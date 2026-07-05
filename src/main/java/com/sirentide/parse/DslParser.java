@@ -4,6 +4,7 @@ import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
+import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +31,7 @@ public final class DslParser {
         return switch (lines[0].strip()) {
             case "pie" -> new Pie(parseData(lines));
             case "xychart" -> new XyChart(parseData(lines));
+            case "timeline" -> new Timeline(parseData(lines));
             default -> new Empty();
         };
     }

@@ -4,9 +4,11 @@ import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.Pie;
+import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.PieLayout;
+import com.sirentide.layout.TimelineLayout;
 import com.sirentide.layout.XyChartLayout;
 
 /// Public entry point. The bake pipeline: DSL → parse → IR → layout (→ coordinates) → emit
@@ -31,6 +33,7 @@ public final class Sirentide {
         return switch (ir) {
             case Pie pie -> PieLayout.layout(pie);
             case XyChart chart -> XyChartLayout.layout(chart);
+            case Timeline tl -> TimelineLayout.layout(tl);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }
