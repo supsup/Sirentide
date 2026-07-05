@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sirentide — pie example</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 3rem auto; padding: 0 1rem;
+         color: #1e293b; line-height: 1.5; }
+  h1 { margin-bottom: .2rem; } .sub { color: #64748b; margin-top: 0; }
+  .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0;
+          display: flex; gap: 2rem; align-items: center; flex-wrap: wrap; }
+  .pie svg { width: 220px; height: 220px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto;
+        font-size: .85rem; }
+  .legend { list-style: none; padding: 0; margin: 0; }
+  .legend li { display: flex; align-items: center; gap: .6rem; margin: .35rem 0; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  .note { color: #475569; font-size: .9rem; border-left: 3px solid #94a3b8; padding-left: 1rem; }
+  code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Sirentide — first diagram 🌊</h1>
+<p class="sub">A pie chart, rendered from a tiny DSL to static SVG <em>at build time</em>. No JavaScript, no runtime.</p>
+
+<div class="card">
+  <div class="pie">
+    <!-- Rendered by Sirentide.render(...) — the exact bake output, pasted verbatim. -->
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"><path d="M 120 120 L 120 20 A 100 100 0 0 1 178.779 200.902 Z" fill="#4e79a7"/><path d="M 120 120 L 178.779 200.902 A 100 100 0 0 1 39.098 178.779 Z" fill="#f28e2b"/><path d="M 120 120 L 39.098 178.779 A 100 100 0 0 1 39.098 61.221 Z" fill="#59a14f"/><path d="M 120 120 L 39.098 61.221 A 100 100 0 0 1 120 20 Z" fill="#e15759"/></svg>
+  </div>
+  <ul class="legend">
+    <li><span class="sw" style="background:#4e79a7"></span> Reviews — 40</li>
+    <li><span class="sw" style="background:#f28e2b"></span> Builds — 25</li>
+    <li><span class="sw" style="background:#59a14f"></span> Docs — 20</li>
+    <li><span class="sw" style="background:#e15759"></span> Design — 15</li>
+  </ul>
+</div>
+
+<h2>The DSL that made it</h2>
+<pre>pie
+  "Reviews" : 40
+  "Builds"  : 25
+  "Docs"    : 20
+  "Design"  : 15</pre>
+
+<h2>How</h2>
+<pre>echo 'pie
+  "Reviews" : 40
+  "Builds"  : 25
+  "Docs"    : 20
+  "Design"  : 15' | java -jar build/libs/sirentide-0.1.0.jar &gt; pie.svg</pre>
+
+<p class="note">
+  The SVG above is Sirentide's <em>verbatim</em> bake output — only <code>&lt;svg&gt;</code> and
+  filled <code>&lt;path&gt;</code> wedges, no <code>&lt;script&gt;</code>, no <code>&lt;style&gt;</code>,
+  no runtime. It's safe to inline into any page and survives a strict HTML sanitizer untouched.
+  <br><br>
+  Slice <strong>labels</strong> live in this page's legend for now — Sirentide draws text as SVG
+  <em>paths</em> (the next build: the glyph-outline reader), at which point the labels render
+  <em>inside</em> the diagram, in the same STIX Two Math face LatteX renders formulas in.
+</p>
+
+</body>
+</html>
