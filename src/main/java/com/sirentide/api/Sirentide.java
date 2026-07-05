@@ -2,29 +2,33 @@ package com.sirentide.api;
 
 import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.Diagram;
-import com.sirentide.layout.LayoutEngine;
+import com.sirentide.ir.Empty;
+import com.sirentide.ir.Pie;
+import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.PieLayout;
 
 /// Public entry point. The bake pipeline: DSL → parse → IR → layout (→ coordinates) → emit
 /// (→ SVG string). Zero runtime dependency, deterministic, sanitizer-clean output
 /// (docs/DESIGN.md §2/§4).
 ///
-/// M0 skeleton: an empty diagram bakes to a minimal, contract-clean `<svg>` shell — proving the
-/// parse→IR→layout→emit pipeline end to end. Real per-type parsers + layout + emit land in M1
-/// (pie, xychart, minimal sequence), building to Confluence's sirentide-output-contract.
+/// M1 (in progress): the first diagram type — `pie` — renders end to end. xychart + a minimal
+/// linear sequence (with the play-through) follow, all projecting into the shared IR.
 public final class Sirentide {
 
     private Sirentide() {}
 
     /// Bake a Sirentide DSL source into a self-contained SVG string.
     public static String render(String dsl) {
-        Diagram ir = parse(dsl);
-        var laid = LayoutEngine.m0Default().layout(ir);
-        return SvgEmitter.m0Default().emit(laid);
+        Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+        LaidOut laid = layout(ir);
+        return SvgEmitter.emit(laid);
     }
 
-    /// M0: recognizes only the empty diagram. Real per-type parsers (own DSL, effects +
-    /// sequencing + math-labels first-class) land in M1.
-    private static Diagram parse(String dsl) {
-        return Diagram.empty();
+    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR.
+    private static LaidOut layout(Diagram ir) {
+        return switch (ir) {
+            case Pie pie -> PieLayout.layout(pie);
+            case Empty ignored -> LaidOut.of(0, 0);
+        };
     }
 }
