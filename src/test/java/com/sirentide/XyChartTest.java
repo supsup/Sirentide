@@ -61,4 +61,14 @@ class XyChartTest {
         assertEquals(2, count(svg, "<line"), "axes render even with no bars");
         assertEquals(0, count(svg, "<rect"), "no bars");
     }
+
+    @Test
+    void negativeValueDoesNotEmitInvalidRect() {
+        // Regression: a mixed-sign dataset kept a positive max, so a negative bar
+        // produced height="-108" — an invalid, off-canvas rect. M0's bar chart is
+        // non-negative magnitude only, so negatives clamp to zero height (inert).
+        String svg = Sirentide.render("xychart\n \"A\" : 5\n \"B\" : -3\n");
+        assertFalse(svg.contains("height=\"-"), "no negative-height rect");
+        assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "still well-formed");
+    }
 }

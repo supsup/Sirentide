@@ -53,7 +53,11 @@ public final class XyChartLayout {
         double barW = slot * 0.6;
         for (int i = 0; i < n; i++) {
             Slice b = bars.get(i);
-            double h = (b.value() / max) * plotH;
+            // M0 xychart is non-negative magnitude only. Clamp negatives to zero
+            // height so a mixed-sign dataset can never emit an invalid negative-height,
+            // off-canvas rect (inert per DESIGN §7). Follow-up: reject negatives at parse.
+            double magnitude = Math.max(0.0, b.value());
+            double h = (magnitude / max) * plotH;
             double x = plotLeft + slot * i + (slot - barW) / 2;
             double y = plotBottom - h;
             shapes.add(new Rect(x, y, barW, h, PALETTE[i % PALETTE.length]));
