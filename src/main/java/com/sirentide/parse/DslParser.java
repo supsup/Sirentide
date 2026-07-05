@@ -4,6 +4,7 @@ import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
+import com.sirentide.ir.XyChart;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,15 +27,17 @@ public final class DslParser {
             return new Empty();
         }
         String[] lines = src.strip().split("\\R");
-        String head = lines[0].strip();
-        return switch (head) {
-            case "pie" -> parsePie(lines);
+        return switch (lines[0].strip()) {
+            case "pie" -> new Pie(parseData(lines));
+            case "xychart" -> new XyChart(parseData(lines));
             default -> new Empty();
         };
     }
 
-    private static Diagram parsePie(String[] lines) {
-        List<Slice> slices = new ArrayList<>();
+    /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row
+    /// is skipped rather than failing the whole diagram (docs/DESIGN.md §6: never fail the bake).
+    private static List<Slice> parseData(String[] lines) {
+        List<Slice> data = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
@@ -46,13 +49,12 @@ public final class DslParser {
             }
             String label = unquote(line.substring(0, colon).strip());
             try {
-                double value = Double.parseDouble(line.substring(colon + 1).strip());
-                slices.add(new Slice(label, value));
+                data.add(new Slice(label, Double.parseDouble(line.substring(colon + 1).strip())));
             } catch (NumberFormatException e) {
-                // Skip a malformed row rather than failing the whole diagram.
+                // Skip a malformed row.
             }
         }
-        return new Pie(slices);
+        return data;
     }
 
     private static String unquote(String s) {

@@ -2,6 +2,8 @@ package com.sirentide.emit;
 
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Line;
+import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import com.sirentide.layout.Wedge;
 
@@ -28,6 +30,13 @@ public final class SvgEmitter {
             case Wedge w -> appendWedge(sb, w);
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
                 .append("\" fill=\"").append(g.fill()).append("\"/>");
+            case Rect r -> sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
+                .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
+                .append("\" fill=\"").append(r.fill()).append("\"/>");
+            case Line l -> sb.append("<line x1=\"").append(fmt(l.x1())).append("\" y1=\"").append(fmt(l.y1()))
+                .append("\" x2=\"").append(fmt(l.x2())).append("\" y2=\"").append(fmt(l.y2()))
+                .append("\" stroke=\"").append(l.stroke())
+                .append("\" stroke-width=\"").append(fmt(l.strokeWidth())).append("\"/>");
         }
     }
 

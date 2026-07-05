@@ -4,8 +4,10 @@ import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.Pie;
+import com.sirentide.ir.XyChart;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.PieLayout;
+import com.sirentide.layout.XyChartLayout;
 
 /// Public entry point. The bake pipeline: DSL → parse → IR → layout (→ coordinates) → emit
 /// (→ SVG string). Zero runtime dependency, deterministic, sanitizer-clean output
@@ -28,6 +30,7 @@ public final class Sirentide {
     private static LaidOut layout(Diagram ir) {
         return switch (ir) {
             case Pie pie -> PieLayout.layout(pie);
+            case XyChart chart -> XyChartLayout.layout(chart);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }
