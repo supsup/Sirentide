@@ -121,11 +121,16 @@ public final class SfntMetrics {
 
     // -- glyph outlines (glyf/loca) ---------------------------------------------
 
-    /// The contours of a glyph's outline, in font design units (y-up). SIMPLE glyphs only for now
-    /// — a composite glyph (numberOfContours &lt; 0, e.g. an accented letter) returns empty (M1
-    /// labels are ASCII, all simple; composite support is a follow-up). Whitespace / empty glyphs
-    /// return empty.
+    /// The contours of a glyph's outline, in font design units (y-up). Handles both SIMPLE glyphs
+    /// and COMPOSITE glyphs (numberOfContours &lt; 0, e.g. an accented letter = base + accent
+    /// component, each with an affine transform). Whitespace / empty glyphs return empty.
     public List<Contour> glyphContours(int glyphId) {
+        return glyphContours(glyphId, 0);
+    }
+
+    private static final int MAX_COMPOSITE_DEPTH = 8;
+
+    private List<Contour> glyphContours(int glyphId, int depth) {
         if (glyphId < 0 || glyphId + 1 >= loca.length) {
             return List.of();
         }
@@ -136,10 +141,9 @@ public final class SfntMetrics {
         }
         int g = tableOffset.get("glyf") + start;
         int numberOfContours = s16(g);
-        if (numberOfContours < 0) {
-            return List.of();   // composite glyph — deferred
-        }
-        return readSimpleContours(g, numberOfContours);
+        return numberOfContours >= 0
+            ? readSimpleContours(g, numberOfContours)
+            : readCompositeContours(g, depth);
     }
 
     private int[] readLoca(int indexToLocFormat) {
@@ -223,6 +227,100 @@ public final class SfntMetrics {
             startPt = endPt + 1;
         }
         return contours;
+    }
+
+    // Composite-glyph component flags (OpenType glyf spec).
+    private static final int ARG_1_AND_2_ARE_WORDS    = 0x0001;
+    private static final int ARGS_ARE_XY_VALUES       = 0x0002;
+    private static final int ROUND_XY_TO_GRID         = 0x0004;
+    private static final int WE_HAVE_A_SCALE          = 0x0008;
+    private static final int MORE_COMPONENTS          = 0x0020;
+    private static final int WE_HAVE_AN_X_AND_Y_SCALE = 0x0040;
+    private static final int WE_HAVE_A_TWO_BY_TWO     = 0x0080;
+    private static final int SCALED_COMPONENT_OFFSET  = 0x0800;
+
+    /// Reads a composite glyph: a chain of component records, each naming another glyph plus an
+    /// affine transform (xy offset + optional scale / 2×2). Component outlines are fetched
+    /// recursively and mapped into this glyph's space. Depth-guarded against cyclic glyphs
+    /// (degrades to empty rather than throwing). Point-matched components (rare, non-XY) are
+    /// placed without repositioning.
+    private List<Contour> readCompositeContours(int g, int depth) {
+        if (depth > MAX_COMPOSITE_DEPTH) {
+            return List.of();
+        }
+        List<Contour> out = new ArrayList<>();
+        int pos = g + 10;
+        boolean more = true;
+        while (more) {
+            int flags = u16(pos);
+            int componentGlyph = u16(pos + 2);
+            pos += 4;
+
+            int arg1;
+            int arg2;
+            if ((flags & ARG_1_AND_2_ARE_WORDS) != 0) {
+                arg1 = s16(pos);
+                arg2 = s16(pos + 2);
+                pos += 4;
+            } else {
+                arg1 = (byte) u8(pos);
+                arg2 = (byte) u8(pos + 1);
+                pos += 2;
+            }
+
+            double a = 1;
+            double b = 0;
+            double c = 0;
+            double d = 1;
+            if ((flags & WE_HAVE_A_SCALE) != 0) {
+                a = d = f2dot14(pos);
+                pos += 2;
+            } else if ((flags & WE_HAVE_AN_X_AND_Y_SCALE) != 0) {
+                a = f2dot14(pos);
+                d = f2dot14(pos + 2);
+                pos += 4;
+            } else if ((flags & WE_HAVE_A_TWO_BY_TWO) != 0) {
+                a = f2dot14(pos);
+                b = f2dot14(pos + 2);
+                c = f2dot14(pos + 4);
+                d = f2dot14(pos + 6);
+                pos += 8;
+            }
+
+            double dx = 0;
+            double dy = 0;
+            if ((flags & ARGS_ARE_XY_VALUES) != 0) {
+                dx = arg1;
+                dy = arg2;
+                if ((flags & SCALED_COMPONENT_OFFSET) != 0) {
+                    double ox = dx;
+                    double oy = dy;
+                    dx = a * ox + c * oy;
+                    dy = b * ox + d * oy;
+                }
+                if ((flags & ROUND_XY_TO_GRID) != 0) {
+                    dx = Math.round(dx);
+                    dy = Math.round(dy);
+                }
+            }
+
+            for (Contour ct : glyphContours(componentGlyph, depth + 1)) {
+                List<GlyphPoint> tp = new ArrayList<>(ct.points().size());
+                for (GlyphPoint p : ct.points()) {
+                    int nx = (int) Math.round(a * p.x() + c * p.y() + dx);
+                    int ny = (int) Math.round(b * p.x() + d * p.y() + dy);
+                    tp.add(new GlyphPoint(nx, ny, p.onCurve()));
+                }
+                out.add(new Contour(tp));
+            }
+            more = (flags & MORE_COMPONENTS) != 0;
+        }
+        return out;
+    }
+
+    /// Reads a 2.14 signed fixed-point number (F2Dot14): value = int16 / 16384.
+    private double f2dot14(int p) {
+        return s16(p) / 16384.0;
     }
 
     // -- cmap subtable selection + lookup (formats 4 and 12) --------------------

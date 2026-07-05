@@ -109,4 +109,20 @@ class FontMetricsTest {
         assertTrue(fm.textPathD("AAAA", 0, 100, 20).length() > fm.textPathD("A", 0, 100, 20).length(),
             "more glyphs => more path");
     }
+
+    @Test
+    void compositeAccentedGlyphsRender() {
+        // Accented Latin letters are typically COMPOSITE glyphs (base + accent components, each
+        // affine-transformed). Before composite support they returned empty; now at least one of
+        // these must produce a real outline.
+        SfntMetrics sfnt = SfntMetrics.loadBundled();
+        int rendered = 0;
+        for (int cp : new int[] {'é', 'ñ', 'ü', 'à', 'ç', 'ö', 'â', 'ê'}) {
+            int gid = sfnt.glyphId(cp);
+            if (gid != 0 && !sfnt.glyphContours(gid).isEmpty()) {
+                rendered++;
+            }
+        }
+        assertTrue(rendered > 0, "at least one accented (composite) glyph renders");
+    }
 }
