@@ -1,0 +1,5 @@
+Manifest-Version: 1.0
+Main-Class: com.sirentide.cli.Main
+Implementation-Title: Sirentide
+Implementation-Version: 0.1.0
+
