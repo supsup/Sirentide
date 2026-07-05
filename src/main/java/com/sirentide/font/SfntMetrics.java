@@ -3,7 +3,9 @@ package com.sirentide.font;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /// A minimal, clean-room reader for the *metrics* of an sfnt (TrueType/`glyf`) font — written
@@ -36,6 +38,8 @@ public final class SfntMetrics {
     private final int cmapSubtableOffset;
     private final int cmapFormat;
 
+    private final int[] loca;   // numGlyphs + 1 byte offsets into the glyf table
+
     private SfntMetrics(byte[] data) {
         this.data = data;
 
@@ -52,7 +56,7 @@ public final class SfntMetrics {
             tableOffset.put(tag, (int) u32(p + 8));
             p += 16;
         }
-        require("head", "maxp", "hhea", "hmtx", "cmap");
+        require("head", "maxp", "hhea", "hmtx", "cmap", "loca", "glyf");
 
         int head = tableOffset.get("head");
         this.unitsPerEm = u16(head + 18);
@@ -64,6 +68,8 @@ public final class SfntMetrics {
         this.numberOfHMetrics = u16(hhea + 34);
 
         this.numGlyphs = u16(tableOffset.get("maxp") + 4);
+
+        this.loca = readLoca(s16(head + 50));  // head.indexToLocFormat
 
         int[] chosen = selectCmap();
         this.cmapSubtableOffset = chosen[0];
@@ -111,6 +117,112 @@ public final class SfntMetrics {
         int hmtx = tableOffset.get("hmtx");
         int idx = Math.min(glyphId, numberOfHMetrics - 1);
         return u16(hmtx + idx * 4);
+    }
+
+    // -- glyph outlines (glyf/loca) ---------------------------------------------
+
+    /// The contours of a glyph's outline, in font design units (y-up). SIMPLE glyphs only for now
+    /// — a composite glyph (numberOfContours &lt; 0, e.g. an accented letter) returns empty (M1
+    /// labels are ASCII, all simple; composite support is a follow-up). Whitespace / empty glyphs
+    /// return empty.
+    public List<Contour> glyphContours(int glyphId) {
+        if (glyphId < 0 || glyphId + 1 >= loca.length) {
+            return List.of();
+        }
+        int start = loca[glyphId];
+        int end = loca[glyphId + 1];
+        if (end <= start) {
+            return List.of();   // no outline data (whitespace)
+        }
+        int g = tableOffset.get("glyf") + start;
+        int numberOfContours = s16(g);
+        if (numberOfContours < 0) {
+            return List.of();   // composite glyph — deferred
+        }
+        return readSimpleContours(g, numberOfContours);
+    }
+
+    private int[] readLoca(int indexToLocFormat) {
+        int locaOff = tableOffset.get("loca");
+        int[] offsets = new int[numGlyphs + 1];
+        if (indexToLocFormat == 0) {   // short: uint16 stored as (offset / 2)
+            for (int i = 0; i <= numGlyphs; i++) {
+                offsets[i] = u16(locaOff + i * 2) * 2;
+            }
+        } else {                       // long: uint32
+            for (int i = 0; i <= numGlyphs; i++) {
+                offsets[i] = (int) u32(locaOff + i * 4);
+            }
+        }
+        return offsets;
+    }
+
+    /// Parses a simple (non-composite) glyf glyph: endPtsOfContours, the REPEAT_FLAG-encoded
+    /// flags, and the delta-encoded x/y coordinates, split into per-contour point rings.
+    private List<Contour> readSimpleContours(int g, int numberOfContours) {
+        int pos = g + 10;
+        int[] endPts = new int[numberOfContours];
+        for (int i = 0; i < numberOfContours; i++) {
+            endPts[i] = u16(pos);
+            pos += 2;
+        }
+        int numPoints = numberOfContours == 0 ? 0 : endPts[numberOfContours - 1] + 1;
+
+        int instructionLength = u16(pos);
+        pos += 2 + instructionLength;
+
+        int[] flags = new int[numPoints];
+        for (int i = 0; i < numPoints; ) {
+            int f = u8(pos++);
+            flags[i++] = f;
+            if ((f & 0x08) != 0) {           // REPEAT_FLAG
+                int repeat = u8(pos++);
+                while (repeat-- > 0 && i < numPoints) {
+                    flags[i++] = f;
+                }
+            }
+        }
+
+        int[] xs = new int[numPoints];
+        int x = 0;
+        for (int i = 0; i < numPoints; i++) {
+            int f = flags[i];
+            if ((f & 0x02) != 0) {           // X_SHORT_VECTOR: 1 byte, sign from bit 0x10
+                int dx = u8(pos++);
+                x += (f & 0x10) != 0 ? dx : -dx;
+            } else if ((f & 0x10) == 0) {     // signed 2-byte delta (else X_IS_SAME → 0)
+                x += s16(pos);
+                pos += 2;
+            }
+            xs[i] = x;
+        }
+
+        int[] ys = new int[numPoints];
+        int y = 0;
+        for (int i = 0; i < numPoints; i++) {
+            int f = flags[i];
+            if ((f & 0x04) != 0) {           // Y_SHORT_VECTOR
+                int dy = u8(pos++);
+                y += (f & 0x20) != 0 ? dy : -dy;
+            } else if ((f & 0x20) == 0) {
+                y += s16(pos);
+                pos += 2;
+            }
+            ys[i] = y;
+        }
+
+        List<Contour> contours = new ArrayList<>(numberOfContours);
+        int startPt = 0;
+        for (int c = 0; c < numberOfContours; c++) {
+            int endPt = endPts[c];
+            List<GlyphPoint> pts = new ArrayList<>(endPt - startPt + 1);
+            for (int i = startPt; i <= endPt; i++) {
+                pts.add(new GlyphPoint(xs[i], ys[i], (flags[i] & 0x01) != 0));
+            }
+            contours.add(new Contour(pts));
+            startPt = endPt + 1;
+        }
+        return contours;
     }
 
     // -- cmap subtable selection + lookup (formats 4 and 12) --------------------
@@ -200,6 +312,10 @@ public final class SfntMetrics {
     }
 
     // -- big-endian primitive reads ---------------------------------------------
+
+    private int u8(int p) {
+        return data[p] & 0xFF;
+    }
 
     private int u16(int p) {
         return ((data[p] & 0xFF) << 8) | (data[p + 1] & 0xFF);

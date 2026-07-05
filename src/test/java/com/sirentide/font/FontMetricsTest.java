@@ -78,4 +78,35 @@ class FontMetricsTest {
     void measurementIsDeterministic() {
         assertEquals(fm.runWidth("Sirentide → SVG", 18), fm.runWidth("Sirentide → SVG", 18));
     }
+
+    // -- text as paths (glyph outlines) --
+
+    @Test
+    void glyphOutlineProducesRealContours() {
+        SfntMetrics sfnt = SfntMetrics.loadBundled();
+        var contours = sfnt.glyphContours(sfnt.glyphId('A'));
+        assertTrue(!contours.isEmpty(), "'A' has a real outline");
+        assertTrue(contours.get(0).points().size() > 2, "the contour has real points");
+    }
+
+    @Test
+    void textRendersToAWellFormedPath() {
+        String d = fm.textPathD("Sirentide", 0, 100, 24);
+        assertTrue(!d.isBlank(), "non-empty path");
+        assertTrue(d.startsWith("M "), "begins with a moveto");
+        assertTrue(d.contains("Z"), "closes its contours");
+        assertTrue(d.contains("Q ") || d.contains("L "), "draws curves or lines");
+        assertTrue(!d.contains("NaN") && !d.contains("Infinity"), "no degenerate coordinates");
+    }
+
+    @Test
+    void textPathIsDeterministic() {
+        assertEquals(fm.textPathD("Reviews", 10, 50, 16), fm.textPathD("Reviews", 10, 50, 16));
+    }
+
+    @Test
+    void moreGlyphsProduceMorePathData() {
+        assertTrue(fm.textPathD("AAAA", 0, 100, 20).length() > fm.textPathD("A", 0, 100, 20).length(),
+            "more glyphs => more path");
+    }
 }
