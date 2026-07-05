@@ -1,5 +1,6 @@
 package com.sirentide.emit;
 
+import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Shape;
 import com.sirentide.layout.Wedge;
@@ -25,6 +26,8 @@ public final class SvgEmitter {
     private static void appendShape(StringBuilder sb, Shape shape) {
         switch (shape) {
             case Wedge w -> appendWedge(sb, w);
+            case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
+                .append("\" fill=\"").append(g.fill()).append("\"/>");
         }
     }
 

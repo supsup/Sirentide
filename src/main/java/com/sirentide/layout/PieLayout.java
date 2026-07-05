@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
 import java.util.ArrayList;
@@ -15,6 +16,9 @@ public final class PieLayout {
 
     private static final double SIZE = 240;
     private static final double RADIUS = 100;
+    private static final FontMetrics FONT = FontMetrics.bundled();
+    private static final double LABEL_SIZE = 11;
+    private static final double LABEL_RADIUS = RADIUS * 0.62;   // label sits inside the wedge
 
     /// A small fixed palette of contract-clean hex fills (mid-tone, readable on light or dark).
     private static final String[] PALETTE = {
@@ -39,6 +43,19 @@ public final class PieLayout {
             }
             double next = angle + (value / total) * 2 * Math.PI;
             shapes.add(new Wedge(cx, cy, RADIUS, angle, next, PALETTE[i % PALETTE.length]));
+
+            // A centered label inside the wedge, at the slice's mid-angle — rendered to glyph
+            // paths by the oracle (text=paths), centered by measured width.
+            double mid = (angle + next) / 2;
+            double lx = cx + LABEL_RADIUS * Math.cos(mid);
+            double ly = cy + LABEL_RADIUS * Math.sin(mid);
+            String label = slices.get(i).label();
+            double w = FONT.runWidth(label, LABEL_SIZE);
+            String d = FONT.textPathD(label, lx - w / 2, ly + LABEL_SIZE * 0.35, LABEL_SIZE);
+            if (!d.isBlank()) {
+                shapes.add(new GlyphRun(d, "#ffffff"));
+            }
+
             angle = next;
         }
         return new LaidOut(SIZE, SIZE, shapes);

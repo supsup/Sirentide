@@ -20,16 +20,16 @@ class PieTest {
     }
 
     @Test
-    void oneWedgePathPerPositiveSlice() {
+    void oneWedgeAndOneLabelPerPositiveSlice() {
         String svg = Sirentide.render("""
             pie
               "Reviews" : 40
               "Builds"  : 30
               "Docs"    : 30
             """);
-        assertEquals(3, count(svg, "<path"), "one wedge per slice");
+        assertEquals(6, count(svg, "<path"), "3 wedges + 3 label paths");
+        assertEquals(3, count(svg, "fill=\"#ffffff\""), "one (white) label path per slice");
         assertTrue(svg.contains("viewBox="), "has a viewBox");
-        assertTrue(svg.contains("fill=\"#"), "wedges carry palette fills");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
     }
 
@@ -46,9 +46,9 @@ class PieTest {
     @Test
     void singleSliceRendersAFullDisc() {
         String svg = Sirentide.render("pie\n \"All\" : 5\n");
-        assertEquals(1, count(svg, "<path"), "one path for the whole disc");
-        // Full-circle form draws two arcs (no degenerate centre wedge).
+        // Full-circle form draws two arcs (no degenerate centre wedge); the label adds no arcs.
         assertEquals(2, count(svg, " A "), "disc drawn as two semicircle arcs");
+        assertEquals(1, count(svg, "fill=\"#ffffff\""), "one label for the one slice");
     }
 
     @Test
@@ -59,7 +59,7 @@ class PieTest {
               this line has no colon
               "bad"  : notanumber
             """);
-        assertEquals(1, count(svg, "<path"), "only the one valid slice renders; bad rows skipped");
+        assertEquals(1, count(svg, "fill=\"#ffffff\""), "one label => one valid slice; bad rows skipped");
     }
 
     @Test
