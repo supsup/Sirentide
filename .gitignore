@@ -1,0 +1,10 @@
+.gradle/
+build/
+*.class
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# stray downloads (never commit large binaries)
+*.zip
