@@ -15,7 +15,14 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Status
 
-Greenlit; **M0** (contracts + LatteX seam + core scaffold) in progress. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design, milestones, and the security model.
+Greenlit; **M1** in progress — the render pipeline, the font-metrics oracle, and the first diagram type (`pie`) are built. See the docs below for how to use it and where it's going.
+
+## Docs
+
+- **[QUICKSTART.md](QUICKSTART.md)** — render a diagram in five minutes.
+- **[SLOWSTART.md](SLOWSTART.md)** — the why, the differentiators, the milestone ladder.
+- **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — what's shipped, dated.
+- **[docs/DESIGN.md](docs/DESIGN.md)** — full design, the LatteX dependency, the security model.
 
 ## Family
 
