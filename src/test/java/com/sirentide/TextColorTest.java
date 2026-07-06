@@ -47,12 +47,14 @@ class TextColorTest {
     }
 
     @Test
-    void threeDigitHexIsNotInTheGrammarSoItFallsBack() {
-        // The contract COLOR grammar is #rrggbb (6 digits) only — a 3-digit hex is rejected and
-        // degrades to the default rather than emitting an out-of-grammar fill.
+    void threeDigitHexIsExpandedToSixDigit() {
+        // The contract COLOR grammar now ACCEPTS a 3-digit `#rgb` shorthand for INPUT and EXPANDS it
+        // to canonical `#rrggbb` before it reaches the emitter — so `color=#333` renders `#333333`
+        // (never the out-of-grammar short form).
         String svg = Sirentide.render("xychart color=#333\n  \"Mon\" : 5\n  \"Tue\" : 8\n");
-        assertTrue(count(svg, "fill=\"currentColor\"") >= 1, "3-digit hex falls back to currentColor");
+        assertTrue(count(svg, "fill=\"#333333\"") >= 1, "3-digit hex expands to 6-digit on the wire");
         assertEquals(0, count(svg, "fill=\"#333\""), "the short hex is never emitted");
+        assertEquals(0, count(svg, "fill=\"currentColor\""), "the override replaces the default");
     }
 
     @Test

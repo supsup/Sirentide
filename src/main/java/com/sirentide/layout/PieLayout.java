@@ -84,7 +84,7 @@ public final class PieLayout {
             }
             double sweep = (value / total) * 2 * Math.PI;
             double next = angle + sweep;
-            String fill = PALETTE[i % PALETTE.length];
+            String fill = fillFor(slices.get(i), i);
             shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
 
             double mid = (angle + next) / 2;
@@ -209,7 +209,7 @@ public final class PieLayout {
             }
             double sweep = (value / total) * 2 * Math.PI;
             double next = angle + sweep;
-            String fill = PALETTE[i % PALETTE.length];
+            String fill = fillFor(slices.get(i), i);
             shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
             angle = next;
 
@@ -236,6 +236,12 @@ public final class PieLayout {
     private static String formatValue(double v) {
         double r = Math.round(v * 1000.0) / 1000.0;
         return r == Math.rint(r) ? Long.toString((long) r) : Double.toString(r);
+    }
+
+    /// The wedge/swatch fill for a slice: its EXPLICIT per-item colour when the author supplied one
+    /// (already a canonical `#rrggbb` from the parser), else the default palette entry by slice order.
+    private static String fillFor(Slice s, int i) {
+        return s.color() != null ? s.color() : PALETTE[i % PALETTE.length];
     }
 
     /// Pick a black or white label fill by the slice colour's perceptual luminance, so the label

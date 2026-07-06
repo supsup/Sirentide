@@ -62,7 +62,9 @@ public final class TimelineLayout {
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
             topText[i] = e.label();
             botText[i] = num(e.value());
-            shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, PALETTE[i % PALETTE.length]));
+            // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
+            String fill = e.color() != null ? e.color() : PALETTE[i % PALETTE.length];
+            shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill));
         }
         // DE-COLLISION: labels of events close in value share nearly the same x and their boxes
         // overlap ("Founded"/"Series A" in the screenshot). Measure each label's width and, where an
