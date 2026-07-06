@@ -31,6 +31,24 @@ public final class PieLayout {
     private static final String OUTSIDE_LABEL_FILL = "#334155";   // on the page background, not a slice
     private static final String LEADER_STROKE = "#94a3b8";
 
+    // -- legend (left-side colour key) geometry ---------------------------------
+    /// Width of the left key column: swatch + gap + (ellipsized) label/value text + paddings.
+    private static final double KEY_WIDTH = 140;
+    /// Gap between the key column and the pie face, so the two never overlap.
+    private static final double KEY_GAP = 20;
+    /// Height of one key row (font size + breathing room), rows evenly stacked.
+    private static final double KEY_ROW_HEIGHT = 22;
+    /// Side of the square colour swatch.
+    private static final double SWATCH = 12;
+    private static final double KEY_PAD_LEFT = 12;
+    private static final double KEY_PAD_RIGHT = 8;
+    private static final double KEY_PAD_TOP = 12;
+    /// Gap between a row's swatch and its text.
+    private static final double SWATCH_TEXT_GAP = 6;
+    /// Max width the label+value text may occupy before it ellipsizes inside the key column.
+    private static final double KEY_TEXT_MAX =
+        KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
+
     /// A small fixed palette of contract-clean hex fills (mid-tone, readable on light or dark).
     private static final String[] PALETTE = {
         "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
@@ -38,6 +56,11 @@ public final class PieLayout {
     };
 
     public static LaidOut layout(Pie pie) {
+        // Legend mode is a wholly separate layout path (left key + shifted, label-suppressed pie),
+        // kept apart so the bare-pie path below stays byte-for-byte identical to before.
+        if (pie.legend()) {
+            return layoutLegend(pie);
+        }
         // Denominator = POSITIVE magnitudes only. Summing negatives (the old `total()`) shrank the
         // denominator while the loop skipped the negative slice, inflating every other slice's sweep
         // past a full 360° turn. A negative value now cannot corrupt any other slice's angle.
@@ -143,6 +166,71 @@ public final class PieLayout {
         if (!d.isBlank()) {
             shapes.add(new GlyphRun(d, fill));
         }
+    }
+
+    /// Legend layout: a vertical colour KEY on the left (one swatch+label+value row per drawn
+    /// slice) with the pie shifted to its right. The on-slice inside labels AND the outside leader
+    /// labels are SUPPRESSED — the key replaces them (that is the whole point). The wedges
+    /// themselves are unchanged; only their centre shifts right past the key column. The canvas
+    /// widens to `KEY_WIDTH + KEY_GAP + pieDiameter`.
+    private static LaidOut layoutLegend(Pie pie) {
+        double total = pie.positiveTotal();
+        List<Slice> slices = pie.slices();
+        int drawn = 0;
+        for (Slice s : slices) {
+            if (s.value() > 0) {
+                drawn++;
+            }
+        }
+        double canvasW = KEY_WIDTH + KEY_GAP + SIZE;
+        // Tall key sets (many slices) grow the canvas so rows never spill off the pie box.
+        double keyBlockH = drawn * KEY_ROW_HEIGHT;
+        double canvasH = Math.max(SIZE, keyBlockH + 2 * KEY_PAD_TOP);
+        if (total <= 0) {
+            return LaidOut.of(canvasW, canvasH);
+        }
+        double cx = KEY_WIDTH + KEY_GAP + SIZE / 2;   // pie shifted right of the key column
+        double cy = canvasH / 2;
+        double keyTop = (canvasH - keyBlockH) / 2;     // key block vertically centred
+        double textX = KEY_PAD_LEFT + SWATCH + SWATCH_TEXT_GAP;
+
+        List<Shape> shapes = new ArrayList<>();
+        double angle = -Math.PI / 2; // 12 o'clock
+        int row = 0;
+        for (int i = 0; i < slices.size(); i++) {
+            double value = slices.get(i).value();
+            if (value <= 0) {
+                continue;
+            }
+            double sweep = (value / total) * 2 * Math.PI;
+            double next = angle + sweep;
+            String fill = PALETTE[i % PALETTE.length];
+            shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
+            angle = next;
+
+            // Key row: a colour swatch (same palette fill as the wedge) + label & value text. Text
+            // uses the standard page-background fill (the row sits on white now, not on the slice),
+            // and is ellipsized to the key column width so a long label can't overrun.
+            double rowTop = keyTop + row * KEY_ROW_HEIGHT;
+            shapes.add(new Rect(KEY_PAD_LEFT, rowTop + (KEY_ROW_HEIGHT - SWATCH) / 2,
+                SWATCH, SWATCH, fill));
+            String text = FONT.ellipsize(
+                slices.get(i).label() + "  " + formatValue(value), KEY_TEXT_MAX, LABEL_SIZE);
+            double baseline = rowTop + KEY_ROW_HEIGHT / 2 + LABEL_SIZE * 0.35;
+            String d = FONT.textPathD(text, textX, baseline, LABEL_SIZE);
+            if (!d.isBlank()) {
+                shapes.add(new GlyphRun(d, OUTSIDE_LABEL_FILL));
+            }
+            row++;
+        }
+        return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// Deterministic value formatting for a key row: integer when whole, else up to 3 decimals —
+    /// matching the emitter's number style so key values read the same as geometry.
+    private static String formatValue(double v) {
+        double r = Math.round(v * 1000.0) / 1000.0;
+        return r == Math.rint(r) ? Long.toString((long) r) : Double.toString(r);
     }
 
     /// Pick a black or white label fill by the slice colour's perceptual luminance, so the label

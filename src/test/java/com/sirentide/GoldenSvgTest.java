@@ -31,6 +31,8 @@ class GoldenSvgTest {
     static {
         FIXTURES.put("pie",
             "pie\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 30\n");
+        FIXTURES.put("pie-legend",
+            "pie legend\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 20\n  \"Ops\" : 10\n");
         FIXTURES.put("xychart",
             "xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n");
         FIXTURES.put("timeline",
