@@ -38,10 +38,20 @@ public final class TimelineLayout {
         if (n == 0) {
             return new LaidOut(W, H, shapes);
         }
-        double plotW = W - 2 * MARGIN;
+        double plotLeft = MARGIN;
+        double plotRight = W - MARGIN;
+        // Place each event PROPORTIONALLY to its value (year/date), not evenly by index — a 1-year
+        // gap and a 19-year gap must render 1:19, not identical. The domain carries both ends so the
+        // mapping is min-normalized (AxisScale). A single event / all-equal values → domain [x,x],
+        // which projects to the axis midpoint (no divide-by-zero).
+        double[] values = new double[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = events.get(i).value();
+        }
+        AxisScale axis = AxisScale.of(values);
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
-            double x = MARGIN + (i + 0.5) * (plotW / n);
+            double x = axis.project(e.value(), plotLeft, plotRight);
             shapes.add(new Wedge(x, AXIS_Y, DOT_R, 0, 2 * Math.PI, PALETTE[i % PALETTE.length]));
             centeredLabel(shapes, e.label(), x, AXIS_Y - 14, 11, LABEL_FILL);   // above the line
             centeredLabel(shapes, num(e.value()), x, AXIS_Y + 24, 10, VALUE_FILL);  // below the line

@@ -27,7 +27,11 @@ class PieTest {
               "Docs"    : 30
             """);
         assertEquals(6, count(svg, "<path"), "3 wedges + 3 label paths");
-        assertEquals(3, count(svg, "fill=\"#ffffff\""), "one (white) label path per slice");
+        // Labels are contrast-aware now (black OR white by slice luminance), not hardcoded white:
+        // #4e79a7 (dark) → white; #f28e2b, #59a14f (light) → black. So both fills appear.
+        assertTrue(count(svg, "fill=\"#ffffff\"") >= 1 && count(svg, "fill=\"#000000\"") >= 1,
+            "labels use contrast-picked black AND white, not a single hardcoded colour");
+        assertEquals(0, count(svg, "<line"), "no thin slices here → no leader lines");
         assertTrue(svg.contains("viewBox="), "has a viewBox");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
     }

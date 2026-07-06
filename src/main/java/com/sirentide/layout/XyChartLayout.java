@@ -39,13 +39,37 @@ public final class XyChartLayout {
         double plotH = plotBottom - plotTop;
 
         List<Shape> shapes = new ArrayList<>();
-        shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1));  // x-axis
-        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));      // y-axis
 
         List<Slice> bars = chart.bars();
-        double max = chart.maxValue();
-        if (bars.isEmpty() || max <= 0) {
+        if (bars.isEmpty()) {
+            // Axes only (no data): keep the classic bottom x-axis + left y-axis.
+            shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1));
+            shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
             return new LaidOut(W, H, shapes);
+        }
+
+        // A SIGNED y-domain with a zero baseline: `[min(0, minValue), max(0, maxValue)]`. Positive
+        // bars rise from the baseline, NEGATIVE bars DESCEND below it (never clamped to zero — that
+        // silently blanked an all-negative chart). `project(v, plotBottom, plotTop)` maps the domain
+        // min to the plot bottom and the max to the top, so higher values sit higher.
+        AxisScale axis = new AxisScale(Math.min(0, chart.minValue()), Math.max(0, chart.maxValue()));
+        double baselineY = axis.project(0, plotBottom, plotTop);
+
+        // y-axis (full height) + the zero baseline as the x-axis (which may sit mid-plot for
+        // mixed-sign data, at the top for all-negative, at the bottom for all-positive).
+        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));      // y-axis
+        shapes.add(new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1));    // x-axis (zero)
+
+        // y-axis scale: nice 1-2-5 tick marks + numeric labels (was missing entirely — no y-scale).
+        for (double tick : axis.ticks()) {
+            double ty = axis.project(tick, plotBottom, plotTop);
+            shapes.add(new Line(plotLeft - 4, ty, plotLeft, ty, AXIS_STROKE, 1));           // tick mark
+            String tlabel = num(tick);
+            double tw = FONT.runWidth(tlabel, LABEL_SIZE - 2);
+            String td = FONT.textPathD(tlabel, plotLeft - 6 - tw, ty + (LABEL_SIZE - 2) * 0.35, LABEL_SIZE - 2);
+            if (!td.isBlank()) {
+                shapes.add(new GlyphRun(td, TEXT_FILL));
+            }
         }
 
         int n = bars.size();
@@ -53,18 +77,17 @@ public final class XyChartLayout {
         double barW = slot * 0.6;
         for (int i = 0; i < n; i++) {
             Slice b = bars.get(i);
-            // M0 xychart is non-negative magnitude only. Clamp negatives to zero
-            // height so a mixed-sign dataset can never emit an invalid negative-height,
-            // off-canvas rect (inert per DESIGN §7). Follow-up: reject negatives at parse.
-            double magnitude = Math.max(0.0, b.value());
-            double h = (magnitude / max) * plotH;
+            double barEndY = axis.project(b.value(), plotBottom, plotTop);
+            double y = Math.min(baselineY, barEndY);
+            double h = Math.abs(baselineY - barEndY);
             double x = plotLeft + slot * i + (slot - barW) / 2;
-            double y = plotBottom - h;
             shapes.add(new Rect(x, y, barW, h, PALETTE[i % PALETTE.length]));
 
             double cx = x + barW / 2;
-            centeredLabel(shapes, b.label(), cx, plotBottom + 14, LABEL_SIZE);   // category, below axis
-            centeredLabel(shapes, num(b.value()), cx, y - 4, LABEL_SIZE - 1);     // value, atop the bar
+            centeredLabel(shapes, b.label(), cx, plotBottom + 14, LABEL_SIZE);   // category, below plot
+            // Value label at the bar's OUTER end: above a positive bar, below a descending one.
+            double valueY = b.value() >= 0 ? barEndY - 4 : barEndY + LABEL_SIZE;
+            centeredLabel(shapes, num(b.value()), cx, valueY, LABEL_SIZE - 1);
         }
         return new LaidOut(W, H, shapes);
     }
