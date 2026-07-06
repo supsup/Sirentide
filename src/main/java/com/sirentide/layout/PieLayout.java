@@ -28,6 +28,10 @@ public final class PieLayout {
     private static final double LABEL_BAND = LABEL_SIZE + 3;
     /// A slice label wider than this gets ellipsized (wrap-oracle wired in) rather than overrunning.
     private static final double MAX_INSIDE_LABEL = RADIUS;
+    /// Max rendered width of a thin-slice OUTSIDE (leader-line) label before it ellipsizes. The inside
+    /// path already caps at MAX_INSIDE_LABEL; this is its un-ellipsized sibling — a legal DSL of many
+    /// thin slices with MAX_LABEL_LEN-char labels would otherwise build unbounded glyph paths (H2).
+    private static final double MAX_OUTSIDE_LABEL = RADIUS;
     private static final String LEADER_STROKE = "#94a3b8";
 
     // -- legend (left-side colour key) geometry ---------------------------------
@@ -103,7 +107,7 @@ public final class PieLayout {
                     cx + RADIUS * Math.cos(mid), cy + RADIUS * Math.sin(mid),   // rim point (leader start)
                     cx + (RADIUS + LEADER_LEN) * Math.cos(mid),                 // leader-end x
                     cy + (RADIUS + LEADER_LEN) * Math.sin(mid),                 // leader-end y (spread below)
-                    mid, slices.get(i).label()));
+                    mid, FONT.ellipsize(slices.get(i).label(), MAX_OUTSIDE_LABEL, LABEL_SIZE)));
             }
             angle = next;
         }
