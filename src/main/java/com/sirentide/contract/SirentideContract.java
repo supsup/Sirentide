@@ -49,6 +49,15 @@ public final class SirentideContract {
         return v != null && COLOR.matcher(v).matches();
     }
 
+    /// True iff `v` is a HEX colour (`#rgb` or `#rrggbb`) — the subset legal as a per-ITEM fill.
+    /// Per-item colours (a pie wedge / bar / dot / gantt bar) must resolve to a concrete swatch:
+    /// `currentColor` and `none` are meaningless there (a `none` wedge is invisible; a `currentColor`
+    /// wedge has no concrete value for the on-slice contrast calc — the H1 blank-pie footgun). They
+    /// stay legal only for the off-slice text `color=` header (see {@link #isColor}).
+    public static boolean isHexColor(String v) {
+        return v != null && v.startsWith("#") && isColor(v);
+    }
+
     /// Canonicalizes a contract-legal colour to its emitted wire form: a 3-digit `#rgb` shorthand
     /// EXPANDS to `#rrggbb` (so the emitter never carries a short hex); a 6-digit hex, `currentColor`,
     /// and `none` pass through unchanged. `null` → `null`. Call this on any colour before it reaches

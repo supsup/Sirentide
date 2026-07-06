@@ -114,4 +114,21 @@ class SliceColorTest {
         assertEquals(0, count(svg, "#12x"), "the malformed hex never reaches output");
         assertTrue(count(svg, "fill=\"#4e79a7\"") >= 1, "the item degrades to its palette colour");
     }
+
+    @Test
+    void h1_perItemCurrentColorOrNoneNeverBlanksThePie() {
+        // REGRESSION (H1, deep-review sirentide/14): per-item `currentColor`/`none` are legal in the
+        // COLOR grammar but meaningless as a wedge fill — they used to reach contrastFill's
+        // Integer.parseInt, throw, and collapse the WHOLE diagram to a 0x0 inert shell (siblings and
+        // all). Per-item colours are now hex-only at the parse boundary, so both fall through to the
+        // palette and the pie renders normally. The exact input Confluence reproduced against the jar.
+        for (String bad : new String[] {"currentColor", "none"}) {
+            String svg = Sirentide.render("pie\n  \"A\" : 60 " + bad + "\n  \"B\" : 40\n");
+            assertTrue(svg.startsWith("<svg"), bad + ": still renders");
+            assertEquals(0, count(svg, "width=\"0\" height=\"0\""), bad + ": NOT the 0x0 inert shell");
+            assertTrue(count(svg, "<path") >= 2, bad + ": both wedges are drawn");
+            assertEquals(0, count(svg, bad), bad + ": the meaningless token never reaches output");
+            assertTrue(count(svg, "fill=\"#4e79a7\"") >= 1, bad + ": the item falls back to its palette colour");
+        }
+    }
 }

@@ -49,6 +49,13 @@ class ContainmentTest {
         "anything",                                               // unknown → empty shell
         "flowchart TD; A-->B",                                    // unknown head
         "pie\n  \"Overflow\" : 1e400\n  \"Real\" : 10\n",          // non-finite value (must not leak)
+        // AUTHOR COLOUR flows (T3, deep-review sirentide/14): the color merges added the highest-risk
+        // author-string→attribute paths but touched zero containment corpus. Exercise them all so the
+        // producer⊆contract guard covers author-supplied colour, not just the built-in palette.
+        "pie\n  \"A\" : 60 #22c55e\n  \"B\" : 40 #f80\n",          // per-item 6-digit + 3-digit hex
+        "pie\n  \"A\" : 60 currentColor\n  \"B\" : 40 none\n",     // per-item currentColor/none (H1 — palette fallback)
+        "pie legend color=#334155\n  \"A\" : 60 #123456\n  \"B\" : 40\n", // color= header + per-item + legend
+        "xychart color=#ffffff\n  \"Mon\" : 5 #abcdef\n  \"Tue\" : -3\n", // header + per-bar + negative
         "pie\n  \"" + "x".repeat(4000) + "\" : 10\n");            // oversized label (capped)
 
     @Test

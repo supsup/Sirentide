@@ -174,7 +174,7 @@ public final class DslParser {
             String color = null;
             if (tok.length == 2) {
                 String tail = tok[1].strip();
-                if (SirentideContract.isColor(tail)) {
+                if (SirentideContract.isHexColor(tail)) {   // per-item fill is hex-only (H1): currentColor/none fall through to palette
                     color = SirentideContract.normalizeColor(tail);
                 }
             }
@@ -212,7 +212,7 @@ public final class DslParser {
         // start > 0 means there is at least one whitespace char before the final token.
         if (start > 0) {
             String tail = tok.substring(start);
-            if (SirentideContract.isColor(tail)) {
+            if (SirentideContract.isHexColor(tail)) {   // per-item fill is hex-only (H1): currentColor/none fall through to palette
                 return new String[] {tok.substring(0, start).strip(), SirentideContract.normalizeColor(tail)};
             }
         }
