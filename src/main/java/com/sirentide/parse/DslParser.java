@@ -8,6 +8,7 @@ import com.sirentide.ir.Slice;
 import com.sirentide.ir.Task;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
+import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.AxisScale;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,17 +49,39 @@ public final class DslParser {
         // (DESIGN §6: never fail the bake).
         String[] header = lines[0].strip().split("\\s+");
         String type = header[0];
+        // The off-slice text colour (page-background labels). `color=<value>` overrides the default;
+        // an unparseable/illegal colour falls back to the default (never fails the bake).
+        String textColor = parseTextColor(header);
         return switch (type) {
             // pie/xychart values are magnitudes → plain numeric parse. `pie legend` (or the `pie
             // key` alias) opts into the left-side colour key; a bare `pie` is legend-off.
-            case "pie" -> new Pie(parseData(lines, false), hasLegendModifier(header));
-            case "xychart" -> new XyChart(parseData(lines, false));
+            case "pie" -> new Pie(parseData(lines, false), hasLegendModifier(header), textColor);
+            case "xychart" -> new XyChart(parseData(lines, false), textColor);
             // timeline values are moments → date-aware parse (bare years stay numeric, ISO dates
             // map to epoch-day) so events place proportionally in time, not evenly by index.
-            case "timeline" -> new Timeline(parseData(lines, true));
-            case "gantt" -> parseGantt(lines);
+            case "timeline" -> new Timeline(parseData(lines, true), textColor);
+            case "gantt" -> parseGantt(lines, textColor);
             default -> new Empty();
         };
+    }
+
+    /// The off-slice text fill from an optional `color=<value>` header modifier. The value must
+    /// match the SirentideContract COLOR grammar (`#rrggbb` | `currentColor` | `none`); an invalid
+    /// or unparseable colour degrades to the default `currentColor` rather than failing the bake
+    /// (DESIGN §6). Order-independent with `legend`/`key` — it is just another header token.
+    private static String parseTextColor(String[] header) {
+        for (int i = 1; i < header.length; i++) {
+            String tok = header[i];
+            if (tok.startsWith("color=")) {
+                String value = tok.substring("color=".length());
+                if (SirentideContract.isColor(value)) {
+                    return value;
+                }
+                // Illegal colour → stop looking and use the default (a typo never fails the bake).
+                return "currentColor";
+            }
+        }
+        return "currentColor";
     }
 
     /// True iff a pie header carries the `legend` modifier (alias `key`). Any other modifier token
@@ -74,7 +97,7 @@ public final class DslParser {
 
     /// Parses gantt rows: `"Task" : start-end` (two numbers on a shared time axis). A malformed
     /// row is skipped (never fails the bake).
-    private static Diagram parseGantt(String[] lines) {
+    private static Diagram parseGantt(String[] lines, String textColor) {
         List<Task> tasks = new ArrayList<>();
         for (int i = 1; i < lines.length && tasks.size() < MAX_DATA_ROWS; i++) {
             String line = lines[i].strip();
@@ -117,7 +140,7 @@ public final class DslParser {
                 // Skip a malformed / unparseable-date row (loud-not-silent: dropped, never misplaced).
             }
         }
-        return new Gantt(tasks);
+        return new Gantt(tasks, textColor);
     }
 
     /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row

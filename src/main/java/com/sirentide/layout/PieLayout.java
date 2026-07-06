@@ -28,7 +28,6 @@ public final class PieLayout {
     private static final double LABEL_BAND = LABEL_SIZE + 3;
     /// A slice label wider than this gets ellipsized (wrap-oracle wired in) rather than overrunning.
     private static final double MAX_INSIDE_LABEL = RADIUS;
-    private static final String OUTSIDE_LABEL_FILL = "#334155";   // on the page background, not a slice
     private static final String LEADER_STROKE = "#94a3b8";
 
     // -- legend (left-side colour key) geometry ---------------------------------
@@ -70,6 +69,10 @@ public final class PieLayout {
         if (total <= 0) {
             return LaidOut.of(SIZE, SIZE);
         }
+        // Off-slice (outside leader-line) label fill: the page-background text colour, defaulting to
+        // `currentColor` (inherits the host page's text colour → legible on light AND dark). The
+        // on-slice contrast labels below are DELIBERATELY untouched — they sit on a coloured slice.
+        String textColor = pie.textColor();
         List<Shape> shapes = new ArrayList<>();
         List<Outside> outside = new ArrayList<>();
         double angle = -Math.PI / 2; // 12 o'clock
@@ -104,7 +107,7 @@ public final class PieLayout {
             }
             angle = next;
         }
-        spreadOutside(shapes, outside);
+        spreadOutside(shapes, outside, textColor);
         return new LaidOut(SIZE, SIZE, shapes);
     }
 
@@ -116,14 +119,14 @@ public final class PieLayout {
     /// left of the leader on the pie's left half, right on the right half), sort each side top-to-
     /// bottom, then greedily push each label down until it clears the previous one's band. The
     /// leader still connects the true slice rim to the pushed anchor, so the pointer stays honest.
-    private static void spreadOutside(List<Shape> shapes, List<Outside> outside) {
+    private static void spreadOutside(List<Shape> shapes, List<Outside> outside, String textColor) {
         List<Outside> right = new ArrayList<>();
         List<Outside> left = new ArrayList<>();
         for (Outside o : outside) {
             (Math.cos(o.mid()) >= 0 ? right : left).add(o);
         }
-        emitSide(shapes, spreadSide(right));
-        emitSide(shapes, spreadSide(left));
+        emitSide(shapes, spreadSide(right), textColor);
+        emitSide(shapes, spreadSide(left), textColor);
     }
 
     /// Push a single side's labels apart in y (already sorted), clamped into the viewbox.
@@ -140,10 +143,10 @@ public final class PieLayout {
         return out;
     }
 
-    private static void emitSide(List<Shape> shapes, List<Outside> side) {
+    private static void emitSide(List<Shape> shapes, List<Outside> side, String textColor) {
         for (Outside o : side) {
             shapes.add(new Line(o.rimX(), o.rimY(), o.lx(), o.ly(), LEADER_STROKE, 1));
-            placeLabel(shapes, o.label(), o.lx(), o.ly(), false, o.mid(), OUTSIDE_LABEL_FILL);
+            placeLabel(shapes, o.label(), o.lx(), o.ly(), false, o.mid(), textColor);
         }
     }
 
@@ -175,6 +178,8 @@ public final class PieLayout {
     /// widens to `KEY_WIDTH + KEY_GAP + pieDiameter`.
     private static LaidOut layoutLegend(Pie pie) {
         double total = pie.positiveTotal();
+        // Legend rows sit on the page background → page-background text colour (default currentColor).
+        String textColor = pie.textColor();
         List<Slice> slices = pie.slices();
         int drawn = 0;
         for (Slice s : slices) {
@@ -219,7 +224,7 @@ public final class PieLayout {
             double baseline = rowTop + KEY_ROW_HEIGHT / 2 + LABEL_SIZE * 0.35;
             String d = FONT.textPathD(text, textX, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, OUTSIDE_LABEL_FILL));
+                shapes.add(new GlyphRun(d, textColor));
             }
             row++;
         }

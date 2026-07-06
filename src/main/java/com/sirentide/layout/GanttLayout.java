@@ -23,7 +23,6 @@ public final class GanttLayout {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final double LABEL_SIZE = 11;
     private static final String AXIS_STROKE = "#cbd5e1";
-    private static final String LABEL_FILL = "#334155";
 
     private static final String[] PALETTE = {
         "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
@@ -39,6 +38,9 @@ public final class GanttLayout {
         double plotW = plotRight - plotLeft;
 
         List<Shape> shapes = new ArrayList<>();
+        // Task-name labels sit on the page background → page-background text colour (default
+        // `currentColor`, legible on light AND dark).
+        String textColor = gantt.textColor();
         double domainMin = gantt.start();
         double domainMax = gantt.end();
         // Degenerate/empty axis: no finite span to place bars against.
@@ -70,7 +72,7 @@ public final class GanttLayout {
             String name = FONT.ellipsize(t.label(), LABEL_COL - 12 - 4, LABEL_SIZE);
             String d = FONT.textPathD(name, 12, baseline, LABEL_SIZE);   // left-aligned
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, LABEL_FILL));
+                shapes.add(new GlyphRun(d, textColor));
             }
         }
         double axisY = TOP + n * ROW_H + 6;

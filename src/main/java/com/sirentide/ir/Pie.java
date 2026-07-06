@@ -8,16 +8,30 @@ import java.util.List;
 /// `legend` is the opt-in LEFT-side colour key (DSL `pie legend`): when true, layout renders a
 /// vertical key of swatch+label rows on the left and SUPPRESSES the on-slice / leader labels (the
 /// key replaces them). Bare `pie` constructs with `legend=false` and behaves exactly as before.
-public record Pie(List<Slice> slices, boolean legend) implements Diagram {
+///
+/// `textColor` is the fill for OFF-slice text (the legend labels/values and the outside leader-line
+/// labels) — the text that sits on the PAGE background. It defaults to `currentColor` so the text
+/// inherits the host page's text colour (legible on light AND dark themes); the DSL `color=`
+/// modifier overrides it. It does NOT touch the ON-slice contrast labels (those pick black/white by
+/// slice luminance and sit on a coloured slice, not the page).
+public record Pie(List<Slice> slices, boolean legend, String textColor) implements Diagram {
 
     public Pie {
         slices = List.copyOf(slices);
+        if (textColor == null) {
+            textColor = "currentColor";
+        }
+    }
+
+    /// Legend-aware construction with the default `currentColor` off-slice text fill.
+    public Pie(List<Slice> slices, boolean legend) {
+        this(slices, legend, "currentColor");
     }
 
     /// Default (legend-off) construction path — the bare `pie` diagram. Keeps every existing
     /// caller/test that builds a `Pie` from just its slices byte-for-byte unchanged.
     public Pie(List<Slice> slices) {
-        this(slices, false);
+        this(slices, false, "currentColor");
     }
 
     /// Sum of ALL slice values (signed). NOT the angular denominator — a negative value here would

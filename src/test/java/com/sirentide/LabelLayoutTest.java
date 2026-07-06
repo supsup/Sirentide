@@ -20,9 +20,10 @@ import org.junit.jupiter.api.Test;
 /// the label's vertical extent. Two labels are disjoint iff their y-extents don't overlap.
 class LabelLayoutTest {
 
-    /// The label fill both the timeline category labels and the pie outside labels use — lets the
-    /// test pick exactly those glyph paths out of the SVG (dots/values/inside-labels use other fills).
-    private static final String LABEL_FILL = "#334155";
+    /// The off-slice text fill both the timeline labels and the pie outside labels now use — the
+    /// theme-adaptive `currentColor` default — lets the test pick those glyph paths out of the SVG
+    /// (dots use palette fills; pie INSIDE labels use black/white contrast fills).
+    private static final String LABEL_FILL = "currentColor";
     private static final Pattern LABELLED_PATH =
         Pattern.compile("<path d=\"([^\"]*)\" fill=\"" + LABEL_FILL + "\"/>");
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
@@ -65,7 +66,14 @@ class LabelLayoutTest {
               "Series A" : 2021
               "IPO"      : 2100
             """);
-        List<YExtent> labels = labelYExtents(svg);
+        // Top (category) and bottom (year) labels now share the `currentColor` fill, so filter to
+        // the ABOVE-AXIS band (AXIS_Y=80) to isolate the three category labels this test is about.
+        List<YExtent> labels = new ArrayList<>();
+        for (YExtent e : labelYExtents(svg)) {
+            if (e.max() < 80) {
+                labels.add(e);
+            }
+        }
         assertTrue(labels.size() == 3, "three category labels, one per event");
         assertTrue(labels.get(0).disjointFrom(labels.get(1)),
             "the two close labels (Founded / Series A) are staggered to disjoint vertical bands: "
