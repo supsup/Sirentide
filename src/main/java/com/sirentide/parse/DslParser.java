@@ -42,9 +42,16 @@ public final class DslParser {
             return new Empty();
         }
         String[] lines = src.strip().split("\\R");
-        return switch (lines[0].strip()) {
-            // pie/xychart values are magnitudes → plain numeric parse.
-            case "pie" -> new Pie(parseData(lines, false));
+        // The header is a TYPE token plus optional whitespace-split MODIFIER tokens (e.g.
+        // `pie legend`). Bare `pie`/`xychart`/… stay exactly as before (a lone type token, no
+        // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
+        // (DESIGN §6: never fail the bake).
+        String[] header = lines[0].strip().split("\\s+");
+        String type = header[0];
+        return switch (type) {
+            // pie/xychart values are magnitudes → plain numeric parse. `pie legend` (or the `pie
+            // key` alias) opts into the left-side colour key; a bare `pie` is legend-off.
+            case "pie" -> new Pie(parseData(lines, false), hasLegendModifier(header));
             case "xychart" -> new XyChart(parseData(lines, false));
             // timeline values are moments → date-aware parse (bare years stay numeric, ISO dates
             // map to epoch-day) so events place proportionally in time, not evenly by index.
@@ -52,6 +59,17 @@ public final class DslParser {
             case "gantt" -> parseGantt(lines);
             default -> new Empty();
         };
+    }
+
+    /// True iff a pie header carries the `legend` modifier (alias `key`). Any other modifier token
+    /// is ignored (degrade gracefully → plain pie), so a typo never fails the bake.
+    private static boolean hasLegendModifier(String[] header) {
+        for (int i = 1; i < header.length; i++) {
+            if (header[i].equals("legend") || header[i].equals("key")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Parses gantt rows: `"Task" : start-end` (two numbers on a shared time axis). A malformed

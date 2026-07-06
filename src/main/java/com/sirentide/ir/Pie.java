@@ -4,10 +4,20 @@ import java.util.List;
 
 /// A pie chart: proportional slices. The cheapest diagram to lay out — pure angular arithmetic,
 /// zero graph optimization (docs/DESIGN.md §5/§6), which is why it is the M1 seam-prover.
-public record Pie(List<Slice> slices) implements Diagram {
+///
+/// `legend` is the opt-in LEFT-side colour key (DSL `pie legend`): when true, layout renders a
+/// vertical key of swatch+label rows on the left and SUPPRESSES the on-slice / leader labels (the
+/// key replaces them). Bare `pie` constructs with `legend=false` and behaves exactly as before.
+public record Pie(List<Slice> slices, boolean legend) implements Diagram {
 
     public Pie {
         slices = List.copyOf(slices);
+    }
+
+    /// Default (legend-off) construction path — the bare `pie` diagram. Keeps every existing
+    /// caller/test that builds a `Pie` from just its slices byte-for-byte unchanged.
+    public Pie(List<Slice> slices) {
+        this(slices, false);
     }
 
     /// Sum of ALL slice values (signed). NOT the angular denominator — a negative value here would

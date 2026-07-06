@@ -30,6 +30,8 @@ class ContainmentTest {
     private static final List<String> CORPUS = List.of(
         // pie
         "pie\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 30\n",
+        "pie legend\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 30\n",   // left colour key
+        "pie key\n  \"A really long legend label that overruns\" : 5\n  \"B\" : 5\n", // alias + ellipsize
         "pie\n  \"All\" : 5\n",                                    // single full-disc slice
         "pie\n  \"good\" : 10\n  no colon here\n  \"bad\" : nope\n",  // malformed rows
         // xychart
