@@ -15,6 +15,13 @@ public final class SvgEmitter {
 
     private SvgEmitter() {}
 
+    /// Incremental output cap: the buffer is bounded DURING construction, not just checked after.
+    /// MUST stay in lockstep with {@link com.sirentide.api.Sirentide#MAX_OUTPUT_BYTES} (duplicated
+    /// here rather than imported to avoid an api↔emit package cycle). Without this bound a runaway
+    /// layout could build a multi-GB StringBuilder before the post-emit check in `render` ever ran
+    /// (H2: a legal timeline of MAX_DATA_ROWS × MAX_LABEL_LEN labels reached ~5.9 GB and OOM'd).
+    static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG — mirrors Sirentide.MAX_OUTPUT_BYTES
+
     public static String emit(LaidOut laid) {
         StringBuilder sb = new StringBuilder();
         // Emit explicit width/height ALONGSIDE the viewBox. A viewBox-only root collapses/overlaps
@@ -26,6 +33,13 @@ public final class SvgEmitter {
             .append(fmt(laid.width())).append(' ').append(fmt(laid.height())).append("\">");
         for (Shape shape : laid.shapes()) {
             appendShape(sb, shape);
+            // Bound the buffer as it grows: a cheap sb.length() compare after each shape stops a
+            // runaway layout before it can allocate a multi-GB document. Thrown as a RuntimeException
+            // so Sirentide.render catches it and degrades to the inert shell (never propagates a bake).
+            if (sb.length() > MAX_OUTPUT_BYTES) {
+                throw new IllegalStateException(
+                    "Sirentide emitter: output exceeded MAX_OUTPUT_BYTES (" + MAX_OUTPUT_BYTES + ")");
+            }
         }
         sb.append("</svg>");
         return sb.toString();

@@ -30,8 +30,10 @@ public final class Sirentide {
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
     /// Cap on total baked output. Past this the bake degrades to the inert shell rather than
-    /// returning a runaway document (DESIGN §6/§7: malformed/oversized → inert, never throw).
-    static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG
+    /// returning a runaway document (DESIGN §6/§7: malformed/oversized → inert, never throw). The
+    /// emitter ({@link SvgEmitter}) enforces the same cap INCREMENTALLY during construction so a
+    /// runaway layout can't build a multi-GB buffer before this post-emit check ever runs (H2).
+    public static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG
 
     /// Bake a Sirentide DSL source into a self-contained SVG string. Honors the "malformed →
     /// inert, never throw" invariant (DESIGN §6/§7): ANY unexpected failure in parse/layout/emit,
@@ -45,8 +47,12 @@ public final class Sirentide {
                 return INERT_SHELL;
             }
             return svg;
-        } catch (RuntimeException | StackOverflowError | OutOfMemoryError e) {
-            // Last-resort bake guard: never let a renderer bug surface as a thrown bake.
+        } catch (RuntimeException | StackOverflowError e) {
+            // Last-resort bake guard: never let a renderer bug surface as a thrown bake. OutOfMemoryError
+            // is DELIBERATELY NOT caught — swallowing it into the inert shell leaves the JVM in an
+            // undefined state and can corrupt concurrent bakes on the same worker, so we fail fast on
+            // genuine heap exhaustion. The emitter's incremental MAX_OUTPUT_BYTES cap plus the label
+            // ellipsization in every layout keep normal operation from ever reaching that point (H2).
             return INERT_SHELL;
         }
     }

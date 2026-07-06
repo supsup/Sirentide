@@ -22,6 +22,11 @@ public final class TimelineLayout {
     private static final double VALUE_SIZE = 10;    // year/value font size
     private static final double ROW_STAGGER = 13;   // vertical offset for the alternate label row
     private static final double LABEL_GAP = 4;       // min horizontal clearance between same-row labels
+    /// Max rendered width of an event (top) label before it ellipsizes. Without this a legal DSL of
+    /// MAX_DATA_ROWS rows × MAX_LABEL_LEN-char labels builds multi-GB of glyph-path data (H2 OOM).
+    /// ~120px (a quarter of the 480px canvas) matches the other layouts' established label-width cap
+    /// (Gantt LABEL_COL slot, XyChart per-bar slot) and keeps two same-row labels legibly disjoint.
+    private static final double MAX_LABEL_W = 120;
 
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
@@ -60,7 +65,10 @@ public final class TimelineLayout {
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
-            topText[i] = e.label();
+            // Ellipsize the event label to a bounded width (parity with Gantt/XyChart/Pie). The raw
+            // label is up to MAX_LABEL_LEN (512) chars; without this cap a full MAX_DATA_ROWS sheet
+            // of long labels builds ~GBs of glyph paths (H2). The value below is a bounded number.
+            topText[i] = FONT.ellipsize(e.label(), MAX_LABEL_W, TOP_SIZE);
             botText[i] = num(e.value());
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = e.color() != null ? e.color() : PALETTE[i % PALETTE.length];
