@@ -27,7 +27,7 @@ public final class Sirentide {
     /// what the emitter produces for {@link Empty}. Kept as a literal so it can be returned even
     /// when the emitter itself is the thing that threw.
     static final String INERT_SHELL =
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 0 0\"></svg>";
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
     /// Cap on total baked output. Past this the bake degrades to the inert shell rather than
     /// returning a runaway document (DESIGN §6/§7: malformed/oversized → inert, never throw).

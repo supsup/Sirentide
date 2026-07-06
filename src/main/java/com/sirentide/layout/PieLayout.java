@@ -23,6 +23,11 @@ public final class PieLayout {
     /// Below this sweep a centered inside-label would collide with its neighbours (two 1% slices
     /// used to stack labels on the same point) — move it outside on a leader line instead.
     private static final double THIN_SLICE = Math.toRadians(15);
+    /// Min vertical spacing between two spread outside labels (font size + breathing room), so their
+    /// glyph boxes stay disjoint. Also the in-frame clamp margin.
+    private static final double LABEL_BAND = LABEL_SIZE + 3;
+    /// A slice label wider than this gets ellipsized (wrap-oracle wired in) rather than overrunning.
+    private static final double MAX_INSIDE_LABEL = RADIUS;
     private static final String OUTSIDE_LABEL_FILL = "#334155";   // on the page background, not a slice
     private static final String LEADER_STROKE = "#94a3b8";
 
@@ -43,6 +48,7 @@ public final class PieLayout {
             return LaidOut.of(SIZE, SIZE);
         }
         List<Shape> shapes = new ArrayList<>();
+        List<Outside> outside = new ArrayList<>();
         double angle = -Math.PI / 2; // 12 o'clock
         List<Slice> slices = pie.slices();
         for (int i = 0; i < slices.size(); i++) {
@@ -56,25 +62,66 @@ public final class PieLayout {
             shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
 
             double mid = (angle + next) / 2;
-            String label = slices.get(i).label();
+            // Wrap-oracle wired in: a long slice label that would overrun the wedge is clipped with
+            // an ellipsis rather than spilling across neighbours (docs/DESIGN.md §4).
+            String label = FONT.ellipsize(slices.get(i).label(), MAX_INSIDE_LABEL, LABEL_SIZE);
             if (sweep >= THIN_SLICE) {
                 // Comfortable slice: a centered inside label, contrast-aware fill (black or white by
                 // the slice colour's luminance — no more contrast-blind hardcoded white).
                 placeLabel(shapes, label, cx + LABEL_RADIUS * Math.cos(mid),
                     cy + LABEL_RADIUS * Math.sin(mid), true, mid, contrastFill(fill));
             } else {
-                // Thin slice: a short leader line out past the rim to a label on the background, so
-                // two tiny slices no longer co-locate their labels at the centre.
-                double ex = cx + RADIUS * Math.cos(mid);
-                double ey = cy + RADIUS * Math.sin(mid);
-                double lx = cx + (RADIUS + LEADER_LEN) * Math.cos(mid);
-                double ly = cy + (RADIUS + LEADER_LEN) * Math.sin(mid);
-                shapes.add(new Line(ex, ey, lx, ly, LEADER_STROKE, 1));
-                placeLabel(shapes, label, lx, ly, false, mid, OUTSIDE_LABEL_FILL);
+                // Thin slice: DEFER — anchor on the rim, collect it, and spread the whole set below
+                // so two near-co-located tiny slices ("Tiny"/"Other") no longer stack their labels.
+                outside.add(new Outside(
+                    cx + RADIUS * Math.cos(mid), cy + RADIUS * Math.sin(mid),   // rim point (leader start)
+                    cx + (RADIUS + LEADER_LEN) * Math.cos(mid),                 // leader-end x
+                    cy + (RADIUS + LEADER_LEN) * Math.sin(mid),                 // leader-end y (spread below)
+                    mid, slices.get(i).label()));
             }
             angle = next;
         }
+        spreadOutside(shapes, outside);
         return new LaidOut(SIZE, SIZE, shapes);
+    }
+
+    /// A deferred outside label: the rim point the leader starts at, the leader-end anchor (whose y
+    /// gets spread), the slice mid-angle (fixes which side the text sits on), and the raw text.
+    private record Outside(double rimX, double rimY, double lx, double ly, double mid, String label) {}
+
+    /// Spread outside labels so adjacent thin-slice labels don't stack. Split by side (the text sits
+    /// left of the leader on the pie's left half, right on the right half), sort each side top-to-
+    /// bottom, then greedily push each label down until it clears the previous one's band. The
+    /// leader still connects the true slice rim to the pushed anchor, so the pointer stays honest.
+    private static void spreadOutside(List<Shape> shapes, List<Outside> outside) {
+        List<Outside> right = new ArrayList<>();
+        List<Outside> left = new ArrayList<>();
+        for (Outside o : outside) {
+            (Math.cos(o.mid()) >= 0 ? right : left).add(o);
+        }
+        emitSide(shapes, spreadSide(right));
+        emitSide(shapes, spreadSide(left));
+    }
+
+    /// Push a single side's labels apart in y (already sorted), clamped into the viewbox.
+    private static List<Outside> spreadSide(List<Outside> side) {
+        side.sort((a, b) -> Double.compare(a.ly(), b.ly()));
+        double prevBottom = Double.NEGATIVE_INFINITY;
+        List<Outside> out = new ArrayList<>();
+        for (Outside o : side) {
+            double ly = Math.max(o.ly(), prevBottom + LABEL_BAND);
+            ly = Math.min(Math.max(ly, LABEL_BAND), SIZE - LABEL_BAND);   // keep the anchor in-frame
+            out.add(new Outside(o.rimX(), o.rimY(), o.lx(), ly, o.mid(), o.label()));
+            prevBottom = ly;
+        }
+        return out;
+    }
+
+    private static void emitSide(List<Shape> shapes, List<Outside> side) {
+        for (Outside o : side) {
+            shapes.add(new Line(o.rimX(), o.rimY(), o.lx(), o.ly(), LEADER_STROKE, 1));
+            placeLabel(shapes, o.label(), o.lx(), o.ly(), false, o.mid(), OUTSIDE_LABEL_FILL);
+        }
     }
 
     /// Emit a label as glyph paths. Inside labels centre on the point; outside labels anchor away

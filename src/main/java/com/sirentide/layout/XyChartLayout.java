@@ -84,10 +84,19 @@ public final class XyChartLayout {
             shapes.add(new Rect(x, y, barW, h, PALETTE[i % PALETTE.length]));
 
             double cx = x + barW / 2;
-            centeredLabel(shapes, b.label(), cx, plotBottom + 14, LABEL_SIZE);   // category, below plot
-            // Value label at the bar's OUTER end: above a positive bar, below a descending one.
-            double valueY = b.value() >= 0 ? barEndY - 4 : barEndY + LABEL_SIZE;
-            centeredLabel(shapes, num(b.value()), cx, valueY, LABEL_SIZE - 1);
+            double categoryBaseline = plotBottom + 14;
+            // Category label below the axis, ellipsized to its column slot so a long name doesn't
+            // run into its neighbours (wrap-oracle wired in; docs/DESIGN.md §4).
+            String category = FONT.ellipsize(b.label(), slot - 2, LABEL_SIZE);
+            centeredLabel(shapes, category, cx, categoryBaseline, LABEL_SIZE);
+            // Value label at the bar's OUTER end: above a positive bar, below a descending one. For a
+            // NEGATIVE bar the outer (bottom) end can reach the axis, so CLAMP the value label up to
+            // stay clear of the category label below the axis (no stacked overlap).
+            double valueSize = LABEL_SIZE - 1;
+            double valueY = b.value() >= 0
+                ? barEndY - 4
+                : Math.min(barEndY + valueSize, categoryBaseline - valueSize - 2);
+            centeredLabel(shapes, num(b.value()), cx, valueY, valueSize);
         }
         return new LaidOut(W, H, shapes);
     }

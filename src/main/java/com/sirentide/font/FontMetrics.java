@@ -91,6 +91,37 @@ public final class FontMetrics {
         return new TextBox(widest, lines.size() * lineHeight(fontSizePx), lines);
     }
 
+    /// Truncate `text` with a trailing ellipsis ("…") so it fits within `maxWidthPx`. If the text
+    /// already fits (or the limit is non-positive/infinite) it is returned unchanged; if not even
+    /// the ellipsis fits, returns "". This is the M1 label-overflow baseline — a long label that
+    /// would run out of its region gets clipped legibly instead of overrunning its neighbours
+    /// (docs/DESIGN.md §4; the built-but-unused wrap oracle wired in). Deterministic: a pure
+    /// function of (text, width, size), so bakes stay byte-identical (§6).
+    public String ellipsize(String text, double maxWidthPx, double fontSizePx) {
+        if (maxWidthPx <= 0 || Double.isInfinite(maxWidthPx) || runWidth(text, fontSizePx) <= maxWidthPx) {
+            return text;
+        }
+        String ellipsis = "…";
+        double budget = maxWidthPx - runWidth(ellipsis, fontSizePx);
+        if (budget < 0) {
+            return "";
+        }
+        StringBuilder kept = new StringBuilder();
+        double w = 0;
+        int i = 0;
+        while (i < text.length()) {
+            int cp = text.codePointAt(i);
+            double cw = advance(cp, fontSizePx);
+            if (w + cw > budget) {
+                break;
+            }
+            kept.appendCodePoint(cp);
+            w += cw;
+            i += Character.charCount(cp);
+        }
+        return kept.append(ellipsis).toString();
+    }
+
     // -- text as paths (glyph outlines) -----------------------------------------
 
     /// Render a run of text as an SVG path `d` string: each glyph's outline positioned along the
