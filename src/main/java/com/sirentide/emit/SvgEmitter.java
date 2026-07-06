@@ -17,7 +17,12 @@ public final class SvgEmitter {
 
     public static String emit(LaidOut laid) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ")
+        // Emit explicit width/height ALONGSIDE the viewBox. A viewBox-only root collapses/overlaps
+        // inside the Stafficy /docs MD->HTML sanitizer (Confluence-flagged); intrinsic width/height
+        // give it a concrete box. Added to SirentideContract's svg allowlist as an M1 widening.
+        sb.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"")
+            .append(fmt(laid.width())).append("\" height=\"").append(fmt(laid.height()))
+            .append("\" viewBox=\"0 0 ")
             .append(fmt(laid.width())).append(' ').append(fmt(laid.height())).append("\">");
         for (Shape shape : laid.shapes()) {
             appendShape(sb, shape);

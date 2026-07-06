@@ -43,8 +43,9 @@ class SirentideM0Test {
             big.append(row);
         }
         String svg = Sirentide.render(big.toString());
-        assertEquals("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 0 0\"></svg>", svg,
-            "oversized input degrades to the inert shell");
+        assertEquals(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>",
+            svg, "oversized input degrades to the inert shell");
     }
 
     @Test

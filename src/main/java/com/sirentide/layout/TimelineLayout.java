@@ -18,6 +18,10 @@ public final class TimelineLayout {
     private static final double MARGIN = 44;
     private static final double AXIS_Y = 80;
     private static final double DOT_R = 5;
+    private static final double TOP_SIZE = 11;      // category-label font size
+    private static final double VALUE_SIZE = 10;    // year/value font size
+    private static final double ROW_STAGGER = 13;   // vertical offset for the alternate label row
+    private static final double LABEL_GAP = 4;       // min horizontal clearance between same-row labels
 
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
@@ -49,14 +53,57 @@ public final class TimelineLayout {
             values[i] = events.get(i).value();
         }
         AxisScale axis = AxisScale.of(values);
+        double[] xs = new double[n];
+        String[] topText = new String[n];
+        String[] botText = new String[n];
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
-            double x = axis.project(e.value(), plotLeft, plotRight);
-            shapes.add(new Wedge(x, AXIS_Y, DOT_R, 0, 2 * Math.PI, PALETTE[i % PALETTE.length]));
-            centeredLabel(shapes, e.label(), x, AXIS_Y - 14, 11, LABEL_FILL);   // above the line
-            centeredLabel(shapes, num(e.value()), x, AXIS_Y + 24, 10, VALUE_FILL);  // below the line
+            xs[i] = axis.project(e.value(), plotLeft, plotRight);
+            topText[i] = e.label();
+            botText[i] = num(e.value());
+            shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, PALETTE[i % PALETTE.length]));
+        }
+        // DE-COLLISION: labels of events close in value share nearly the same x and their boxes
+        // overlap ("Founded"/"Series A" in the screenshot). Measure each label's width and, where an
+        // adjacent label would overlap the one before it, push it to a SECOND row (2-row vertical
+        // stagger) — the simplest readable fix. Top labels rise, bottom values drop.
+        int[] topRows = assignRows(xs, topText, TOP_SIZE);
+        int[] botRows = assignRows(xs, botText, VALUE_SIZE);
+        for (int i = 0; i < n; i++) {
+            centeredLabel(shapes, topText[i], xs[i],
+                AXIS_Y - 14 - topRows[i] * ROW_STAGGER, TOP_SIZE, LABEL_FILL);      // above the line
+            centeredLabel(shapes, botText[i], xs[i],
+                AXIS_Y + 24 + botRows[i] * ROW_STAGGER, VALUE_SIZE, VALUE_FILL);    // below the line
         }
         return new LaidOut(W, H, shapes);
+    }
+
+    /// Greedy 2-row assignment: walk the labels in x order; keep each row's right edge. Place a
+    /// label on the first row whose last label clears it (left edge past that row's right edge +
+    /// gap); if neither row is clear, use the row with the smaller right edge. Guarantees any two
+    /// labels that overlap horizontally land on different rows, so their 2-D boxes stay disjoint.
+    private static int[] assignRows(double[] centers, String[] texts, double size) {
+        int n = centers.length;
+        int[] rows = new int[n];
+        double[] rowRight = {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        for (int i = 0; i < n; i++) {
+            double half = FONT.runWidth(texts[i], size) / 2;
+            double left = centers[i] - half;
+            double right = centers[i] + half;
+            int row = -1;
+            for (int r = 0; r < 2; r++) {
+                if (left >= rowRight[r] + LABEL_GAP) {
+                    row = r;
+                    break;
+                }
+            }
+            if (row < 0) {
+                row = rowRight[0] <= rowRight[1] ? 0 : 1;   // least-bad: least-extended row
+            }
+            rows[i] = row;
+            rowRight[row] = Math.max(rowRight[row], right);
+        }
+        return rows;
     }
 
     private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,

@@ -65,7 +65,10 @@ public final class GanttLayout {
             shapes.add(new Rect(x, barY, w, barH, PALETTE[i % PALETTE.length]));
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar
-            String d = FONT.textPathD(t.label(), 12, baseline, LABEL_SIZE);   // left-aligned
+            // Ellipsize the task name to the label column so a long name is clipped rather than
+            // running under the bars (wrap-oracle wired in; docs/DESIGN.md §4).
+            String name = FONT.ellipsize(t.label(), LABEL_COL - 12 - 4, LABEL_SIZE);
+            String d = FONT.textPathD(name, 12, baseline, LABEL_SIZE);   // left-aligned
             if (!d.isBlank()) {
                 shapes.add(new GlyphRun(d, LABEL_FILL));
             }

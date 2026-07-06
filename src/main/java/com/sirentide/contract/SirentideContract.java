@@ -28,7 +28,10 @@ public final class SirentideContract {
     /// the allowlist matches real output. FOLLOW-UP for Confluence (contract-doc owner): add
     /// `xmlns` to the doc's geometry/identity table so doc ⊇ constants.
     public static final Map<String, Set<String>> ALLOWED_ATTRS = Map.of(
-        "svg", Set.of("xmlns", "viewBox"),
+        // M1 (labels milestone) widening: `width`/`height` join `viewBox` on the root <svg>. A
+        // viewBox-only root collapses inside the Stafficy /docs sanitizer; intrinsic width/height
+        // fix that. Both are geometry scalars (finite-numeric), so the value grammar is unchanged.
+        "svg", Set.of("xmlns", "viewBox", "width", "height"),
         "path", Set.of("d", "fill"),
         "rect", Set.of("x", "y", "width", "height", "fill"),
         "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"));

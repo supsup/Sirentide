@@ -69,6 +69,23 @@ class FontMetricsTest {
     }
 
     @Test
+    void ellipsizeClipsLongLabelWithinItsRegionWidth() {
+        String longLabel = "Quarterly revenue by region and product line";
+        double maxWidth = fm.runWidth("Quarterly", 12);   // room for ~one word
+        String clipped = fm.ellipsize(longLabel, maxWidth, 12);
+        assertTrue(clipped.endsWith("…"), "clipped with an ellipsis: '" + clipped + "'");
+        assertTrue(clipped.length() < longLabel.length(), "actually shortened");
+        assertTrue(fm.runWidth(clipped, 12) <= maxWidth + 1e-6,
+            "the clipped label fits within the region: '" + clipped + "'");
+    }
+
+    @Test
+    void ellipsizeLeavesAFittingLabelUntouched() {
+        assertEquals("OK", fm.ellipsize("OK", 500, 12), "a label that already fits is unchanged");
+        assertEquals("OK", fm.ellipsize("OK", Double.POSITIVE_INFINITY, 12), "no-limit is unchanged");
+    }
+
+    @Test
     void hugeWidthMeansNoWrap() {
         TextBox box = fm.measureWrapped("no wrapping happens here", Double.POSITIVE_INFINITY, 14);
         assertEquals(1, box.lines().size(), "infinite width = single line");
