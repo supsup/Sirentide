@@ -25,8 +25,6 @@ public final class TimelineLayout {
 
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
-    private static final String LABEL_FILL = "#334155";
-    private static final String VALUE_FILL = "#64748b";
 
     private static final String[] PALETTE = {
         "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
@@ -35,6 +33,9 @@ public final class TimelineLayout {
 
     public static LaidOut layout(Timeline timeline) {
         List<Shape> shapes = new ArrayList<>();
+        // Both the event (top) and value/year (bottom) labels sit on the page background → the
+        // page-background text colour, default `currentColor` (legible on light AND dark).
+        String textColor = timeline.textColor();
         shapes.add(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2));
 
         List<Slice> events = timeline.events();
@@ -71,9 +72,9 @@ public final class TimelineLayout {
         int[] botRows = assignRows(xs, botText, VALUE_SIZE);
         for (int i = 0; i < n; i++) {
             centeredLabel(shapes, topText[i], xs[i],
-                AXIS_Y - 14 - topRows[i] * ROW_STAGGER, TOP_SIZE, LABEL_FILL);      // above the line
+                AXIS_Y - 14 - topRows[i] * ROW_STAGGER, TOP_SIZE, textColor);       // above the line
             centeredLabel(shapes, botText[i], xs[i],
-                AXIS_Y + 24 + botRows[i] * ROW_STAGGER, VALUE_SIZE, VALUE_FILL);    // below the line
+                AXIS_Y + 24 + botRows[i] * ROW_STAGGER, VALUE_SIZE, textColor);     // below the line
         }
         return new LaidOut(W, H, shapes);
     }

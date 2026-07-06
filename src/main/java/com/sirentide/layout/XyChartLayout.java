@@ -23,7 +23,6 @@ public final class XyChartLayout {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final double LABEL_SIZE = 11;
     private static final String AXIS_STROKE = "#94a3b8";
-    private static final String TEXT_FILL = "#334155";
 
     private static final String[] PALETTE = {
         "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
@@ -40,6 +39,9 @@ public final class XyChartLayout {
 
         List<Shape> shapes = new ArrayList<>();
 
+        // Off-slice text fill (category, y-tick, and per-bar value labels): the page-background text
+        // colour, default `currentColor` so it inherits the host page's colour (light AND dark).
+        String textColor = chart.textColor();
         List<Slice> bars = chart.bars();
         if (bars.isEmpty()) {
             // Axes only (no data): keep the classic bottom x-axis + left y-axis.
@@ -68,7 +70,7 @@ public final class XyChartLayout {
             double tw = FONT.runWidth(tlabel, LABEL_SIZE - 2);
             String td = FONT.textPathD(tlabel, plotLeft - 6 - tw, ty + (LABEL_SIZE - 2) * 0.35, LABEL_SIZE - 2);
             if (!td.isBlank()) {
-                shapes.add(new GlyphRun(td, TEXT_FILL));
+                shapes.add(new GlyphRun(td, textColor));
             }
         }
 
@@ -88,7 +90,7 @@ public final class XyChartLayout {
             // Category label below the axis, ellipsized to its column slot so a long name doesn't
             // run into its neighbours (wrap-oracle wired in; docs/DESIGN.md §4).
             String category = FONT.ellipsize(b.label(), slot - 2, LABEL_SIZE);
-            centeredLabel(shapes, category, cx, categoryBaseline, LABEL_SIZE);
+            centeredLabel(shapes, category, cx, categoryBaseline, LABEL_SIZE, textColor);
             // Value label at the bar's OUTER end: above a positive bar, below a descending one. For a
             // NEGATIVE bar the outer (bottom) end can reach the axis, so CLAMP the value label up to
             // stay clear of the category label below the axis (no stacked overlap).
@@ -96,16 +98,17 @@ public final class XyChartLayout {
             double valueY = b.value() >= 0
                 ? barEndY - 4
                 : Math.min(barEndY + valueSize, categoryBaseline - valueSize - 2);
-            centeredLabel(shapes, num(b.value()), cx, valueY, valueSize);
+            centeredLabel(shapes, num(b.value()), cx, valueY, valueSize, textColor);
         }
         return new LaidOut(W, H, shapes);
     }
 
-    private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline, double size) {
+    private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,
+                                      double size, String fill) {
         double w = FONT.runWidth(text, size);
         String d = FONT.textPathD(text, cx - w / 2, baseline, size);
         if (!d.isBlank()) {
-            shapes.add(new GlyphRun(d, TEXT_FILL));
+            shapes.add(new GlyphRun(d, fill));
         }
     }
 

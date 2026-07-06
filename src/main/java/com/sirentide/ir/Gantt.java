@@ -4,10 +4,22 @@ import java.util.List;
 
 /// A gantt chart: tasks as horizontal bars on a shared time axis. Layout is deterministic
 /// arithmetic — task span → bar x/width, row index → bar y — no optimization.
-public record Gantt(List<Task> tasks) implements Diagram {
+/// `textColor` fills the off-slice page-background text (the task-name labels). Defaults to
+/// `currentColor` so it inherits the host page's text colour (legible on light AND dark); the DSL
+/// `color=` modifier overrides it.
+public record Gantt(List<Task> tasks, String textColor) implements Diagram {
 
     public Gantt {
         tasks = List.copyOf(tasks);
+        if (textColor == null) {
+            textColor = "currentColor";
+        }
+    }
+
+    /// Default construction with the `currentColor` text fill — keeps existing callers/tests
+    /// that build a `Gantt` from just its tasks unchanged.
+    public Gantt(List<Task> tasks) {
+        this(tasks, "currentColor");
     }
 
     /// The earliest start across all tasks (the time-axis LEFT edge). The missing min-normalization
