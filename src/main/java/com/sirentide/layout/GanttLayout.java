@@ -39,17 +39,29 @@ public final class GanttLayout {
         double plotW = plotRight - plotLeft;
 
         List<Shape> shapes = new ArrayList<>();
-        double maxEnd = gantt.end();
-        if (n == 0 || maxEnd <= 0) {
+        double domainMin = gantt.start();
+        double domainMax = gantt.end();
+        // Degenerate/empty axis: no finite span to place bars against.
+        if (n == 0 || domainMax <= domainMin) {
             return new LaidOut(W, Math.max(height, 60), shapes);
         }
+        // Min-normalized time axis: `x = project(start)`, NOT `start / maxEnd`. Without the min the
+        // domain silently started at 0, so absolute-date tasks (start ≫ 0) collapsed to sub-pixel
+        // slivers crammed at the right edge — an empty-looking chart. AxisScale carries both ends.
+        AxisScale axis = new AxisScale(domainMin, domainMax);
+        double minVisibleW = 3;   // a zero/negative-span task still shows as a visible marker bar
         for (int i = 0; i < n; i++) {
             Task t = tasks.get(i);
             double rowY = TOP + i * ROW_H;
             double barY = rowY + 6;
             double barH = ROW_H - 12;
-            double x = plotLeft + (t.start() / maxEnd) * plotW;
-            double w = (t.duration() / maxEnd) * plotW;
+            double x = axis.project(t.start(), plotLeft, plotRight);
+            double w = axis.project(t.end(), plotLeft, plotRight) - x;
+            // A malformed `end <= start` yields a non-positive width. Draw a visible min-width marker
+            // bar at the start instead of an invisible zero-width one (loud-not-silent, DESIGN §6).
+            if (w < minVisibleW) {
+                w = minVisibleW;
+            }
             shapes.add(new Rect(x, barY, w, barH, PALETTE[i % PALETTE.length]));
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar

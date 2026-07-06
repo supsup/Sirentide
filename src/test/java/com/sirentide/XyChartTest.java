@@ -28,8 +28,10 @@ class XyChartTest {
               "Wed" : 3
             """);
         assertEquals(3, count(svg, "<rect"), "one bar per row");
-        assertEquals(2, count(svg, "<line"), "x-axis + y-axis");
-        assertEquals(6, count(svg, "<path"), "a category label + a value label per bar");
+        // x-axis + y-axis + one nice tick mark per y-scale stop (the y-scale that used to be absent).
+        assertTrue(count(svg, "<line") > 2, "axes PLUS y-axis tick marks (a real y-scale now)");
+        // per-bar category + value labels, PLUS a numeric label per y-tick.
+        assertTrue(count(svg, "<path") > 6, "bar labels plus y-scale tick labels");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
     }
 
@@ -40,14 +42,7 @@ class XyChartTest {
         assertTrue(svg.contains("height=\"180\""), "the max-value bar reaches the plot top");
     }
 
-    @Test
-    void outputIsContractClean() {
-        String svg = Sirentide.render("xychart\n \"A\" : 1\n \"B\" : 2\n");
-        assertFalse(svg.contains("<script"), "no script");
-        assertFalse(svg.contains("<style"), "no style");
-        assertFalse(svg.contains("foreignObject"), "no foreignObject");
-        assertFalse(svg.contains("href"), "no href");
-    }
+    // Contract-cleanliness is enforced by ContainmentTest's allowlist guard (covers xychart too).
 
     @Test
     void renderIsDeterministic() {
@@ -64,11 +59,12 @@ class XyChartTest {
 
     @Test
     void negativeValueDoesNotEmitInvalidRect() {
-        // Regression: a mixed-sign dataset kept a positive max, so a negative bar
-        // produced height="-108" — an invalid, off-canvas rect. M0's bar chart is
-        // non-negative magnitude only, so negatives clamp to zero height (inert).
+        // A mixed-sign dataset now uses a SIGNED domain with a zero baseline: the negative bar
+        // DESCENDS below the baseline (a positive-height rect placed lower), it is not clamped to
+        // zero (which used to silently blank an all-negative chart). Never an invalid negative rect.
         String svg = Sirentide.render("xychart\n \"A\" : 5\n \"B\" : -3\n");
         assertFalse(svg.contains("height=\"-"), "no negative-height rect");
+        assertEquals(2, count(svg, "<rect"), "both bars drawn (the negative one descends, not blank)");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "still well-formed");
     }
 }

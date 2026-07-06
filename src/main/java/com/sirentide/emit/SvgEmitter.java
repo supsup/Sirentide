@@ -1,5 +1,6 @@
 package com.sirentide.emit;
 
+import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
@@ -29,13 +30,13 @@ public final class SvgEmitter {
         switch (shape) {
             case Wedge w -> appendWedge(sb, w);
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
-                .append("\" fill=\"").append(g.fill()).append("\"/>");
+                .append("\" fill=\"").append(color(g.fill())).append("\"/>");
             case Rect r -> sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
                 .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
-                .append("\" fill=\"").append(r.fill()).append("\"/>");
+                .append("\" fill=\"").append(color(r.fill())).append("\"/>");
             case Line l -> sb.append("<line x1=\"").append(fmt(l.x1())).append("\" y1=\"").append(fmt(l.y1()))
                 .append("\" x2=\"").append(fmt(l.x2())).append("\" y2=\"").append(fmt(l.y2()))
-                .append("\" stroke=\"").append(l.stroke())
+                .append("\" stroke=\"").append(color(l.stroke()))
                 .append("\" stroke-width=\"").append(fmt(l.strokeWidth())).append("\"/>");
         }
     }
@@ -66,14 +67,32 @@ public final class SvgEmitter {
                 .append(" 0 ").append(largeArc).append(" 1 ")
                 .append(fmt(x1)).append(' ').append(fmt(y1)).append(" Z");
         }
-        sb.append("\" fill=\"").append(w.fill()).append("\"/>");
+        sb.append("\" fill=\"").append(color(w.fill())).append("\"/>");
+    }
+
+    /// The sink's last-line-of-defense on presentation colour: fill/stroke values MUST match the
+    /// contract's `#hex | currentColor | none` grammar. A violation is an internal invariant break
+    /// (a layout bug feeding a bad colour), NOT user input — so fail LOUD naming the value, rather
+    /// than silently emitting a sanitizer-stripped or injection-carrying attribute.
+    private static String color(String c) {
+        if (!SirentideContract.isColor(c)) {
+            throw new IllegalStateException(
+                "Sirentide emitter: non-contract fill/stroke value reached the sink: \"" + c + "\"");
+        }
+        return c;
     }
 
     /// Deterministic, locale-independent number formatting: 3 decimal places, integer when
     /// whole. Byte-identical bakes depend on this (docs/DESIGN.md §6).
     private static String fmt(double v) {
+        // Last line of defense against a non-finite geometry leak: S4 rejects NaN/Infinity at
+        // parse, but if one still reaches the emitter, clamp to 0 rather than emit the literal
+        // "Infinity"/"NaN" (which is not valid SVG numeric syntax and breaks the bake silently).
+        if (!Double.isFinite(v)) {
+            v = 0.0;
+        }
         double r = Math.round(v * 1000.0) / 1000.0;
-        return r == Math.rint(r) && !Double.isInfinite(r)
+        return r == Math.rint(r)
             ? Long.toString((long) r)
             : Double.toString(r);
     }
