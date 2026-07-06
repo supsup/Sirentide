@@ -34,6 +34,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Forward the golden-regen switch to the forked test JVM so
+    // `./gradlew test -Dsirentide.updateGolden=true` actually reaches GoldenSvgTest.
+    systemProperty("sirentide.updateGolden", System.getProperty("sirentide.updateGolden", "false"))
 }
 
 application {

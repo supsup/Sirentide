@@ -23,11 +23,32 @@ public final class Sirentide {
 
     private Sirentide() {}
 
-    /// Bake a Sirentide DSL source into a self-contained SVG string.
+    /// The inert, contract-clean empty SVG shell — the universal degrade target. Byte-identical to
+    /// what the emitter produces for {@link Empty}. Kept as a literal so it can be returned even
+    /// when the emitter itself is the thing that threw.
+    static final String INERT_SHELL =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 0 0\"></svg>";
+
+    /// Cap on total baked output. Past this the bake degrades to the inert shell rather than
+    /// returning a runaway document (DESIGN §6/§7: malformed/oversized → inert, never throw).
+    static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG
+
+    /// Bake a Sirentide DSL source into a self-contained SVG string. Honors the "malformed →
+    /// inert, never throw" invariant (DESIGN §6/§7): ANY unexpected failure in parse/layout/emit,
+    /// or an over-cap output, degrades to the inert empty shell instead of propagating.
     public static String render(String dsl) {
-        Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
-        LaidOut laid = layout(ir);
-        return SvgEmitter.emit(laid);
+        try {
+            Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            LaidOut laid = layout(ir);
+            String svg = SvgEmitter.emit(laid);
+            if (svg.length() > MAX_OUTPUT_BYTES) {
+                return INERT_SHELL;
+            }
+            return svg;
+        } catch (RuntimeException | StackOverflowError | OutOfMemoryError e) {
+            // Last-resort bake guard: never let a renderer bug surface as a thrown bake.
+            return INERT_SHELL;
+        }
     }
 
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR.

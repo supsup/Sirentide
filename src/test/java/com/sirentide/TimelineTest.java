@@ -1,7 +1,6 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
@@ -33,14 +32,7 @@ class TimelineTest {
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
     }
 
-    @Test
-    void outputIsContractClean() {
-        String svg = Sirentide.render("timeline\n \"A\" : 1\n \"B\" : 2\n");
-        assertFalse(svg.contains("<script"), "no script");
-        assertFalse(svg.contains("<style"), "no style");
-        assertFalse(svg.contains("foreignObject"), "no foreignObject");
-        assertFalse(svg.contains("href"), "no href");
-    }
+    // Contract-cleanliness is enforced by ContainmentTest's allowlist guard (covers timeline too).
 
     @Test
     void renderIsDeterministic() {

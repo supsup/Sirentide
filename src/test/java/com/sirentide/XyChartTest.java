@@ -40,14 +40,7 @@ class XyChartTest {
         assertTrue(svg.contains("height=\"180\""), "the max-value bar reaches the plot top");
     }
 
-    @Test
-    void outputIsContractClean() {
-        String svg = Sirentide.render("xychart\n \"A\" : 1\n \"B\" : 2\n");
-        assertFalse(svg.contains("<script"), "no script");
-        assertFalse(svg.contains("<style"), "no style");
-        assertFalse(svg.contains("foreignObject"), "no foreignObject");
-        assertFalse(svg.contains("href"), "no href");
-    }
+    // Contract-cleanliness is enforced by ContainmentTest's allowlist guard (covers xychart too).
 
     @Test
     void renderIsDeterministic() {

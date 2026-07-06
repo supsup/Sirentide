@@ -1,7 +1,6 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
@@ -43,14 +42,7 @@ class GanttTest {
         assertEquals(1, count(svg, "<rect"), "the malformed row is dropped");
     }
 
-    @Test
-    void outputIsContractClean() {
-        String svg = Sirentide.render("gantt\n \"A\" : 0-1\n \"B\" : 1-2\n");
-        assertFalse(svg.contains("<script"), "no script");
-        assertFalse(svg.contains("<style"), "no style");
-        assertFalse(svg.contains("foreignObject"), "no foreignObject");
-        assertFalse(svg.contains("href"), "no href");
-    }
+    // Contract-cleanliness is enforced by ContainmentTest's allowlist guard (covers gantt too).
 
     @Test
     void renderIsDeterministic() {

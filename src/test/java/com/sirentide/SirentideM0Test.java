@@ -1,6 +1,6 @@
 package com.sirentide;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
@@ -21,17 +21,9 @@ class SirentideM0Test {
         assertTrue(svg.endsWith("</svg>"), "well-formed");
     }
 
-    @Test
-    void outputCarriesNoExecutableSurface() {
-        // The trust story starts at the scaffold: even the empty shell must be inert
-        // (docs/DESIGN.md §5) — no script/style/foreignObject/event handlers.
-        String svg = Sirentide.render("anything");
-
-        assertFalse(svg.contains("<script"), "no script");
-        assertFalse(svg.contains("<style"), "no style");
-        assertFalse(svg.contains("foreignObject"), "no foreignObject");
-        assertFalse(svg.contains(" on"), "no on* handlers");
-    }
+    // The old denylist smoke (no script/style/foreignObject/on*) is superseded by the ALLOWLIST
+    // guard in ContainmentTest, which parses the SVG and enforces element+attribute+value bounds
+    // across the whole corpus — a real containment test, not a leading-space heuristic.
 
     @Test
     void numberFormattingIsDeterministicIntegerWhenWhole() {
@@ -39,5 +31,27 @@ class SirentideM0Test {
         // not "0.0", and no locale dependence.
         String svg = Sirentide.render("");
         assertTrue(svg.contains("viewBox=\"0 0 0 0\""), "whole numbers render without decimals");
+    }
+
+    @Test
+    void oversizedInputDegradesToInertShellWithoutOom() {
+        // A 10M-row-equivalent input (well over the 1MB source cap) must degrade to the inert
+        // empty shell — never OOM parsing it into millions of shapes, never throw (DESIGN §6/§7).
+        StringBuilder big = new StringBuilder("pie\n");
+        String row = "  \"x\" : 1\n";
+        while (big.length() < 2_000_000) {   // ~2 MB, ~200k rows, past MAX_SOURCE_BYTES
+            big.append(row);
+        }
+        String svg = Sirentide.render(big.toString());
+        assertEquals("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 0 0\"></svg>", svg,
+            "oversized input degrades to the inert shell");
+    }
+
+    @Test
+    void nonFiniteInputDoesNotEmitInfinity() {
+        // 1e400 parses to Infinity in Java WITHOUT throwing; it must be rejected at parse so no
+        // x="Infinity" ever reaches the output (the emitter clamp is the second line of defense).
+        String svg = Sirentide.render("pie\n  \"Overflow\" : 1e400\n");
+        assertTrue(!svg.contains("Infinity"), "no Infinity literal leaks into output: " + svg);
     }
 }
