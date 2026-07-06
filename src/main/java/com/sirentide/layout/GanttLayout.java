@@ -64,7 +64,9 @@ public final class GanttLayout {
             if (w < minVisibleW) {
                 w = minVisibleW;
             }
-            shapes.add(new Rect(x, barY, w, barH, PALETTE[i % PALETTE.length]));
+            // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
+            String fill = t.color() != null ? t.color() : PALETTE[i % PALETTE.length];
+            shapes.add(new Rect(x, barY, w, barH, fill));
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar
             // Ellipsize the task name to the label column so a long name is clipped rather than

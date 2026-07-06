@@ -36,14 +36,30 @@ public final class SirentideContract {
         "rect", Set.of("x", "y", "width", "height", "fill"),
         "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"));
 
-    /// The presentation-colour grammar: a 6-digit hex, `currentColor`, or `none`. Exactly the set
-    /// the sanitizer preserves; anything else (url(), rgb(), named colours, expressions) is a
-    /// containment violation.
-    public static final Pattern COLOR = Pattern.compile("#[0-9a-fA-F]{6}|currentColor|none");
+    /// The presentation-colour INPUT grammar: a 6-digit hex, a 3-digit shorthand hex, `currentColor`,
+    /// or `none`. Exactly the set the sanitizer preserves; anything else (url(), rgb(), named colours,
+    /// expressions) is a containment violation. NOTE: 3-digit `#rgb` is accepted for INPUT only — it
+    /// is normalized (expanded) to `#rrggbb` by {@link #normalizeColor} before it ever reaches the
+    /// emitter, so the emitted wire form is ALWAYS 6-digit (canonical, sanitizer-safe regardless of
+    /// whether the /docs sanitizer accepts the short form).
+    public static final Pattern COLOR = Pattern.compile("#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|currentColor|none");
 
-    /// True iff `v` is a contract-legal fill/stroke value.
+    /// True iff `v` is a contract-legal fill/stroke INPUT value (accepts both hex widths).
     public static boolean isColor(String v) {
         return v != null && COLOR.matcher(v).matches();
+    }
+
+    /// Canonicalizes a contract-legal colour to its emitted wire form: a 3-digit `#rgb` shorthand
+    /// EXPANDS to `#rrggbb` (so the emitter never carries a short hex); a 6-digit hex, `currentColor`,
+    /// and `none` pass through unchanged. `null` → `null`. Call this on any colour before it reaches
+    /// the IR/emitter so every emitted fill is a canonical 6-digit hex.
+    public static String normalizeColor(String v) {
+        if (v != null && v.length() == 4 && v.charAt(0) == '#' && isColor(v)) {
+            char r = v.charAt(1), g = v.charAt(2), b = v.charAt(3);
+            return new StringBuilder(7).append('#')
+                .append(r).append(r).append(g).append(g).append(b).append(b).toString();
+        }
+        return v;
     }
 
     /// True iff `v` parses to a finite (non-NaN, non-Infinity) number.

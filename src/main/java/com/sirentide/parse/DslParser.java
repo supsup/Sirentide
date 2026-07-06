@@ -75,7 +75,8 @@ public final class DslParser {
             if (tok.startsWith("color=")) {
                 String value = tok.substring("color=".length());
                 if (SirentideContract.isColor(value)) {
-                    return value;
+                    // Normalize so a 3-digit `color=#333` reaches the emitter as `#333333`.
+                    return SirentideContract.normalizeColor(value);
                 }
                 // Illegal colour → stop looking and use the default (a typo never fails the bake).
                 return "currentColor";
@@ -109,7 +110,13 @@ public final class DslParser {
                 continue;
             }
             String label = cap(unquote(line.substring(0, colon).strip()));
-            String range = line.substring(colon + 1).strip();
+            // Peel an OPTIONAL trailing `#hex` colour token off the END first, BEFORE the range
+            // split — so `"Design" : 0-3 #4e79a7` gives range=`0-3` (the numeric dash still splits
+            // cleanly) and colour=`#4e79a7`, and an ISO `2020-01-01 - 2020-06-01 #abcdef` keeps its
+            // ` - ` delimiter intact. A non-colour trailing token is left on the range (palette).
+            String[] pc = peelColor(line.substring(colon + 1).strip());
+            String range = pc[0];
+            String color = pc[1];
             // Split start from end. ISO date ranges use a ` - ` delimiter (so the dashes INSIDE a
             // `2020-01-01` date are not mistaken for the range separator — the old first-dash split
             // broke absolute dates); the bare-numeric `start-end` form still splits on its lone dash.
@@ -135,7 +142,7 @@ public final class DslParser {
                 if (!Double.isFinite(start) || !Double.isFinite(end)) {
                     continue;
                 }
-                tasks.add(new Task(label, start, end));
+                tasks.add(new Task(label, start, end, color));
             } catch (NumberFormatException e) {
                 // Skip a malformed / unparseable-date row (loud-not-silent: dropped, never misplaced).
             }
@@ -157,7 +164,20 @@ public final class DslParser {
                 continue;
             }
             String label = cap(unquote(line.substring(0, colon).strip()));
-            String valueTok = line.substring(colon + 1).strip();
+            // A data value is a SINGLE token, optionally followed by a trailing colour token:
+            // `"Reviews" : 40 #4e79a7` → value=`40`, colour=`#4e79a7`. Split off the first token as
+            // the value; if a trailing token follows AND matches the COLOR grammar it becomes the
+            // per-item fill (normalized to canonical `#rrggbb`). A trailing token that is NOT a colour
+            // (a typo) is simply IGNORED — the value still parses → palette fallback, never fails bake.
+            String[] tok = line.substring(colon + 1).strip().split("\\s+", 2);
+            String valueTok = tok[0];
+            String color = null;
+            if (tok.length == 2) {
+                String tail = tok[1].strip();
+                if (SirentideContract.isColor(tail)) {
+                    color = SirentideContract.normalizeColor(tail);
+                }
+            }
             try {
                 // Date-aware rows (timeline) map ISO dates to epoch-day for proportional placement;
                 // a bare year / plain number parses as its numeric value either way.
@@ -169,12 +189,34 @@ public final class DslParser {
                 if (!Double.isFinite(value)) {
                     continue;
                 }
-                data.add(new Slice(label, value));
+                data.add(new Slice(label, value, color));
             } catch (NumberFormatException e) {
                 // Skip a malformed row.
             }
         }
         return data;
+    }
+
+    /// Peels an OPTIONAL trailing colour token off a stripped data value (the text after the `:`).
+    /// Returns `{valuePart, colorOrNull}`: if the LAST whitespace-separated token matches the
+    /// SirentideContract COLOR grammar it is removed and returned (normalized to canonical `#rrggbb`,
+    /// so a 3-digit `#333` becomes `#333333` on the IR); the leading value part is returned stripped.
+    /// If there is no trailing colour token (or the input is a single token), the value is returned
+    /// unchanged with a `null` colour — an invalid/unparseable trailing token is NEVER treated as a
+    /// colour (it stays on the value, whose numeric parse then rejects it → palette fallback, no throw).
+    private static String[] peelColor(String tok) {
+        int start = tok.length();
+        while (start > 0 && !Character.isWhitespace(tok.charAt(start - 1))) {
+            start--;
+        }
+        // start > 0 means there is at least one whitespace char before the final token.
+        if (start > 0) {
+            String tail = tok.substring(start);
+            if (SirentideContract.isColor(tail)) {
+                return new String[] {tok.substring(0, start).strip(), SirentideContract.normalizeColor(tail)};
+            }
+        }
+        return new String[] {tok, null};
     }
 
     private static String unquote(String s) {

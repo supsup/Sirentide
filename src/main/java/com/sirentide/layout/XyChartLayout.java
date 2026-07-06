@@ -83,7 +83,9 @@ public final class XyChartLayout {
             double y = Math.min(baselineY, barEndY);
             double h = Math.abs(baselineY - barEndY);
             double x = plotLeft + slot * i + (slot - barW) / 2;
-            shapes.add(new Rect(x, y, barW, h, PALETTE[i % PALETTE.length]));
+            // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
+            String fill = b.color() != null ? b.color() : PALETTE[i % PALETTE.length];
+            shapes.add(new Rect(x, y, barW, h, fill));
 
             double cx = x + barW / 2;
             double categoryBaseline = plotBottom + 14;
