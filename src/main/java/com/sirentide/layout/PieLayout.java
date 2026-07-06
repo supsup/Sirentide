@@ -248,9 +248,21 @@ public final class PieLayout {
     /// stays legible on both light and dark slice colours (the old hardcoded white vanished on the
     /// palette's light slices).
     private static String contrastFill(String hex) {
-        int r = Integer.parseInt(hex.substring(1, 3), 16);
-        int g = Integer.parseInt(hex.substring(3, 5), 16);
-        int b = Integer.parseInt(hex.substring(5, 7), 16);
+        // Defense-in-depth (H1): the parse boundary already restricts per-item fills to hex, so this
+        // only ever sees `#rrggbb` — but a non-hex value must NEVER throw here (a swallowed
+        // NumberFormatException collapsed the whole diagram to a 0x0 inert shell). Fall back to a
+        // legible default on anything that isn't a clean 6-digit hex.
+        if (hex == null || hex.length() != 7 || hex.charAt(0) != '#') {
+            return "#ffffff";
+        }
+        int r, g, b;
+        try {
+            r = Integer.parseInt(hex.substring(1, 3), 16);
+            g = Integer.parseInt(hex.substring(3, 5), 16);
+            b = Integer.parseInt(hex.substring(5, 7), 16);
+        } catch (NumberFormatException e) {
+            return "#ffffff";
+        }
         double luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
         return luminance > 0.55 ? "#000000" : "#ffffff";
     }
