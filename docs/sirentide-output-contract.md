@@ -50,6 +50,7 @@ The alphabet starts minimal and grows only as a milestone needs it. **M1 (pie / 
 | presentation | `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `stroke-linecap`, `stroke-linejoin`, `opacity`, `fill-opacity`, `stroke-opacity` | `currentColor` \| `#hex` \| `none` \| numeric; `stroke-dasharray` = numeric list only |
 | identity | `class` | a fixed `sirentide-*` set ONLY (no free-form) — see the container contract |
 | a11y | `role`, `aria-label`, `aria-hidden` (on the root `<svg>`); `<title>`, `<desc>` children | text only |
+| namespace | `xmlns` (root `<svg>` only) | exactly `http://www.w3.org/2000/svg` — required for a standalone SVG document; same as LatteX's emitter-output-contract (was an attr-table omission, caught by the foundation's ContainmentTest keying on this table — Fixpoint sirentide seq 7) |
 
 ### Banned everywhere (build-failing)
 `<script>`, `<style>`, `<foreignObject>`, `<use>`, `<image>`, `<a>`; any `on*` handler; any `href`/`xlink:href`; any `style` attribute; any `url(...)` that is not a same-document `#localId`; any element or attribute not listed above.
