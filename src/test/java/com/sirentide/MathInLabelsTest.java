@@ -159,10 +159,16 @@ class MathInLabelsTest {
     void mathNode_emitsMathBox_afterPrecedingText() {
         String dsl = "flowchart TD\n  A[E $x$] --> B[plain]\n";
         String svg = Sirentide.render(dsl, FAKE);
-        assertTrue(svg.contains("<g transform=\"translate("), "a MathBox <g translate> is emitted: " + svg);
+        // The wrapper carries the label fill (F2) then the numeric translate.
+        assertTrue(svg.matches("(?s).*<g fill=\"[^\"]+\" transform=\"translate\\(.*"),
+            "a MathBox <g fill … translate> is emitted: " + svg);
         // The fragment's inner markup passes through verbatim.
         assertTrue(svg.contains("<path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>"),
             "fragment inner markup embedded verbatim: " + svg);
+        // F2: the wrapper stamps a CONCRETE contrast colour (not currentColor), so the
+        // currentColor fragment inherits the label colour instead of resolving to black.
+        Matcher fill = Pattern.compile("<g fill=\"(#[0-9a-f]{6})\" transform=\"translate").matcher(svg);
+        assertTrue(fill.find(), "MathBox wrapper carries a concrete contrast fill: " + svg);
     }
 
     @Test
@@ -178,7 +184,7 @@ class MathInLabelsTest {
     void mathBox_translatesToNodeBaseline() {
         // The MathBox y must equal the node label baseline (box centre + LABEL_SIZE*0.35), not 0.
         String svg = Sirentide.render("flowchart TD\n  A[$x$]\n", FAKE);
-        Matcher m = Pattern.compile("<g transform=\"translate\\(([-0-9.]+) ([-0-9.]+)\\)\"").matcher(svg);
+        Matcher m = Pattern.compile("<g fill=\"[^\"]+\" transform=\"translate\\(([-0-9.]+) ([-0-9.]+)\\)\"").matcher(svg);
         assertTrue(m.find(), "MathBox present: " + svg);
         double y = Double.parseDouble(m.group(2));
         assertTrue(y > 0, "MathBox sits on the (positive) baseline, not the origin: y=" + y);

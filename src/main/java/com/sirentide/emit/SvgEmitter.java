@@ -65,8 +65,10 @@ public final class SvgEmitter {
                 .append("\" stroke-width=\"").append(fmt(l.strokeWidth())).append("\"/>");
             // An inline-math fragment: place it on the label baseline with a numeric translate and
             // embed its already-contract-clean inner markup verbatim (FragmentGuard ran at layout
-            // time). The transform value stays inside SirentideContract.TRANSFORM's numeric grammar.
-            case MathBox b -> sb.append("<g transform=\"translate(").append(fmt(b.x())).append(' ')
+            // time). The transform stays inside SirentideContract.TRANSFORM's numeric grammar; the
+            // fill stamps the label's contrast colour so a currentColor fragment inherits it (F2).
+            case MathBox b -> sb.append("<g fill=\"").append(color(b.fill()))
+                .append("\" transform=\"translate(").append(fmt(b.x())).append(' ')
                 .append(fmt(b.y())).append(")\">").append(b.innerSvg()).append("</g>");
         }
     }

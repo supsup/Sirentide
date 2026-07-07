@@ -82,7 +82,9 @@ public final class MathLabel {
         double penX = originX;
         for (Resolved r : m.runs()) {
             if (r.fragment() != null) {
-                out.add(new MathBox(penX, baselineY, r.fragment().innerSvg()));
+                // Stamp the label's contrast fill on the wrapper so a currentColor fragment
+                // inherits it (F2) — same fill the text runs use, one shared label colour.
+                out.add(new MathBox(penX, baselineY, fill, r.fragment().innerSvg()));
             } else if (!r.text().isEmpty()) {
                 String d = fm.textPathD(r.text(), penX, baselineY, fontSizePx);
                 if (!d.isEmpty()) {
