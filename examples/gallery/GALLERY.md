@@ -98,3 +98,34 @@ Gateway -->> Client : 200 token
 
 ![Sequence (API token flow)](sequence.png)
 
+## Pie thin-slice outside labels (clipped)
+
+```
+pie
+"quarter" : 25
+"right outside label that should clip" : 1
+"rest" : 74
+```
+
+![Pie thin-slice outside labels (clipped)](pie-thin-labels.png)
+
+## Timeline endpoint labels (clamped)
+
+```
+timeline
+"very long left endpoint label" : 0
+"very long right endpoint label" : 10
+```
+
+![Timeline endpoint labels (clamped)](timeline-endpoints.png)
+
+## Flowchart left-going edge label (clamped)
+
+```
+flowchart
+A --> C
+B -->|this forward label can escape left| C
+```
+
+![Flowchart left-going edge label (clamped)](flowchart-left-label.png)
+

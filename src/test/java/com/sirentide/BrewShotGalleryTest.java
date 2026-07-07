@@ -76,7 +76,15 @@ class BrewShotGalleryTest {
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"
-                + "\nGateway -->> Client : 200 token"));
+                + "\nGateway -->> Client : 200 token"),
+        // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
+        // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
+        new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
+            "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74"),
+        new Case("timeline-endpoints", "Timeline endpoint labels (clamped)",
+            "timeline\n\"very long left endpoint label\" : 0\n\"very long right endpoint label\" : 10"),
+        new Case("flowchart-left-label", "Flowchart left-going edge label (clamped)",
+            "flowchart\nA --> C\nB -->|this forward label can escape left| C"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

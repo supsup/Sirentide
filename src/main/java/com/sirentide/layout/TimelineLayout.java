@@ -27,6 +27,8 @@ public final class TimelineLayout {
     /// ~120px (a quarter of the 480px canvas) matches the other layouts' established label-width cap
     /// (Gantt LABEL_COL slot, XyChart per-bar slot) and keeps two same-row labels legibly disjoint.
     private static final double MAX_LABEL_W = 120;
+    /// In-frame clamp margin: the min gap kept between any glyph box and the canvas edge.
+    private static final double CLAMP_MARGIN = 2;
 
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
@@ -122,7 +124,11 @@ public final class TimelineLayout {
     private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,
                                       double size, String fill) {
         double w = FONT.runWidth(text, size);
-        String d = FONT.textPathD(text, cx - w / 2, baseline, size);
+        // Center on cx, then clamp both ends into [CLAMP_MARGIN, W-CLAMP_MARGIN-w] so an endpoint's
+        // wide label (near x=MARGIN or x=W-MARGIN) can't overhang the canvas edge (GEOMETRY-ESCAPE
+        // #2). Row de-collision above still runs on the true centers — only the emitted origin clamps.
+        double originX = Math.max(CLAMP_MARGIN, Math.min(cx - w / 2, W - CLAMP_MARGIN - w));
+        String d = FONT.textPathD(text, originX, baseline, size);
         if (!d.isBlank()) {
             shapes.add(new GlyphRun(d, fill));
         }

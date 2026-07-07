@@ -10,7 +10,7 @@ import com.sirentide.layout.Shape;
 import com.sirentide.layout.Wedge;
 
 /// Pure emit: a laid-out scene → SVG string, using ONLY the sirentide-output-contract alphabet
-/// (svg/g/path + geometry/fill; docs/DESIGN.md §4/§5). Contract-clean by construction — no
+/// (svg/path/rect/line + geometry/fill; docs/DESIGN.md §4/§5). Contract-clean by construction — no
 /// script/style/foreignObject/on*/href ever. Numbers are formatted deterministically (§6).
 public final class SvgEmitter {
 
