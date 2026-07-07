@@ -1,6 +1,6 @@
 # Sirentide gallery — real-browser renders
 
-Captured by BrewShot in the test suite. Each diagram is audited so no drawn element escapes its canvas (the visual class the byte-pinned SVG goldens can't see).
+Captured by [BrewShot](https://github.com/supsup/BrewShot) in the test suite. Each diagram is audited so no drawn element escapes its canvas (the visual class the byte-pinned SVG goldens can't see).
 
 ## Pie
 

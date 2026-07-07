@@ -81,7 +81,8 @@ class BrewShotGalleryTest {
         Path dir = galleryDir();
         Files.createDirectories(dir);
         StringBuilder md = new StringBuilder("# Sirentide gallery — real-browser renders\n\n"
-            + "Captured by BrewShot in the test suite. Each diagram is audited so no drawn element "
+            + "Captured by [BrewShot](https://github.com/supsup/BrewShot) in the test suite. "
+            + "Each diagram is audited so no drawn element "
             + "escapes its canvas (the visual class the byte-pinned SVG goldens can't see).\n\n");
 
         try (BrewShot shot = BrewShot.launch(520, 320)) {

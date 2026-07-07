@@ -23,6 +23,7 @@ Greenlit; **M1** in progress — the render pipeline, the font-metrics oracle, a
 - **[SLOWSTART.md](SLOWSTART.md)** — the why, the differentiators, the milestone ladder.
 - **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — what's shipped, dated.
 - **[docs/DESIGN.md](docs/DESIGN.md)** — full design, the LatteX dependency, the security model.
+- **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot).
 
 ## Family
 
