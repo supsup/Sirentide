@@ -18,8 +18,13 @@ import java.util.Map;
 /// would close a cycle) are detected by a DFS and EXCLUDED from layering but STILL DRAWN, so a
 /// cyclic graph lays out in bounded work instead of looping forever.
 ///
-/// M1 scope: TD only, straight edges, rectangular nodes. FOLLOW-UP: `LR` geometry, orthogonal /
-/// routed edges, node-shape variants, and crossing-minimization within a layer.
+/// Flowchart-quality routing (M2, Sugiyama): a FORWARD edge spanning more than one layer is split
+/// into a chain through one VIRTUAL waypoint per crossed layer (no box/label drawn, a ~12px slot).
+/// The waypoints (a) give the long edge bend points so it routes AROUND the intermediate boxes
+/// instead of grazing them, and (b) participate — as first-class vertices alongside the real nodes —
+/// in BARYCENTER crossing-minimization, which reorders each layer by the mean position of its
+/// neighbours in the adjacent layer (down/up sweeps, stable first-seen tiebreak). Both are computed
+/// direction-independently, so TD and LR benefit identically; back-edges keep their lanes unchanged.
 public final class FlowchartLayout {
 
     private FlowchartLayout() {}
@@ -48,6 +53,14 @@ public final class FlowchartLayout {
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
     private static final double CLAMP_MARGIN = 2;       // min gap kept between a glyph box and the canvas edge
+
+    /// A Sugiyama VIRTUAL waypoint's slot width — a thin, invisible placeholder (no box, no label)
+    /// that a long edge routes THROUGH and that occupies an ordering slot in barycenter sweeps.
+    private static final double VIRTUAL_W = 12;
+    /// Barycenter crossing-minimization sweeps: down, up, down, up (4). Each sweep re-orders a layer
+    /// by the mean position of its neighbours in the just-fixed adjacent layer; a STABLE sort keeps
+    /// first-seen order on ties (deterministic bakes, DESIGN §6).
+    private static final int SWEEP_PASSES = 4;
 
     /// One laid-out edge: endpoint node indices `u`→`v`, the (already-ellipsized) `label` (`null`
     /// when unlabeled), and `dataIdx` — the edge's index into {@code fc.edges()} BEFORE the
@@ -203,25 +216,25 @@ public final class FlowchartLayout {
             nodeFill[i] = perNode != null ? perNode : (headerFill != null ? headerFill : NODE_FILL);
         }
 
+        // -- Sugiyama routing (M2): split each FORWARD edge spanning >1 layer into a chain through one
+        // VIRTUAL waypoint per crossed layer, then barycenter-order every layer (real + virtual). Pure
+        // combinatorics over `layer`/`byLayer` — direction-independent, so TD and LR share it. When no
+        // forward edge is long AND no layer reorders (single-node or stable-tie layers), `order` equals
+        // `byLayer` and no virtual exists → every existing bake is byte-identical.
+        Routing rt = route(n, edges, isBack, layer, layerCount, boxW, byLayer);
+
         // Layering/box-sizing above is direction-INDEPENDENT. TD (below) draws layers as ROWS flowing
         // top→down; LR draws them as COLUMNS flowing left→right — a genuinely different coordinate +
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, nodeFill, edges, isBack, styler);
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler);
         }
 
-        // Canvas width = widest layer + margins.
+        // Canvas width = widest layer (real + virtual slots) + margins.
         double maxLayerWidth = 0;
-        for (List<Integer> row : byLayer) {
-            double lw = 0;
-            for (int idx = 0; idx < row.size(); idx++) {
-                lw += boxW[row.get(idx)];
-            }
-            if (row.size() > 1) {
-                lw += (row.size() - 1) * NODE_GAP;
-            }
-            maxLayerWidth = Math.max(maxLayerWidth, lw);
+        for (List<Integer> row : rt.order) {
+            maxLayerWidth = Math.max(maxLayerWidth, rowWidth(row, rt.vWidth));
         }
         double contentW = maxLayerWidth + 2 * MARGIN;
         // Back-edges route through vertical LANES reserved to the RIGHT of the content (M1.1):
@@ -243,25 +256,20 @@ public final class FlowchartLayout {
         double canvasH = layerCount * (NODE_H + LAYER_GAP) - LAYER_GAP + 2 * MARGIN;
 
         // Assign coordinates: each layer centered horizontally on the CONTENT width (the back-edge
-        // lanes extend the canvas to the right without shifting the graph), laid left→right.
-        double[] nx = new double[n];
-        double[] ny = new double[n];
+        // lanes extend the canvas to the right without shifting the graph), laid left→right. Real and
+        // virtual vertices share the vx/vy arrays; a virtual's waypoint POINT is its slot centre.
+        double[] vx = new double[rt.vTotal];
+        double[] vy = new double[rt.vTotal];
         for (int L = 0; L < layerCount; L++) {
-            List<Integer> row = byLayer.get(L);
-            double lw = 0;
-            for (int idx : row) {
-                lw += boxW[idx];
-            }
-            if (row.size() > 1) {
-                lw += (row.size() - 1) * NODE_GAP;
-            }
+            List<Integer> row = rt.order.get(L);
+            double lw = rowWidth(row, rt.vWidth);
             double startX = (contentW - lw) / 2;
             double y = MARGIN + L * (NODE_H + LAYER_GAP);
             double cursor = startX;
             for (int idx : row) {
-                nx[idx] = cursor;
-                ny[idx] = y;
-                cursor += boxW[idx] + NODE_GAP;
+                vx[idx] = cursor;
+                vy[idx] = y;
+                cursor += rt.vWidth[idx] + NODE_GAP;
             }
         }
 
@@ -269,10 +277,10 @@ public final class FlowchartLayout {
         // then labels on top.
         List<Shape> shapes = new ArrayList<>();
 
-        // 1) edges: forward = a straight line src-bottom-center → dst-top-center + a triangle
-        // arrowhead (Path); BACK-edges = an orthogonal detour through a right-side lane (M1.1) —
-        // out the source's right side, up the lane, back into the target's right side, so a cycle
-        // reads as a visible loop instead of overdrawing the forward chain.
+        // 1) edges: forward = a straight line (or, when routed through waypoints, a POLYLINE) from the
+        // src bottom-center to the dst top-center + a triangle arrowhead on the FINAL segment; BACK-
+        // edges = an orthogonal detour through a right-side lane (M1.1) — out the source's right side,
+        // up the lane, back into the target's right side.
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -280,10 +288,10 @@ public final class FlowchartLayout {
             int v = e.v();
             if (isBack[ei]) {
                 double laneX = contentW - MARGIN + BACK_LANE_GAP * (++laneIdx);
-                double sy = ny[u] + NODE_H / 2;        // source right-middle
-                double sx = nx[u] + boxW[u];
-                double ty = ny[v] + NODE_H / 2;        // target right-middle
-                double tx = nx[v] + boxW[v];
+                double sy = vy[u] + NODE_H / 2;        // source right-middle
+                double sx = vx[u] + boxW[u];
+                double ty = vy[v] + NODE_H / 2;        // target right-middle
+                double tx = vx[v] + boxW[v];
                 shapes.add(new Line(sx, sy, laneX, sy, EDGE_STROKE, EDGE_WIDTH));      // out right
                 shapes.add(new Line(laneX, sy, laneX, ty, EDGE_STROKE, EDGE_WIDTH));   // up the lane
                 shapes.add(new Line(laneX, ty, tx + ARROW_LEN, ty, EDGE_STROKE, EDGE_WIDTH)); // back in
@@ -306,42 +314,78 @@ public final class FlowchartLayout {
                 }
                 continue;
             }
-            double scx = nx[u] + boxW[u] / 2;
-            double sBottom = ny[u] + NODE_H;
-            double dcx = nx[v] + boxW[v] / 2;
-            double dTop = ny[v];
-            double dx = dcx - scx;
-            double dy = dTop - sBottom;
-            double len = Math.hypot(dx, dy);
-            if (!Double.isFinite(len) || len < 1e-6) {
-                continue;   // degenerate anchor pair — skip (never emit NaN geometry)
+            int[] chain = rt.chain.get(ei);
+            double scx = vx[u] + boxW[u] / 2;
+            double sBottom = vy[u] + NODE_H;
+            double dcx = vx[v] + boxW[v] / 2;
+            double dTop = vy[v];
+            if (chain.length == 2) {
+                // Straight span-1 edge — byte-for-byte the original emission (all existing goldens).
+                double dx = dcx - scx;
+                double dy = dTop - sBottom;
+                double len = Math.hypot(dx, dy);
+                if (!Double.isFinite(len) || len < 1e-6) {
+                    continue;   // degenerate anchor pair — skip (never emit NaN geometry)
+                }
+                double ux = dx / len;
+                double uy = dy / len;
+                // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
+                double baseCx = dcx - ARROW_LEN * ux;
+                double baseCy = dTop - ARROW_LEN * uy;
+                double px = -uy;   // unit perpendicular
+                double py = ux;
+                // The line stops at the arrow base so it doesn't overshoot the filled triangle.
+                shapes.add(new Line(scx, sBottom, baseCx, baseCy, EDGE_STROKE, EDGE_WIDTH));
+                String d = "M " + fmt(dcx) + " " + fmt(dTop)
+                    + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
+                    + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
+                    + " Z";
+                shapes.add(new Path(d, ARROW_FILL));
+                // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
+                // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
+                // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
+                String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+                if (fl != null && !fl.isBlank()) {
+                    double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
+                    double midX = (scx + baseCx) / 2;
+                    double lblX = dx >= 0
+                        ? midX + EDGE_LABEL_GAP
+                        : midX - EDGE_LABEL_GAP - flW;
+                    lblX = clampLabelX(lblX, flW, canvasW);
+                    double lblY = (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35;
+                    String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
+                    if (!ld.isBlank()) {
+                        shapes.add(new GlyphRun(ld, fc.textColor()));
+                    }
+                }
+                continue;
             }
-            double ux = dx / len;
-            double uy = dy / len;
-            // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
-            double baseCx = dcx - ARROW_LEN * ux;
-            double baseCy = dTop - ARROW_LEN * uy;
-            double px = -uy;   // unit perpendicular
-            double py = ux;
-            // The line stops at the arrow base so it doesn't overshoot the filled triangle.
-            shapes.add(new Line(scx, sBottom, baseCx, baseCy, EDGE_STROKE, EDGE_WIDTH));
-            String d = "M " + fmt(dcx) + " " + fmt(dTop)
-                + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
-                + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
-                + " Z";
-            shapes.add(new Path(d, ARROW_FILL));
-            // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
-            // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
-            // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
+            // LONG edge: route as a POLYLINE src-anchor → waypoint centres → dst-anchor. Each virtual
+            // slot sits BESIDE the intermediate boxes (barycenter placed it), so the polyline bends
+            // AROUND them instead of grazing them. Arrowhead ONLY on the final segment.
+            int k = chain.length;
+            double[] xs = new double[k];
+            double[] ys = new double[k];
+            xs[0] = scx;
+            ys[0] = sBottom;
+            for (int j = 1; j < k - 1; j++) {
+                int w = chain[j];
+                xs[j] = vx[w] + VIRTUAL_W / 2;
+                ys[j] = vy[w] + NODE_H / 2;
+            }
+            xs[k - 1] = dcx;
+            ys[k - 1] = dTop;
+            emitPolyline(shapes, xs, ys);
+            // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
             String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
             if (fl != null && !fl.isBlank()) {
                 double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
-                double midX = (scx + baseCx) / 2;
-                double lblX = dx >= 0
+                double midX = (xs[0] + xs[1]) / 2;
+                double lblX = (xs[1] - xs[0]) >= 0
                     ? midX + EDGE_LABEL_GAP
                     : midX - EDGE_LABEL_GAP - flW;
                 lblX = clampLabelX(lblX, flW, canvasW);
-                double lblY = (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35;
+                double lblY = (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35;
                 String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
                 if (!ld.isBlank()) {
                     shapes.add(new GlyphRun(ld, fc.textColor()));
@@ -351,10 +395,11 @@ public final class FlowchartLayout {
 
         // 2) node boxes via the STYLER seam (default = rect / diamond `<path>` for a decision node;
         // the four diamond vertices are the box's top/bottom-center + left/right-middle, i.e. exactly
-        // the anchors the edges already attach to). A state diagram substitutes disc/bullseye discs
-        // for its pseudostates here without any change to the layering/edge geometry above.
+        // the anchors the edges already attach to). Boxes emit in NODE-INDEX (first-seen) order — the
+        // barycenter reorder only moves COORDINATES, never the emission sequence. Virtual waypoints
+        // are NOT drawn (this loop stops at n).
         for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+            styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
         }
 
         // 3) centered labels (glyph paths — never <text>). A node label sits ON its box, so it fills
@@ -362,8 +407,8 @@ public final class FlowchartLayout {
         // page-theme textColor, which vanished white-on-light under a dark theme. Edge labels (above)
         // keep textColor: they sit on the page background, not on a box.
         for (int i = 0; i < n; i++) {
-            double cx = nx[i] + boxW[i] / 2;
-            double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
+            double cx = vx[i] + boxW[i] / 2;
+            double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
             double w = FONT.runWidth(labels[i], LABEL_SIZE);
             String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
@@ -378,17 +423,19 @@ public final class FlowchartLayout {
     /// pass with the axes swapped — columns (not rows), vertical centering within the tallest column,
     /// forward edges out the RIGHT side into the next column's LEFT side, and back-edges detouring
     /// through horizontal lanes BELOW the content (mirror of TD's right-side vertical lanes). The
-    /// diamond path is untouched: its left/right vertices already land on the LR side anchors.
+    /// diamond path is untouched: its left/right vertices already land on the LR side anchors. Long
+    /// forward edges route through the SAME virtual waypoints (computed direction-independently); only
+    /// the coordinates differ.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
-                                    List<List<Integer>> byLayer, double[] boxW, String[] labels,
+                                    Routing rt, double[] boxW, String[] labels,
                                     String[] nodeFill, List<Edge> edges, boolean[] isBack,
                                     NodeStyler styler) {
-        // -- columns: colW[L] = widest box in layer L; colX marches left→right by colW + LAYER_GAP.
+        // -- columns: colW[L] = widest slot (real box or virtual) in layer L; colX marches left→right.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
             double w = 0;
-            for (int idx : byLayer.get(L)) {
-                w = Math.max(w, boxW[idx]);
+            for (int idx : rt.order.get(L)) {
+                w = Math.max(w, rt.vWidth[idx]);
             }
             colW[L] = w;
         }
@@ -396,27 +443,28 @@ public final class FlowchartLayout {
         double maxColumnStackH = 0;   // tallest column's stacked height → the vertical-centering datum
         for (int L = 0; L < layerCount; L++) {
             colX[L] = L == 0 ? MARGIN : colX[L - 1] + colW[L - 1] + LAYER_GAP;
-            int cnt = byLayer.get(L).size();
+            int cnt = rt.order.get(L).size();
             double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
             maxColumnStackH = Math.max(maxColumnStackH, stackH);
         }
         double contentW = (layerCount == 0 ? MARGIN : colX[layerCount - 1] + colW[layerCount - 1]) + MARGIN;
         double contentH = maxColumnStackH + 2 * MARGIN;
 
-        // Assign coordinates: within a column, nodes stack top→down in first-seen order, and the whole
-        // stack is CENTERED VERTICALLY on the tallest column (mirror of TD's per-row horizontal
-        // centering). Each node is centered horizontally within its column's width.
-        double[] nx = new double[n];
-        double[] ny = new double[n];
+        // Assign coordinates: within a column, vertices stack top→down in barycenter order, and the
+        // whole stack is CENTERED VERTICALLY on the tallest column (mirror of TD's per-row horizontal
+        // centering). Each vertex is centered horizontally within its column's width. Real + virtual
+        // share vx/vy; a virtual's waypoint POINT is its slot centre.
+        double[] vx = new double[rt.vTotal];
+        double[] vy = new double[rt.vTotal];
         for (int L = 0; L < layerCount; L++) {
-            List<Integer> col = byLayer.get(L);
+            List<Integer> col = rt.order.get(L);
             int cnt = col.size();
             double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
             double startY = (contentH - stackH) / 2;
             double cursor = startY;
             for (int idx : col) {
-                nx[idx] = colX[L] + (colW[L] - boxW[idx]) / 2;
-                ny[idx] = cursor;
+                vx[idx] = colX[L] + (colW[L] - rt.vWidth[idx]) / 2;
+                vy[idx] = cursor;
                 cursor += NODE_H + NODE_GAP;
             }
         }
@@ -441,9 +489,9 @@ public final class FlowchartLayout {
         List<Shape> shapes = new ArrayList<>();
         String textColor = fc.textColor();
 
-        // 1) edges. forward = right-middle → left-middle straight line + triangle arrowhead; back =
-        // a detour DOWN out the source's bottom, along a lane below the content, UP into the target's
-        // bottom with an up-pointing arrowhead.
+        // 1) edges. forward = right-middle → left-middle straight line (or a POLYLINE through waypoint
+        // centres) + a triangle arrowhead on the FINAL segment; back = a detour DOWN out the source's
+        // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -451,10 +499,10 @@ public final class FlowchartLayout {
             int v = e.v();
             if (isBack[ei]) {
                 double laneY = contentH - MARGIN + BACK_LANE_GAP * (++laneIdx);
-                double sx = nx[u] + boxW[u] / 2;       // source bottom-middle
-                double sy = ny[u] + NODE_H;
-                double tx = nx[v] + boxW[v] / 2;        // target bottom-middle
-                double ty = ny[v] + NODE_H;
+                double sx = vx[u] + boxW[u] / 2;       // source bottom-middle
+                double sy = vy[u] + NODE_H;
+                double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
+                double ty = vy[v] + NODE_H;
                 shapes.add(new Line(sx, sy, sx, laneY, EDGE_STROKE, EDGE_WIDTH));      // down out
                 shapes.add(new Line(sx, laneY, tx, laneY, EDGE_STROKE, EDGE_WIDTH));   // along the lane
                 shapes.add(new Line(tx, laneY, tx, ty + ARROW_LEN, EDGE_STROKE, EDGE_WIDTH)); // up in
@@ -477,37 +525,70 @@ public final class FlowchartLayout {
                 }
                 continue;
             }
-            double sx = nx[u] + boxW[u];             // source right-middle
-            double sy = ny[u] + NODE_H / 2;
-            double tx = nx[v];                        // target left-middle
-            double ty = ny[v] + NODE_H / 2;
-            double dx = tx - sx;
-            double dy = ty - sy;
-            double len = Math.hypot(dx, dy);
-            if (!Double.isFinite(len) || len < 1e-6) {
-                continue;   // degenerate anchor pair — skip (never emit NaN geometry)
+            int[] chain = rt.chain.get(ei);
+            double sx = vx[u] + boxW[u];             // source right-middle
+            double sy = vy[u] + NODE_H / 2;
+            double tx = vx[v];                        // target left-middle
+            double ty = vy[v] + NODE_H / 2;
+            if (chain.length == 2) {
+                // Straight span-1 edge — byte-for-byte the original LR emission.
+                double dx = tx - sx;
+                double dy = ty - sy;
+                double len = Math.hypot(dx, dy);
+                if (!Double.isFinite(len) || len < 1e-6) {
+                    continue;   // degenerate anchor pair — skip (never emit NaN geometry)
+                }
+                double ux = dx / len;
+                double uy = dy / len;
+                // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
+                double baseX = tx - ARROW_LEN * ux;
+                double baseY = ty - ARROW_LEN * uy;
+                double px = -uy;   // unit perpendicular
+                double py = ux;
+                shapes.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
+                String d = "M " + fmt(tx) + " " + fmt(ty)
+                    + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
+                    + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
+                    + " Z";
+                shapes.add(new Path(d, ARROW_FILL));
+                // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
+                // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it.
+                String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+                if (fl != null && !fl.isBlank()) {
+                    double midX = (sx + baseX) / 2;
+                    double midY = (sy + baseY) / 2;
+                    double lblY = dy > 0
+                        ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                        : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                    double lblX = clampLabelX(midX + EDGE_LABEL_GAP,
+                        FONT.runWidth(fl, EDGE_LABEL_SIZE), canvasW);
+                    String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
+                    if (!ld.isBlank()) {
+                        shapes.add(new GlyphRun(ld, textColor));
+                    }
+                }
+                continue;
             }
-            double ux = dx / len;
-            double uy = dy / len;
-            // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
-            double baseX = tx - ARROW_LEN * ux;
-            double baseY = ty - ARROW_LEN * uy;
-            double px = -uy;   // unit perpendicular
-            double py = ux;
-            shapes.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
-            String d = "M " + fmt(tx) + " " + fmt(ty)
-                + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
-                + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
-                + " Z";
-            shapes.add(new Path(d, ARROW_FILL));
-            // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
-            // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it. Keeps a
-            // fan-out's labels ("yes"/"no") from colliding.
+            // LONG edge: POLYLINE right-anchor → waypoint centres → left-anchor, arrowhead on the last.
+            int k = chain.length;
+            double[] xs = new double[k];
+            double[] ys = new double[k];
+            xs[0] = sx;
+            ys[0] = sy;
+            for (int j = 1; j < k - 1; j++) {
+                int w = chain[j];
+                xs[j] = vx[w] + rt.vWidth[w] / 2;
+                ys[j] = vy[w] + NODE_H / 2;
+            }
+            xs[k - 1] = tx;
+            ys[k - 1] = ty;
+            emitPolyline(shapes, xs, ys);
+            // Edge label anchors on the FIRST segment's midpoint (LR outside rule + clamp).
             String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
             if (fl != null && !fl.isBlank()) {
-                double midX = (sx + baseX) / 2;
-                double midY = (sy + baseY) / 2;
-                double lblY = dy > 0
+                double midX = (xs[0] + xs[1]) / 2;
+                double midY = (ys[0] + ys[1]) / 2;
+                double lblY = (ys[1] - ys[0]) > 0
                     ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                     : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
                 double lblX = clampLabelX(midX + EDGE_LABEL_GAP,
@@ -521,16 +602,16 @@ public final class FlowchartLayout {
 
         // 2) node boxes via the STYLER seam (default = rect / diamond `<path>`; identical construction
         // to TD, no change needed for LR — the diamond's left/right vertices already land on the LR
-        // side anchors). A state diagram reskins pseudostates here without touching the geometry above.
+        // side anchors). Boxes emit in NODE-INDEX order; virtual waypoints are not drawn (loop < n).
         for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+            styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
         }
 
         // 3) centered labels (glyph paths — never <text>). Node labels contrast against the box fill
         // (see the TD pass); edge labels above keep textColor (they sit on the page background).
         for (int i = 0; i < n; i++) {
-            double cx = nx[i] + boxW[i] / 2;
-            double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
+            double cx = vx[i] + boxW[i] / 2;
+            double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
             double w = FONT.runWidth(labels[i], LABEL_SIZE);
             String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
@@ -539,6 +620,179 @@ public final class FlowchartLayout {
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// The Sugiyama result shared by TD + LR: the barycenter-ordered layers of ALL vertices (real +
+    /// virtual), a per-vertex slot width, the total vertex count, and each edge's routing chain
+    /// (`[u, w1, …, wk, v]`; length 2 for a straight span-1 edge; unused/`[u,v]` for a back-edge).
+    private record Routing(List<List<Integer>> order, double[] vWidth, int vTotal, List<int[]> chain) {}
+
+    /// Split long forward edges into virtual-waypoint chains, then barycenter-order every layer.
+    private static Routing route(int n, List<Edge> edges, boolean[] isBack, int[] layer,
+                                 int layerCount, double[] boxW, List<List<Integer>> byLayer) {
+        // 1) build chains + mint virtual vertices (ids ≥ n), one per layer a forward edge SKIPS.
+        List<int[]> chain = new ArrayList<>(edges.size());
+        List<Integer> virtualLayer = new ArrayList<>();   // layer of virtual (n + k)
+        int vNext = n;
+        for (int ei = 0; ei < edges.size(); ei++) {
+            Edge e = edges.get(ei);
+            if (isBack[ei]) {
+                chain.add(new int[] {e.u(), e.v()});   // back-edge: not routed through waypoints
+                continue;
+            }
+            int lu = layer[e.u()];
+            int lv = layer[e.v()];
+            if (lv - lu <= 1) {
+                chain.add(new int[] {e.u(), e.v()});
+                continue;
+            }
+            int[] c = new int[lv - lu + 1];
+            c[0] = e.u();
+            for (int L = lu + 1; L < lv; L++) {
+                int vid = vNext++;
+                virtualLayer.add(L);
+                c[L - lu] = vid;
+            }
+            c[lv - lu] = e.v();
+            chain.add(c);
+        }
+        int vTotal = vNext;
+
+        double[] vWidth = new double[vTotal];
+        int[] vLayer = new int[vTotal];
+        for (int i = 0; i < n; i++) {
+            vWidth[i] = boxW[i];
+            vLayer[i] = layer[i];
+        }
+        for (int k = 0; k < virtualLayer.size(); k++) {
+            int vid = n + k;
+            vWidth[vid] = VIRTUAL_W;
+            vLayer[vid] = virtualLayer.get(k);
+        }
+
+        // 2) initial order = real nodes (first-seen, from byLayer) then virtuals appended in mint order.
+        List<List<Integer>> order = new ArrayList<>();
+        for (int L = 0; L < layerCount; L++) {
+            order.add(new ArrayList<>(byLayer.get(L)));
+        }
+        for (int vid = n; vid < vTotal; vid++) {
+            order.get(vLayer[vid]).add(vid);
+        }
+
+        // 3) adjacency between consecutive-layer vertices, from chain links only (back-edges excluded
+        // from the sweeps — they keep their lanes). up[b] = neighbours a layer ABOVE; down[a] = below.
+        List<List<Integer>> up = new ArrayList<>();
+        List<List<Integer>> down = new ArrayList<>();
+        for (int i = 0; i < vTotal; i++) {
+            up.add(new ArrayList<>());
+            down.add(new ArrayList<>());
+        }
+        for (int ei = 0; ei < edges.size(); ei++) {
+            if (isBack[ei]) {
+                continue;
+            }
+            int[] c = chain.get(ei);
+            for (int j = 0; j + 1 < c.length; j++) {
+                down.get(c[j]).add(c[j + 1]);
+                up.get(c[j + 1]).add(c[j]);
+            }
+        }
+
+        // 4) barycenter sweeps (down, up, down, up). A STABLE sort keeps first-seen order on ties.
+        int[] pos = new int[vTotal];
+        for (List<Integer> row : order) {
+            for (int p = 0; p < row.size(); p++) {
+                pos[row.get(p)] = p;
+            }
+        }
+        for (int sweep = 0; sweep < SWEEP_PASSES; sweep++) {
+            if (sweep % 2 == 0) {
+                for (int L = 1; L < layerCount; L++) {
+                    sortLayerByBarycenter(order.get(L), up, pos);
+                }
+            } else {
+                for (int L = layerCount - 2; L >= 0; L--) {
+                    sortLayerByBarycenter(order.get(L), down, pos);
+                }
+            }
+        }
+
+        return new Routing(order, vWidth, vTotal, chain);
+    }
+
+    /// Re-order one layer by the barycenter (mean neighbour position) of each vertex against the
+    /// just-fixed adjacent layer. A vertex with no neighbour keeps its current slot (key = current
+    /// index), so it never jumps. A STABLE sort resolves equal barycenters to the prior (ultimately
+    /// first-seen) order — the determinism the byte-goldens require. `pos` is refreshed for this layer.
+    private static void sortLayerByBarycenter(List<Integer> row, List<List<Integer>> neighbors,
+                                              int[] pos) {
+        if (row.size() > 1) {
+            Map<Integer, Double> key = new HashMap<>();
+            for (int p = 0; p < row.size(); p++) {
+                int v = row.get(p);
+                List<Integer> nb = neighbors.get(v);
+                double k;
+                if (nb.isEmpty()) {
+                    k = p;                       // no neighbour → keep the current slot
+                } else {
+                    double sum = 0;
+                    for (int u : nb) {
+                        sum += pos[u];
+                    }
+                    k = sum / nb.size();
+                }
+                key.put(v, k);
+            }
+            row.sort((a, b) -> Double.compare(key.get(a), key.get(b)));   // stable (TimSort)
+        }
+        for (int p = 0; p < row.size(); p++) {
+            pos[row.get(p)] = p;
+        }
+    }
+
+    /// Emit a routed polyline: every segment but the last as a full {@link Line}, then the final
+    /// segment truncated at the arrow base with a triangle arrowhead at its tip (reuses the straight-
+    /// edge arrowhead math). Points are (xs[i], ys[i]); the arrow points into (xs[last], ys[last]).
+    private static void emitPolyline(List<Shape> shapes, double[] xs, double[] ys) {
+        int last = xs.length - 1;
+        for (int j = 0; j < last - 1; j++) {
+            shapes.add(new Line(xs[j], ys[j], xs[j + 1], ys[j + 1], EDGE_STROKE, EDGE_WIDTH));
+        }
+        double px0 = xs[last - 1];
+        double py0 = ys[last - 1];
+        double tx = xs[last];
+        double ty = ys[last];
+        double dx = tx - px0;
+        double dy = ty - py0;
+        double len = Math.hypot(dx, dy);
+        if (!Double.isFinite(len) || len < 1e-6) {
+            shapes.add(new Line(px0, py0, tx, ty, EDGE_STROKE, EDGE_WIDTH));   // degenerate — no head
+            return;
+        }
+        double ux = dx / len;
+        double uy = dy / len;
+        double baseX = tx - ARROW_LEN * ux;
+        double baseY = ty - ARROW_LEN * uy;
+        double px = -uy;   // unit perpendicular
+        double py = ux;
+        shapes.add(new Line(px0, py0, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
+        String d = "M " + fmt(tx) + " " + fmt(ty)
+            + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
+            + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
+            + " Z";
+        shapes.add(new Path(d, ARROW_FILL));
+    }
+
+    /// A layer's laid width: sum of its slot widths + NODE_GAP between consecutive slots.
+    private static double rowWidth(List<Integer> row, double[] vWidth) {
+        double lw = 0;
+        for (int idx : row) {
+            lw += vWidth[idx];
+        }
+        if (row.size() > 1) {
+            lw += (row.size() - 1) * NODE_GAP;
+        }
+        return lw;
     }
 
     /// DFS classification of back-edges: mark any out-edge that targets a GRAY (on-stack) node.
