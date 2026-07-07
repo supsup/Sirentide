@@ -11,6 +11,7 @@ import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.StateDiagram;
 import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Path;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import com.sirentide.layout.StateDiagramLayout;
@@ -163,8 +164,25 @@ class StateDiagramTest {
         // The start pseudostate = ONE disc; the end bullseye = THREE stacked discs → 4 Wedges total.
         assertEquals(4, countShapes(laid, Wedge.class),
             "1 start disc + 3 bullseye discs (dark/white/dark)");
-        // The two normal states (Idle, Running) draw as rects — the pseudostates never do.
-        assertEquals(2, countShapes(laid, Rect.class), "one rect per NORMAL state, none for pseudostates");
+        // Normal states are ROUNDED-rect Paths now (Q-corner boxes), NOT sharp Rects — none anywhere.
+        assertEquals(0, countShapes(laid, Rect.class), "no sharp rects — states are rounded paths");
+    }
+
+    /// Each normal `state` box is a rounded-rect {@link Path} carrying Q (quadratic corner) commands
+    /// and NO {@link Rect} — the flowchart's sharp Rect was reskinned to a soft box. Arrowhead paths
+    /// are straight triangles (M/L/Z, no Q), so filtering on Q isolates exactly the state boxes.
+    @Test
+    void normalStatesAreRoundedRectPathsNotRects() {
+        LaidOut laid = StateDiagramLayout.layout(parse(LIFECYCLE));
+        long roundedBoxes = laid.shapes().stream()
+            .filter(s -> s instanceof Path)
+            .map(s -> ((Path) s).d())
+            .filter(d -> d.contains(" Q "))
+            .count();
+        assertEquals(2, roundedBoxes,
+            "each of the 2 normal states (Idle, Running) is a rounded-rect path with Q corners");
+        assertEquals(0, countShapes(laid, Rect.class),
+            "no sharp rects for a state box — rounded paths replace them");
     }
 
     @Test
@@ -193,7 +211,10 @@ class StateDiagramTest {
         // Idle↔Running is a cycle; the engine's back-edge handling must terminate and still render
         // both states (the styler seam doesn't touch layering).
         LaidOut laid = StateDiagramLayout.layout(parse(LIFECYCLE));
-        assertEquals(2, countShapes(laid, Rect.class), "both cyclic states render");
+        long roundedBoxes = laid.shapes().stream()
+            .filter(s -> s instanceof Path).map(s -> ((Path) s).d())
+            .filter(d -> d.contains(" Q ")).count();
+        assertEquals(2, roundedBoxes, "both cyclic states render as rounded-rect paths");
         String svg = Sirentide.render(LIFECYCLE);
         assertNotNull(svg);
         assertTrue(svg.startsWith("<svg"), "the cycle still renders a valid svg");
