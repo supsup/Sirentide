@@ -39,8 +39,11 @@ public final class SirentideContract {
         "path", Set.of("d", "fill"),
         "rect", Set.of("x", "y", "width", "height", "fill"),
         "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"),
-        // math-in-labels widening: `g` carries ONLY a numeric-grammar `transform` (see TRANSFORM).
-        "g", Set.of("transform"));
+        // math-in-labels widening: `g` carries a numeric-grammar `transform` (see TRANSFORM) and
+        // an optional `fill` (F1, Conf pins sirentide/51): the MathBox wrapper stamps the label's
+        // contrast fill so `currentColor` math inherits it (not black-on-dark), and the guard
+        // already permits inner-element `fill` — this reconciles contract == guard == doc-intent.
+        "g", Set.of("transform", "fill"));
 
     /// The presentation-colour INPUT grammar: a 6-digit hex, a 3-digit shorthand hex, `currentColor`,
     /// or `none`. Exactly the set the sanitizer preserves; anything else (url(), rgb(), named colours,

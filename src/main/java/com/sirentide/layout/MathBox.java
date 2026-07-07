@@ -8,4 +8,8 @@ package com.sirentide.layout;
 /// renderer, not the font-metrics oracle), so it passes {@link com.sirentide.contract.FragmentGuard}
 /// at layout time before it ever becomes a MathBox — the emitter trusts it is already
 /// contract-clean (docs/DESIGN.md §4/§6: producer ⊆ contract).
-public record MathBox(double x, double y, String innerSvg) implements Shape {}
+///
+/// `fill` is stamped on the wrapping `<g>` so a `currentColor` fragment inherits the LABEL's
+/// contrast colour (F2, Conf pins sirentide/51) — otherwise `currentColor` math resolves to the
+/// SVG default (black) and vanishes on a dark node while the text runs stay light.
+public record MathBox(double x, double y, String fill, String innerSvg) implements Shape {}

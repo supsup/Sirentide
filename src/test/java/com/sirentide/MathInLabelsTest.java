@@ -114,6 +114,27 @@ class MathInLabelsTest {
         assertFalse(FragmentGuard.isClean("<g><foreignObject/></g>"));
     }
 
+    // -- Conf F3 pins (RFC sirentide/49): the belt-and-suspenders branches were vacuously
+    //    covered — every hostile case also tripped the element allowlist, so the stray-bracket
+    //    and null/blank checks could be deleted with the suite still green. Pin them directly so
+    //    a future mutant can't no-op them (these guard MALFORMED input, not injection — a real
+    //    <script> still hits the element allowlist).
+
+    @Test
+    void guard_rejectsStrayTailBracket() {
+        // well-formed path with an extra '>' hanging off the end — must not slip through
+        assertFalse(FragmentGuard.isClean("<path d=\"M0 0\" fill=\"none\"/>>"));
+        // a lone '<' with no tag, and a bare '>' between otherwise-clean tags
+        assertFalse(FragmentGuard.isClean("<path d=\"M0 0\" fill=\"none\"/> < <path d=\"M1 1\" fill=\"none\"/>"));
+    }
+
+    @Test
+    void guard_rejectsNullAndBlank() {
+        assertFalse(FragmentGuard.isClean(null));
+        assertFalse(FragmentGuard.isClean(""));
+        assertFalse(FragmentGuard.isClean("   "));
+    }
+
     // -- zero-behaviour-change pin (the load-bearing one) -------------------------
 
     @Test
@@ -138,10 +159,16 @@ class MathInLabelsTest {
     void mathNode_emitsMathBox_afterPrecedingText() {
         String dsl = "flowchart TD\n  A[E $x$] --> B[plain]\n";
         String svg = Sirentide.render(dsl, FAKE);
-        assertTrue(svg.contains("<g transform=\"translate("), "a MathBox <g translate> is emitted: " + svg);
+        // The wrapper carries the label fill (F2) then the numeric translate.
+        assertTrue(svg.matches("(?s).*<g fill=\"[^\"]+\" transform=\"translate\\(.*"),
+            "a MathBox <g fill … translate> is emitted: " + svg);
         // The fragment's inner markup passes through verbatim.
         assertTrue(svg.contains("<path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>"),
             "fragment inner markup embedded verbatim: " + svg);
+        // F2: the wrapper stamps a CONCRETE contrast colour (not currentColor), so the
+        // currentColor fragment inherits the label colour instead of resolving to black.
+        Matcher fill = Pattern.compile("<g fill=\"(#[0-9a-f]{6})\" transform=\"translate").matcher(svg);
+        assertTrue(fill.find(), "MathBox wrapper carries a concrete contrast fill: " + svg);
     }
 
     @Test
@@ -157,7 +184,7 @@ class MathInLabelsTest {
     void mathBox_translatesToNodeBaseline() {
         // The MathBox y must equal the node label baseline (box centre + LABEL_SIZE*0.35), not 0.
         String svg = Sirentide.render("flowchart TD\n  A[$x$]\n", FAKE);
-        Matcher m = Pattern.compile("<g transform=\"translate\\(([-0-9.]+) ([-0-9.]+)\\)\"").matcher(svg);
+        Matcher m = Pattern.compile("<g fill=\"[^\"]+\" transform=\"translate\\(([-0-9.]+) ([-0-9.]+)\\)\"").matcher(svg);
         assertTrue(m.find(), "MathBox present: " + svg);
         double y = Double.parseDouble(m.group(2));
         assertTrue(y > 0, "MathBox sits on the (positive) baseline, not the origin: y=" + y);
