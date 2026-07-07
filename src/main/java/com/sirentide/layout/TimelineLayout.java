@@ -69,7 +69,9 @@ public final class TimelineLayout {
             // label is up to MAX_LABEL_LEN (512) chars; without this cap a full MAX_DATA_ROWS sheet
             // of long labels builds ~GBs of glyph paths (H2). The value below is a bounded number.
             topText[i] = FONT.ellipsize(e.label(), MAX_LABEL_W, TOP_SIZE);
-            botText[i] = num(e.value());
+            // Show the author's date token (A2) when the value came from an ISO date — its numeric
+            // form is an opaque epoch-day. A bare year / plain number has a null valueLabel → num().
+            botText[i] = e.valueLabel() != null ? e.valueLabel() : num(e.value());
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = e.color() != null ? e.color() : PALETTE[i % PALETTE.length];
             shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill));

@@ -136,6 +136,18 @@ public final class AxisScale {
     /// keeps the value label human-readable AND keeps year-to-year gaps proportional). Throws
     /// {@link NumberFormatException} on an unparseable token so the caller can skip the row rather
     /// than silently misplace it (docs/DESIGN.md §6: loud, never silent).
+    /// True iff `token` is an ISO date (`YYYY-MM-DD`) or year-month (`YYYY-MM`) — the tokens
+    /// {@link #parseDomainValue} maps to an epoch-day. The epoch-day is an opaque double afterward,
+    /// so a caller that wants to DISPLAY the value as a date (not the raw epoch number) must remember
+    /// the token was a date; this is that check. A bare year / plain number returns false.
+    public static boolean isDateToken(String token) {
+        if (token == null) {
+            return false;
+        }
+        String s = token.strip();
+        return ISO_DATE.matcher(s).matches() || ISO_YEAR_MONTH.matcher(s).matches();
+    }
+
     public static double parseDomainValue(String token) {
         if (token == null) {
             throw new NumberFormatException("null domain token");
