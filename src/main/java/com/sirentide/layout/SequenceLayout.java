@@ -3,7 +3,9 @@ package com.sirentide.layout;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,8 +18,9 @@ import java.util.Map;
 /// Robustness is the point (DESIGN §6 — never throw, always terminate): an unknown-actor message is
 /// defensively skipped, and non-finite geometry can never reach emit (guards + {@link #fmt}).
 ///
-/// M1 scope: linear messages only. FOLLOW-UP (M2): activation bars, alt/loop/par frames, and
-/// bottom actor boxes.
+/// M1 scope: linear messages only. M2 adds ACTIVATION BARS (this file — implicit activation: a call
+/// `->>` activates its callee, a reply `-->>` deactivates its sender, nested activations stack with an
+/// x-offset). FOLLOW-UP (M3): alt/loop/par frames, and bottom actor boxes.
 public final class SequenceLayout {
 
     private SequenceLayout() {}
@@ -52,6 +55,13 @@ public final class SequenceLayout {
     private static final double V_DX = 8.19;          // open-V back-offset ≈ ARROW_LEN·cos35°
     private static final double V_DY = 5.74;          // open-V half-spread ≈ ARROW_LEN·sin35°
     private static final double EDGE_PAD = 2;         // labels are clamped inside [EDGE_PAD, W-EDGE_PAD]
+
+    // -- activation bars (M2). A thin rect on the actor's lifeline while a call is active; nested
+    // (concurrent) activations of the SAME actor step ACT_OFFSET right so overlapping bars stay
+    // visible. ACT_FILL is a subtle "active" tint that reads over the light lifeline without dominating.
+    private static final double ACT_W = 8;            // activation-bar width
+    private static final double ACT_OFFSET = 4;       // each nesting depth steps this far right
+    private static final String ACT_FILL = "#c7d2fe"; // subtle soft-indigo "active" fill
 
     /// The visible-degrade message for a non-empty body that parsed to ZERO actors (every line
     /// malformed) — drawn as a glyph run so a mistyped sequence never renders as silent nothing.
@@ -115,6 +125,44 @@ public final class SequenceLayout {
         }
         double contentBottom = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
 
+        // -- activation bars (M2, IMPLICIT activation — the low-friction default). Walk the drawn
+        // messages in time order maintaining a per-actor STACK of open activations:
+        //   • a CALL `->>` (reply=false) ACTIVATES its CALLEE (the `to`) — push an activation onto
+        //     that actor's stack, starting at the message y. A self-call `A ->> A` activates A too
+        //     (Mermaid semantics: the callee is A — no special case, `to` already equals `from`).
+        //   • a REPLY `-->>` (reply=true) DEACTIVATES its SENDER (the `from`) — pop that actor's
+        //     MOST-RECENT open activation (LIFO), ending its bar at the reply y.
+        // Nested (concurrent) activations of the same actor carry a `depth` = the open count at push
+        // time, so each steps ACT_OFFSET to the right and overlapping bars stay visible. Robustness
+        // (DESIGN §6 — malformed→inert, never throw): an UNBALANCED reply (pop on an empty stack) is
+        // ignored (nothing to close); an UNBALANCED call (no matching reply) keeps its default endY =
+        // contentBottom, so its bar closes cleanly at the diagram bottom. Arrows still connect to the
+        // lifeline CENTRE (v1 — the bar overlays the centred arrow; edge-coupling is a follow-up).
+        List<Activation> activations = new ArrayList<>();
+        List<Deque<Activation>> open = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            open.add(new ArrayDeque<>());
+        }
+        for (int i = 0; i < drawn.size(); i++) {
+            SeqMessage m = drawn.get(i);
+            double y = msgY[i];
+            if (!m.reply()) {
+                int actor = index.get(m.to());        // a call activates the callee
+                Deque<Activation> st = open.get(actor);
+                Activation act = new Activation(actor, y, contentBottom, st.size());
+                activations.add(act);
+                st.push(act);
+            } else {
+                int actor = index.get(m.from());       // a reply deactivates the sender
+                Deque<Activation> st = open.get(actor);
+                if (!st.isEmpty()) {
+                    st.pop().endY = y;                 // close the most-recent open activation (LIFO)
+                }
+                // else: an unbalanced reply — no open activation to close, ignore (never throw)
+            }
+        }
+        // Still-open activations (unbalanced calls) keep their default endY = contentBottom.
+
         // -- canvas width: base = last lifeline + half a head + margin. Then WIDEN for any trailing
         // actor's self-message label (its hook + left-aligned label reach right of the lifeline).
         double baseW = cx[n - 1] + maxHeadW / 2 + MARGIN;
@@ -129,6 +177,12 @@ public final class SequenceLayout {
                 canvasW = Math.max(canvasW, need);
             }
         }
+        // Widen for any activation bar that offsets RIGHT past the base width (a deeply-nested bar on
+        // the trailing actor) so the containment invariant holds — no rect x+width escapes the canvas.
+        for (Activation act : activations) {
+            double right = cx[act.actor] - ACT_W / 2 + act.depth * ACT_OFFSET + ACT_W;
+            canvasW = Math.max(canvasW, right + MARGIN);
+        }
         double canvasH = contentBottom + MARGIN;
 
         // -- emit order (readability + the containment audit): lifelines UNDER, then message lines +
@@ -138,6 +192,19 @@ public final class SequenceLayout {
         // 1) lifelines: a light vertical line from each head bottom to the diagram bottom.
         for (int i = 0; i < n; i++) {
             shapes.add(new Line(cx[i], headBottom, cx[i], contentBottom, LIFELINE_STROKE, LIFELINE_WIDTH));
+        }
+
+        // 1.5) activation bars: a thin ACT_FILL rect per activation, centred on its actor's lifeline
+        // (nested bars stepped right by ACT_OFFSET·depth). Emitted AFTER the lifelines (the bar
+        // overlays the line) and BEFORE the messages (arrows/heads draw on top). A degenerate span
+        // (zero/negative/non-finite height) is skipped — never emit inverted geometry (DESIGN §6).
+        for (Activation act : activations) {
+            double h = act.endY - act.startY;
+            if (!Double.isFinite(h) || h <= 0) {
+                continue;
+            }
+            double bx = cx[act.actor] - ACT_W / 2 + act.depth * ACT_OFFSET;
+            shapes.add(new Rect(bx, act.startY, ACT_W, h, ACT_FILL));
         }
 
         // 2) messages.
@@ -276,6 +343,26 @@ public final class SequenceLayout {
             x = EDGE_PAD;
         }
         return x;
+    }
+
+    /// One activation frame on an actor's lifeline: the actor's column `index`, the y where the bar
+    /// STARTS (a call arrived), the y where it ENDS (its matching reply — or `contentBottom` if the
+    /// call was never replied to), and the nesting `depth` (0 = the base bar centred on the lifeline;
+    /// each concurrent activation of the same actor steps +ACT_OFFSET right so overlapping bars stay
+    /// visible). Mutable in `endY` alone: it is filled in when the reply is seen, else left at the
+    /// diagram bottom (the unbalanced-call close). Layout-internal, never emitted directly.
+    private static final class Activation {
+        final int actor;
+        final double startY;
+        double endY;
+        final int depth;
+
+        Activation(int actor, double startY, double endY, int depth) {
+            this.actor = actor;
+            this.startY = startY;
+            this.endY = endY;
+            this.depth = depth;
+        }
     }
 
     /// Deterministic 3-dp number formatting for arrowhead path data (byte-identical bakes, DESIGN §6).

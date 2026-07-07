@@ -169,7 +169,9 @@ class SequenceTest {
     void nActorsRenderNRectsAndNLifelines() {
         String svg = Sirentide.render("sequence\nA ->> B : x\nB ->> C : y\n");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
-        assertEquals(3, count(svg, "<rect"), "one head box per actor");
+        // Head boxes carry the head fill; activation bars (M2) add their own ACT_FILL rects, so count
+        // HEAD rects by fill — one per actor (the two calls here also open two activation bars).
+        assertEquals(3, count(svg, "fill=\"#dbe4ff\""), "one head box per actor");
         // Lifelines are the ONLY light-stroke lines; 3 actors → 3 lifelines (message lines add more).
         assertEquals(3, count(svg, "stroke=\"#cbd5e1\""), "one lifeline per actor");
         assertFalse(svg.contains("<text"), "labels are glyph paths, never <text>");
@@ -199,7 +201,9 @@ class SequenceTest {
     void selfMessageRendersAHookAndArrowhead() {
         String svg = Sirentide.render("sequence\nAlice ->> Alice : loop\n");
         assertTrue(svg.startsWith("<svg"), "well-formed");
-        assertEquals(1, count(svg, "<rect"), "one actor head");
+        // One actor head (by head fill); the self-CALL also opens an activation bar (Mermaid semantics
+        // — a self `->>` activates the actor), which adds its own ACT_FILL rect, so don't count raw rects.
+        assertEquals(1, count(svg, "fill=\"#dbe4ff\""), "one actor head");
         // The self-hook is 3 segments (out, down, back-to-base) + 1 lifeline = 4 call-coloured/light
         // lines; plus the filled-triangle arrowhead path.
         assertTrue(count(svg, "<line") >= 4, "hook segments + lifeline");
@@ -286,5 +290,114 @@ class SequenceTest {
 
     private static void assertInRange(double x, double width, String what) {
         assertTrue(x >= 0 && x <= width, what + " " + x + " escapes canvas width " + width);
+    }
+
+    // -- M2: activation bars ---------------------------------------------------
+
+    private static final String ACT_FILL = "#c7d2fe";     // the subtle activation-bar fill
+    private static final String CALL_STROKE = "#64748b";  // a call `->>` message line
+    private static final String REPLY_STROKE = "#94a3b8"; // a reply `-->>` message line
+    private static final String LIFELINE = "#cbd5e1";     // a lifeline vertical
+    private static final double ACT_OFFSET = 4;           // the nesting x-step
+
+    /// Every activation-bar rect as `{x, y, width, height}` — the ONLY rects filled ACT_FILL (head
+    /// boxes use the head fill), so the fill cleanly discriminates them from the actor heads.
+    private static List<double[]> activationRects(String svg) {
+        Matcher m = Pattern.compile("<rect x=\"([\\-0-9.]+)\" y=\"([\\-0-9.]+)\" width=\"([\\-0-9.]+)\""
+            + " height=\"([\\-0-9.]+)\" fill=\"" + ACT_FILL + "\"").matcher(svg);
+        List<double[]> out = new java.util.ArrayList<>();
+        while (m.find()) {
+            out.add(new double[] {Double.parseDouble(m.group(1)), Double.parseDouble(m.group(2)),
+                Double.parseDouble(m.group(3)), Double.parseDouble(m.group(4))});
+        }
+        return out;
+    }
+
+    /// The y of the first HORIZONTAL line (y1 == y2) drawn with `stroke` — the message line for a
+    /// call/reply (an open-V reply also emits two non-horizontal lines with the reply stroke, which
+    /// this skips). Used to pin an activation bar's span to the actual call/reply y's, not to
+    /// brittle layout constants.
+    private static double horizontalLineY(String svg, String stroke) {
+        Matcher m = Pattern.compile("<line x1=\"[\\-0-9.]+\" y1=\"([\\-0-9.]+)\" x2=\"[\\-0-9.]+\""
+            + " y2=\"([\\-0-9.]+)\" stroke=\"" + stroke + "\"").matcher(svg);
+        while (m.find()) {
+            double y1 = Double.parseDouble(m.group(1));
+            double y2 = Double.parseDouble(m.group(2));
+            if (y1 == y2) {
+                return y1;
+            }
+        }
+        throw new AssertionError("no horizontal line with stroke " + stroke);
+    }
+
+    /// The rightmost lifeline x (a VERTICAL line, x1 == x2, LIFELINE stroke) — the callee's lifeline
+    /// in a two-actor A→B diagram (B is declared second → laid out to the right).
+    private static double rightmostLifelineX(String svg) {
+        Matcher m = Pattern.compile("<line x1=\"([\\-0-9.]+)\" y1=\"([\\-0-9.]+)\" x2=\"([\\-0-9.]+)\""
+            + " y2=\"([\\-0-9.]+)\" stroke=\"" + LIFELINE + "\"").matcher(svg);
+        double max = Double.NEGATIVE_INFINITY;
+        while (m.find()) {
+            double x1 = Double.parseDouble(m.group(1));
+            double x2 = Double.parseDouble(m.group(3));
+            if (x1 == x2) {
+                max = Math.max(max, x1);
+            }
+        }
+        assertTrue(Double.isFinite(max), "at least one lifeline");
+        return max;
+    }
+
+    @Test
+    void aCallReplyPairProducesOneActivationBarOnTheCalleeSpanningCallToReply() {
+        // A CALL `->>` activates its callee (B); the matching REPLY `-->>` from B deactivates it. So
+        // exactly ONE activation bar, on B's lifeline, spanning the call y down to the reply y.
+        String svg = Sirentide.render("sequence\nA ->> B : go\nB -->> A : ok\n");
+        List<double[]> bars = activationRects(svg);
+        assertEquals(1, bars.size(), "one call/reply pair → exactly one activation bar");
+        double[] bar = bars.get(0);
+        double callY = horizontalLineY(svg, CALL_STROKE);
+        double replyY = horizontalLineY(svg, REPLY_STROKE);
+        assertEquals(callY, bar[1], 1e-6, "the bar starts at the call's y");
+        assertEquals(replyY, bar[1] + bar[3], 1e-6, "the bar ends at the reply's y");
+        assertTrue(bar[3] > 0, "positive height");
+        // Centred on the callee's (B's, rightmost) lifeline.
+        double center = bar[0] + bar[2] / 2;
+        assertEquals(rightmostLifelineX(svg), center, 1e-6, "the bar sits on the callee's lifeline");
+    }
+
+    @Test
+    void nestedActivationsStackWithAnXOffset() {
+        // Two concurrent calls to B (before either reply) open TWO activations on B; each deactivates
+        // in LIFO order. The two bars stack with an ACT_OFFSET x-step so the overlap stays visible.
+        String svg = Sirentide.render("sequence\nA ->> B : c1\nA ->> B : c2\n"
+            + "B -->> A : r2\nB -->> A : r1\n");
+        List<double[]> bars = activationRects(svg);
+        assertEquals(2, bars.size(), "two concurrent activations → two stacked bars");
+        double x0 = bars.get(0)[0];
+        double x1 = bars.get(1)[0];
+        assertEquals(ACT_OFFSET, Math.abs(x0 - x1), 1e-6, "the nested bar steps ACT_OFFSET to the right");
+        // The inner (2nd) activation opens later and closes earlier → its bar is shorter and sits
+        // strictly inside the outer's y-span (LIFO nesting).
+        double[] outer = bars.get(0)[3] >= bars.get(1)[3] ? bars.get(0) : bars.get(1);
+        double[] inner = bars.get(0)[3] >= bars.get(1)[3] ? bars.get(1) : bars.get(0);
+        assertTrue(inner[1] > outer[1], "the inner activation opens after the outer");
+        assertTrue(inner[1] + inner[3] < outer[1] + outer[3], "the inner closes before the outer");
+    }
+
+    @Test
+    void anUnbalancedCallClosesAtTheDiagramBottomWithoutThrowing() {
+        // A call with NO matching reply must close cleanly at the diagram bottom (malformed→inert,
+        // never throw). The bar's bottom lands on the lifeline's bottom (contentBottom).
+        String svg = Sirentide.render("sequence\nA ->> B : go\n");
+        assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed, no throw");
+        List<double[]> bars = activationRects(svg);
+        assertEquals(1, bars.size(), "the unbalanced call still draws its bar");
+        double[] bar = bars.get(0);
+        // The lifeline's bottom y (y2 of a vertical LIFELINE line) is the diagram content bottom.
+        Matcher m = Pattern.compile("<line x1=\"([\\-0-9.]+)\" y1=\"[\\-0-9.]+\" x2=\"([\\-0-9.]+)\""
+            + " y2=\"([\\-0-9.]+)\" stroke=\"" + LIFELINE + "\"").matcher(svg);
+        assertTrue(m.find(), "a lifeline exists");
+        double lifelineBottom = Double.parseDouble(m.group(3));
+        assertEquals(lifelineBottom, bar[1] + bar[3], 1e-6, "the unbalanced bar closes at the diagram bottom");
     }
 }
