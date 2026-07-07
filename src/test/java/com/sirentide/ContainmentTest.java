@@ -82,6 +82,17 @@ class ContainmentTest {
         // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
         // cycle handling plus the new disc geometry, all through the allowlist.
         "state\n  [*] --> Idle\n  Idle --> Running : start\n  Running --> Idle : stop\n  Running --> [*]\n",
+        // quadrant chart (8th type): both axis ends, all four quadrant labels, points one-per-quadrant
+        // plus an OUT-OF-RANGE point (clamped into the unit square) and a LONG label that ellipsizes —
+        // exercises the tints (rect), border+crossing axes (line), quadrant/point/axis glyph runs, the
+        // palette discs (wedge), and the clamp/ellipsize containment, all through the allowlist.
+        "quadrant\n  x-axis \"Low Reach\" --> \"High Reach\"\n  y-axis \"Low Impact\" --> \"High Impact\"\n"
+            + "  quadrant-1 \"A really long quadrant label that must ellipsize inside its cell\"\n"
+            + "  quadrant-2 \"Quick win\"\n  quadrant-3 \"Deprioritize\"\n  quadrant-4 \"Fill-in\"\n"
+            + "  \"Feature A\" : [0.3, 0.6]\n  \"Out of range\" : [1.8, -0.5]\n  \"Malformed\" : nope\n",
+        // bare quadrant: no axis/quadrant labels, no points → a valid EMPTY 2×2 grid (still in-set,
+        // never the inert shell — the type round-trips even with an empty body).
+        "quadrant\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

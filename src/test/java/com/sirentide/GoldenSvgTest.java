@@ -53,6 +53,16 @@ class GoldenSvgTest {
             "sequence\n  Client ->> Gateway : GET /token\n  Gateway ->> Auth : validate\n"
                 + "  Auth -->> Gateway : ok\n  Gateway ->> Gateway : sign JWT\n"
                 + "  Gateway -->> Client : 200 token\n");
+        // A quadrant chart: both axis ends, all four quadrant labels, and points landing one per
+        // quadrant plus one dead-centre — pins the affine unit-square mapping, the y-flip, the tints,
+        // and the contrast-derived labels byte-for-byte.
+        FIXTURES.put("quadrant",
+            "quadrant\n  x-axis \"Low Reach\" --> \"High Reach\"\n"
+                + "  y-axis \"Low Impact\" --> \"High Impact\"\n"
+                + "  quadrant-1 \"Major project\"\n  quadrant-2 \"Quick win\"\n"
+                + "  quadrant-3 \"Deprioritize\"\n  quadrant-4 \"Fill-in\"\n"
+                + "  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.75, 0.8]\n"
+                + "  \"Feature C\" : [0.5, 0.2]\n");
     }
 
     @Test

@@ -123,6 +123,24 @@ Running --> [*]
 
 ![State diagram (lifecycle)](state.png)
 
+## Quadrant chart (2×2 prioritization matrix)
+
+```
+quadrant
+x-axis "Low Reach" --> "High Reach"
+y-axis "Low Impact" --> "High Impact"
+quadrant-1 "Major project"
+quadrant-2 "Quick win"
+quadrant-3 "Deprioritize"
+quadrant-4 "Fill-in"
+"Feature A" : [0.3, 0.6]
+"Feature B" : [0.75, 0.8]
+"Feature C" : [0.5, 0.2]
+"Feature D" : [0.85, 0.35]
+```
+
+![Quadrant chart (2×2 prioritization matrix)](quadrant.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```
