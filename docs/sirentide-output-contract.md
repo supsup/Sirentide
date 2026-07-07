@@ -35,9 +35,22 @@ Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTM
 - **No `<style>`.** All presentation is inline attributes; theming rides `currentColor` where possible (dark-mode-native, exactly like LatteX). The Stafficy sanitizer strips `<style>` anyway.
 - **No `<foreignObject>`, no `<script>`, no `on*`, no `<a>`/`href`, no external `url()`.**
 
+## What the emitter emits TODAY (the current producer surface)
+
+All **six shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`) and asserted by the `ContainmentTest`:
+
+| Element | Attributes emitted today |
+| --- | --- |
+| `svg` (root) | `xmlns` (= `http://www.w3.org/2000/svg`), `width`, `height`, `viewBox` |
+| `path` | `d`, `fill` — labels (as glyph paths), pie wedges, flowchart arrowhead triangles |
+| `rect` | `x`, `y`, `width`, `height`, `fill` — bars, boxes, node rectangles |
+| `line` | `x1`, `y1`, `x2`, `y2`, `stroke`, `stroke-width` — axes, lifelines, edges |
+
+**No `<g>`, no `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, no `<marker>`/`<defs>`, no `stroke-dasharray`, no `transform`, no `class`, and no `data-*` anchors are emitted yet.** The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
+
 ## The alphabet — GROWS PER MILESTONE
 
-The alphabet starts minimal and grows only as a milestone needs it. **M1 (pie / xychart / minimal linear sequence) needs NO `<marker>`/`<defs>`** — sequence arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). `<marker>`/`<defs>` are added at **M2** (denser diagrams) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
+The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all six diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). `<marker>`/`<defs>` are added at a later milestone (a fuller `sequence` with activation frames) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
 
 ### M1 — allowed elements
 `svg`, `g`, `path`, `rect`, `line`, `polyline`, `polygon`, `circle`, `ellipse`.
@@ -61,9 +74,9 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 ## Milestone growth ledger
 | Milestone | Adds to the alphabet |
 | --- | --- |
-| M1 (pie/xychart/min-sequence) | the element + attribute sets above; arrowheads = inline `<path>` |
-| M2 (fuller sequence, gantt/timeline) | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |
-| M-gate (graph-layout diagrams) | re-decision only; no new alphabet expected (still path/line/polygon) |
+| Shipped — all six types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed — the graph and time-axis types landed on the current path/line surface. |
+| Future — fuller `sequence` (activation frames, denser heads) | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |
+| Future — the effect / anchor layer | `<g>` groups carrying the closed `data-sirentide-*` anchor vocabulary (see the container contract) |
 
 Every row is a reviewed doc + test change, not a default.
 
