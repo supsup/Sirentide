@@ -126,7 +126,14 @@ public final class FlowchartLayout {
         for (int i = 0; i < n; i++) {
             String label = FONT.ellipsize(nodes.get(i).label(), MAX_LABEL_W, LABEL_SIZE);
             labels[i] = label;
-            boxW[i] = Math.max(MIN_BOX_W, FONT.runWidth(label, LABEL_SIZE) + 2 * PAD_X);
+            double lw = FONT.runWidth(label, LABEL_SIZE);
+            // A DIAMOND (M1.3) must CONTAIN its centered label: with height fixed at NODE_H
+            // (half-diagonal b = NODE_H/2) and the label box ~±6px tall, the rhombus containment
+            // condition (w/2)/a + 6/b <= 1 needs a >= 0.75·labelW — so the diamond is 1.5× wider
+            // than the text (+ padding). Its top/bottom/side VERTICES land exactly on the rect's
+            // edge anchors, so edge routing needs no change at all.
+            boolean diamond = "diamond".equals(nodes.get(i).shape());
+            boxW[i] = Math.max(MIN_BOX_W, (diamond ? 1.5 * lw : lw) + 2 * PAD_X);
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 
@@ -264,9 +271,22 @@ public final class FlowchartLayout {
             }
         }
 
-        // 2) node boxes.
+        // 2) node boxes: rects, or a DIAMOND path for a `{Label}` decision node (M1.3) — its four
+        // vertices are the box's top/bottom-center + left/right-middle, i.e. exactly the anchors
+        // the edges already attach to.
         for (int i = 0; i < n; i++) {
-            shapes.add(new Rect(nx[i], ny[i], boxW[i], NODE_H, NODE_FILL));
+            if ("diamond".equals(nodes.get(i).shape())) {
+                double cx = nx[i] + boxW[i] / 2;
+                double cy = ny[i] + NODE_H / 2;
+                String d = "M " + fmt(cx) + " " + fmt(ny[i])
+                    + " L " + fmt(nx[i] + boxW[i]) + " " + fmt(cy)
+                    + " L " + fmt(cx) + " " + fmt(ny[i] + NODE_H)
+                    + " L " + fmt(nx[i]) + " " + fmt(cy)
+                    + " Z";
+                shapes.add(new Path(d, NODE_FILL));
+            } else {
+                shapes.add(new Rect(nx[i], ny[i], boxW[i], NODE_H, NODE_FILL));
+            }
         }
 
         // 3) centered labels (glyph paths — never <text>).

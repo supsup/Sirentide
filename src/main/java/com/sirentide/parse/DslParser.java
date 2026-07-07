@@ -184,8 +184,10 @@ public final class DslParser {
             }
         }
         // Insertion-ordered id → label map: preserves first-seen node order and lets the first
-        // bracketed occurrence win the label (a later bare mention never overwrites it).
+        // decorated occurrence win the label (a later bare mention never overwrites it). Shapes
+        // ride a parallel map (absent = rect).
         LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
+        Map<String, String> nodeShapes = new java.util.HashMap<>();
         List<FlowEdge> edges = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -197,7 +199,7 @@ public final class DslParser {
                 // No edge operator → treat the whole line as a lone node declaration (`id[Label]`).
                 String[] nd = parseEndpoint(line);
                 if (nd != null) {
-                    registerNode(nodeLabels, nd);
+                    registerNode(nodeLabels, nodeShapes, nd);
                 }
                 continue;
             }
@@ -222,8 +224,8 @@ public final class DslParser {
             if (src == null || dst == null) {
                 continue;
             }
-            registerNode(nodeLabels, src);
-            registerNode(nodeLabels, dst);
+            registerNode(nodeLabels, nodeShapes, src);
+            registerNode(nodeLabels, nodeShapes, dst);
             // Only draw an edge whose BOTH endpoints actually registered (a node past MAX_NODES is
             // dropped, so its edges are too) and while under the edge cap.
             if (edges.size() < MAX_EDGES
@@ -233,46 +235,64 @@ public final class DslParser {
         }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
-            nodes.add(new FlowNode(e.getKey(), e.getValue()));
+            nodes.add(new FlowNode(e.getKey(), e.getValue(), nodeShapes.getOrDefault(e.getKey(), "rect")));
         }
         return new Flowchart(nodes, edges, direction, textColor);
     }
 
-    /// Parses one flowchart endpoint token into `{id, bracketLabelOrNull}`. A bare `id` returns a
-    /// null bracket-label (so the id becomes its own label); an `id[Label]` returns the trimmed +
-    /// capped label. An empty id → null (the caller drops the line). Both id and label are `cap()`'d.
+    /// Parses one flowchart endpoint token into `{id, labelOrNull, shapeOrNull}`. A bare `id`
+    /// returns null label/shape (the id becomes its own label, shape defaults to rect); `id[Label]`
+    /// claims a rect box, `id{Label}` a DIAMOND decision node (M1.3) — whichever delimiter appears
+    /// first wins. An empty id → null (the caller drops the line). Id and label are `cap()`'d.
     private static String[] parseEndpoint(String tok) {
         tok = tok.strip();
         if (tok.isEmpty()) {
             return null;
         }
-        int open = tok.indexOf('[');
-        if (open < 0) {
-            return new String[] {cap(tok), null};
+        int openB = tok.indexOf('[');
+        int openC = tok.indexOf('{');
+        int open;
+        char closeCh;
+        String shape;
+        if (openB >= 0 && (openC < 0 || openB < openC)) {
+            open = openB;
+            closeCh = ']';
+            shape = "rect";
+        } else if (openC >= 0) {
+            open = openC;
+            closeCh = '}';
+            shape = "diamond";
+        } else {
+            return new String[] {cap(tok), null, null};
         }
         String id = tok.substring(0, open).strip();
         if (id.isEmpty()) {
             return null;
         }
-        int close = tok.indexOf(']', open);
+        int close = tok.indexOf(closeCh, open);
         String label = close > open ? tok.substring(open + 1, close) : tok.substring(open + 1);
-        return new String[] {cap(id), cap(label.strip())};
+        return new String[] {cap(id), cap(label.strip()), shape};
     }
 
-    /// Registers a node in first-seen order. A brand-new id enters with its bracket label (or the id
-    /// itself when bare), subject to {@link #MAX_NODES}. An already-seen id UPGRADES from a default
-    /// (label == id) to its first bracketed label, but a node that already carries a bracket label
-    /// keeps it (first `[...]` occurrence wins).
-    private static void registerNode(LinkedHashMap<String, String> map, String[] nd) {
+    /// Registers a node in first-seen order. A brand-new id enters with its decorated label (or the
+    /// id itself when bare), subject to {@link #MAX_NODES}. An already-seen id UPGRADES from a
+    /// default (label == id) to its first decorated label; the first DECORATED occurrence also sets
+    /// the shape (a later bare mention never changes either).
+    private static void registerNode(LinkedHashMap<String, String> map, Map<String, String> shapes,
+                                     String[] nd) {
         String id = nd[0];
-        String bracketLabel = nd[1];   // null when the token was bare
+        String decoratedLabel = nd[1];   // null when the token was bare
+        String shape = nd[2];            // null when the token was bare
         if (!map.containsKey(id)) {
             if (map.size() >= MAX_NODES) {
                 return;   // drop past the node cap (never throw / never allocate unboundedly)
             }
-            map.put(id, bracketLabel != null ? bracketLabel : id);
-        } else if (bracketLabel != null && map.get(id).equals(id)) {
-            map.put(id, bracketLabel);   // first bracketed occurrence upgrades a bare default
+            map.put(id, decoratedLabel != null ? decoratedLabel : id);
+        } else if (decoratedLabel != null && map.get(id).equals(id)) {
+            map.put(id, decoratedLabel);   // first decorated occurrence upgrades a bare default
+        }
+        if (shape != null && map.containsKey(id) && !shapes.containsKey(id)) {
+            shapes.put(id, shape);   // first decorated occurrence wins the shape too
         }
     }
 

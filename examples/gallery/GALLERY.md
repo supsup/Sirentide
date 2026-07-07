@@ -77,9 +77,9 @@ gantt
 
 ```
 flowchart
-A[Open PR] --> B[Review]
-B -->|approve| C[Merge]
-B -->|request changes| D[Revise]
+A[Open PR] --> B{Approve?}
+B -->|yes| C[Merge]
+B -->|no| D[Revise]
 D -->|re-review| B
 ```
 
