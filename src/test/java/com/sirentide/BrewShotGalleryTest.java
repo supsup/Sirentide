@@ -80,6 +80,8 @@ class BrewShotGalleryTest {
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"
                 + "\nGateway -->> Client : 200 token"),
+        new Case("state", "State diagram (lifecycle)",
+            "state\n[*] --> Idle\nIdle --> Running : start\nRunning --> Idle : stop\nRunning --> [*]"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

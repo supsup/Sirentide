@@ -62,7 +62,34 @@ public final class FlowchartLayout {
         return Math.max(CLAMP_MARGIN, Math.min(x, canvasW - CLAMP_MARGIN - w));
     }
 
+    /// The default node styler: a rect box, or a diamond `<path>` for a `{Label}` decision node —
+    /// byte-for-byte the emission that used to be inline in both the TD and LR passes, so every
+    /// flowchart golden is unchanged by the styler seam. State diagrams pass a different styler
+    /// ({@link StateDiagramLayout}) to reskin the SAME boxes (discs for pseudostates) without forking
+    /// this engine.
+    static final NodeStyler DEFAULT_STYLER = (shapes, i, x, y, w, h, shape, fill) -> {
+        if ("diamond".equals(shape)) {
+            double cx = x + w / 2;
+            double cy = y + h / 2;
+            String d = "M " + fmt(cx) + " " + fmt(y)
+                + " L " + fmt(x + w) + " " + fmt(cy)
+                + " L " + fmt(cx) + " " + fmt(y + h)
+                + " L " + fmt(x) + " " + fmt(cy)
+                + " Z";
+            shapes.add(new Path(d, fill));
+        } else {
+            shapes.add(new Rect(x, y, w, h, fill));
+        }
+    };
+
     public static LaidOut layout(Flowchart fc) {
+        return layout(fc, DEFAULT_STYLER);
+    }
+
+    /// The parameterized engine: identical layered-graph layout for every caller, with only the
+    /// final node-drawing step delegated to `styler` (DESIGN §5 — one graph engine, two presentations).
+    /// Package-private so a sibling layout (state diagram) can drive it without exposing the seam.
+    static LaidOut layout(Flowchart fc, NodeStyler styler) {
         List<FlowNode> nodes = fc.nodes();
         int n = nodes.size();
         // 0 nodes → a small blank-but-valid canvas (a bare `flowchart` still round-trips as one).
@@ -157,7 +184,7 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack);
+            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack, styler);
         }
 
         // Canvas width = widest layer + margins.
@@ -298,22 +325,12 @@ public final class FlowchartLayout {
             }
         }
 
-        // 2) node boxes: rects, or a DIAMOND path for a `{Label}` decision node (M1.3) — its four
-        // vertices are the box's top/bottom-center + left/right-middle, i.e. exactly the anchors
-        // the edges already attach to.
+        // 2) node boxes via the STYLER seam (default = rect / diamond `<path>` for a decision node;
+        // the four diamond vertices are the box's top/bottom-center + left/right-middle, i.e. exactly
+        // the anchors the edges already attach to). A state diagram substitutes disc/bullseye discs
+        // for its pseudostates here without any change to the layering/edge geometry above.
         for (int i = 0; i < n; i++) {
-            if ("diamond".equals(nodes.get(i).shape())) {
-                double cx = nx[i] + boxW[i] / 2;
-                double cy = ny[i] + NODE_H / 2;
-                String d = "M " + fmt(cx) + " " + fmt(ny[i])
-                    + " L " + fmt(nx[i] + boxW[i]) + " " + fmt(cy)
-                    + " L " + fmt(cx) + " " + fmt(ny[i] + NODE_H)
-                    + " L " + fmt(nx[i]) + " " + fmt(cy)
-                    + " Z";
-                shapes.add(new Path(d, NODE_FILL));
-            } else {
-                shapes.add(new Rect(nx[i], ny[i], boxW[i], NODE_H, NODE_FILL));
-            }
+            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), NODE_FILL);
         }
 
         // 3) centered labels (glyph paths — never <text>).
@@ -338,7 +355,7 @@ public final class FlowchartLayout {
     /// diamond path is untouched: its left/right vertices already land on the LR side anchors.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     List<List<Integer>> byLayer, double[] boxW, String[] labels,
-                                    List<Edge> edges, boolean[] isBack) {
+                                    List<Edge> edges, boolean[] isBack, NodeStyler styler) {
         // -- columns: colW[L] = widest box in layer L; colX marches left→right by colW + LAYER_GAP.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -475,21 +492,11 @@ public final class FlowchartLayout {
             }
         }
 
-        // 2) node boxes: rect, or a DIAMOND path (its top/bottom/side vertices are the anchors edges
-        // attach to — identical construction to TD, no change needed for LR).
+        // 2) node boxes via the STYLER seam (default = rect / diamond `<path>`; identical construction
+        // to TD, no change needed for LR — the diamond's left/right vertices already land on the LR
+        // side anchors). A state diagram reskins pseudostates here without touching the geometry above.
         for (int i = 0; i < n; i++) {
-            if ("diamond".equals(nodes.get(i).shape())) {
-                double cx = nx[i] + boxW[i] / 2;
-                double cy = ny[i] + NODE_H / 2;
-                String d = "M " + fmt(cx) + " " + fmt(ny[i])
-                    + " L " + fmt(nx[i] + boxW[i]) + " " + fmt(cy)
-                    + " L " + fmt(cx) + " " + fmt(ny[i] + NODE_H)
-                    + " L " + fmt(nx[i]) + " " + fmt(cy)
-                    + " Z";
-                shapes.add(new Path(d, NODE_FILL));
-            } else {
-                shapes.add(new Rect(nx[i], ny[i], boxW[i], NODE_H, NODE_FILL));
-            }
+            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), NODE_FILL);
         }
 
         // 3) centered labels (glyph paths — never <text>).

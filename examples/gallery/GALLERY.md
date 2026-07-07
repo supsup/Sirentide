@@ -111,6 +111,18 @@ Gateway -->> Client : 200 token
 
 ![Sequence (API token flow)](sequence.png)
 
+## State diagram (lifecycle)
+
+```
+state
+[*] --> Idle
+Idle --> Running : start
+Running --> Idle : stop
+Running --> [*]
+```
+
+![State diagram (lifecycle)](state.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```
