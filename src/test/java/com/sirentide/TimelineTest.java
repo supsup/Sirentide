@@ -1,9 +1,14 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
+import com.sirentide.ir.Slice;
+import com.sirentide.ir.Timeline;
+import com.sirentide.parse.DslParser;
+import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 
 /// Sirentide's third diagram type: a timeline renders an axis (line), an event dot per row
@@ -16,6 +21,30 @@ class TimelineTest {
             n++;
         }
         return n;
+    }
+
+    @Test
+    void a2_isoDateEventsRememberTheirDateForDisplay() {
+        // REGRESSION (A2, deep-review sirentide/14): an ISO date parses to an opaque epoch-day for
+        // placement; the Slice used to keep only that double, so the label printed the epoch number
+        // (e.g. 18276) instead of the date. The Slice now carries the original date token in
+        // valueLabel; a bare year / plain number keeps valueLabel null and formats numerically.
+        Timeline t = (Timeline) DslParser.parse("""
+            timeline
+              "Launch"  : 2020-01-15
+              "Review"  : 2020-06
+              "Founded" : 2019
+            """);
+        Slice dated = t.events().get(0);
+        assertEquals("2020-01-15", dated.valueLabel(), "the full ISO date is the display label");
+        assertEquals(LocalDate.of(2020, 1, 15).toEpochDay(), (long) dated.value(), "placement stays epoch-day");
+
+        Slice yearMonth = t.events().get(1);
+        assertEquals("2020-06", yearMonth.valueLabel(), "year-month shows as the author wrote it");
+
+        Slice bareYear = t.events().get(2);
+        assertNull(bareYear.valueLabel(), "a bare year is a plain number — no date label");
+        assertEquals(2019.0, bareYear.value(), 1e-9, "and its numeric value is the year itself");
     }
 
     @Test

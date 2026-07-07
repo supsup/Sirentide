@@ -189,7 +189,11 @@ public final class DslParser {
                 if (!Double.isFinite(value)) {
                     continue;
                 }
-                data.add(new Slice(label, value, color));
+                // An ISO-date token became an opaque epoch-day for placement; remember the original
+                // so the timeline shows `2020-01-15`, not the epoch number `18276` (A2). A bare
+                // year / plain number keeps a null valueLabel and formats numerically as before.
+                String valueLabel = (dateAware && AxisScale.isDateToken(valueTok)) ? valueTok : null;
+                data.add(new Slice(label, value, color, valueLabel));
             } catch (NumberFormatException e) {
                 // Skip a malformed row.
             }
