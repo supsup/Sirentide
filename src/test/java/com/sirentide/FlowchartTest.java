@@ -73,6 +73,20 @@ class FlowchartTest {
     }
 
     @Test
+    void diamondDecisionNodesParseAndRender() {
+        // M1.3: `id{Label}` = a diamond decision node; `id[Label]`/bare = rect (default).
+        Flowchart fc = parse("flowchart\nA{Tests green?} -->|yes| B[Ship]\nA -->|no| C[Fix]\n");
+        assertEquals("diamond", fc.nodes().get(0).shape());
+        assertEquals("Tests green?", fc.nodes().get(0).label());
+        assertEquals("rect", fc.nodes().get(1).shape());
+        assertEquals("rect", fc.nodes().get(2).shape(), "an undecorated node defaults to rect");
+        // The diamond node draws as a <path>, not a <rect>: 3 nodes, only 2 rects.
+        String svg = Sirentide.render("flowchart\nA{Q} --> B[Yes]\nA --> C[No]\n");
+        assertEquals(2, count(svg, "<rect"), "the diamond isn't a rect");
+        assertTrue(svg.startsWith("<svg"), "well-formed");
+    }
+
+    @Test
     void bareIdsUseIdAsLabel() {
         Flowchart fc = parse("flowchart\nA --> B\n");
         Map<String, String> labels = labelsById(fc);
