@@ -15,7 +15,7 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Status
 
-Greenlit and building. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **six diagram types** are built today — each baked to inert `svg/path/rect/line` geometry. See the [gallery](examples/gallery/GALLERY.md) for real-browser renders, and the docs below for where it's going.
+Greenlit and building. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **six diagram types** are built today — each baked to inert `svg/path/rect/line` geometry. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md); the docs below say where it's going.
 
 | Type | One-liner | Sample |
 |---|---|---|
