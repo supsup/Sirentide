@@ -501,6 +501,23 @@ public final class DslParser {
     /// NON-COLOUR trailing junk after a closed delimiter (`A[Start] junk`), a NESTED/unbalanced
     /// delimiter inside the label (`A[Start --> B[End]`), or a BARE id with a trailing `#hex`
     /// (`A #22c55e` — ambiguous with a multi-word id, so it drops rather than guessing).
+    /// Peel a trailing `: label` off a diagram line at the FIRST colon (any
+    /// surrounding spacing), returning {@code [preColonHead, label]} where label
+    /// is null when absent/empty. Only the first colon delimits, so a colon
+    /// INSIDE the label survives; an arrow token in the pre-colon head stays
+    /// inert (callers scan the head). THE single colon-peel every label-carrying
+    /// diagram type uses — so the no-space-colon regression class (sirentide/33
+    /// sequence, /35 state) cannot be reintroduced one type at a time. Label is
+    /// stripped but NOT capped (callers cap).
+    static String[] peelLabel(String line) {
+        int colon = line.indexOf(':');
+        if (colon < 0) {
+            return new String[] {line, null};
+        }
+        String raw = line.substring(colon + 1).strip();
+        return new String[] {line.substring(0, colon), raw.isEmpty() ? null : raw};
+    }
+
     private static String[] parseEndpoint(String tok) {
         tok = tok.strip();
         if (tok.isEmpty()) {
@@ -640,14 +657,9 @@ public final class DslParser {
             // arrow lives in the pre-colon HEAD, so an arrow token in the label is inert
             // (operator-scan discipline, mirrors the flowchart); a colon INSIDE the label survives
             // because only the FIRST colon delimits. Actor names cannot contain ':' (as before).
-            String head = line;
-            String label = null;
-            int colon = line.indexOf(':');
-            if (colon >= 0) {
-                head = line.substring(0, colon);
-                String raw = line.substring(colon + 1).strip();
-                label = raw.isEmpty() ? null : cap(raw);
-            }
+            String[] peeled = peelLabel(line);
+            String head = peeled[0];
+            String label = peeled[1] == null ? null : cap(peeled[1]);
             // Scan the head for the arrow token (leftmost, longest-at-position). null → no arrow → drop.
             SeqArrow arrow = scanSeqArrow(head);
             if (arrow == null) {
@@ -748,14 +760,9 @@ public final class DslParser {
             }
             // Split off the FIRST ` : ` tail. The colon FOLLOWS the destination, so scan arrows on the
             // pre-colon segment: the tail is a transition label (arrows present) or a display name (not).
-            String edgesPart = line;
-            String tail = null;
-            int colon = line.indexOf(" : ");
-            if (colon >= 0) {
-                edgesPart = line.substring(0, colon).strip();
-                String raw = line.substring(colon + 3).strip();
-                tail = raw.isEmpty() ? null : cap(raw);
-            }
+            String[] peeled = peelLabel(line);
+            String edgesPart = peeled[0].strip();
+            String tail = peeled[1] == null ? null : cap(peeled[1]);
             List<Integer> arrows = topLevelArrows(edgesPart);
             if (arrows.isEmpty()) {
                 // Bare state declaration: `S`, `S : display name`, or `S #hex` (per-state colour). A
