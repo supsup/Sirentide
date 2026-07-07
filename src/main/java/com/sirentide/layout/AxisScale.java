@@ -90,9 +90,16 @@ public final class AxisScale {
             return out;
         }
         double start = Math.ceil(min / step) * step;
+        // Ticks land on multiples of `step`, so they carry at most the step's decimal precision.
+        // Round each to THAT precision (H4): otherwise `start + k*step` leaves float dust — a
+        // domain [0,0.7] yields 0.30000000000000004 and a last tick 0.7000000000000001 that both
+        // renders as a garbled glyph label AND exceeds max (breaking the within-[min,max] invariant).
+        // decimals = places needed to write `step` exactly (0.1→1, 0.05→2, 2→0); capped for pow safety.
+        int decimals = Math.min(12, Math.max(0, (int) Math.ceil(-Math.log10(step) - 1e-9)));
+        double pow = Math.pow(10, decimals);
         // Iterate on an integer index to avoid floating-point drift accumulating across the range.
         for (int k = 0; k <= 1000; k++) {
-            double tick = start + k * step;
+            double tick = Math.round((start + k * step) * pow) / pow;   // snap to step precision
             if (tick > max + step * 1e-9) {
                 break;
             }

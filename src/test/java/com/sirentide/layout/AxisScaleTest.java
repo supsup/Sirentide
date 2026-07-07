@@ -107,4 +107,24 @@ class AxisScaleTest {
         assertTrue(Double.isFinite(a.project(5, 0, 100)));
         assertEquals(List.of(5.0), a.ticks());
     }
+
+    @Test
+    void h4_fractionalTicksAreCleanAndStayWithinTheDomain() {
+        // REGRESSION (H4, deep-review sirentide/14): `start + k*step` left float dust — a [0,0.7]
+        // domain yielded 0.30000000000000004 and a LAST tick 0.7000000000000001 that both rendered
+        // as a garbled y-axis glyph label AND exceeded max (breaking the within-[min,max] invariant).
+        // Ticks now round to the step's decimal precision.
+        AxisScale a = new AxisScale(0, 0.7);
+        List<Double> ticks = a.ticks();
+        for (double t : ticks) {
+            // no float dust: step is 0.1 here, so each tick equals its 1-decimal rounding exactly
+            assertEquals(Math.round(t * 10.0) / 10.0, t, 0.0, "tick carries float dust: " + t);
+            // the documented [min, max] invariant holds for every tick
+            assertTrue(t >= a.min() - EPS && t <= a.max() + EPS, "tick outside [min,max]: " + t);
+        }
+        assertTrue(ticks.contains(0.3), "0.3 is a clean tick, not 0.30000000000000004: " + ticks);
+        assertEquals(a.max(), ticks.get(ticks.size() - 1), EPS, "last tick == max, never exceeds it");
+        // Integer domains are unchanged (round-trip through the new rounding is a no-op).
+        assertEquals(List.of(0.0, 2.0, 4.0, 6.0, 8.0, 10.0), new AxisScale(0, 10).ticks());
+    }
 }
