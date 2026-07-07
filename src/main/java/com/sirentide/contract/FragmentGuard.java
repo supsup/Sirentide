@@ -21,12 +21,18 @@ public final class FragmentGuard {
     private FragmentGuard() {}
 
     /// Elements a fragment may contain.
-    private static final Set<String> ELEMENTS = Set.of("g", "path");
+    // {g, path, rect}: LatteX emits fraction bars + radical bars as <rect> (SvgEmitter rule-emit),
+    // so a fragment for $\frac{a}{b}$ / $\sqrt{2}$ carries a rect — admit it or the commonest label
+    // math degrades to text (math-in-labels S2; the /docs sanitizer already allows rect).
+    private static final Set<String> ELEMENTS = Set.of("g", "path", "rect");
 
     /// Attributes allowed per element.
     private static final Map<String, Set<String>> ATTRS = Map.of(
         "g", Set.of("transform", "fill"),
-        "path", Set.of("d", "fill", "transform"));
+        "path", Set.of("d", "fill", "transform"),
+        // rect (fraction/radical bar): numeric geometry + optional legal fill (LatteX 0.4.0+ stamps
+        // a fill on the bar for a \color'd fraction, so a colored bar-in-a-label stays colored).
+        "rect", Set.of("x", "y", "width", "height", "fill"));
 
     /// Matches one tag token: `<g …>`, `</g>`, `<path …/>`. The attr blob is captured loosely and
     /// validated separately; the `[^<>]*` body guarantees no nested `<`/`>` sneaks inside a tag.
@@ -38,6 +44,10 @@ public final class FragmentGuard {
     /// The `d` path-data grammar: SVG path commands + finite numbers/separators only. No letters
     /// beyond the command set, so no `url(`, no function calls.
     private static final Pattern PATH_D = Pattern.compile("[MmLlHhVvCcSsQqTtAaZz0-9eE .,+-]*");
+
+    /// A single finite decimal — the numeric grammar for a rect's x/y/width/height (no functions,
+    /// no url(), no expressions). Matches the deterministic form the emitter's fmt() produces.
+    private static final Pattern NUMBER = Pattern.compile("-?\\d+(\\.\\d+)?");
 
     /// True iff `innerSvg` is a contract-clean fragment (only g/path, allowed attrs, legal values).
     /// A `null` or blank fragment is NOT clean (there is nothing to trust).
@@ -105,6 +115,8 @@ public final class FragmentGuard {
             case "fill" -> SirentideContract.isColor(value);
             case "transform" -> SirentideContract.TRANSFORM.matcher(value).matches();
             case "d" -> PATH_D.matcher(value).matches();
+            // rect geometry scalars: a single finite decimal, same numeric class the emitter formats.
+            case "x", "y", "width", "height" -> NUMBER.matcher(value).matches();
             default -> false;
         };
     }

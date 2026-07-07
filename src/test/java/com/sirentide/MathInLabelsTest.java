@@ -110,8 +110,25 @@ class MathInLabelsTest {
 
     @Test
     void guard_rejectsForeignElement() {
-        assertFalse(FragmentGuard.isClean("<rect x=\"0\" y=\"0\"/>"));
+        // rect is now ADMITTED (S2: fraction/radical bars) — use genuinely-foreign elements here.
+        assertFalse(FragmentGuard.isClean("<circle cx=\"0\" cy=\"0\" r=\"1\"/>"));
         assertFalse(FragmentGuard.isClean("<g><foreignObject/></g>"));
+    }
+
+    @Test
+    void guard_acceptsCleanRect() {
+        // A fraction/radical bar: numeric geometry + optional legal fill (LatteX rule-emit).
+        assertTrue(FragmentGuard.isClean(
+            "<g transform=\"translate(0 0)\"><rect x=\"0\" y=\"-4.2\" width=\"8\" height=\"0.6\" fill=\"#ff0000\"/></g>"));
+        assertTrue(FragmentGuard.isClean("<rect x=\"1\" y=\"2\" width=\"3\" height=\"4\"/>"));
+    }
+
+    @Test
+    void guard_rejectsRectWithNonNumericOrForeignAttr() {
+        // geometry must be a finite number (no url(), calc(), expressions)...
+        assertFalse(FragmentGuard.isClean("<rect x=\"0\" y=\"0\" width=\"url(#x)\" height=\"1\"/>"));
+        // ...and rect carries no rx/ry/stroke/on* — only x/y/width/height/fill.
+        assertFalse(FragmentGuard.isClean("<rect x=\"0\" y=\"0\" width=\"1\" height=\"1\" onclick=\"x()\"/>"));
     }
 
     // -- Conf F3 pins (RFC sirentide/49): the belt-and-suspenders branches were vacuously
