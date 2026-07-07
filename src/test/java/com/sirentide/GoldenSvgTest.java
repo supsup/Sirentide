@@ -39,6 +39,12 @@ class GoldenSvgTest {
             "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n");
         FIXTURES.put("gantt",
             "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n  \"Test\" : 7-10\n");
+        // A TD decision flow: a diamond ({Ready?}), labeled edges (yes/no), a CHAINED hop
+        // (C[Build] --> D[Ship], E[Fix] --> A), and a CYCLE (E→A→…→E). Pins the parser-hardening
+        // behaviour (operator-scan split + per-hop labels + chain expansion) byte-for-byte.
+        FIXTURES.put("flowchart",
+            "flowchart TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Build] --> D[Ship]\n"
+                + "  B -->|no| E[Fix] --> A\n");
     }
 
     @Test
