@@ -45,6 +45,14 @@ class GoldenSvgTest {
         FIXTURES.put("flowchart",
             "flowchart TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Build] --> D[Ship]\n"
                 + "  B -->|no| E[Fix] --> A\n");
+        // A 3-actor sequence with ACTIVATION bars (M2): Client→Gateway opens Gateway's bar,
+        // Gateway→Auth opens Auth's, Auth-->>Gateway closes Auth's, a NESTED self-call on Gateway
+        // stacks an offset bar, and the final reply closes it — pinning the activation-rect geometry
+        // (start/end y, nesting x-offset, unbalanced close) byte-for-byte.
+        FIXTURES.put("sequence",
+            "sequence\n  Client ->> Gateway : GET /token\n  Gateway ->> Auth : validate\n"
+                + "  Auth -->> Gateway : ok\n  Gateway ->> Gateway : sign JWT\n"
+                + "  Gateway -->> Client : 200 token\n");
     }
 
     @Test

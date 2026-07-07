@@ -73,6 +73,11 @@ class ContainmentTest {
         // sequence ZERO-ACTOR degrade (fix 2): a NON-EMPTY body where every line is malformed renders a
         // visible `sequence: no messages parsed` glyph-run canvas — must stay in-set, not the inert shell.
         "sequence\n  garbage line\n  more garbage\n",
+        // sequence ACTIVATION bars (M2): a call `->>` opens an activation on its callee, a reply `-->>`
+        // closes it, a NESTED concurrent call stacks an offset bar, and a trailing UNBALANCED call
+        // (no reply) closes at the diagram bottom — exercises the new ACT_FILL <rect>s through the
+        // allowlist (rect is already in-set; this proves the activation rects obey the value grammar).
+        "sequence\n  A ->> B : c1\n  A ->> B : c2\n  B -->> A : r2\n  B -->> A : r1\n  A ->> B : dangling\n",
         // state diagram (7th type): `[*]` start + end pseudostates (disc + bullseye Wedge paths), a
         // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
         // cycle handling plus the new disc geometry, all through the allowlist.
