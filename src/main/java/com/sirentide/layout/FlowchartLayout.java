@@ -62,6 +62,19 @@ public final class FlowchartLayout {
         return Math.max(CLAMP_MARGIN, Math.min(x, canvasW - CLAMP_MARGIN - w));
     }
 
+    /// Bound an edge label to the CANVAS width before placing it. Parse-side ellipsization caps the
+    /// label at MAX_EDGE_LABEL_W — a canvas-INDEPENDENT bound — so when the canvas is NARROWER than the
+    /// label (two tiny nodes + a long `-->|label|`), the label is still wider than canvasW-2·CLAMP.
+    /// Then {@link #clampLabelX}'s [CLAMP, canvasW-CLAMP-w] interval INVERTS (max < min) and pins x to
+    /// CLAMP with w unchanged → x+w escapes off the right edge (the TD clamp-floor regression). Fix:
+    /// re-ellipsize to the canvas-relative bound (`min(MAX_EDGE_LABEL_W, canvasW-2·CLAMP)`, since the
+    /// label already ≤ MAX_EDGE_LABEL_W) so the width itself fits before clamping. May return "" when
+    /// even an ellipsis won't fit a hair-thin canvas — the caller then skips the glyph (edge still
+    /// draws). Shared by TD + LR, forward + back edges.
+    private static String boundLabelToCanvas(String label, double canvasW) {
+        return FONT.ellipsize(label, canvasW - 2 * CLAMP_MARGIN, EDGE_LABEL_SIZE);
+    }
+
     /// The default node styler: a rect box, or a diamond `<path>` for a `{Label}` decision node —
     /// byte-for-byte the emission that used to be inline in both the TD and LR passes, so every
     /// flowchart golden is unchanged by the styler seam. State diagrams pass a different styler
@@ -281,8 +294,8 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
-                String bl = e.label();
-                if (bl != null) {
+                String bl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+                if (bl != null && !bl.isBlank()) {
                     double lblY = (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35;
                     double lblX = clampLabelX(laneX + EDGE_LABEL_GAP,
                         FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
@@ -320,8 +333,8 @@ public final class FlowchartLayout {
             // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
             // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
             // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
-            String fl = e.label();
-            if (fl != null) {
+            String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+            if (fl != null && !fl.isBlank()) {
                 double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
                 double midX = (scx + baseCx) / 2;
                 double lblX = dx >= 0
@@ -452,8 +465,8 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
-                String bl = e.label();
-                if (bl != null) {
+                String bl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+                if (bl != null && !bl.isBlank()) {
                     double lblX = clampLabelX((sx + tx) / 2 + EDGE_LABEL_GAP,
                         FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
                     double lblY = laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7;
@@ -490,8 +503,8 @@ public final class FlowchartLayout {
             // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
             // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it. Keeps a
             // fan-out's labels ("yes"/"no") from colliding.
-            String fl = e.label();
-            if (fl != null) {
+            String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
+            if (fl != null && !fl.isBlank()) {
                 double midX = (sx + baseX) / 2;
                 double midY = (sy + baseY) / 2;
                 double lblY = dy > 0

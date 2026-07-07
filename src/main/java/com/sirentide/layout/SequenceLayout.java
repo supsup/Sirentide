@@ -53,12 +53,21 @@ public final class SequenceLayout {
     private static final double V_DY = 5.74;          // open-V half-spread ≈ ARROW_LEN·sin35°
     private static final double EDGE_PAD = 2;         // labels are clamped inside [EDGE_PAD, W-EDGE_PAD]
 
+    /// The visible-degrade message for a non-empty body that parsed to ZERO actors (every line
+    /// malformed) — drawn as a glyph run so a mistyped sequence never renders as silent nothing.
+    private static final String DEGRADE_MSG = "sequence: no messages parsed";
+
     public static LaidOut layout(Sequence seq) {
         List<String> actors = seq.actors();
         int n = actors.size();
-        // 0 actors → a small blank-but-valid canvas (a bare `sequence` still round-trips as one).
         if (n == 0) {
-            return LaidOut.of(MIN_W, MIN_H);
+            // A bare `sequence` header (no body) is an INTENTIONAL empty diagram → keep the minimal
+            // blank canvas. But a NON-EMPTY body that parsed to zero actors is an ERROR (every line
+            // malformed) → degrade VISIBLY with a small message canvas, never a silent blank shell.
+            if (!seq.bodyHadContent()) {
+                return LaidOut.of(MIN_W, MIN_H);
+            }
+            return degradeNoMessages(seq.textColor());
         }
 
         String textColor = seq.textColor();
@@ -237,6 +246,23 @@ public final class SequenceLayout {
                 shapes.add(new GlyphRun(d, textColor));
             }
         }
+    }
+
+    /// The VISIBLE degrade for a non-empty sequence body that parsed to zero actors: a small canvas
+    /// with a single one-line glyph-run message (11px, `textColor` → `currentColor`), clamped
+    /// in-canvas. Never the silent inert shell — a mistyped diagram must still say something.
+    private static LaidOut degradeNoMessages(String textColor) {
+        double tw = FONT.runWidth(DEGRADE_MSG, MSG_LABEL_SIZE);
+        double w = tw + 2 * MARGIN;
+        double h = MIN_H;
+        double runX = clamp(MARGIN, tw, w);   // keep the whole run inside [EDGE_PAD, w-EDGE_PAD]
+        double baseline = h / 2 + MSG_LABEL_SIZE * 0.35;
+        List<Shape> shapes = new ArrayList<>();
+        String d = FONT.textPathD(DEGRADE_MSG, runX, baseline, MSG_LABEL_SIZE);
+        if (!d.isBlank()) {
+            shapes.add(new GlyphRun(d, textColor));
+        }
+        return new LaidOut(w, h, shapes);
     }
 
     /// Clamps a glyph-run's start x so the whole run `[x, x+w]` stays inside `[EDGE_PAD, W-EDGE_PAD]`

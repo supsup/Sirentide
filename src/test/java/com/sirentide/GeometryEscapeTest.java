@@ -55,6 +55,16 @@ class GeometryEscapeTest {
             "flowchart\nA --> C\nB -->|this forward label can escape left| C");
     }
 
+    @Test
+    void flowchartNarrowCanvasEdgeLabelStaysInCanvas() {
+        // Two tiny nodes + an edge label far WIDER than the whole canvas: the parse-side
+        // MAX_EDGE_LABEL_W cap is canvas-independent, so the label still exceeds canvasW and
+        // clampLabelX's interval inverts, pinning x at CLAMP with w unchanged → x+w escapes the right
+        // edge (the TD clamp-floor regression). The canvas-relative ellipsize must contain it.
+        assertContained(
+            "flowchart\nA -->|this is an extremely long edge label that far exceeds the canvas width| B");
+    }
+
     private static void assertContained(String dsl) {
         String svg = Sirentide.render(dsl);
         Matcher wm = SVG_WIDTH.matcher(svg);

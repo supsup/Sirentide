@@ -605,57 +605,53 @@ public final class DslParser {
     /// Bob  -->> Alice : Token
     /// Alice ->> Alice : Validate locally
     /// ```
-    /// Each body line is `FROM ARROW TO : label`. The ARROW is `->>` (a CALL — solid, filled
-    /// triangle head) or `-->>` (a RETURN/REPLY — lighter, open-V head); the LONGER `-->>` wins
-    /// (it CONTAINS `->>` as a substring, so scan for `-->>` first). The label is everything after
-    /// the FIRST `:` following the arrow and is OPTIONAL (no colon → no label). Both endpoints
-    /// auto-register in first-seen order (a self-message `A ->> A` registers `A` once). A malformed
-    /// line — no arrow token, or an empty endpoint — is DROPPED whole (never throws, DESIGN §6).
-    /// Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages; ids/labels `cap()`'d. A
-    /// bare `sequence` body → a Sequence with no actors (still a sequence, round-trips — NOT Empty).
+    /// Each body line is `FROM ARROW TO : label`. The ARROW is a CALL — `->>` or its alias `->`
+    /// (solid, filled-triangle head) — or a REPLY — `-->>` or its alias `-->` (lighter, open-V head).
+    ///
+    /// SPLIT DISCIPLINE (mirrors the flowchart operator-scan): split at the FIRST ` : ` first — that
+    /// is the OPTIONAL label delimiter, and the label follows the whole arrow region — then scan the
+    /// pre-colon HEAD for the arrow token. So an arrow INSIDE the label (`A ->> B : retry -> escalate`)
+    /// is inert (post-colon), never a mis-split. The head scan is LEFTMOST + LONGEST-at-position
+    /// ({@link #scanSeqArrow}): at each offset it tries `-->>` (len 4) before `->>`/`-->` (len 3)
+    /// before `->` (len 2), so a longer form never mis-splits (`->>` is a substring of `-->>`; `->` of
+    /// all of them). CONSEQUENCE: actor names cannot contain an arrow token or ` : ` (documented).
+    ///
+    /// Both endpoints auto-register in first-seen order (a self-message `A ->> A` registers `A` once).
+    /// A malformed line — no arrow token in the head, or an empty endpoint — is DROPPED whole (never
+    /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages;
+    /// ids/labels `cap()`'d. A bare `sequence` body (no non-blank lines) → a Sequence with no actors
+    /// and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY body that parses to zero
+    /// actors (every line malformed) sets `bodyHadContent=true` so layout degrades VISIBLY.
     private static Diagram parseSequence(String[] lines, String[] header, String textColor) {
         // Header `nodecolor=#hex` colours ALL actor heads (per-actor colours are a follow-up — no
         // actor-decl syntax yet). null → the layout's built-in head fill.
         String nodeColor = parseNodeColor(header);
         LinkedHashSet<String> actors = new LinkedHashSet<>();
         List<SeqMessage> messages = new ArrayList<>();
+        boolean bodyHadContent = false;
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
                 continue;
             }
-            // Longer token wins: `-->>` contains `->>` at offset+1, so look for the reply arrow FIRST.
-            boolean reply;
-            int arrowPos;
-            int arrowLen;
-            int r = line.indexOf("-->>");
-            if (r >= 0) {
-                reply = true;
-                arrowPos = r;
-                arrowLen = 4;
-            } else {
-                int c = line.indexOf("->>");
-                if (c < 0) {
-                    continue;   // no arrow token → malformed, drop the line
-                }
-                reply = false;
-                arrowPos = c;
-                arrowLen = 3;
-            }
-            String from = cap(line.substring(0, arrowPos).strip());
-            String rest = line.substring(arrowPos + arrowLen);
-            // The label is everything after the FIRST `:` following the arrow (optional).
-            int colon = rest.indexOf(':');
-            String to;
-            String label;
+            bodyHadContent = true;   // a non-blank body line existed (even if it turns out malformed)
+            // Peel the OPTIONAL label at the FIRST ` : ` — the arrow lives in the pre-colon HEAD, so an
+            // arrow token in the label is inert (operator-scan discipline, mirrors the flowchart).
+            String head = line;
+            String label = null;
+            int colon = line.indexOf(" : ");
             if (colon >= 0) {
-                to = cap(rest.substring(0, colon).strip());
-                String raw = rest.substring(colon + 1).strip();
+                head = line.substring(0, colon);
+                String raw = line.substring(colon + 3).strip();
                 label = raw.isEmpty() ? null : cap(raw);
-            } else {
-                to = cap(rest.strip());
-                label = null;
             }
+            // Scan the head for the arrow token (leftmost, longest-at-position). null → no arrow → drop.
+            SeqArrow arrow = scanSeqArrow(head);
+            if (arrow == null) {
+                continue;   // no arrow token in the head → malformed, drop the line
+            }
+            String from = cap(head.substring(0, arrow.pos()).strip());
+            String to = cap(head.substring(arrow.pos() + arrow.len()).strip());
             if (from.isEmpty() || to.isEmpty()) {
                 continue;   // empty endpoint → malformed, drop the line
             }
@@ -664,10 +660,39 @@ public final class DslParser {
             registerActor(actors, from);
             registerActor(actors, to);
             if (messages.size() < MAX_DATA_ROWS && actors.contains(from) && actors.contains(to)) {
-                messages.add(new SeqMessage(from, to, label, reply));
+                messages.add(new SeqMessage(from, to, label, arrow.reply()));
             }
         }
-        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor);
+        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor, bodyHadContent);
+    }
+
+    /// A located sequence-message arrow: byte `pos` in the head, token `len`, and whether it is a
+    /// REPLY (`-->>` / `-->`) rather than a CALL (`->>` / `->`).
+    private record SeqArrow(int pos, int len, boolean reply) {}
+
+    /// Scans a head segment for the arrow token — LEFTMOST match, LONGEST token at that position, so a
+    /// longer form never mis-splits (`->>` is a substring of `-->>`; `->` a substring of all). The
+    /// left-to-right walk guarantees we never start MID-token: a `-->>` at offset j is caught at j, so
+    /// the loop never reaches j+1 to spuriously match the embedded `->>`. Returns null when the head
+    /// carries no arrow token (→ the caller drops the line, loud-not-silent). `-->>`/`-->` are replies;
+    /// `->>`/`->` are calls.
+    private static SeqArrow scanSeqArrow(String head) {
+        int n = head.length();
+        for (int i = 0; i < n; i++) {
+            if (head.startsWith("-->>", i)) {
+                return new SeqArrow(i, 4, true);    // reply
+            }
+            if (head.startsWith("->>", i)) {
+                return new SeqArrow(i, 3, false);   // call
+            }
+            if (head.startsWith("-->", i)) {
+                return new SeqArrow(i, 3, true);    // reply alias
+            }
+            if (head.startsWith("->", i)) {
+                return new SeqArrow(i, 2, false);   // call alias
+            }
+        }
+        return null;
     }
 
     /// Registers an actor in first-seen order, up to {@link #MAX_ACTORS}; past the cap a brand-new
