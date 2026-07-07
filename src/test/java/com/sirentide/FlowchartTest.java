@@ -188,98 +188,9 @@ class FlowchartTest {
         assertTrue(!svg.contains("<path"), "no pie wedge leaked from the over-cap source");
     }
 
-    // -- layering -------------------------------------------------------------
 
-    /// Re-derives the layer of each node from the parsed graph using the SAME longest-path rule the
-    /// layout uses, so the assertions read against node ids rather than pixels.
-    private static Map<String, Integer> layers(Flowchart fc) {
-        List<FlowNode> nodes = fc.nodes();
-        Map<String, Integer> idx = new java.util.HashMap<>();
-        for (int i = 0; i < nodes.size(); i++) {
-            idx.put(nodes.get(i).id(), i);
-        }
-        int n = nodes.size();
-        List<int[]> edges = new java.util.ArrayList<>();
-        for (var e : fc.edges()) {
-            edges.add(new int[] {idx.get(e.from()), idx.get(e.to())});
-        }
-        List<List<Integer>> adj = new java.util.ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            adj.add(new java.util.ArrayList<>());
-        }
-        for (int ei = 0; ei < edges.size(); ei++) {
-            adj.get(edges.get(ei)[0]).add(ei);
-        }
-        boolean[] back = new boolean[edges.size()];
-        int[] state = new int[n];
-        for (int s = 0; s < n; s++) {
-            if (state[s] == 0) {
-                classify(s, edges, adj, state, back);
-            }
-        }
-        List<List<Integer>> preds = new java.util.ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            preds.add(new java.util.ArrayList<>());
-        }
-        for (int ei = 0; ei < edges.size(); ei++) {
-            if (!back[ei]) {
-                preds.get(edges.get(ei)[1]).add(edges.get(ei)[0]);
-            }
-        }
-        int[] layer = new int[n];
-        java.util.Arrays.fill(layer, -1);
-        Function<Integer, Integer> lf = new Function<>() {
-            @Override public Integer apply(Integer v) {
-                if (layer[v] >= 0) {
-                    return layer[v];
-                }
-                layer[v] = 0;
-                int best = 0;
-                for (int u : preds.get(v)) {
-                    best = Math.max(best, apply(u) + 1);
-                }
-                layer[v] = best;
-                return best;
-            }
-        };
-        Map<String, Integer> out = new java.util.HashMap<>();
-        for (int i = 0; i < n; i++) {
-            out.put(nodes.get(i).id(), lf.apply(i));
-        }
-        return out;
-    }
 
-    private static void classify(int u, List<int[]> edges, List<List<Integer>> adj,
-                                 int[] state, boolean[] back) {
-        state[u] = 1;
-        for (int ei : adj.get(u)) {
-            int v = edges.get(ei)[1];
-            if (state[v] == 1) {
-                back[ei] = true;
-            } else if (state[v] == 0) {
-                classify(v, edges, adj, state, back);
-            }
-        }
-        state[u] = 2;
-    }
 
-    @Test
-    void chainLayersZeroOneTwo() {
-        Map<String, Integer> l = layers(parse("flowchart\nA --> B\nB --> C\n"));
-        assertEquals(0, l.get("A"));
-        assertEquals(1, l.get("B"));
-        assertEquals(2, l.get("C"));
-    }
-
-    @Test
-    void diamondUsesLongestPath() {
-        // A→B, A→C, B→D, C→D  ⇒ D at layer 2 (longest path A→B→D), not layer 1.
-        Map<String, Integer> l = layers(parse("flowchart\nA --> B\nA --> C\nB --> D\nC --> D\n"));
-        assertEquals(0, l.get("A"));
-        assertEquals(1, l.get("B"));
-        assertEquals(1, l.get("C"));
-        assertEquals(2, l.get("D"));
-    }
 
     @Test
     @Timeout(5)
@@ -289,10 +200,8 @@ class FlowchartTest {
         String dsl = "flowchart\nA --> B\nB --> C\nC --> A\n";
         Flowchart fc = parse(dsl);
         assertEquals(3, fc.nodes().size(), "all 3 cycle nodes present");
-        Map<String, Integer> l = layers(fc);
-        assertEquals(0, l.get("A"));
-        assertEquals(1, l.get("B"));
-        assertEquals(2, l.get("C"));
+        // Layer VALUES are pinned against emitted geometry in FlowchartGeometryTest (the
+        // test-local layers() re-implementation was deleted after review sirentide/22 T1).
         String svg = Sirentide.render(dsl);
         assertNotNull(svg);
         assertTrue(svg.startsWith("<svg"), "cycle still renders a valid svg");
