@@ -202,7 +202,21 @@ public final class DslParser {
                 continue;
             }
             String[] src = parseEndpoint(line.substring(0, sep));
-            String[] dst = parseEndpoint(line.substring(sep + 3));
+            // Optional mermaid-style edge label: `A -->|yes| B`. If the text after the operator
+            // starts with `|`, the label runs to the FIRST closing `|`; the dst follows. A missing
+            // closing pipe is malformed → the whole line drops (loud-not-silent).
+            String rest = line.substring(sep + 3).strip();
+            String edgeLabel = null;
+            if (rest.startsWith("|")) {
+                int close = rest.indexOf('|', 1);
+                if (close < 0) {
+                    continue;
+                }
+                String raw = rest.substring(1, close).strip();
+                edgeLabel = raw.isEmpty() ? null : cap(raw);
+                rest = rest.substring(close + 1);
+            }
+            String[] dst = parseEndpoint(rest);
             // An empty/malformed endpoint drops the whole edge line (loud-not-silent: skipped, never
             // half-drawn).
             if (src == null || dst == null) {
@@ -214,7 +228,7 @@ public final class DslParser {
             // dropped, so its edges are too) and while under the edge cap.
             if (edges.size() < MAX_EDGES
                 && nodeLabels.containsKey(src[0]) && nodeLabels.containsKey(dst[0])) {
-                edges.add(new FlowEdge(src[0], dst[0]));
+                edges.add(new FlowEdge(src[0], dst[0], edgeLabel));
             }
         }
         List<FlowNode> nodes = new ArrayList<>();

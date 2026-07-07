@@ -56,6 +56,23 @@ class FlowchartTest {
     }
 
     @Test
+    void edgeLabelsParseAndPlainEdgesStayUnlabeled() {
+        // M1.2: the mermaid `-->|yes|` edge annotation.
+        Flowchart fc = parse("flowchart\nA[Ship?] -->|yes| B[Deploy]\nA -->|no| C[Fix]\nC --> A\n");
+        assertEquals("yes", fc.edges().get(0).label());
+        assertEquals("no", fc.edges().get(1).label());
+        assertEquals(null, fc.edges().get(2).label(), "an unlabeled edge has a null label");
+        // A missing closing pipe is malformed → that line drops, the rest parse.
+        Flowchart bad = parse("flowchart\nA -->|yes B\nA --> C\n");
+        assertEquals(1, bad.edges().size(), "the malformed labeled line is dropped");
+        assertEquals(null, bad.edges().get(0).label());
+        // A labeled diagram renders more glyph shapes than its unlabeled twin (the label is drawn).
+        String labeled = Sirentide.render("flowchart\nA[Go] -->|yes| B[Ship]\n");
+        String plain = Sirentide.render("flowchart\nA[Go] --> B[Ship]\n");
+        assertTrue(count(labeled, "<path") > count(plain, "<path"), "the edge label adds glyph paths");
+    }
+
+    @Test
     void bareIdsUseIdAsLabel() {
         Flowchart fc = parse("flowchart\nA --> B\n");
         Map<String, String> labels = labelsById(fc);
