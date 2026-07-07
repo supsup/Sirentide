@@ -45,9 +45,18 @@ public final class Sirentide {
     /// inert, never throw" invariant (DESIGN §6/§7): ANY unexpected failure in parse/layout/emit,
     /// or an over-cap output, degrades to the inert empty shell instead of propagating.
     public static String render(String dsl) {
+        return render(dsl, null);
+    }
+
+    /// Bake with inline-math support: `$…$` runs in a flowchart node label are rendered through
+    /// `math` (RFC sirentide/39). A `null` renderer is exactly {@link #render(String)} — the
+    /// feature is off and `$` renders as a literal glyph, byte-identical to the pre-feature output.
+    /// Same malformed→inert invariant; a throwing renderer is caught per-fragment (degrades that
+    /// run to raw text) and never propagates a bake.
+    public static String render(String dsl, com.sirentide.api.MathFragmentRenderer math) {
         try {
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
-            LaidOut laid = layout(ir);
+            LaidOut laid = layout(ir, math);
             String svg = SvgEmitter.emit(laid);
             if (svg.length() > MAX_OUTPUT_BYTES) {
                 return INERT_SHELL;
@@ -63,14 +72,16 @@ public final class Sirentide {
         }
     }
 
-    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR.
-    private static LaidOut layout(Diagram ir) {
+    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. Only the
+    /// flowchart consumes `math` in this slice (node labels); every other type ignores it until a
+    /// later slice threads a renderer through its labels.
+    private static LaidOut layout(Diagram ir, com.sirentide.api.MathFragmentRenderer math) {
         return switch (ir) {
             case Pie pie -> PieLayout.layout(pie);
             case XyChart chart -> XyChartLayout.layout(chart);
             case Timeline tl -> TimelineLayout.layout(tl);
             case Gantt gantt -> GanttLayout.layout(gantt);
-            case Flowchart fc -> FlowchartLayout.layout(fc);
+            case Flowchart fc -> FlowchartLayout.layout(fc, math);
             case Sequence s -> SequenceLayout.layout(s);
             case StateDiagram sd -> StateDiagramLayout.layout(sd);
             case Empty ignored -> LaidOut.of(0, 0);

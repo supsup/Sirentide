@@ -102,6 +102,17 @@ public final class SfntMetrics {
         return ascender - descender + lineGap;
     }
 
+    /// The font ascender in design units (y-up): how far glyphs rise above the baseline.
+    public int ascenderUnits() {
+        return ascender;
+    }
+
+    /// The font descender in design units (typically negative): how far glyphs fall below the
+    /// baseline. Returned verbatim from `hhea` (sign preserved).
+    public int descenderUnits() {
+        return descender;
+    }
+
     /// Maps a Unicode code point to a glyph id, or 0 (.notdef) if unmapped.
     public int glyphId(int codePoint) {
         return switch (cmapFormat) {
