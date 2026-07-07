@@ -72,7 +72,15 @@ class BrewShotGalleryTest {
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
         new Case("flowchart", "Flowchart (layered)",
             "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge]"
-                + "\nB -->|no| D[Revise]\nD -->|re-review| B"));
+                + "\nB -->|no| D[Revise]\nD -->|re-review| B"),
+        // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
+        // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
+        new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
+            "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74"),
+        new Case("timeline-endpoints", "Timeline endpoint labels (clamped)",
+            "timeline\n\"very long left endpoint label\" : 0\n\"very long right endpoint label\" : 10"),
+        new Case("flowchart-left-label", "Flowchart left-going edge label (clamped)",
+            "flowchart\nA --> C\nB -->|this forward label can escape left| C"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

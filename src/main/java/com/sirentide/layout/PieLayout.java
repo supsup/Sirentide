@@ -33,6 +33,9 @@ public final class PieLayout {
     /// thin slices with MAX_LABEL_LEN-char labels would otherwise build unbounded glyph paths (H2).
     private static final double MAX_OUTSIDE_LABEL = RADIUS;
     private static final String LEADER_STROKE = "#94a3b8";
+    /// In-frame clamp margin: the min gap kept between any glyph box and the canvas edge, and the
+    /// amount subtracted off the near edge when computing an outside label's available room.
+    private static final double CLAMP_MARGIN = 2;
 
     // -- legend (left-side colour key) geometry ---------------------------------
     /// Width of the left key column: swatch + gap + (ellipsized) label/value text + paddings.
@@ -159,16 +162,30 @@ public final class PieLayout {
     /// meets the text edge, not its middle.
     private static void placeLabel(List<Shape> shapes, String label, double px, double py,
                                    boolean centered, double mid, String fill) {
-        double w = FONT.runWidth(label, LABEL_SIZE);
         double baseline = py + LABEL_SIZE * 0.35;
         double originX;
         if (centered) {
+            double w = FONT.runWidth(label, LABEL_SIZE);
             originX = px - w / 2;
-        } else if (Math.cos(mid) >= 0) {
-            originX = px + 2;                 // right half: text to the right of the leader
-        } else {
-            originX = px - 2 - w;             // left half: text to the left of the leader
+            emitGlyphs(shapes, label, originX, baseline, fill);
+            return;
         }
+        boolean right = Math.cos(mid) >= 0;
+        // Bound the outside label to the room between its leader-end anchor and the near canvas edge,
+        // then ellipsize to fit. A right-side thin slice whose anchor sits ~2px from the edge
+        // ellipsizes to EMPTY (the leader is still drawn) — the honest containment outcome rather than
+        // glyphs spilling past x=SIZE (GEOMETRY-ESCAPE #1).
+        double avail = right ? SIZE - px - CLAMP_MARGIN - CLAMP_MARGIN : px - CLAMP_MARGIN - CLAMP_MARGIN;
+        label = FONT.ellipsize(label, Math.max(0, avail), LABEL_SIZE);
+        double w = FONT.runWidth(label, LABEL_SIZE);
+        originX = right ? px + CLAMP_MARGIN : px - CLAMP_MARGIN - w;
+        // Final safety clamp: the whole glyph box stays in [CLAMP_MARGIN, SIZE-CLAMP_MARGIN-w].
+        originX = Math.max(CLAMP_MARGIN, Math.min(originX, SIZE - CLAMP_MARGIN - w));
+        emitGlyphs(shapes, label, originX, baseline, fill);
+    }
+
+    private static void emitGlyphs(List<Shape> shapes, String label, double originX,
+                                   double baseline, String fill) {
         String d = FONT.textPathD(label, originX, baseline, LABEL_SIZE);
         if (!d.isBlank()) {
             shapes.add(new GlyphRun(d, fill));

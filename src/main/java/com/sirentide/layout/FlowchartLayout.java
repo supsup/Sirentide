@@ -47,6 +47,20 @@ public final class FlowchartLayout {
     private static final double EDGE_LABEL_SIZE = 10;   // edge-label font size (M1.2, `-->|yes|`)
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
+    private static final double CLAMP_MARGIN = 2;       // min gap kept between a glyph box and the canvas edge
+
+    /// One laid-out edge: endpoint node indices `u`→`v`, the (already-ellipsized) `label` (`null`
+    /// when unlabeled), and `dataIdx` — the edge's index into {@code fc.edges()} BEFORE the
+    /// unknown-endpoint filter, so downstream (Confluence fx-readiness) can map a drawn edge back to
+    /// its source authoring row. Replaces the old parallel `List<int[]>` + `List<String>` pair.
+    private record Edge(int u, int v, String label, int dataIdx) {}
+
+    /// Shared in-frame clamp: keep a label's whole glyph box in [CLAMP_MARGIN, canvasW-CLAMP_MARGIN-w].
+    /// The outside-of-edge origin rule keeps its natural value; the clamp only engages at the boundary
+    /// (GEOMETRY-ESCAPE #3: a left-going forward edge subtracting the full label width went negative).
+    private static double clampLabelX(double x, double w, double canvasW) {
+        return Math.max(CLAMP_MARGIN, Math.min(x, canvasW - CLAMP_MARGIN - w));
+    }
 
     public static LaidOut layout(Flowchart fc) {
         List<FlowNode> nodes = fc.nodes();
@@ -62,18 +76,19 @@ public final class FlowchartLayout {
             index.put(nodes.get(i).id(), i);
         }
 
-        // Edge endpoints as indices (labels carried in a parallel list); drop any edge whose
-        // endpoint isn't a known node (defensive — the parser already guards this, but layout must
-        // tolerate a stray reference, never throw).
-        List<int[]> edges = new ArrayList<>();
-        List<String> edgeLabels = new ArrayList<>();
-        for (FlowEdge e : fc.edges()) {
+        // Edge endpoints as indices, label + source-row index carried in the Edge record; drop any
+        // edge whose endpoint isn't a known node (defensive — the parser already guards this, but
+        // layout must tolerate a stray reference, never throw). dataIdx is the PRE-filter index.
+        List<Edge> edges = new ArrayList<>();
+        List<FlowEdge> fcEdges = fc.edges();
+        for (int di = 0; di < fcEdges.size(); di++) {
+            FlowEdge e = fcEdges.get(di);
             Integer u = index.get(e.from());
             Integer v = index.get(e.to());
             if (u != null && v != null) {
-                edges.add(new int[] {u, v});
-                edgeLabels.add(e.label() == null ? null
-                    : FONT.ellipsize(e.label(), MAX_EDGE_LABEL_W, EDGE_LABEL_SIZE));
+                String lbl = e.label() == null ? null
+                    : FONT.ellipsize(e.label(), MAX_EDGE_LABEL_W, EDGE_LABEL_SIZE);
+                edges.add(new Edge(u, v, lbl, di));
             }
         }
 
@@ -85,7 +100,7 @@ public final class FlowchartLayout {
             adj.add(new ArrayList<>());
         }
         for (int ei = 0; ei < edges.size(); ei++) {
-            adj.get(edges.get(ei)[0]).add(ei);
+            adj.get(edges.get(ei).u()).add(ei);
         }
         boolean[] isBack = new boolean[edges.size()];
         int[] state = new int[n];   // 0=white(unseen), 1=gray(on stack), 2=black(done)
@@ -104,7 +119,7 @@ public final class FlowchartLayout {
         }
         for (int ei = 0; ei < edges.size(); ei++) {
             if (!isBack[ei]) {
-                preds.get(edges.get(ei)[1]).add(edges.get(ei)[0]);
+                preds.get(edges.get(ei).v()).add(edges.get(ei).u());
             }
         }
         int[] layer = new int[n];
@@ -142,7 +157,7 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack, edgeLabels);
+            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack);
         }
 
         // Canvas width = widest layer + margins.
@@ -166,7 +181,7 @@ public final class FlowchartLayout {
         for (int ei = 0; ei < isBack.length; ei++) {
             if (isBack[ei]) {
                 backCount++;
-                String bl = edgeLabels.get(ei);
+                String bl = edges.get(ei).label();
                 if (bl != null) {
                     maxBackLabelW = Math.max(maxBackLabelW,
                         FONT.runWidth(bl, EDGE_LABEL_SIZE) + EDGE_LABEL_GAP);
@@ -209,9 +224,9 @@ public final class FlowchartLayout {
         // reads as a visible loop instead of overdrawing the forward chain.
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
-            int[] e = edges.get(ei);
-            int u = e[0];
-            int v = e[1];
+            Edge e = edges.get(ei);
+            int u = e.u();
+            int v = e.v();
             if (isBack[ei]) {
                 double laneX = contentW - MARGIN + BACK_LANE_GAP * (++laneIdx);
                 double sy = ny[u] + NODE_H / 2;        // source right-middle
@@ -228,10 +243,12 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
-                String bl = edgeLabels.get(ei);
+                String bl = e.label();
                 if (bl != null) {
                     double lblY = (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35;
-                    String ld = FONT.textPathD(bl, laneX + EDGE_LABEL_GAP, lblY, EDGE_LABEL_SIZE);
+                    double lblX = clampLabelX(laneX + EDGE_LABEL_GAP,
+                        FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
+                    String ld = FONT.textPathD(bl, lblX, lblY, EDGE_LABEL_SIZE);
                     if (!ld.isBlank()) {
                         shapes.add(new GlyphRun(ld, fc.textColor()));
                     }
@@ -265,12 +282,14 @@ public final class FlowchartLayout {
             // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
             // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
             // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
-            String fl = edgeLabels.get(ei);
+            String fl = e.label();
             if (fl != null) {
+                double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
                 double midX = (scx + baseCx) / 2;
                 double lblX = dx >= 0
                     ? midX + EDGE_LABEL_GAP
-                    : midX - EDGE_LABEL_GAP - FONT.runWidth(fl, EDGE_LABEL_SIZE);
+                    : midX - EDGE_LABEL_GAP - flW;
+                lblX = clampLabelX(lblX, flW, canvasW);
                 double lblY = (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35;
                 String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
                 if (!ld.isBlank()) {
@@ -319,7 +338,7 @@ public final class FlowchartLayout {
     /// diamond path is untouched: its left/right vertices already land on the LR side anchors.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     List<List<Integer>> byLayer, double[] boxW, String[] labels,
-                                    List<int[]> edges, boolean[] isBack, List<String> edgeLabels) {
+                                    List<Edge> edges, boolean[] isBack) {
         // -- columns: colW[L] = widest box in layer L; colX marches left→right by colW + LAYER_GAP.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -366,7 +385,7 @@ public final class FlowchartLayout {
         for (int ei = 0; ei < isBack.length; ei++) {
             if (isBack[ei]) {
                 backCount++;
-                if (edgeLabels.get(ei) != null) {
+                if (edges.get(ei).label() != null) {
                     maxBackLabelH = Math.max(maxBackLabelH, EDGE_LABEL_GAP + EDGE_LABEL_SIZE);
                 }
             }
@@ -383,9 +402,9 @@ public final class FlowchartLayout {
         // bottom with an up-pointing arrowhead.
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
-            int[] e = edges.get(ei);
-            int u = e[0];
-            int v = e[1];
+            Edge e = edges.get(ei);
+            int u = e.u();
+            int v = e.v();
             if (isBack[ei]) {
                 double laneY = contentH - MARGIN + BACK_LANE_GAP * (++laneIdx);
                 double sx = nx[u] + boxW[u] / 2;       // source bottom-middle
@@ -402,9 +421,10 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
-                String bl = edgeLabels.get(ei);
+                String bl = e.label();
                 if (bl != null) {
-                    double lblX = (sx + tx) / 2 + EDGE_LABEL_GAP;
+                    double lblX = clampLabelX((sx + tx) / 2 + EDGE_LABEL_GAP,
+                        FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
                     double lblY = laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7;
                     String ld = FONT.textPathD(bl, lblX, lblY, EDGE_LABEL_SIZE);
                     if (!ld.isBlank()) {
@@ -439,14 +459,16 @@ public final class FlowchartLayout {
             // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
             // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it. Keeps a
             // fan-out's labels ("yes"/"no") from colliding.
-            String fl = edgeLabels.get(ei);
+            String fl = e.label();
             if (fl != null) {
                 double midX = (sx + baseX) / 2;
                 double midY = (sy + baseY) / 2;
                 double lblY = dy > 0
                     ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                     : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                String ld = FONT.textPathD(fl, midX + EDGE_LABEL_GAP, lblY, EDGE_LABEL_SIZE);
+                double lblX = clampLabelX(midX + EDGE_LABEL_GAP,
+                    FONT.runWidth(fl, EDGE_LABEL_SIZE), canvasW);
+                String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
                 if (!ld.isBlank()) {
                     shapes.add(new GlyphRun(ld, textColor));
                 }
@@ -485,11 +507,11 @@ public final class FlowchartLayout {
     }
 
     /// DFS classification of back-edges: mark any out-edge that targets a GRAY (on-stack) node.
-    private static void dfsClassify(int u, List<int[]> edges, List<List<Integer>> adj,
+    private static void dfsClassify(int u, List<Edge> edges, List<List<Integer>> adj,
                                     int[] state, boolean[] isBack) {
         state[u] = 1;   // gray
         for (int ei : adj.get(u)) {
-            int v = edges.get(ei)[1];
+            int v = edges.get(ei).v();
             if (state[v] == 1) {
                 isBack[ei] = true;         // target is on the recursion stack → back-edge (cycle)
             } else if (state[v] == 0) {
