@@ -43,6 +43,7 @@ public final class FlowchartLayout {
     private static final double EDGE_WIDTH = 1.5;
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
+    private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
 
     public static LaidOut layout(Flowchart fc) {
         List<FlowNode> nodes = fc.nodes();
@@ -134,10 +135,21 @@ public final class FlowchartLayout {
             }
             maxLayerWidth = Math.max(maxLayerWidth, lw);
         }
-        double canvasW = maxLayerWidth + 2 * MARGIN;
+        double contentW = maxLayerWidth + 2 * MARGIN;
+        // Back-edges route through vertical LANES reserved to the RIGHT of the content (M1.1):
+        // the straight up-line overlapped the forward chain, so a cycle looked like a plain chain.
+        // One lane per back-edge, so multiple cycles don't overdraw each other.
+        int backCount = 0;
+        for (boolean b : isBack) {
+            if (b) {
+                backCount++;
+            }
+        }
+        double canvasW = contentW + backCount * BACK_LANE_GAP;
         double canvasH = layerCount * (NODE_H + LAYER_GAP) - LAYER_GAP + 2 * MARGIN;
 
-        // Assign coordinates: each layer centered horizontally, laid left→right.
+        // Assign coordinates: each layer centered horizontally on the CONTENT width (the back-edge
+        // lanes extend the canvas to the right without shifting the graph), laid left→right.
         double[] nx = new double[n];
         double[] ny = new double[n];
         for (int L = 0; L < layerCount; L++) {
@@ -149,7 +161,7 @@ public final class FlowchartLayout {
             if (row.size() > 1) {
                 lw += (row.size() - 1) * NODE_GAP;
             }
-            double startX = (canvasW - lw) / 2;
+            double startX = (contentW - lw) / 2;
             double y = MARGIN + L * (NODE_H + LAYER_GAP);
             double cursor = startX;
             for (int idx : row) {
@@ -163,10 +175,32 @@ public final class FlowchartLayout {
         // then labels on top.
         List<Shape> shapes = new ArrayList<>();
 
-        // 1) edges: a straight line src-bottom-center → dst-top-center + a triangle arrowhead (Path).
-        for (int[] e : edges) {
+        // 1) edges: forward = a straight line src-bottom-center → dst-top-center + a triangle
+        // arrowhead (Path); BACK-edges = an orthogonal detour through a right-side lane (M1.1) —
+        // out the source's right side, up the lane, back into the target's right side, so a cycle
+        // reads as a visible loop instead of overdrawing the forward chain.
+        int laneIdx = 0;
+        for (int ei = 0; ei < edges.size(); ei++) {
+            int[] e = edges.get(ei);
             int u = e[0];
             int v = e[1];
+            if (isBack[ei]) {
+                double laneX = contentW - MARGIN + BACK_LANE_GAP * (++laneIdx);
+                double sy = ny[u] + NODE_H / 2;        // source right-middle
+                double sx = nx[u] + boxW[u];
+                double ty = ny[v] + NODE_H / 2;        // target right-middle
+                double tx = nx[v] + boxW[v];
+                shapes.add(new Line(sx, sy, laneX, sy, EDGE_STROKE, EDGE_WIDTH));      // out right
+                shapes.add(new Line(laneX, sy, laneX, ty, EDGE_STROKE, EDGE_WIDTH));   // up the lane
+                shapes.add(new Line(laneX, ty, tx + ARROW_LEN, ty, EDGE_STROKE, EDGE_WIDTH)); // back in
+                // Left-pointing arrowhead, tip on the target's right edge.
+                String bd = "M " + fmt(tx) + " " + fmt(ty)
+                    + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty - ARROW_HALF_W)
+                    + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
+                    + " Z";
+                shapes.add(new Path(bd, ARROW_FILL));
+                continue;
+            }
             double scx = nx[u] + boxW[u] / 2;
             double sBottom = ny[u] + NODE_H;
             double dcx = nx[v] + boxW[v] / 2;
