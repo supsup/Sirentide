@@ -44,6 +44,10 @@ class ContainmentTest {
         // gantt
         "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n  \"Test\" : 7-10\n",
         "gantt\n  \"ok\" : 0-2\n  \"bad\" : notarange\n",          // malformed range
+        // flowchart (5th type): a chain + a diamond + a CYCLE + a lone node — exercises the new
+        // <path> arrowhead shape, the layered layout, and cycle-termination through the allowlist.
+        "flowchart TD\n  A[Start] --> B[Process]\n  B --> C[End]\n"
+            + "  A --> D[Side]\n  D --> C\n  C --> A\n  E[Lone]\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

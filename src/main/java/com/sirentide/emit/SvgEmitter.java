@@ -4,6 +4,7 @@ import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
+import com.sirentide.layout.Path;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import com.sirentide.layout.Wedge;
@@ -50,6 +51,10 @@ public final class SvgEmitter {
             case Wedge w -> appendWedge(sb, w);
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
                 .append("\" fill=\"").append(color(g.fill())).append("\"/>");
+            // Path mirrors GlyphRun exactly — a contract-clean `d` string + a colour-sink-validated
+            // fill (flowchart arrowheads / future rounded nodes). Same <path> emission, same fill guard.
+            case Path p -> sb.append("<path d=\"").append(p.d())
+                .append("\" fill=\"").append(color(p.fill())).append("\"/>");
             case Rect r -> sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
                 .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
                 .append("\" fill=\"").append(color(r.fill())).append("\"/>");

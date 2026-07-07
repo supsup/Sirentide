@@ -69,7 +69,9 @@ class BrewShotGalleryTest {
         new Case("timeline", "Timeline (proportional)",
             "timeline\n\"Founded\" : 2000\n\"Series A\" : 2005\n\"Launch\" : 2020"),
         new Case("gantt", "Gantt",
-            "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"));
+            "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
+        new Case("flowchart", "Flowchart (layered)",
+            "flowchart\nA[Open PR] --> B[Review]\nB --> C[Merge]\nB --> D[Request changes]\nD --> B"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

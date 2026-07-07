@@ -3,10 +3,12 @@ package com.sirentide.api;
 import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
+import com.sirentide.layout.FlowchartLayout;
 import com.sirentide.layout.GanttLayout;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.PieLayout;
@@ -64,6 +66,7 @@ public final class Sirentide {
             case XyChart chart -> XyChartLayout.layout(chart);
             case Timeline tl -> TimelineLayout.layout(tl);
             case Gantt gantt -> GanttLayout.layout(gantt);
+            case Flowchart fc -> FlowchartLayout.layout(fc);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

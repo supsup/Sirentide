@@ -4,4 +4,4 @@ package com.sirentide.layout;
 /// (docs/DESIGN.md §4 — the layout/emit split). Sealed so the emitter's `switch` is exhaustive
 /// and every shape maps to exactly one contract element. New primitives (Rect, Line, GlyphRun)
 /// join as permitted records per milestone.
-public sealed interface Shape permits Wedge, GlyphRun, Rect, Line {}
+public sealed interface Shape permits Wedge, GlyphRun, Rect, Line, Path {}
