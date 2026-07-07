@@ -39,6 +39,20 @@ class SequenceTest {
     // -- parse ----------------------------------------------------------------
 
     @Test
+    void noSpaceColonLabelParses() {
+        // REGRESSION (Lattice, sirentide/33): the verdict-fix batch split labels at " : "
+        // (space-colon-space), silently breaking the common no-space form — `A ->> B: hi`
+        // parsed as a bogus actor "B: hi" with NO label. The delimiter is the FIRST colon,
+        // any spacing; the label is stripped BEFORE the arrow scan so arrows-in-labels stay inert.
+        Sequence s = (Sequence) DslParser.parse("sequence\nA ->> B: hi\n");
+        assertEquals(java.util.List.of("A", "B"), s.actors(), "B, not 'B: hi'");
+        assertEquals("hi", s.messages().get(0).label());
+        Sequence tight = (Sequence) DslParser.parse("sequence\nA ->> B:hi\nB -->> A : ok: sure\n");
+        assertEquals("hi", tight.messages().get(0).label(), "tight colon form");
+        assertEquals("ok: sure", tight.messages().get(1).label(), "a colon INSIDE the label survives");
+    }
+
+    @Test
     void parsesActorsFirstSeenIncludingBothEndpoints() {
         Sequence s = parse("sequence\nAlice ->> Bob : Request token\nBob -->> Alice : Token\n"
             + "Carol ->> Alice : Ping\n");
