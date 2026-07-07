@@ -8,14 +8,27 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Why it exists
 
-- **Static-site / docs safe.** Output is inert `svg/g/path/rect/...` — no `<script>`, no runtime JS, no external fonts. It survives a strict HTML sanitizer untouched.
+- **Static-site / docs safe.** Output is inert `svg/path/rect/line` geometry (labels baked to `<path>` glyphs) — no `<script>`, no runtime JS, no external fonts. It survives a strict HTML sanitizer untouched.
 - **Hermetic build.** Pure JVM, zero runtime deps (no headless browser at bake). The one build-time asset is a bundled OFL/Apache font, rendered to paths.
 - **Native effects.** Because Sirentide emits the SVG with its own stable semantic anchors, effects ("glow the critical path", "pulse the active step", "play the flow in order") attach natively — not bolted onto a drifting class-soup.
 - **Math composition.** A node label, axis tick, or bar can *be* a real LaTeX formula — its LatteX sibling renders it at bake, and the two minimal-alphabet emitters compose for free.
 
 ## Status
 
-Greenlit; **M1** in progress — the render pipeline, the font-metrics oracle, and the first diagram type (`pie`) are built. See the docs below for how to use it and where it's going.
+Greenlit and building. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **six diagram types** are built today — each baked to inert `svg/path/rect/line` geometry. See the [gallery](examples/gallery/GALLERY.md) for real-browser renders, and the docs below for where it's going.
+
+| Type | One-liner | Sample |
+|---|---|---|
+| **`pie`** | proportional wedges; optional `legend` (alias `key`), per-item `#hex` colours (3- or 6-digit), thin-slice outside labels clamped | `pie legend`<br>`"Reviews" : 40`<br>`"Docs" : 30 #22c55e` |
+| **`xychart`** | signed bars on a fractional-clean axis | `xychart`<br>`"Mon" : 5`<br>`"Tue" : -3` |
+| **`timeline`** | events placed *proportionally* in time; bare years and ISO dates both shown as dates, labels ellipsized/clamped | `timeline`<br>`"Founded" : 2000`<br>`"Launch" : 2020` |
+| **`gantt`** | tasks on a shared, min-normalized time axis; degenerate domains still draw markers | `gantt`<br>`"Design" : 0-3`<br>`"Build" : 3-8` |
+| **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
+| **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
+
+Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws.
+
+Still ahead (the *thesis* work): the native effect/anchor layer, play-through, and LatteX-math-in-labels — see [SLOWSTART.md](SLOWSTART.md).
 
 ## Docs
 

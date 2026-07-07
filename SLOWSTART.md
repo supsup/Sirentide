@@ -43,38 +43,44 @@ than shell out to a browser.
 Dana writes internal docs on a static site whose sanitizer strips `<script>` and `<style>`. She
 wants a diagram, not a hand-placed SVG.
 
-Today she can write a pie of where the team's time goes:
+Today she can already reach for six diagram types — a `pie` of where the team's time goes, an
+`xychart` of throughput, a `timeline` or `gantt` of the roadmap, a `flowchart` of the review
+gate, or a `sequence` of the request path:
 
 ```
-pie
-  "Reviews" : 40
-  "Builds"  : 30
-  "Docs"    : 30
+flowchart TD
+  A[Open PR] --> B{Approve?}
+  B -->|yes| C[Merge]
+  B -->|no|  D[Revise]
+  D -->|re-review| B
 ```
 
-Her build calls `Sirentide.render(...)`, gets back a self-contained `<svg>` of colored wedges,
-and splices it into the page. No JavaScript ships; the sanitizer waves the inert geometry
-through untouched; the reader sees a crisp pie with the page.
+Her build calls `Sirentide.render(...)`, gets back a self-contained `<svg>` of inert geometry,
+and splices it into the page. No JavaScript ships; the sanitizer waves it through untouched; the
+reader sees a crisp diagram with the page.
 
-*Where it's going:* soon Dana writes a `sequence` of her service's request flow and the reader can
-**play** it step by step; a node label reads `latency = $\frac{n}{r}$` and the formula renders
-*in* the box; she tags the critical path `fx=glow` and it pulses. Same DSL, same hermetic bake,
-same no-runtime-JS guarantee — with presence.
+*Where it's going:* soon the reader can **play** her `sequence` step by step; a node label reads
+`latency = $\frac{n}{r}$` and the formula renders *in* the box; she tags the critical path
+`fx=glow` and it pulses. Same DSL, same hermetic bake, same no-runtime-JS guarantee — with
+presence.
 
 ---
 
 ## The milestone ladder
 
 Sirentide scopes by **layout tractability**, not feature parity — it will never chase all of
-Mermaid.
+Mermaid. The ladder moved faster than first drawn: the graph and time-axis types landed on the
+current path/line alphabet, so `flowchart`, `gantt`, and `timeline` are built now rather than
+deferred. What remains ahead is the *thesis* layer (play-through, effects, math) and the denser
+`sequence` machinery.
 
 | | Diagrams | Status |
 |---|---|---|
-| **M0** | scaffold, contracts, font-metrics oracle | **built** (font oracle ✓, scaffold ✓; contracts in progress) |
-| **M1** | **`pie`**, `xychart`, a minimal linear `sequence` with play-through | `pie` **built**; rest *planned* — the go/no-go for the effect thesis |
-| **M2** | full `sequence` (alt/loop/par, activations) | *planned* |
-| **M3** | `gantt`, `timeline` | *planned* |
-| **M-gate** | `flowchart` (needs real graph auto-layout) | *explicitly deferred* — dagre-hard; a conscious re-decision, not a default |
+| **M0** | scaffold, contracts, font-metrics oracle | **built** (font oracle ✓, scaffold ✓, contracts ✓) |
+| **M1** | `pie`, `xychart`, a minimal linear `sequence` (`->>` calls / `-->>` replies / self-messages) | **built** — the linear-sequence demonstrator ships; the play-through *effect* that rides it is *planned* |
+| **M2** | full `sequence` (alt/loop/par frames, activation bars, `marker`/`defs`) | *planned* — arrowheads today are inline `<path>` triangles |
+| **M3** | `gantt`, `timeline` | **built** (proportional time axis; ISO dates shown as dates) |
+| **M-gate** | `flowchart` (`TD`/`LR`, rect/diamond nodes, edge labels, cycle-tolerant) | **built** — a layered, deterministic layout with visible back-edge lanes. Full graph auto-layout (crossing-minimization, dagre/ELK-class) is *not* attempted and stays a conscious re-decision. |
 
 ## Family
 

@@ -2,11 +2,12 @@
 
 Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into your HTML.
 
-> **Status note.** Sirentide is *very* early (M1 in progress). What's **built**: the render
-> pipeline (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, and the first
-> diagram type — **`pie`**. What's **planned** (each flagged inline): `xychart`, a minimal
-> `sequence` with play-through, text labels as paths, the native effect layer, and the
-> LatteX-math-in-labels composition. Accuracy over hype: if it isn't built, this doc says so.
+> **Status note.** Sirentide is early but real. What's **built**: the render pipeline
+> (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
+> glyphs, and **six diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`, and
+> `sequence`. What's **planned** (each flagged inline): the play-through / native effect layer,
+> the semantic-anchor layer, and the LatteX-math-in-labels composition. Accuracy over hype: if it
+> isn't built, this doc says so.
 
 ---
 
@@ -14,10 +15,10 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 Sirentide is a clean-room, pure-**Java 25**, **zero-runtime-dependency** renderer that turns a
 small diagram DSL into **static SVG at build time** — no JavaScript, no headless browser, no
-runtime. Its emitter targets a deliberately tiny, sanitizer-safe SVG alphabet (`<svg>`, `<g>`,
-`<path>`, and geometry — never `<script>`, `<style>`, `<foreignObject>`, or external `href`s),
-so the output is safe to inline directly into HTML and already sits inside a standard sanitizer
-allow-list. Apache-2.0.
+runtime. Its emitter targets a deliberately tiny, sanitizer-safe SVG alphabet (`<svg>`, `<path>`,
+`<rect>`, `<line>` — labels are baked to `<path>` glyphs; never `<script>`, `<style>`,
+`<foreignObject>`, or external `href`s), so the output is safe to inline directly into HTML and
+already sits inside a standard sanitizer allow-list. Apache-2.0.
 
 It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTeX→SVG math
 renderer), and shares its discipline — and, soon, its font, so a diagram label can *contain* a
@@ -26,23 +27,55 @@ real LaTeX formula.
 ## 2. Render a diagram
 
 The whole pipeline is one call. Give it a Sirentide DSL source, get back a self-contained SVG
-string:
+string. The first token names the diagram type. A **pie**:
 
 ```java
 import com.sirentide.api.Sirentide;
 
 String svg = Sirentide.render("""
-    pie
+    pie legend
       "Reviews" : 40
       "Builds"  : 30
-      "Docs"    : 30
+      "Docs"    : 30 #22c55e
     """);
-// -> <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240"> <path .../> ... </svg>
+// -> <svg xmlns="http://www.w3.org/2000/svg" width="..." height="..." viewBox="0 0 ..."> <path .../> ... </svg>
 ```
 
-That SVG is complete and standalone — write it to a `.svg` file, or paste it inline into a page.
-A malformed row is skipped and an unknown diagram type degrades to an empty shell — the bake
-never fails on one bad line.
+`legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
+colour. Swap the source and you get a different diagram from the same call. A **flowchart**:
+
+```java
+String flow = Sirentide.render("""
+    flowchart TD
+      A[Open PR] --> B{Approve?}
+      B -->|yes| C[Merge]
+      B -->|no|  D[Revise]
+      D -->|re-review| B
+    """);
+```
+
+`TD` (top-down, default) or `LR` (left-right); `A[label]` is a rectangle, `A{label}` a diamond;
+`-->|text|` labels a single hop; chains like `A --> B --> C` expand; cycles are drawn with a
+visible back-edge lane. A **sequence**:
+
+```java
+String seq = Sirentide.render("""
+    sequence
+      Client ->> Gateway : GET /token
+      Gateway ->> Auth   : validate
+      Auth   -->> Gateway : ok
+      Gateway ->> Gateway : sign JWT
+      Gateway -->> Client : 200 token
+    """);
+```
+
+`->>` is a call (solid, filled head), `-->>` a reply (lighter, open head); `A ->> A` is a
+self-message; the `: label` after the arrow is optional. Actors register in first-seen order.
+
+Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
+page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
+bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for all six
+types, `timeline` and `gantt` included, with real-browser renders.)
 
 ## 3. From the command line
 
@@ -65,8 +98,8 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, `pie`. |
-| *planned* | Designed, not yet built: `xychart`, `sequence` + play-through, text-as-paths labels, the native effect layer, LatteX-math-in-labels. |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, and all six diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`). |
+| *planned* | Designed, not yet built: play-through / the native effect layer, the semantic-anchor layer, LatteX-math-in-labels, and fuller `sequence` (activation bars, alt/loop/par frames). |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for
 the why.
