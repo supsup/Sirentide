@@ -43,8 +43,12 @@ public final class GanttLayout {
         String textColor = gantt.textColor();
         double domainMin = gantt.start();
         double domainMax = gantt.end();
-        // Degenerate/empty axis: no finite span to place bars against.
-        if (n == 0 || domainMax <= domainMin) {
+        // Bail ONLY when there are no tasks. A DEGENERATE domain (a single milestone `"M":5-5`,
+        // all-equal instants, or a lone reversed range) is NOT empty — the data is present and must
+        // be drawn (loud-not-silent, DESIGN §6). AxisScale tolerates it: it swaps a reversed [max,min]
+        // and projects a degenerate [x,x] to the pixel midpoint, so every task lands at the midpoint
+        // and picks up its minVisibleW marker bar below — a real chart, not a blank one. (H3)
+        if (n == 0) {
             return new LaidOut(W, Math.max(height, 60), shapes);
         }
         // Min-normalized time axis: `x = project(start)`, NOT `start / maxEnd`. Without the min the
