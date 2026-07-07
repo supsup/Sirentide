@@ -36,7 +36,13 @@ public final class SirentideContract {
         // viewBox-only root collapses inside the Stafficy /docs sanitizer; intrinsic width/height
         // fix that. Both are geometry scalars (finite-numeric), so the value grammar is unchanged.
         "svg", Set.of("xmlns", "viewBox", "width", "height"),
-        "path", Set.of("d", "fill"),
+        // math-in-labels S2 widening: `path` carries a numeric-grammar `transform`. Real LatteX
+        // places every glyph with its own `translate(...) scale(...)` on the <path> (glyph outlines
+        // are emitted in font units, then scaled/positioned per-glyph) — so a baked-math fragment's
+        // paths carry transforms. FragmentGuard already permits path/transform and the output-contract
+        // doc's geometry row already lists it; this reconciles the containment allowlist to match
+        // (same drift-class as F1's `g fill`). TRANSFORM stays the numeric-only grammar (no url/rotate).
+        "path", Set.of("d", "fill", "transform"),
         "rect", Set.of("x", "y", "width", "height", "fill"),
         "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"),
         // math-in-labels widening: `g` carries a numeric-grammar `transform` (see TRANSFORM) and
