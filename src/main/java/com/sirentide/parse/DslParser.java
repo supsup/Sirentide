@@ -635,14 +635,17 @@ public final class DslParser {
                 continue;
             }
             bodyHadContent = true;   // a non-blank body line existed (even if it turns out malformed)
-            // Peel the OPTIONAL label at the FIRST ` : ` — the arrow lives in the pre-colon HEAD, so an
-            // arrow token in the label is inert (operator-scan discipline, mirrors the flowchart).
+            // Peel the OPTIONAL label at the FIRST colon, ANY spacing (`B : hi`, `B: hi`, `B:hi` —
+            // requiring " : " silently broke the common no-space form: Lattice, sirentide/33). The
+            // arrow lives in the pre-colon HEAD, so an arrow token in the label is inert
+            // (operator-scan discipline, mirrors the flowchart); a colon INSIDE the label survives
+            // because only the FIRST colon delimits. Actor names cannot contain ':' (as before).
             String head = line;
             String label = null;
-            int colon = line.indexOf(" : ");
+            int colon = line.indexOf(':');
             if (colon >= 0) {
                 head = line.substring(0, colon);
-                String raw = line.substring(colon + 3).strip();
+                String raw = line.substring(colon + 1).strip();
                 label = raw.isEmpty() ? null : cap(raw);
             }
             // Scan the head for the arrow token (leftmost, longest-at-position). null → no arrow → drop.
