@@ -72,7 +72,11 @@ class BrewShotGalleryTest {
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
         new Case("flowchart", "Flowchart (layered)",
             "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge]"
-                + "\nB -->|no| D[Revise]\nD -->|re-review| B"));
+                + "\nB -->|no| D[Revise]\nD -->|re-review| B"),
+        new Case("sequence", "Sequence (API token flow)",
+            "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
+                + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"
+                + "\nGateway -->> Client : 200 token"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

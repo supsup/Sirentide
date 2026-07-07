@@ -7,6 +7,8 @@ import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
+import com.sirentide.ir.SeqMessage;
+import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.Task;
 import com.sirentide.ir.Timeline;
@@ -15,6 +17,7 @@ import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.AxisScale;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -42,6 +45,9 @@ public final class DslParser {
     // laid out — bounds the layering work + the shape count on a pathological graph, never throws.
     public static final int MAX_NODES = 500;
     public static final int MAX_EDGES = 1000;
+    // Sequence-diagram cap (DESIGN §6/§7): a pathological actor count would blow up the lifeline
+    // grid; extra first-seen actors past this are dropped (their messages then skip in layout).
+    public static final int MAX_ACTORS = 50;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -85,6 +91,7 @@ public final class DslParser {
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
             case "gantt" -> parseGantt(lines, textColor);
             case "flowchart" -> parseFlowchart(lines, header, textColor);
+            case "sequence" -> parseSequence(lines, textColor);
             default -> new Empty();
         };
     }
@@ -404,6 +411,83 @@ public final class DslParser {
         }
         if (shape != null && map.containsKey(id) && !shapes.containsKey(id)) {
             shapes.put(id, shape);   // first decorated occurrence wins the shape too
+        }
+    }
+
+    /// Parses a sequence diagram: actors across the top and time-ordered messages between them.
+    /// ```
+    /// sequence
+    /// Alice ->> Bob   : Request token
+    /// Bob  -->> Alice : Token
+    /// Alice ->> Alice : Validate locally
+    /// ```
+    /// Each body line is `FROM ARROW TO : label`. The ARROW is `->>` (a CALL — solid, filled
+    /// triangle head) or `-->>` (a RETURN/REPLY — lighter, open-V head); the LONGER `-->>` wins
+    /// (it CONTAINS `->>` as a substring, so scan for `-->>` first). The label is everything after
+    /// the FIRST `:` following the arrow and is OPTIONAL (no colon → no label). Both endpoints
+    /// auto-register in first-seen order (a self-message `A ->> A` registers `A` once). A malformed
+    /// line — no arrow token, or an empty endpoint — is DROPPED whole (never throws, DESIGN §6).
+    /// Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages; ids/labels `cap()`'d. A
+    /// bare `sequence` body → a Sequence with no actors (still a sequence, round-trips — NOT Empty).
+    private static Diagram parseSequence(String[] lines, String textColor) {
+        LinkedHashSet<String> actors = new LinkedHashSet<>();
+        List<SeqMessage> messages = new ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Longer token wins: `-->>` contains `->>` at offset+1, so look for the reply arrow FIRST.
+            boolean reply;
+            int arrowPos;
+            int arrowLen;
+            int r = line.indexOf("-->>");
+            if (r >= 0) {
+                reply = true;
+                arrowPos = r;
+                arrowLen = 4;
+            } else {
+                int c = line.indexOf("->>");
+                if (c < 0) {
+                    continue;   // no arrow token → malformed, drop the line
+                }
+                reply = false;
+                arrowPos = c;
+                arrowLen = 3;
+            }
+            String from = cap(line.substring(0, arrowPos).strip());
+            String rest = line.substring(arrowPos + arrowLen);
+            // The label is everything after the FIRST `:` following the arrow (optional).
+            int colon = rest.indexOf(':');
+            String to;
+            String label;
+            if (colon >= 0) {
+                to = cap(rest.substring(0, colon).strip());
+                String raw = rest.substring(colon + 1).strip();
+                label = raw.isEmpty() ? null : cap(raw);
+            } else {
+                to = cap(rest.strip());
+                label = null;
+            }
+            if (from.isEmpty() || to.isEmpty()) {
+                continue;   // empty endpoint → malformed, drop the line
+            }
+            // Register both endpoints (first-seen order), each subject to the actor cap. A message is
+            // kept only if BOTH endpoints registered (so an over-cap actor drops its messages too).
+            registerActor(actors, from);
+            registerActor(actors, to);
+            if (messages.size() < MAX_DATA_ROWS && actors.contains(from) && actors.contains(to)) {
+                messages.add(new SeqMessage(from, to, label, reply));
+            }
+        }
+        return new Sequence(new ArrayList<>(actors), messages, textColor);
+    }
+
+    /// Registers an actor in first-seen order, up to {@link #MAX_ACTORS}; past the cap a brand-new
+    /// actor is dropped (never throws / never allocates unboundedly). An already-seen actor is a no-op.
+    private static void registerActor(LinkedHashSet<String> actors, String id) {
+        if (!actors.contains(id) && actors.size() < MAX_ACTORS) {
+            actors.add(id);
         }
     }
 

@@ -57,6 +57,11 @@ class ContainmentTest {
         // operator-scan hardening: a bracket-EMBEDDED arrow (label "a-->b", NOT an edge split) plus a
         // CHAINED multi-hop line (A→B→C) — bake-through safety that the parse-fix output stays in-set.
         "flowchart TD\n  A[a-->b] --> C\n  A --> B --> C\n",
+        // sequence (6th type): a call `->>` + a reply `-->>` + a SELF-message + an UNLABELED message
+        // — exercises the filled-triangle arrowhead, the open-V (line-pair) reply head, the self-hook,
+        // and the label-clamp, all through the allowlist.
+        "sequence\n  Alice ->> Bob : Request a really long token label that must clamp in-canvas\n"
+            + "  Bob -->> Alice : Token\n  Alice ->> Alice : Validate locally\n  Bob ->> Carol\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

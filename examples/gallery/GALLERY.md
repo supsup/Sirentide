@@ -85,3 +85,16 @@ D -->|re-review| B
 
 ![Flowchart (layered)](flowchart.png)
 
+## Sequence (API token flow)
+
+```
+sequence
+Client ->> Gateway : GET /token
+Gateway ->> Auth : validate
+Auth -->> Gateway : ok
+Gateway ->> Gateway : sign JWT
+Gateway -->> Client : 200 token
+```
+
+![Sequence (API token flow)](sequence.png)
+

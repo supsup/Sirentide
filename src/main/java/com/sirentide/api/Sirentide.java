@@ -6,12 +6,14 @@ import com.sirentide.ir.Empty;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
+import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import com.sirentide.layout.FlowchartLayout;
 import com.sirentide.layout.GanttLayout;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.PieLayout;
+import com.sirentide.layout.SequenceLayout;
 import com.sirentide.layout.TimelineLayout;
 import com.sirentide.layout.XyChartLayout;
 
@@ -67,6 +69,7 @@ public final class Sirentide {
             case Timeline tl -> TimelineLayout.layout(tl);
             case Gantt gantt -> GanttLayout.layout(gantt);
             case Flowchart fc -> FlowchartLayout.layout(fc);
+            case Sequence s -> SequenceLayout.layout(s);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }
