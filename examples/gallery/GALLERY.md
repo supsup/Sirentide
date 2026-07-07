@@ -73,3 +73,15 @@ gantt
 
 ![Gantt](gantt.png)
 
+## Flowchart (layered)
+
+```
+flowchart
+A[Open PR] --> B[Review]
+B --> C[Merge]
+B --> D[Request changes]
+D --> B
+```
+
+![Flowchart (layered)](flowchart.png)
+

@@ -2,6 +2,9 @@ package com.sirentide.parse;
 
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.FlowEdge;
+import com.sirentide.ir.FlowNode;
+import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
@@ -11,7 +14,9 @@ import com.sirentide.ir.XyChart;
 import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.AxisScale;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /// The Sirentide DSL parser (its own language, not a mermaid subset — docs/DESIGN.md §8). M0
 /// recognizes the empty diagram and `pie`. Malformed input degrades to the empty diagram or
@@ -33,6 +38,10 @@ public final class DslParser {
     public static final int MAX_SOURCE_BYTES = 1_000_000;   // 1 MB of DSL source
     public static final int MAX_DATA_ROWS = 10_000;         // rows past this are dropped
     public static final int MAX_LABEL_LEN = 512;            // labels are truncated to this
+    // Flowchart graph caps (DESIGN §6/§7): past these, extra nodes/edges are dropped rather than
+    // laid out — bounds the layering work + the shape count on a pathological graph, never throws.
+    public static final int MAX_NODES = 500;
+    public static final int MAX_EDGES = 1000;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -61,6 +70,7 @@ public final class DslParser {
             // map to epoch-day) so events place proportionally in time, not evenly by index.
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
             case "gantt" -> parseGantt(lines, textColor);
+            case "flowchart" -> parseFlowchart(lines, header, textColor);
             default -> new Empty();
         };
     }
@@ -148,6 +158,108 @@ public final class DslParser {
             }
         }
         return new Gantt(tasks, textColor);
+    }
+
+    /// Parses a flowchart: a directed graph, one edge (or one lone node) per body line.
+    /// ```
+    /// flowchart TD
+    ///   A[Start] --> B[Process]
+    ///   B --> C[End]
+    /// ```
+    /// Header: `flowchart` optionally followed by a `TD` (default) or `LR` direction token. Each
+    /// body line is `SRC --> DST` where an endpoint is a bare `id` or `id[Label]`; a line with no
+    /// `-->` is a lone node declaration. A node's label is its FIRST `[...]` occurrence (a node that
+    /// is never bracketed uses its id as its label). Nodes register in first-seen order (both
+    /// endpoints). A malformed line (no `-->` and not a lone node, or an empty endpoint) is skipped
+    /// — never throws (DESIGN §6). Caps: {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph.
+    /// Empty body → a Flowchart with no nodes (still a flowchart, so `flowchart` round-trips — NOT
+    /// degraded to Empty). FOLLOW-UP: chained `A-->B-->C` on one line, and `LR` geometry.
+    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor) {
+        String direction = "TD";
+        for (int i = 1; i < header.length; i++) {
+            if (header[i].equals("LR")) {
+                direction = "LR";
+            } else if (header[i].equals("TD")) {
+                direction = "TD";
+            }
+        }
+        // Insertion-ordered id → label map: preserves first-seen node order and lets the first
+        // bracketed occurrence win the label (a later bare mention never overwrites it).
+        LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
+        List<FlowEdge> edges = new ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            int sep = line.indexOf("-->");
+            if (sep < 0) {
+                // No edge operator → treat the whole line as a lone node declaration (`id[Label]`).
+                String[] nd = parseEndpoint(line);
+                if (nd != null) {
+                    registerNode(nodeLabels, nd);
+                }
+                continue;
+            }
+            String[] src = parseEndpoint(line.substring(0, sep));
+            String[] dst = parseEndpoint(line.substring(sep + 3));
+            // An empty/malformed endpoint drops the whole edge line (loud-not-silent: skipped, never
+            // half-drawn).
+            if (src == null || dst == null) {
+                continue;
+            }
+            registerNode(nodeLabels, src);
+            registerNode(nodeLabels, dst);
+            // Only draw an edge whose BOTH endpoints actually registered (a node past MAX_NODES is
+            // dropped, so its edges are too) and while under the edge cap.
+            if (edges.size() < MAX_EDGES
+                && nodeLabels.containsKey(src[0]) && nodeLabels.containsKey(dst[0])) {
+                edges.add(new FlowEdge(src[0], dst[0]));
+            }
+        }
+        List<FlowNode> nodes = new ArrayList<>();
+        for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
+            nodes.add(new FlowNode(e.getKey(), e.getValue()));
+        }
+        return new Flowchart(nodes, edges, direction, textColor);
+    }
+
+    /// Parses one flowchart endpoint token into `{id, bracketLabelOrNull}`. A bare `id` returns a
+    /// null bracket-label (so the id becomes its own label); an `id[Label]` returns the trimmed +
+    /// capped label. An empty id → null (the caller drops the line). Both id and label are `cap()`'d.
+    private static String[] parseEndpoint(String tok) {
+        tok = tok.strip();
+        if (tok.isEmpty()) {
+            return null;
+        }
+        int open = tok.indexOf('[');
+        if (open < 0) {
+            return new String[] {cap(tok), null};
+        }
+        String id = tok.substring(0, open).strip();
+        if (id.isEmpty()) {
+            return null;
+        }
+        int close = tok.indexOf(']', open);
+        String label = close > open ? tok.substring(open + 1, close) : tok.substring(open + 1);
+        return new String[] {cap(id), cap(label.strip())};
+    }
+
+    /// Registers a node in first-seen order. A brand-new id enters with its bracket label (or the id
+    /// itself when bare), subject to {@link #MAX_NODES}. An already-seen id UPGRADES from a default
+    /// (label == id) to its first bracketed label, but a node that already carries a bracket label
+    /// keeps it (first `[...]` occurrence wins).
+    private static void registerNode(LinkedHashMap<String, String> map, String[] nd) {
+        String id = nd[0];
+        String bracketLabel = nd[1];   // null when the token was bare
+        if (!map.containsKey(id)) {
+            if (map.size() >= MAX_NODES) {
+                return;   // drop past the node cap (never throw / never allocate unboundedly)
+            }
+            map.put(id, bracketLabel != null ? bracketLabel : id);
+        } else if (bracketLabel != null && map.get(id).equals(id)) {
+            map.put(id, bracketLabel);   // first bracketed occurrence upgrades a bare default
+        }
     }
 
     /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row
