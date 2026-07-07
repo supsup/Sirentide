@@ -199,9 +199,22 @@ public final class XyChartLayout {
             hi = 0;
         }
         boolean grouped = mode.equals("bars");
-        AxisScale axis = grouped
-            ? new AxisScale(Math.min(0, lo), Math.max(0, hi))
-            : new AxisScale(lo, hi);
+        AxisScale axis;
+        if (grouped) {
+            // Grouped bars keep the SIGNED zero-baseline domain — unchanged, byte-identical output.
+            axis = new AxisScale(Math.min(0, lo), Math.max(0, hi));
+        } else {
+            // Line / scatter: PAD the value domain by 5% of the span on each end so a min-value point
+            // doesn't sit ON the plot floor and a max-value point ON the ceiling (dots visually clipped
+            // against the axis edge). Bars never pad (they grow from a fixed zero baseline, above).
+            // DEGENERATE span (all values equal, or a single point → span 0): there is no span to take
+            // 5% of, so pad by max(1.0, half the |value|). The 1.0 floor keeps a near-zero value clear
+            // of the edges; half the magnitude keeps a large single value visibly inset rather than
+            // pinned to the plot midpoint's neighbours. Ticks stay within the PADDED [min,max].
+            double span = hi - lo;
+            double pad = span > 0 ? 0.05 * span : Math.max(1.0, 0.5 * Math.abs(lo));
+            axis = new AxisScale(lo - pad, hi + pad);
+        }
         double baselineY = grouped ? axis.project(0, plotBottom, plotTop) : plotBottom;
 
         // y-axis (full height) + the baseline x-axis.

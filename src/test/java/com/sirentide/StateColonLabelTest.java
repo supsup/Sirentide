@@ -22,9 +22,24 @@ class StateColonLabelTest {
         // the spaced form always worked; the others must now match it exactly
         assertEquals(spaced, noBefore, "'B: go' must render identically to 'B : go'");
         assertEquals(spaced, noAfter,  "'B :go' must render identically to 'B : go'");
-        // and it's a real diagram (two state boxes), not the inert shell
+        // and it's a real diagram (two state boxes), not the inert shell. State boxes are now
+        // rounded-rect <path>s (H/V sides + Q corners); the H/V commands are emitted ONLY by that box,
+        // so a path carrying " H " is exactly one state box (glyph/arrowhead paths use only M/L/Q/A/Z).
         assertFalse(spaced.contains("width=\"120\""), "must not be the blank degrade shell");
-        assertEquals(2, spaced.split("<rect", -1).length - 1, "two state boxes: A and B");
+        assertEquals(2, stateBoxes(spaced), "two state boxes: A and B");
+    }
+
+    /// Count rounded-rect state boxes: each is a single <path> whose data carries a horizontal-lineto
+    /// (" H "), a command only the state box emits (never a glyph or arrowhead path).
+    private static int stateBoxes(String svg) {
+        int n = 0;
+        for (int i = svg.indexOf("<path"); i >= 0; i = svg.indexOf("<path", i + 1)) {
+            int end = svg.indexOf("/>", i);
+            if (end > 0 && svg.substring(i, end).contains(" H ")) {
+                n++;
+            }
+        }
+        return n;
     }
 
     @Test

@@ -7,6 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.XyChart;
+import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Wedge;
+import com.sirentide.layout.XyChartLayout;
 import com.sirentide.parse.DslParser;
 import org.junit.jupiter.api.Test;
 
@@ -145,6 +148,28 @@ class XyLineScatterTest {
         // One series + legend → nothing to key: no swatch column, canvas not widened.
         String svg = Sirentide.render("xychart legend\n\"Jan\" : 5\n\"Feb\" : 8\n");
         assertEquals(320, svgWidth(svg), "single-series legend is ignored — canvas unchanged");
+    }
+
+    @Test
+    void lineDomainPadsSoExtremePointsClearThePlotEdges() {
+        // Line/scatter pad the value domain by 5% of the span, so the min-value dot no longer sits ON
+        // the plot floor nor the max-value dot ON the ceiling. For a no-legend chart the plot band is
+        // [plotTop=20, plotBottom=200] (MT=20, canvasH=240, MB=40). Disc centres (Wedge.cy) of the
+        // extreme points must land STRICTLY inside that band by >2px — with the raw domain they'd be
+        // exactly 20 (max) and 200 (min). Single-value rows in line mode still route to the point path.
+        XyChart chart = (XyChart) DslParser.parse("xychart line\n\"Jan\" : 5\n\"Feb\" : 8\n\"Mar\" : 3\n");
+        LaidOut laid = XyChartLayout.layout(chart);
+        double plotTop = 20;
+        double plotBottom = 200;
+        java.util.List<Double> discY = laid.shapes().stream()
+            .filter(s -> s instanceof Wedge).map(s -> ((Wedge) s).cy()).toList();
+        assertEquals(3, discY.size(), "one disc per point (3 categories, 1 series)");
+        double topDot = discY.stream().min(Double::compare).orElseThrow();      // the MAX value (8)
+        double bottomDot = discY.stream().max(Double::compare).orElseThrow();   // the MIN value (3)
+        assertTrue(topDot > plotTop + 2,
+            "max-value dot clears the plot ceiling by >2px (padded): cy=" + topDot);
+        assertTrue(bottomDot < plotBottom - 2,
+            "min-value dot clears the plot floor by >2px (padded): cy=" + bottomDot);
     }
 
     @Test
