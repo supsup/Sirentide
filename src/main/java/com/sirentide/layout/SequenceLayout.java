@@ -62,6 +62,11 @@ public final class SequenceLayout {
         }
 
         String textColor = seq.textColor();
+        // Actor-head box fill: the header `nodecolor=#hex` default, else the built-in HEAD_FILL. The
+        // head LABEL contrasts against THIS fill (dark on a light head, white on a dark one) so it
+        // stays legible on any theme — message labels below keep textColor (they sit on the page bg).
+        String headFill = seq.nodeColor() != null ? seq.nodeColor() : HEAD_FILL;
+        String headLabelFill = Colors.contrastFill(headFill);
 
         // -- head boxes: ellipsized label → width; the widest sets a uniform column spacing so
         // lifelines are evenly placed (a mermaid actor row). id → column index for message routing.
@@ -142,16 +147,17 @@ public final class SequenceLayout {
 
         // 3) head boxes (rects), each centred on its lifeline.
         for (int i = 0; i < n; i++) {
-            shapes.add(new Rect(cx[i] - headW[i] / 2, MARGIN, headW[i], ACTOR_H, HEAD_FILL));
+            shapes.add(new Rect(cx[i] - headW[i] / 2, MARGIN, headW[i], ACTOR_H, headFill));
         }
 
-        // 4) head labels (glyph paths — never <text>), centred in the box.
+        // 4) head labels (glyph paths — never <text>), centred in the box, contrast-filled against
+        // the head box (not the page-theme textColor, which vanished white-on-light under dark).
         for (int i = 0; i < n; i++) {
             double w = FONT.runWidth(headLabels[i], LABEL_SIZE);
             double baseline = MARGIN + ACTOR_H / 2 + LABEL_SIZE * 0.35;
             String d = FONT.textPathD(headLabels[i], cx[i] - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+                shapes.add(new GlyphRun(d, headLabelFill));
             }
         }
 

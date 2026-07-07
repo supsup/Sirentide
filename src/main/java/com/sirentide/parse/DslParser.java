@@ -92,10 +92,10 @@ public final class DslParser {
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
             case "gantt" -> parseGantt(lines, textColor);
             case "flowchart" -> parseFlowchart(lines, header, textColor);
-            case "sequence" -> parseSequence(lines, textColor);
+            case "sequence" -> parseSequence(lines, header, textColor);
             // A mermaid-style state diagram — reuses the flowchart graph engine (§5); `statediagram`
             // is an accepted alias of `state`.
-            case "state", "statediagram" -> parseStateDiagram(lines, textColor);
+            case "state", "statediagram" -> parseStateDiagram(lines, header, textColor);
             default -> new Empty();
         };
     }
@@ -118,6 +118,25 @@ public final class DslParser {
             }
         }
         return "currentColor";
+    }
+
+    /// The default node/head box fill from an optional `nodecolor=<hex>` header modifier (flowchart
+    /// nodes, state boxes, sequence actor heads). HEX-ONLY (like a per-item fill: a box needs a
+    /// concrete swatch — `currentColor`/`none` are meaningless and are the H1 contrast footgun), so a
+    /// non-hex value degrades to `null` = the layout's built-in default (never fails the bake, DESIGN
+    /// §6). Normalized to canonical `#rrggbb`. Order-independent with the other header tokens.
+    private static String parseNodeColor(String[] header) {
+        for (int i = 1; i < header.length; i++) {
+            String tok = header[i];
+            if (tok.startsWith("nodecolor=")) {
+                String value = tok.substring("nodecolor=".length());
+                if (SirentideContract.isHexColor(value)) {
+                    return SirentideContract.normalizeColor(value);
+                }
+                return null;   // invalid → the built-in default fill (a typo never fails the bake)
+            }
+        }
+        return null;
     }
 
     /// True iff a pie header carries the `legend` modifier (alias `key`). Any other modifier token
@@ -340,8 +359,12 @@ public final class DslParser {
         // Insertion-ordered id → label map: preserves first-seen node order and lets the first
         // decorated occurrence win the label (a later bare mention never overwrites it). Shapes
         // ride a parallel map (absent = rect).
+        // The header `nodecolor=#hex` default box fill (null → the layout's built-in default). A
+        // per-node `#hex` always overrides it; an invalid value degrades to the default (never fails).
+        String nodeColor = parseNodeColor(header);
         LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
         Map<String, String> nodeShapes = new java.util.HashMap<>();
+        Map<String, String> nodeColors = new java.util.HashMap<>();
         List<FlowEdge> edges = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -356,7 +379,7 @@ public final class DslParser {
                 // endpoint validator (nested `[` → malformed), NOT as a plausible node.
                 String[] nd = parseEndpoint(line);
                 if (nd != null) {
-                    registerNode(nodeLabels, nodeShapes, nd);
+                    registerNode(nodeLabels, nodeShapes, nodeColors, nd);
                 }
                 continue;
             }
@@ -400,7 +423,7 @@ public final class DslParser {
             // Register every endpoint (only after the whole chain validated — a partial line never
             // half-registers), then wire one edge per hop with that hop's own label.
             for (String[] ep : endpoints) {
-                registerNode(nodeLabels, nodeShapes, ep);
+                registerNode(nodeLabels, nodeShapes, nodeColors, ep);
             }
             for (int k = 0; k < hopLabels.size(); k++) {
                 String from = endpoints.get(k)[0];
@@ -415,9 +438,10 @@ public final class DslParser {
         }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
-            nodes.add(new FlowNode(e.getKey(), e.getValue(), nodeShapes.getOrDefault(e.getKey(), "rect")));
+            nodes.add(new FlowNode(e.getKey(), e.getValue(),
+                nodeShapes.getOrDefault(e.getKey(), "rect"), nodeColors.get(e.getKey())));
         }
-        return new Flowchart(nodes, edges, direction, textColor);
+        return new Flowchart(nodes, edges, direction, textColor, nodeColor);
     }
 
     /// Scans a body line for the byte offsets of every top-level `-->` — one that lies OUTSIDE any
@@ -465,15 +489,18 @@ public final class DslParser {
         return arrows;
     }
 
-    /// Parses one flowchart endpoint token into `{id, labelOrNull, shapeOrNull}`. A bare `id`
-    /// returns null label/shape (the id becomes its own label, shape defaults to rect); `id[Label]`
-    /// claims a rect box, `id{Label}` a DIAMOND decision node (M1.3) — whichever delimiter appears
-    /// first wins. Id and label are `cap()`'d. Returns `null` (→ caller drops the whole line,
-    /// loud-not-silent) for any malformed endpoint: an empty token or id, an UNTERMINATED delimiter
-    /// (`A[Start` with no `]`), TRAILING JUNK after a closed delimiter (`A[Start] junk` — only
-    /// whitespace may follow the closer), or a NESTED/unbalanced delimiter inside the label
-    /// (`A[Start --> B[End]` — the swallowed `[` makes the endpoint ambiguous, so it drops rather
-    /// than canonicalizing into a plausible-but-wrong node).
+    /// Parses one flowchart endpoint token into `{id, labelOrNull, shapeOrNull, colorOrNull}`. A bare
+    /// `id` returns null label/shape/colour (the id becomes its own label, shape defaults to rect);
+    /// `id[Label]` claims a rect box, `id{Label}` a DIAMOND decision node (M1.3) — whichever delimiter
+    /// appears first wins. A closed delimiter may be followed by exactly ONE trailing `#hex` COLOUR
+    /// token (`A[Start] #22c55e`, normalized to `#rrggbb`) that overrides the node's default box fill;
+    /// ANY OTHER trailing junk still DROPS the whole line (the hardening pin stays green — the colour
+    /// is the sole recognized trailing token, so a typo can't sneak a phantom node through). Id and
+    /// label are `cap()`'d. Returns `null` (→ caller drops the whole line, loud-not-silent) for any
+    /// malformed endpoint: an empty token or id, an UNTERMINATED delimiter (`A[Start` with no `]`),
+    /// NON-COLOUR trailing junk after a closed delimiter (`A[Start] junk`), a NESTED/unbalanced
+    /// delimiter inside the label (`A[Start --> B[End]`), or a BARE id with a trailing `#hex`
+    /// (`A #22c55e` — ambiguous with a multi-word id, so it drops rather than guessing).
     private static String[] parseEndpoint(String tok) {
         tok = tok.strip();
         if (tok.isEmpty()) {
@@ -493,7 +520,12 @@ public final class DslParser {
             closeCh = '}';
             shape = "diamond";
         } else {
-            return new String[] {cap(tok), null, null};   // bare id
+            // Bare id: no delimiter. A trailing `#hex` on a bare id is ambiguous (a colour, or part of
+            // a multi-word id?) → DROP rather than guess. Any other bare token stays a plain id.
+            if (trailingHex(tok) != null) {
+                return null;
+            }
+            return new String[] {cap(tok), null, null, null};   // bare id, default colour
         }
         String id = tok.substring(0, open).strip();
         if (id.isEmpty()) {
@@ -503,8 +535,16 @@ public final class DslParser {
         if (close < 0) {
             return null;   // unterminated delimiter → drop
         }
-        if (!tok.substring(close + 1).isBlank()) {
-            return null;   // trailing junk after the closer → drop
+        String color = null;
+        String trailing = tok.substring(close + 1).strip();
+        if (!trailing.isEmpty()) {
+            // AFTER the closer, ONLY a single `#hex` colour token is allowed; anything else drops the
+            // whole line (never mint a plausible-but-wrong node from `A[Start] junk`).
+            if (SirentideContract.isHexColor(trailing)) {
+                color = SirentideContract.normalizeColor(trailing);
+            } else {
+                return null;   // trailing junk after the closer → drop (keeps the hardening pin green)
+            }
         }
         String label = tok.substring(open + 1, close);
         // A nested/unbalanced delimiter inside the label means the operator-scan swallowed an arrow
@@ -513,18 +553,35 @@ public final class DslParser {
             || label.indexOf('{') >= 0 || label.indexOf('}') >= 0) {
             return null;
         }
-        return new String[] {cap(id), cap(label.strip()), shape};
+        return new String[] {cap(id), cap(label.strip()), shape, color};
+    }
+
+    /// If `tok`'s LAST whitespace-separated token is a contract-legal `#hex` colour, returns that
+    /// (raw, un-normalized); else `null`. Used to detect a colour suffix on a bare-id / state endpoint.
+    private static String trailingHex(String tok) {
+        int start = tok.length();
+        while (start > 0 && !Character.isWhitespace(tok.charAt(start - 1))) {
+            start--;
+        }
+        if (start > 0) {
+            String tail = tok.substring(start).strip();
+            if (SirentideContract.isHexColor(tail)) {
+                return tail;
+            }
+        }
+        return null;
     }
 
     /// Registers a node in first-seen order. A brand-new id enters with its decorated label (or the
     /// id itself when bare), subject to {@link #MAX_NODES}. An already-seen id UPGRADES from a
     /// default (label == id) to its first decorated label; the first DECORATED occurrence also sets
-    /// the shape (a later bare mention never changes either).
+    /// the shape AND the colour (a later mention never changes any of them — first decoration wins).
     private static void registerNode(LinkedHashMap<String, String> map, Map<String, String> shapes,
-                                     String[] nd) {
+                                     Map<String, String> colors, String[] nd) {
         String id = nd[0];
         String decoratedLabel = nd[1];   // null when the token was bare
         String shape = nd[2];            // null when the token was bare
+        String color = nd[3];            // null when no trailing `#hex` colour
         if (!map.containsKey(id)) {
             if (map.size() >= MAX_NODES) {
                 return;   // drop past the node cap (never throw / never allocate unboundedly)
@@ -535,6 +592,9 @@ public final class DslParser {
         }
         if (shape != null && map.containsKey(id) && !shapes.containsKey(id)) {
             shapes.put(id, shape);   // first decorated occurrence wins the shape too
+        }
+        if (color != null && map.containsKey(id) && !colors.containsKey(id)) {
+            colors.put(id, color);   // first colour-bearing occurrence wins the colour
         }
     }
 
@@ -553,7 +613,10 @@ public final class DslParser {
     /// line — no arrow token, or an empty endpoint — is DROPPED whole (never throws, DESIGN §6).
     /// Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages; ids/labels `cap()`'d. A
     /// bare `sequence` body → a Sequence with no actors (still a sequence, round-trips — NOT Empty).
-    private static Diagram parseSequence(String[] lines, String textColor) {
+    private static Diagram parseSequence(String[] lines, String[] header, String textColor) {
+        // Header `nodecolor=#hex` colours ALL actor heads (per-actor colours are a follow-up — no
+        // actor-decl syntax yet). null → the layout's built-in head fill.
+        String nodeColor = parseNodeColor(header);
         LinkedHashSet<String> actors = new LinkedHashSet<>();
         List<SeqMessage> messages = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
@@ -604,7 +667,7 @@ public final class DslParser {
                 messages.add(new SeqMessage(from, to, label, reply));
             }
         }
-        return new Sequence(new ArrayList<>(actors), messages, textColor);
+        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor);
     }
 
     /// Registers an actor in first-seen order, up to {@link #MAX_ACTORS}; past the cap a brand-new
@@ -642,9 +705,13 @@ public final class DslParser {
     /// {@link #topLevelArrows}. Malformed rows (empty endpoint, bare `[*]`) drop, never throw
     /// (DESIGN §6). Caps {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph. Empty body → a state
     /// diagram with no states (round-trips, NOT degraded to Empty).
-    private static Diagram parseStateDiagram(String[] lines, String textColor) {
+    private static Diagram parseStateDiagram(String[] lines, String[] header, String textColor) {
+        // Header `nodecolor=#hex` colours every state box (null → the built-in default); a per-state
+        // trailing `#hex` (`Idle #22c55e`) overrides it, riding the same endpoint parse as flowcharts.
+        String nodeColor = parseNodeColor(header);
         LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
         Map<String, String> nodeShapes = new java.util.HashMap<>();
+        Map<String, String> nodeColors = new java.util.HashMap<>();
         List<FlowEdge> edges = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -663,42 +730,52 @@ public final class DslParser {
             }
             List<Integer> arrows = topLevelArrows(edgesPart);
             if (arrows.isEmpty()) {
-                // Bare state declaration: `S` or `S : display name`. A bare `[*]` has no role → drop.
-                String id = cap(edgesPart);
+                // Bare state declaration: `S`, `S : display name`, or `S #hex` (per-state colour). A
+                // bare `[*]` has no role → drop.
+                String[] pc = peelStateEndpoint(edgesPart);
+                String id = cap(pc[0]);
                 if (id.isEmpty() || id.equals(STATE_TOKEN)) {
                     continue;
                 }
-                registerState(nodeLabels, nodeShapes, id, tail);
+                registerState(nodeLabels, nodeShapes, nodeColors, id, tail, pc[1]);
                 continue;
             }
-            // Tokenize the chain into endpoints separated by top-level `-->`, validate each is
-            // non-empty (drop the WHOLE line otherwise — never half-wire a chain, DESIGN §6).
-            List<String> endpoints = new ArrayList<>();
-            endpoints.add(edgesPart.substring(0, arrows.get(0)).strip());
+            // Tokenize the chain into endpoints separated by top-level `-->`, peel each endpoint's
+            // optional trailing `#hex`, and validate the id is non-empty (drop the WHOLE line
+            // otherwise — never half-wire a chain, DESIGN §6).
+            List<String> ids = new ArrayList<>();
+            List<String> colors = new ArrayList<>();
+            List<String> raw = new ArrayList<>();
+            raw.add(edgesPart.substring(0, arrows.get(0)).strip());
             for (int k = 0; k < arrows.size(); k++) {
                 int segStart = arrows.get(k) + 3;
                 int segEnd = (k + 1 < arrows.size()) ? arrows.get(k + 1) : edgesPart.length();
-                endpoints.add(edgesPart.substring(segStart, segEnd).strip());
+                raw.add(edgesPart.substring(segStart, segEnd).strip());
             }
             boolean dropped = false;
-            for (String ep : endpoints) {
-                if (ep.isEmpty()) {
+            for (String ep : raw) {
+                String[] pc = peelStateEndpoint(ep);
+                if (pc[0].isEmpty()) {
                     dropped = true;
                     break;
                 }
+                ids.add(pc[0]);
+                colors.add(pc[1]);
             }
             if (dropped) {
                 continue;
             }
             // Wire one edge per hop. `[*]` resolves per ROLE: as a hop's SOURCE it is __start__, as its
-            // TARGET it is __end__ (so the same token in `A --> [*] --> B` is END then START). The
-            // label rides the LAST hop only.
-            int lastHop = endpoints.size() - 2;
-            for (int k = 0; k < endpoints.size() - 1; k++) {
-                String from = endpoints.get(k).equals(STATE_TOKEN) ? START_ID : cap(endpoints.get(k));
-                String to = endpoints.get(k + 1).equals(STATE_TOKEN) ? END_ID : cap(endpoints.get(k + 1));
-                registerState(nodeLabels, nodeShapes, from, null);
-                registerState(nodeLabels, nodeShapes, to, null);
+            // TARGET it is __end__ (so the same token in `A --> [*] --> B` is END then START). A
+            // pseudostate never takes a colour (its disc fill is fixed). The label rides the LAST hop.
+            int lastHop = ids.size() - 2;
+            for (int k = 0; k < ids.size() - 1; k++) {
+                boolean fromStar = ids.get(k).equals(STATE_TOKEN);
+                boolean toStar = ids.get(k + 1).equals(STATE_TOKEN);
+                String from = fromStar ? START_ID : cap(ids.get(k));
+                String to = toStar ? END_ID : cap(ids.get(k + 1));
+                registerState(nodeLabels, nodeShapes, nodeColors, from, null, fromStar ? null : colors.get(k));
+                registerState(nodeLabels, nodeShapes, nodeColors, to, null, toStar ? null : colors.get(k + 1));
                 String hopLabel = (k == lastHop) ? tail : null;
                 if (edges.size() < MAX_EDGES
                     && nodeLabels.containsKey(from) && nodeLabels.containsKey(to)) {
@@ -708,18 +785,35 @@ public final class DslParser {
         }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
-            nodes.add(new FlowNode(e.getKey(), e.getValue(), nodeShapes.get(e.getKey())));
+            nodes.add(new FlowNode(e.getKey(), e.getValue(),
+                nodeShapes.get(e.getKey()), nodeColors.get(e.getKey())));
         }
-        return new StateDiagram(new Flowchart(nodes, edges, "TD", textColor));
+        return new StateDiagram(new Flowchart(nodes, edges, "TD", textColor, nodeColor));
+    }
+
+    /// Peels an OPTIONAL trailing `#hex` colour off a state endpoint token, returning
+    /// `{idPart, colorOrNull}` (colour normalized to canonical `#rrggbb`). Mirrors the flowchart
+    /// endpoint's trailing-colour rule for state lines (`Idle #22c55e`). A token with no
+    /// whitespace-separated trailing hex is returned unchanged with a `null` colour.
+    private static String[] peelStateEndpoint(String tok) {
+        String hex = trailingHex(tok);
+        if (hex != null) {
+            int cut = tok.length() - hex.length();
+            return new String[] {tok.substring(0, cut).strip(), SirentideContract.normalizeColor(hex)};
+        }
+        return new String[] {tok, null};
     }
 
     /// Registers a state (or pseudostate) in first-seen order, up to {@link #MAX_NODES}. The
     /// pseudostates `__start__`/`__end__` get shape `"start"`/`"end"` and an EMPTY label (a disc, no
     /// text); a normal state gets shape `"state"` and defaults its label to its id. A `displayName`
     /// (from a bare `S : name` decl) UPGRADES a state whose label is still the default id — the first
-    /// display name wins, a later bare mention never overwrites it.
+    /// display name wins, a later bare mention never overwrites it. A per-state `color` (from a
+    /// trailing `#hex`) sets the box fill on first colour-bearing occurrence; pseudostates never carry
+    /// a colour (the caller passes `null` for `[*]`).
     private static void registerState(LinkedHashMap<String, String> map, Map<String, String> shapes,
-                                      String id, String displayName) {
+                                      Map<String, String> colors, String id, String displayName,
+                                      String color) {
         String shape;
         String defaultLabel;
         if (id.equals(START_ID)) {
@@ -740,6 +834,9 @@ public final class DslParser {
             shapes.put(id, shape);
         } else if (displayName != null && map.get(id).equals(defaultLabel)) {
             map.put(id, displayName);   // first display name upgrades the default id label
+        }
+        if (color != null && map.containsKey(id) && !colors.containsKey(id)) {
+            colors.put(id, color);   // first colour-bearing occurrence wins the box fill
         }
     }
 

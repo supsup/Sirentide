@@ -24,11 +24,6 @@ public final class GanttLayout {
     private static final double LABEL_SIZE = 11;
     private static final String AXIS_STROKE = "#cbd5e1";
 
-    private static final String[] PALETTE = {
-        "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
-        "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"
-    };
-
     public static LaidOut layout(Gantt gantt) {
         List<Task> tasks = gantt.tasks();
         int n = tasks.size();
@@ -69,7 +64,7 @@ public final class GanttLayout {
                 w = minVisibleW;
             }
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
-            String fill = t.color() != null ? t.color() : PALETTE[i % PALETTE.length];
+            String fill = t.color() != null ? t.color() : Colors.PALETTE[i % Colors.PALETTE.length];
             shapes.add(new Rect(x, barY, w, barH, fill));
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar

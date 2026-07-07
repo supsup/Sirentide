@@ -9,9 +9,14 @@ import java.util.List;
 /// solve). FOLLOW-UP (M2): activation bars, alt/loop/par frames, bottom actor boxes.
 ///
 /// `actors` are in first-seen declaration order (both endpoints of every message register). `messages`
-/// are in declaration order (top→down). `textColor` fills every label — defaults to `currentColor`
-/// so labels inherit the host page's text colour (legible on light AND dark), matching the other types.
-public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor)
+/// are in declaration order (top→down). `textColor` fills the MESSAGE labels (they sit on the page
+/// background) — defaults to `currentColor` so they inherit the host page's text colour (legible on
+/// light AND dark). Actor-HEAD labels no longer use `textColor`: they contrast against the head box
+/// fill so they stay legible on any theme.
+///
+/// `nodeColor` is the header `nodecolor=#hex` actor-head fill — a canonical `#rrggbb`, or `null` for
+/// the built-in `#dbe4ff` (per-actor colours are a follow-up; no actor-decl syntax exists yet).
+public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor, String nodeColor)
     implements Diagram {
 
     public Sequence {
@@ -22,9 +27,14 @@ public record Sequence(List<String> actors, List<SeqMessage> messages, String te
         }
     }
 
-    /// Default construction (`currentColor` labels) — keeps a caller that builds a Sequence from just
-    /// its actors+messages unchanged.
+    /// No header node colour — keeps a caller that supplies just actors+messages+textColor unchanged.
+    public Sequence(List<String> actors, List<SeqMessage> messages, String textColor) {
+        this(actors, messages, textColor, null);
+    }
+
+    /// Default construction (`currentColor` message labels, default head fill) — keeps a caller that
+    /// builds a Sequence from just its actors+messages unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages) {
-        this(actors, messages, "currentColor");
+        this(actors, messages, "currentColor", null);
     }
 }

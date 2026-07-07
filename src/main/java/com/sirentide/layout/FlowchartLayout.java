@@ -179,12 +179,23 @@ public final class FlowchartLayout {
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 
+        // Resolve each node's BOX fill once (direction-independent): the author's per-node colour
+        // wins, else the header `nodecolor=` default, else the built-in NODE_FILL. This fill is what
+        // the box is drawn with AND what its label contrasts against — an author's dark box gets a
+        // white label automatically (Colors.contrastFill), so a custom colour is always legible.
+        String headerFill = fc.nodeColor();   // canonical #rrggbb or null (→ NODE_FILL)
+        String[] nodeFill = new String[n];
+        for (int i = 0; i < n; i++) {
+            String perNode = nodes.get(i).color();
+            nodeFill[i] = perNode != null ? perNode : (headerFill != null ? headerFill : NODE_FILL);
+        }
+
         // Layering/box-sizing above is direction-INDEPENDENT. TD (below) draws layers as ROWS flowing
         // top→down; LR draws them as COLUMNS flowing left→right — a genuinely different coordinate +
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack, styler);
+            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, nodeFill, edges, isBack, styler);
         }
 
         // Canvas width = widest layer + margins.
@@ -330,18 +341,20 @@ public final class FlowchartLayout {
         // the anchors the edges already attach to). A state diagram substitutes disc/bullseye discs
         // for its pseudostates here without any change to the layering/edge geometry above.
         for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), NODE_FILL);
+            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
         }
 
-        // 3) centered labels (glyph paths — never <text>).
-        String textColor = fc.textColor();
+        // 3) centered labels (glyph paths — never <text>). A node label sits ON its box, so it fills
+        // with the CONTRAST of the box colour (dark on a light box, white on a dark one) — never the
+        // page-theme textColor, which vanished white-on-light under a dark theme. Edge labels (above)
+        // keep textColor: they sit on the page background, not on a box.
         for (int i = 0; i < n; i++) {
             double cx = nx[i] + boxW[i] / 2;
             double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
             double w = FONT.runWidth(labels[i], LABEL_SIZE);
             String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+                shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
             }
         }
 
@@ -355,7 +368,8 @@ public final class FlowchartLayout {
     /// diamond path is untouched: its left/right vertices already land on the LR side anchors.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     List<List<Integer>> byLayer, double[] boxW, String[] labels,
-                                    List<Edge> edges, boolean[] isBack, NodeStyler styler) {
+                                    String[] nodeFill, List<Edge> edges, boolean[] isBack,
+                                    NodeStyler styler) {
         // -- columns: colW[L] = widest box in layer L; colX marches left→right by colW + LAYER_GAP.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -496,17 +510,18 @@ public final class FlowchartLayout {
         // to TD, no change needed for LR — the diamond's left/right vertices already land on the LR
         // side anchors). A state diagram reskins pseudostates here without touching the geometry above.
         for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), NODE_FILL);
+            styler.emitNode(shapes, i, nx[i], ny[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
         }
 
-        // 3) centered labels (glyph paths — never <text>).
+        // 3) centered labels (glyph paths — never <text>). Node labels contrast against the box fill
+        // (see the TD pass); edge labels above keep textColor (they sit on the page background).
         for (int i = 0; i < n; i++) {
             double cx = nx[i] + boxW[i] / 2;
             double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
             double w = FONT.runWidth(labels[i], LABEL_SIZE);
             String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+                shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
             }
         }
 

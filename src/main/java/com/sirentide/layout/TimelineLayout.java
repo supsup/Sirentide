@@ -33,11 +33,6 @@ public final class TimelineLayout {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
 
-    private static final String[] PALETTE = {
-        "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
-        "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"
-    };
-
     public static LaidOut layout(Timeline timeline) {
         List<Shape> shapes = new ArrayList<>();
         // Both the event (top) and value/year (bottom) labels sit on the page background → the
@@ -75,7 +70,7 @@ public final class TimelineLayout {
             // form is an opaque epoch-day. A bare year / plain number has a null valueLabel → num().
             botText[i] = e.valueLabel() != null ? e.valueLabel() : num(e.value());
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
-            String fill = e.color() != null ? e.color() : PALETTE[i % PALETTE.length];
+            String fill = e.color() != null ? e.color() : Colors.PALETTE[i % Colors.PALETTE.length];
             shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill));
         }
         // DE-COLLISION: labels of events close in value share nearly the same x and their boxes
