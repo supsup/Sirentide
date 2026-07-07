@@ -123,6 +123,71 @@ class FlowchartTest {
         assertEquals(0, fc.edges().size());
     }
 
+    // -- operator-scan `-->` splitting + chained edges + malformed drops ------
+
+    @Test
+    void bracketEmbeddedArrowIsNotAnEdgeSeparator() {
+        // The `-->` inside `[a-->b]` is part of the LABEL, not an edge operator: this is ONE edge
+        // A→C with A labeled "a-->b" (the old blind indexOf minted a phantom node id "b] --> C").
+        Flowchart fc = parse("flowchart\nA[a-->b] --> C\n");
+        assertEquals(List.of("A", "C"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()), "exactly 2 nodes");
+        assertEquals("a-->b", labelsById(fc).get("A"), "the bracket-embedded arrow stays in the label");
+        assertEquals(1, fc.edges().size(), "one edge");
+        assertEquals("A", fc.edges().get(0).from());
+        assertEquals("C", fc.edges().get(0).to());
+    }
+
+    @Test
+    void chainedEdgesExpandToConsecutiveHops() {
+        // `A --> B --> C` (any length) becomes edges A→B and B→C.
+        Flowchart fc = parse("flowchart\nA --> B --> C\n");
+        assertEquals(List.of("A", "B", "C"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()), "3 nodes");
+        assertEquals(2, fc.edges().size(), "2 edges from the chain");
+        assertEquals("A", fc.edges().get(0).from());
+        assertEquals("B", fc.edges().get(0).to());
+        assertEquals("B", fc.edges().get(1).from());
+        assertEquals("C", fc.edges().get(1).to());
+    }
+
+    @Test
+    void chainedEdgeLabelsApplyPerHop() {
+        // `A -->|yes| B -->|no| C` labels each hop independently: A-yes→B, B-no→C.
+        Flowchart fc = parse("flowchart\nA -->|yes| B -->|no| C\n");
+        assertEquals(2, fc.edges().size());
+        assertEquals("yes", fc.edges().get(0).label());
+        assertEquals("no", fc.edges().get(1).label());
+    }
+
+    @Test
+    void unterminatedBracketDropsTheLine() {
+        // `A[Start --> B[End]` — the operator scan sees the `-->` inside the (nested/unbalanced)
+        // bracket, so there is no top-level arrow; the endpoint validator then drops it entirely
+        // rather than canonicalizing a plausible A→B. 0 edges (and 0 nodes: nothing registers).
+        Flowchart fc = parse("flowchart\nA[Start --> B[End]\n");
+        assertEquals(0, fc.edges().size(), "the malformed line yields no edge");
+        assertEquals(0, fc.nodes().size(), "and no node — the whole line drops");
+    }
+
+    @Test
+    void trailingJunkAfterClosedDelimiterDropsTheLine() {
+        // Non-whitespace after a CLOSED `]`/`}` in an endpoint is malformed → drop the whole line.
+        Flowchart fc = parse("flowchart\nA[Start] junk --> B[End] also junk\n");
+        assertEquals(0, fc.edges().size(), "both endpoints carry trailing junk → line dropped");
+        assertEquals(0, fc.nodes().size(), "nothing registers from a dropped line");
+    }
+
+    @Test
+    void oversizedUtf8SourceDegradesToInert() {
+        // Lattice #4 repro: 600k `é` chars = 1.2 MB of UTF-8 (but only 600k UTF-16 code units, so the
+        // cheap length() guard misses it). The true-byte cap must reject it → the inert empty shell.
+        String huge = "pie\n  \"A\" : 1\n" + "é".repeat(600_000);
+        String svg = Sirentide.render(huge);
+        assertEquals(Sirentide.render(""), svg, "oversized UTF-8 source renders the inert empty shell");
+        assertTrue(!svg.contains("<path"), "no pie wedge leaked from the over-cap source");
+    }
+
     // -- layering -------------------------------------------------------------
 
     /// Re-derives the layer of each node from the parsed graph using the SAME longest-path rule the

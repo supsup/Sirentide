@@ -48,8 +48,22 @@ public final class DslParser {
             return new Empty();
         }
         // Oversized source degrades to inert (never parse a runaway input into millions of shapes).
+        // MAX_SOURCE_BYTES is a UTF-8 *byte* bound (DESIGN §6/§7 + the CLI stdin read cap). The cheap
+        // `length()` guard is a fast reject on UTF-16 code units (always ≤ the UTF-8 byte count for
+        // BMP, but multi-byte chars mean length() UNDER-counts bytes — a 600k-char `é` string is
+        // 1.2 MB of UTF-8 yet only 600k code units). So ALSO scan the true UTF-8 byte length with a
+        // no-alloc code-point walk (never materializes a byte[]) and reject once it exceeds the cap.
         if (src.length() > MAX_SOURCE_BYTES) {
             return new Empty();
+        }
+        long utf8Bytes = 0;
+        for (int i = 0, n = src.length(); i < n; ) {
+            int cp = src.codePointAt(i);
+            utf8Bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+            if (utf8Bytes > MAX_SOURCE_BYTES) {
+                return new Empty();
+            }
+            i += Character.charCount(cp);
         }
         String[] lines = src.strip().split("\\R");
         // The header is a TYPE token plus optional whitespace-split MODIFIER tokens (e.g.
@@ -167,13 +181,22 @@ public final class DslParser {
     ///   B --> C[End]
     /// ```
     /// Header: `flowchart` optionally followed by a `TD` (default) or `LR` direction token. Each
-    /// body line is `SRC --> DST` where an endpoint is a bare `id` or `id[Label]`; a line with no
-    /// `-->` is a lone node declaration. A node's label is its FIRST `[...]` occurrence (a node that
-    /// is never bracketed uses its id as its label). Nodes register in first-seen order (both
-    /// endpoints). A malformed line (no `-->` and not a lone node, or an empty endpoint) is skipped
-    /// — never throws (DESIGN §6). Caps: {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph.
-    /// Empty body → a Flowchart with no nodes (still a flowchart, so `flowchart` round-trips — NOT
-    /// degraded to Empty). FOLLOW-UP: chained `A-->B-->C` on one line, and `LR` geometry.
+    /// body line is a `-->`-separated CHAIN of endpoints where an endpoint is a bare `id`,
+    /// `id[Label]`, or `id{Label}`; a line with no top-level `-->` is a lone node declaration. A
+    /// chained `A --> B --> C` expands to edges A→B and B→C (any length); an edge label rides its
+    /// OWN hop (`A -->|yes| B -->|no| C` = A-yes→B, B-no→C). A node's label is its FIRST decorated
+    /// occurrence (a node that is never bracketed uses its id as its label). Nodes register in
+    /// first-seen order.
+    ///
+    /// The `-->` split is OPERATOR-SCANNED, not a blind `indexOf`: it only splits on a `-->` that is
+    /// OUTSIDE any `[...]`, `{...}`, or `|...|` span (see {@link #topLevelArrows}). So `A[a-->b] --> C`
+    /// is one edge A→C with A labeled `a-->b` (the bracket-embedded arrow is NOT a separator), and a
+    /// label-embedded `|a-->b|` is inert. A malformed line drops WHOLE (loud-not-silent, DESIGN §6),
+    /// never half-drawn: an unterminated `A[Start` (no `]`), trailing junk after a closed delimiter
+    /// (`A[Start] junk`), a nested/unbalanced bracket (`A[Start --> B[End]`), an empty endpoint, or a
+    /// missing closing edge-label pipe all drop the line. Caps: {@link #MAX_NODES}/{@link #MAX_EDGES}
+    /// bound the graph. Empty body → a Flowchart with no nodes (still a flowchart, so `flowchart`
+    /// round-trips — NOT degraded to Empty).
     private static Diagram parseFlowchart(String[] lines, String[] header, String textColor) {
         String direction = "TD";
         for (int i = 1; i < header.length; i++) {
@@ -194,43 +217,69 @@ public final class DslParser {
             if (line.isEmpty()) {
                 continue;
             }
-            int sep = line.indexOf("-->");
-            if (sep < 0) {
-                // No edge operator → treat the whole line as a lone node declaration (`id[Label]`).
+            // Operator-scan for the top-level `-->` positions (outside every bracket/brace/pipe span).
+            List<Integer> arrows = topLevelArrows(line);
+            if (arrows.isEmpty()) {
+                // No edge operator at top level → the whole line is a lone node declaration. A
+                // bracket-swallowed arrow (`A[Start --> B[End]`) lands here too and drops via the
+                // endpoint validator (nested `[` → malformed), NOT as a plausible node.
                 String[] nd = parseEndpoint(line);
                 if (nd != null) {
                     registerNode(nodeLabels, nodeShapes, nd);
                 }
                 continue;
             }
-            String[] src = parseEndpoint(line.substring(0, sep));
-            // Optional mermaid-style edge label: `A -->|yes| B`. If the text after the operator
-            // starts with `|`, the label runs to the FIRST closing `|`; the dst follows. A missing
-            // closing pipe is malformed → the whole line drops (loud-not-silent).
-            String rest = line.substring(sep + 3).strip();
-            String edgeLabel = null;
-            if (rest.startsWith("|")) {
-                int close = rest.indexOf('|', 1);
-                if (close < 0) {
-                    continue;
-                }
-                String raw = rest.substring(1, close).strip();
-                edgeLabel = raw.isEmpty() ? null : cap(raw);
-                rest = rest.substring(close + 1);
+            // Tokenize the chain: endpoints[0..k] separated by k arrows, each arrow carrying an
+            // OPTIONAL leading `|label|` that annotates only its hop. The head endpoint precedes the
+            // first arrow; each subsequent segment is `[|label|] endpoint`.
+            String[] head = parseEndpoint(line.substring(0, arrows.get(0)));
+            if (head == null) {
+                continue;   // malformed head endpoint → drop the whole line
             }
-            String[] dst = parseEndpoint(rest);
-            // An empty/malformed endpoint drops the whole edge line (loud-not-silent: skipped, never
-            // half-drawn).
-            if (src == null || dst == null) {
+            List<String[]> endpoints = new ArrayList<>();
+            List<String> hopLabels = new ArrayList<>();
+            endpoints.add(head);
+            boolean dropped = false;
+            for (int k = 0; k < arrows.size(); k++) {
+                int segStart = arrows.get(k) + 3;
+                int segEnd = (k + 1 < arrows.size()) ? arrows.get(k + 1) : line.length();
+                String seg = line.substring(segStart, segEnd).strip();
+                String label = null;
+                if (seg.startsWith("|")) {
+                    int close = seg.indexOf('|', 1);
+                    if (close < 0) {
+                        dropped = true;   // missing closing pipe → drop the whole line
+                        break;
+                    }
+                    String raw = seg.substring(1, close).strip();
+                    label = raw.isEmpty() ? null : cap(raw);
+                    seg = seg.substring(close + 1).strip();
+                }
+                String[] ep = parseEndpoint(seg);
+                if (ep == null) {
+                    dropped = true;   // any malformed endpoint drops the whole line (never half-drawn)
+                    break;
+                }
+                hopLabels.add(label);
+                endpoints.add(ep);
+            }
+            if (dropped) {
                 continue;
             }
-            registerNode(nodeLabels, nodeShapes, src);
-            registerNode(nodeLabels, nodeShapes, dst);
-            // Only draw an edge whose BOTH endpoints actually registered (a node past MAX_NODES is
-            // dropped, so its edges are too) and while under the edge cap.
-            if (edges.size() < MAX_EDGES
-                && nodeLabels.containsKey(src[0]) && nodeLabels.containsKey(dst[0])) {
-                edges.add(new FlowEdge(src[0], dst[0], edgeLabel));
+            // Register every endpoint (only after the whole chain validated — a partial line never
+            // half-registers), then wire one edge per hop with that hop's own label.
+            for (String[] ep : endpoints) {
+                registerNode(nodeLabels, nodeShapes, ep);
+            }
+            for (int k = 0; k < hopLabels.size(); k++) {
+                String from = endpoints.get(k)[0];
+                String to = endpoints.get(k + 1)[0];
+                // Only draw an edge whose BOTH endpoints actually registered (a node past MAX_NODES is
+                // dropped, so its edges are too) and while under the edge cap.
+                if (edges.size() < MAX_EDGES
+                    && nodeLabels.containsKey(from) && nodeLabels.containsKey(to)) {
+                    edges.add(new FlowEdge(from, to, hopLabels.get(k)));
+                }
             }
         }
         List<FlowNode> nodes = new ArrayList<>();
@@ -240,10 +289,60 @@ public final class DslParser {
         return new Flowchart(nodes, edges, direction, textColor);
     }
 
+    /// Scans a body line for the byte offsets of every top-level `-->` — one that lies OUTSIDE any
+    /// `[...]` / `{...}` / `|...|` span — so brackets, braces, and edge-label pipes never poison the
+    /// edge split (the old `indexOf("-->")` split blind, minting a phantom node from `A[a-->b]`).
+    /// A tiny state machine walks the line: a `[`/`{` opens a bracket span until its matching closer;
+    /// a `|` TOGGLES a pipe span; while inside either span the scanner ignores everything but the
+    /// span terminator. An unterminated span at end-of-line simply yields no further arrows (the
+    /// endpoint validator then drops the malformed line). Non-nesting by design — matches the DSL,
+    /// where a label may contain `-->` but not a nested delimiter.
+    private static List<Integer> topLevelArrows(String line) {
+        List<Integer> arrows = new ArrayList<>();
+        char bracketClose = 0;   // 0 = not in a bracket/brace span, else the awaited ']' or '}'
+        boolean inPipe = false;
+        int n = line.length();
+        int i = 0;
+        while (i < n) {
+            char c = line.charAt(i);
+            if (bracketClose != 0) {
+                if (c == bracketClose) {
+                    bracketClose = 0;
+                }
+                i++;
+            } else if (inPipe) {
+                if (c == '|') {
+                    inPipe = false;
+                }
+                i++;
+            } else if (c == '[') {
+                bracketClose = ']';
+                i++;
+            } else if (c == '{') {
+                bracketClose = '}';
+                i++;
+            } else if (c == '|') {
+                inPipe = true;
+                i++;
+            } else if (c == '-' && i + 2 < n && line.charAt(i + 1) == '-' && line.charAt(i + 2) == '>') {
+                arrows.add(i);
+                i += 3;
+            } else {
+                i++;
+            }
+        }
+        return arrows;
+    }
+
     /// Parses one flowchart endpoint token into `{id, labelOrNull, shapeOrNull}`. A bare `id`
     /// returns null label/shape (the id becomes its own label, shape defaults to rect); `id[Label]`
     /// claims a rect box, `id{Label}` a DIAMOND decision node (M1.3) — whichever delimiter appears
-    /// first wins. An empty id → null (the caller drops the line). Id and label are `cap()`'d.
+    /// first wins. Id and label are `cap()`'d. Returns `null` (→ caller drops the whole line,
+    /// loud-not-silent) for any malformed endpoint: an empty token or id, an UNTERMINATED delimiter
+    /// (`A[Start` with no `]`), TRAILING JUNK after a closed delimiter (`A[Start] junk` — only
+    /// whitespace may follow the closer), or a NESTED/unbalanced delimiter inside the label
+    /// (`A[Start --> B[End]` — the swallowed `[` makes the endpoint ambiguous, so it drops rather
+    /// than canonicalizing into a plausible-but-wrong node).
     private static String[] parseEndpoint(String tok) {
         tok = tok.strip();
         if (tok.isEmpty()) {
@@ -263,14 +362,26 @@ public final class DslParser {
             closeCh = '}';
             shape = "diamond";
         } else {
-            return new String[] {cap(tok), null, null};
+            return new String[] {cap(tok), null, null};   // bare id
         }
         String id = tok.substring(0, open).strip();
         if (id.isEmpty()) {
             return null;
         }
         int close = tok.indexOf(closeCh, open);
-        String label = close > open ? tok.substring(open + 1, close) : tok.substring(open + 1);
+        if (close < 0) {
+            return null;   // unterminated delimiter → drop
+        }
+        if (!tok.substring(close + 1).isBlank()) {
+            return null;   // trailing junk after the closer → drop
+        }
+        String label = tok.substring(open + 1, close);
+        // A nested/unbalanced delimiter inside the label means the operator-scan swallowed an arrow
+        // (or the box is unbalanced) — malformed, drop rather than mint a plausible-but-wrong node.
+        if (label.indexOf('[') >= 0 || label.indexOf(']') >= 0
+            || label.indexOf('{') >= 0 || label.indexOf('}') >= 0) {
+            return null;
+        }
         return new String[] {cap(id), cap(label.strip()), shape};
     }
 

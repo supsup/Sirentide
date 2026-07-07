@@ -54,6 +54,9 @@ class ContainmentTest {
         // LR geometry (M1.4): columns flow left→right, back-edges lane BELOW the content, labeled —
         // exercises the diamond, forward + back edge labels, and the cycle through the LR path.
         "flowchart LR\n  A{Ship?} -->|yes| B[Deploy]\n  A -->|no| C[Fix]\n  C -->|retry| A\n  D[Lone]\n",
+        // operator-scan hardening: a bracket-EMBEDDED arrow (label "a-->b", NOT an edge split) plus a
+        // CHAINED multi-hop line (A→B→C) — bake-through safety that the parse-fix output stays in-set.
+        "flowchart TD\n  A[a-->b] --> C\n  A --> B --> C\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell
