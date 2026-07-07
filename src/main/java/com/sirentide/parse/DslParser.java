@@ -7,6 +7,8 @@ import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
+import com.sirentide.ir.Point;
+import com.sirentide.ir.QuadrantChart;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
@@ -96,6 +98,8 @@ public final class DslParser {
             // A mermaid-style state diagram — reuses the flowchart graph engine (§5); `statediagram`
             // is an accepted alias of `state`.
             case "state", "statediagram" -> parseStateDiagram(lines, header, textColor);
+            // A 2×2 positioning matrix — axis-end labels, per-quadrant labels, and `[x,y]` points.
+            case "quadrant" -> parseQuadrant(lines, textColor);
             default -> new Empty();
         };
     }
@@ -873,6 +877,124 @@ public final class DslParser {
         if (color != null && map.containsKey(id) && !colors.containsKey(id)) {
             colors.put(id, color);   // first colour-bearing occurrence wins the box fill
         }
+    }
+
+    /// Parses a quadrant chart — a 2×2 positioning matrix.
+    /// ```
+    /// quadrant
+    ///   x-axis "Low Reach" --> "High Reach"
+    ///   y-axis "Low Impact" --> "High Impact"
+    ///   quadrant-1 "Major project"
+    ///   quadrant-2 "Quick win"
+    ///   quadrant-3 "Deprioritize"
+    ///   quadrant-4 "Fill-in"
+    ///   "Feature A" : [0.3, 0.6]
+    ///   "Feature B" : [0.75, 0.8]
+    /// ```
+    /// DIRECTIVE rows: `x-axis`/`y-axis` carry the axis-END labels split on `-->` (the `Low` end
+    /// LEFT of the arrow, the `High` end right; a lone value with no `-->` sets only the Low end).
+    /// `quadrant-1`..`quadrant-4` carry a quadrant label — Mermaid numbering: Q1 top-right, Q2
+    /// top-left, Q3 bottom-left, Q4 bottom-right. POINT rows are `"label" : [x, y]` with `x,y` in
+    /// `[0,1]` (out-of-range CLAMPED into the unit square, never thrown). Every part is OPTIONAL —
+    /// a bare `quadrant` still bakes a valid empty 2×2 grid. A malformed row is skipped (DESIGN §6:
+    /// never fail the bake); the type ALWAYS round-trips to a QuadrantChart, never degrades to Empty.
+    private static Diagram parseQuadrant(String[] lines, String textColor) {
+        String[] xEnds = {null, null};    // {lo, hi}
+        String[] yEnds = {null, null};    // {lo, hi}
+        String[] quadrantLabels = new String[4];
+        List<Point> points = new ArrayList<>();
+        for (int i = 1; i < lines.length && points.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.startsWith("x-axis")) {
+                axisEnds(xEnds, line.substring("x-axis".length()));
+            } else if (line.startsWith("y-axis")) {
+                axisEnds(yEnds, line.substring("y-axis".length()));
+            } else if (line.startsWith("quadrant-1")) {
+                quadrantLabels[0] = quadrantLabel(line.substring("quadrant-1".length()));
+            } else if (line.startsWith("quadrant-2")) {
+                quadrantLabels[1] = quadrantLabel(line.substring("quadrant-2".length()));
+            } else if (line.startsWith("quadrant-3")) {
+                quadrantLabels[2] = quadrantLabel(line.substring("quadrant-3".length()));
+            } else if (line.startsWith("quadrant-4")) {
+                quadrantLabels[3] = quadrantLabel(line.substring("quadrant-4".length()));
+            } else {
+                // A point row `"label" : [x, y]`. No colon → not a point → skip (never fail the bake).
+                int colon = line.indexOf(':');
+                if (colon < 0) {
+                    continue;
+                }
+                String label = cap(unquote(line.substring(0, colon).strip()));
+                Point p = parsePoint(label, line.substring(colon + 1).strip());
+                if (p != null) {
+                    points.add(p);
+                }
+            }
+        }
+        return new QuadrantChart(xEnds[0], xEnds[1], yEnds[0], yEnds[1],
+            quadrantLabels, points, textColor);
+    }
+
+    /// Fills `{lo, hi}` from an axis-end directive's tail (`"Low" --> "High"`). The `-->` splits the
+    /// two ends; with no arrow the whole tail is the LOW end and the high end stays null. Each end is
+    /// unquoted, `cap()`'d, and a blank end becomes null (an absent end is simply not drawn).
+    private static void axisEnds(String[] ends, String tail) {
+        tail = tail.strip();
+        int arrow = tail.indexOf("-->");
+        if (arrow >= 0) {
+            ends[0] = axisEnd(tail.substring(0, arrow));
+            ends[1] = axisEnd(tail.substring(arrow + 3));
+        } else {
+            ends[0] = axisEnd(tail);
+        }
+    }
+
+    /// One axis-end label: unquoted, `cap()`'d, blank → null.
+    private static String axisEnd(String s) {
+        String v = cap(unquote(s.strip()));
+        return v.isEmpty() ? null : v;
+    }
+
+    /// A quadrant label from a `quadrant-N` directive tail: unquoted, `cap()`'d, blank → null.
+    private static String quadrantLabel(String tail) {
+        String v = cap(unquote(tail.strip()));
+        return v.isEmpty() ? null : v;
+    }
+
+    /// Parses a point's `[x, y]` coordinate tail into a {@link Point}, or null when malformed (which
+    /// the caller skips). Surrounding `[ ]` are optional; the two comma-split tokens parse as doubles
+    /// and CLAMP into the unit square `[0,1]` (out-of-range never throws — the inert-shell invariant,
+    /// DESIGN §6). A non-numeric or non-finite coordinate, or the wrong token count, drops the point.
+    private static Point parsePoint(String label, String coords) {
+        String c = coords.strip();
+        if (c.startsWith("[")) {
+            c = c.substring(1);
+        }
+        if (c.endsWith("]")) {
+            c = c.substring(0, c.length() - 1);
+        }
+        String[] toks = c.split(",");
+        if (toks.length != 2) {
+            return null;   // a point needs exactly an x and a y
+        }
+        try {
+            double x = Double.parseDouble(toks[0].strip());
+            double y = Double.parseDouble(toks[1].strip());
+            if (!Double.isFinite(x) || !Double.isFinite(y)) {
+                return null;   // NaN/Infinity (incl. "1e400") never reaches layout
+            }
+            return new Point(label, clampUnit(x), clampUnit(y));
+        } catch (NumberFormatException e) {
+            return null;   // unparseable coordinate → drop the point (never fail the bake)
+        }
+    }
+
+    /// Clamps a coordinate into the unit interval `[0,1]` (defensive against an out-of-range author
+    /// value — it stays inside the plot square rather than escaping the canvas or throwing).
+    private static double clampUnit(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
     }
 
     /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row
