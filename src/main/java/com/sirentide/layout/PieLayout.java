@@ -96,7 +96,7 @@ public final class PieLayout {
                 // Comfortable slice: a centered inside label, contrast-aware fill (black or white by
                 // the slice colour's luminance — no more contrast-blind hardcoded white).
                 placeLabel(shapes, label, cx + LABEL_RADIUS * Math.cos(mid),
-                    cy + LABEL_RADIUS * Math.sin(mid), true, mid, Colors.contrastFill(fill));
+                    cy + LABEL_RADIUS * Math.sin(mid), Colors.contrastFill(fill));
             } else {
                 // Thin slice: DEFER — anchor on the rim, collect it, and spread the whole set below
                 // so two near-co-located tiny slices ("Tiny"/"Other") no longer stack their labels.
@@ -146,33 +146,38 @@ public final class PieLayout {
 
     private static void emitSide(List<Shape> shapes, List<Outside> side, String textColor) {
         for (Outside o : side) {
+            boolean right = Math.cos(o.mid()) >= 0;
+            // Bound the outside label to the room between its leader-end anchor and the near canvas
+            // edge, then ellipsize to fit. A thin slice with no horizontal room ellipsizes to EMPTY
+            // (GEOMETRY-ESCAPE #1's honest outcome) — and then we DROP the leader too: a leader line
+            // pointing at an empty label is dangling residue. The wedge itself already drew above.
+            double avail = right ? SIZE - o.lx() - CLAMP_MARGIN - CLAMP_MARGIN
+                                 : o.lx() - CLAMP_MARGIN - CLAMP_MARGIN;
+            String label = FONT.ellipsize(o.label(), Math.max(0, avail), LABEL_SIZE);
+            if (label.isBlank()) {
+                continue;   // no room for even an ellipsis → no label AND no leader (drop the residue)
+            }
             shapes.add(new Line(o.rimX(), o.rimY(), o.lx(), o.ly(), LEADER_STROKE, 1));
-            placeLabel(shapes, o.label(), o.lx(), o.ly(), false, o.mid(), textColor);
+            placeOutside(shapes, label, o.lx(), o.ly(), right, textColor);
         }
     }
 
-    /// Emit a label as glyph paths. Inside labels centre on the point; outside labels anchor away
-    /// from the pie (left-aligned on the right half, right-aligned on the left half) so the leader
-    /// meets the text edge, not its middle.
-    private static void placeLabel(List<Shape> shapes, String label, double px, double py,
-                                   boolean centered, double mid, String fill) {
+    /// Emit a CENTERED inside label as glyph paths — centred on the point (contrast-filled).
+    private static void placeLabel(List<Shape> shapes, String label, double px, double py, String fill) {
         double baseline = py + LABEL_SIZE * 0.35;
-        double originX;
-        if (centered) {
-            double w = FONT.runWidth(label, LABEL_SIZE);
-            originX = px - w / 2;
-            emitGlyphs(shapes, label, originX, baseline, fill);
-            return;
-        }
-        boolean right = Math.cos(mid) >= 0;
-        // Bound the outside label to the room between its leader-end anchor and the near canvas edge,
-        // then ellipsize to fit. A right-side thin slice whose anchor sits ~2px from the edge
-        // ellipsizes to EMPTY (the leader is still drawn) — the honest containment outcome rather than
-        // glyphs spilling past x=SIZE (GEOMETRY-ESCAPE #1).
-        double avail = right ? SIZE - px - CLAMP_MARGIN - CLAMP_MARGIN : px - CLAMP_MARGIN - CLAMP_MARGIN;
-        label = FONT.ellipsize(label, Math.max(0, avail), LABEL_SIZE);
         double w = FONT.runWidth(label, LABEL_SIZE);
-        originX = right ? px + CLAMP_MARGIN : px - CLAMP_MARGIN - w;
+        emitGlyphs(shapes, label, px - w / 2, baseline, fill);
+    }
+
+    /// Emit an ALREADY-BOUNDED outside label as glyph paths, anchored away from the pie (left-aligned
+    /// on the right half, right-aligned on the left half) so the leader meets the text edge, not its
+    /// middle. Callers ellipsize to the available room BEFORE calling — an empty label never reaches
+    /// here (its leader is dropped in {@link #emitSide}).
+    private static void placeOutside(List<Shape> shapes, String label, double px, double py,
+                                     boolean right, String fill) {
+        double baseline = py + LABEL_SIZE * 0.35;
+        double w = FONT.runWidth(label, LABEL_SIZE);
+        double originX = right ? px + CLAMP_MARGIN : px - CLAMP_MARGIN - w;
         // Final safety clamp: the whole glyph box stays in [CLAMP_MARGIN, SIZE-CLAMP_MARGIN-w].
         originX = Math.max(CLAMP_MARGIN, Math.min(originX, SIZE - CLAMP_MARGIN - w));
         emitGlyphs(shapes, label, originX, baseline, fill);

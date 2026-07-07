@@ -16,7 +16,13 @@ import java.util.List;
 ///
 /// `nodeColor` is the header `nodecolor=#hex` actor-head fill — a canonical `#rrggbb`, or `null` for
 /// the built-in `#dbe4ff` (per-actor colours are a follow-up; no actor-decl syntax exists yet).
-public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor, String nodeColor)
+///
+/// `bodyHadContent` distinguishes a genuinely EMPTY diagram (a bare `sequence` header, no body — an
+/// intentional blank canvas) from an ERROR (a non-empty body where every line was malformed → zero
+/// actors). The former stays a minimal blank canvas; the latter degrades VISIBLY (layout draws a
+/// `sequence: no messages parsed` glyph-run) so a mistyped diagram never renders as silent nothing.
+public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
+                       String nodeColor, boolean bodyHadContent)
     implements Diagram {
 
     public Sequence {
@@ -27,14 +33,20 @@ public record Sequence(List<String> actors, List<SeqMessage> messages, String te
         }
     }
 
+    /// No body-content signal (bodyHadContent=false) — keeps a caller supplying just
+    /// actors+messages+textColor+nodeColor unchanged.
+    public Sequence(List<String> actors, List<SeqMessage> messages, String textColor, String nodeColor) {
+        this(actors, messages, textColor, nodeColor, false);
+    }
+
     /// No header node colour — keeps a caller that supplies just actors+messages+textColor unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages, String textColor) {
-        this(actors, messages, textColor, null);
+        this(actors, messages, textColor, null, false);
     }
 
     /// Default construction (`currentColor` message labels, default head fill) — keeps a caller that
     /// builds a Sequence from just its actors+messages unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages) {
-        this(actors, messages, "currentColor", null);
+        this(actors, messages, "currentColor", null, false);
     }
 }

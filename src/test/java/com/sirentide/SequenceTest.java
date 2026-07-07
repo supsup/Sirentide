@@ -92,6 +92,63 @@ class SequenceTest {
         assertEquals(0, s.messages().size());
     }
 
+    // -- FIX 1: arrow aliases `->` / `-->` ------------------------------------
+
+    @Test
+    void bareArrowAliasesAreAcceptedAsCallAndReply() {
+        // `->` == `->>` (call), `-->` == `-->>` (reply). Both used to render SILENTLY EMPTY.
+        Sequence s = parse("sequence\nA -> B : hi\nA --> B : ok\n");
+        assertEquals(2, s.messages().size(), "both alias forms parse to a message");
+        assertFalse(s.messages().get(0).reply(), "-> is a call");
+        assertEquals("hi", s.messages().get(0).label());
+        assertTrue(s.messages().get(1).reply(), "--> is a reply");
+        assertEquals("ok", s.messages().get(1).label());
+    }
+
+    @Test
+    void aliasScanIsLongestFirstSoLongerFormsNeverMisSplit() {
+        // `->>` contains `->`; `-->>` contains `-->`/`->>`/`->`. The scan must not mis-split them.
+        Sequence s = parse("sequence\nAlice -->> Bob : reply\nBob ->> Alice : call\n");
+        assertEquals("Alice", s.messages().get(0).from());
+        assertEquals("Bob", s.messages().get(0).to());
+        assertTrue(s.messages().get(0).reply(), "-->> stays a reply, not mis-split to ->>");
+        assertFalse(s.messages().get(1).reply(), "->> stays a call, not mis-split to ->");
+    }
+
+    // -- FIX 4: operator-scan (arrow in the label is inert) -------------------
+
+    @Test
+    void arrowInsideTheLabelIsInertOneMessageLabelIntact() {
+        // Split at the FIRST " : " first, THEN scan the HEAD — so the `->` inside the post-colon
+        // label is never treated as the message arrow (a blind indexOf would mis-split here).
+        Sequence s = parse("sequence\nA ->> B : retry -> escalate\n");
+        assertEquals(1, s.messages().size(), "exactly ONE message");
+        SeqMessage m = s.messages().get(0);
+        assertEquals("A", m.from());
+        assertEquals("B", m.to());
+        assertFalse(m.reply(), "the head arrow ->> is a call");
+        assertEquals("retry -> escalate", m.label(), "the label (with its arrow) is intact");
+    }
+
+    // -- FIX 2: non-empty malformed body degrades VISIBLY --------------------
+
+    @Test
+    void allMalformedBodyDegradesVisiblyNotToInertShell() {
+        // Every line malformed → zero actors, but the body was NON-EMPTY: render a visible message,
+        // never the inert blank shell (width 0).
+        String svg = Sirentide.render("sequence\ngarbage line\nmore garbage\n");
+        assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
+        assertTrue(svg.contains("<path"), "the degrade message renders as glyph paths");
+        assertFalse(svg.contains("width=\"0\""), "NOT the inert width-0 shell");
+    }
+
+    @Test
+    void emptyBodyStaysAMinimalBlankCanvasNotADegradeMessage() {
+        // A bare `sequence` header (no body) is an intentional empty diagram → no degrade message.
+        String svg = Sirentide.render("sequence\n");
+        assertFalse(svg.contains("<path"), "no degrade message for an intentionally empty body");
+    }
+
     // -- render ---------------------------------------------------------------
 
     @Test
@@ -133,6 +190,17 @@ class SequenceTest {
         // lines; plus the filled-triangle arrowhead path.
         assertTrue(count(svg, "<line") >= 4, "hook segments + lifeline");
         assertTrue(count(svg, "<path") >= 1, "a filled arrowhead + label glyphs");
+    }
+
+    @Test
+    void aliasFormsRenderDistinctArrowheadsLikeTheirDoubleForms() {
+        // `->` renders a call (filled-triangle <path>); `-->` a reply (open-V, two extra <line>s, no
+        // extra path) — the same heads that `->>` / `-->>` produce. Both label-free so the ONLY delta
+        // is the arrowhead geometry (matching callAndReplyRenderDistinctArrowheads for the alias forms).
+        String call = Sirentide.render("sequence\nA -> B\n");
+        String reply = Sirentide.render("sequence\nA --> B\n");
+        assertEquals(count(call, "<line") + 2, count(reply, "<line"), "the open V is two extra lines");
+        assertEquals(count(reply, "<path") + 1, count(call, "<path"), "only the call has a filled head");
     }
 
     @Test

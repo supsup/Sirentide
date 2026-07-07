@@ -59,6 +59,18 @@ class PieTest {
     }
 
     @Test
+    void thinSliceWhoseOutsideLabelEmptiesDrawsNoDanglingLeader() {
+        // A 1% thin slice whose outside label has only ~2px of room ellipsizes to EMPTY (the
+        // geometry-escape honest outcome). Its leader line must be DROPPED too — a leader pointing at
+        // an empty label is dangling residue. The three wedges (arcs) are unchanged.
+        String svg = Sirentide.render(
+            "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74");
+        assertEquals(3, count(svg, " A "), "3 wedges drawn (one arc each), unchanged");
+        assertEquals(0, count(svg, "<line"),
+            "the emptied outside label draws NO leader (dangling residue dropped)");
+    }
+
+    @Test
     void renderIsDeterministic() {
         String dsl = "pie\n \"A\" : 3\n \"B\" : 7\n";
         assertEquals(Sirentide.render(dsl), Sirentide.render(dsl));

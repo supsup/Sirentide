@@ -66,6 +66,13 @@ class ContainmentTest {
         // and the label-clamp, all through the allowlist.
         "sequence\n  Alice ->> Bob : Request a really long token label that must clamp in-canvas\n"
             + "  Bob -->> Alice : Token\n  Alice ->> Alice : Validate locally\n  Bob ->> Carol\n",
+        // sequence arrow ALIASES (fix 1): bare `->` (call) + `-->` (reply) + an arrow INSIDE the label
+        // (fix 4, operator-scan: post-colon `->` is inert) — all through the allowlist.
+        "sequence\n  A -> B : call via alias\n  B --> A : reply via alias\n"
+            + "  A ->> B : retry -> escalate\n",
+        // sequence ZERO-ACTOR degrade (fix 2): a NON-EMPTY body where every line is malformed renders a
+        // visible `sequence: no messages parsed` glyph-run canvas — must stay in-set, not the inert shell.
+        "sequence\n  garbage line\n  more garbage\n",
         // state diagram (7th type): `[*]` start + end pseudostates (disc + bullseye Wedge paths), a
         // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
         // cycle handling plus the new disc geometry, all through the allowlist.
