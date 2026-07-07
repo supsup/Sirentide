@@ -105,6 +105,21 @@ class ContainmentTest {
         }
     }
 
+    /// The math-in-labels widening (RFC sirentide/39): a flowchart node whose `$…$` label renders
+    /// through a fake fragment must bake a `<g transform>` that STILL stays inside the allowlist
+    /// (g + numeric transform, path + d/fill). Proves the g/transform contract widening is
+    /// producer ⊆ contract, same guard as every other element.
+    @Test
+    void mathFragmentLabelStaysInsideTheAllowlist() throws Exception {
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g transform=\"scale(0.5 0.5)\"><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>", 40, 12, 4));
+        String svg = Sirentide.render("flowchart TD\n  A[Energy $E=mc^2$] --> B[Done]\n", fake);
+        assertTrue(svg.contains("<g transform="), "a MathBox was actually emitted: " + svg);
+        Document doc = parse(svg);
+        checkElement(doc.getDocumentElement(), "math-in-labels");
+    }
+
     /// Direct proof the non-finite leak is closed: `1e400` parses to Infinity in Java WITHOUT
     /// throwing; the emitter must never surface the literal string "Infinity" as a coordinate.
     @Test

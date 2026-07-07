@@ -52,6 +52,18 @@ public final class FontMetrics {
         return sfnt.lineHeightUnits() * fontSizePx / unitsPerEm;
     }
 
+    /// Distance the glyphs rise ABOVE the baseline at the given pixel size (font ascender), a
+    /// positive number. Used to size a composite label around an inline-math fragment.
+    public double ascent(double fontSizePx) {
+        return sfnt.ascenderUnits() * fontSizePx / unitsPerEm;
+    }
+
+    /// Distance the glyphs fall BELOW the baseline at the given pixel size, a positive number
+    /// (the `hhea` descender is negative; this returns its magnitude).
+    public double descent(double fontSizePx) {
+        return -sfnt.descenderUnits() * fontSizePx / unitsPerEm;
+    }
+
     /// Measure an unwrapped, single-line label.
     public TextBox measure(String text, double fontSizePx) {
         return new TextBox(runWidth(text, fontSizePx), lineHeight(fontSizePx), List.of(text));

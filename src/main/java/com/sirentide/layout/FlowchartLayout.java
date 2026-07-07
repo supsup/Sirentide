@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
@@ -109,13 +110,25 @@ public final class FlowchartLayout {
     };
 
     public static LaidOut layout(Flowchart fc) {
-        return layout(fc, DEFAULT_STYLER);
+        return layout(fc, DEFAULT_STYLER, null);
+    }
+
+    /// Inline-math entry: node labels containing `$…$` render through `math` (RFC sirentide/39).
+    /// A null `math` is identical to {@link #layout(Flowchart)}.
+    public static LaidOut layout(Flowchart fc, MathFragmentRenderer math) {
+        return layout(fc, DEFAULT_STYLER, math);
+    }
+
+    /// Styler entry with no math (the state-diagram driver's path). Byte-identical to before.
+    static LaidOut layout(Flowchart fc, NodeStyler styler) {
+        return layout(fc, styler, null);
     }
 
     /// The parameterized engine: identical layered-graph layout for every caller, with only the
     /// final node-drawing step delegated to `styler` (DESIGN §5 — one graph engine, two presentations).
-    /// Package-private so a sibling layout (state diagram) can drive it without exposing the seam.
-    static LaidOut layout(Flowchart fc, NodeStyler styler) {
+    /// `math` (nullable) renders `$…$` runs in node labels; when null every label is plain text and
+    /// the output is byte-identical to the pre-feature engine.
+    static LaidOut layout(Flowchart fc, NodeStyler styler, MathFragmentRenderer math) {
         List<FlowNode> nodes = fc.nodes();
         int n = nodes.size();
         // 0 nodes → a small blank-but-valid canvas (a bare `flowchart` still round-trips as one).
@@ -187,14 +200,28 @@ public final class FlowchartLayout {
         // Node box sizes (ellipsized label → width). Group node indices by layer, in first-seen order.
         String[] labels = new String[n];
         double[] boxW = new double[n];
+        // Composite measures for nodes whose label carries `$…$` math AND a renderer was provided;
+        // null for every plain-text node, which keeps the existing text path (byte-identical) below.
+        MathLabel.Measured[] measures = new MathLabel.Measured[n];
         List<List<Integer>> byLayer = new ArrayList<>();
         for (int i = 0; i < layerCount; i++) {
             byLayer.add(new ArrayList<>());
         }
         for (int i = 0; i < n; i++) {
-            String label = FONT.ellipsize(nodes.get(i).label(), MAX_LABEL_W, LABEL_SIZE);
-            labels[i] = label;
-            double lw = FONT.runWidth(label, LABEL_SIZE);
+            String raw = nodes.get(i).label();
+            double lw;
+            if (math != null && MathLabel.hasMath(raw)) {
+                // Math labels SKIP ellipsization — a formula must not be cut mid-run (parse-side
+                // label length caps still bound the input). Size the box on the composite width.
+                MathLabel.Measured m = MathLabel.measure(raw, LABEL_SIZE, FONT, math);
+                measures[i] = m;
+                labels[i] = raw;
+                lw = m.width();
+            } else {
+                String label = FONT.ellipsize(raw, MAX_LABEL_W, LABEL_SIZE);
+                labels[i] = label;
+                lw = FONT.runWidth(label, LABEL_SIZE);
+            }
             // A DIAMOND (M1.3) must CONTAIN its centered label: with height fixed at NODE_H
             // (half-diagonal b = NODE_H/2) and the label box ~±6px tall, the rhombus containment
             // condition (w/2)/a + 6/b <= 1 needs a >= 0.75·labelW — so the diamond is 1.5× wider
@@ -228,7 +255,7 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler);
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler, measures);
         }
 
         // Canvas width = widest layer (real + virtual slots) + margins.
@@ -370,7 +397,9 @@ public final class FlowchartLayout {
             ys[0] = sBottom;
             for (int j = 1; j < k - 1; j++) {
                 int w = chain[j];
-                xs[j] = vx[w] + VIRTUAL_W / 2;
+                // Use the routed virtual width (matches the LR path) so a future variable-width
+                // virtual can't make TD and LR waypoints diverge (Conf sirentide/44 #5).
+                xs[j] = vx[w] + rt.vWidth[w] / 2;
                 ys[j] = vy[w] + NODE_H / 2;
             }
             xs[k - 1] = dcx;
@@ -409,10 +438,15 @@ public final class FlowchartLayout {
         for (int i = 0; i < n; i++) {
             double cx = vx[i] + boxW[i] / 2;
             double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
-            double w = FONT.runWidth(labels[i], LABEL_SIZE);
-            String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+            if (measures[i] != null) {
+                MathLabel.emit(measures[i], cx - measures[i].width() / 2, baseline,
+                    Colors.contrastFill(nodeFill[i]), LABEL_SIZE, FONT, shapes);
+            } else {
+                double w = FONT.runWidth(labels[i], LABEL_SIZE);
+                String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+                }
             }
         }
 
@@ -429,7 +463,7 @@ public final class FlowchartLayout {
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     Routing rt, double[] boxW, String[] labels,
                                     String[] nodeFill, List<Edge> edges, boolean[] isBack,
-                                    NodeStyler styler) {
+                                    NodeStyler styler, MathLabel.Measured[] measures) {
         // -- columns: colW[L] = widest slot (real box or virtual) in layer L; colX marches left→right.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -612,10 +646,15 @@ public final class FlowchartLayout {
         for (int i = 0; i < n; i++) {
             double cx = vx[i] + boxW[i] / 2;
             double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
-            double w = FONT.runWidth(labels[i], LABEL_SIZE);
-            String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+            if (measures[i] != null) {
+                MathLabel.emit(measures[i], cx - measures[i].width() / 2, baseline,
+                    Colors.contrastFill(nodeFill[i]), LABEL_SIZE, FONT, shapes);
+            } else {
+                double w = FONT.runWidth(labels[i], LABEL_SIZE);
+                String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+                }
             }
         }
 

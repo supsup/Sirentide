@@ -20,8 +20,12 @@ public final class SirentideContract {
     public static final String SVG_NS = "http://www.w3.org/2000/svg";
 
     /// The elements the emitter may emit. Grows only when SvgEmitter emits a new one (reviewed,
-    /// per docs/sirentide-output-contract.md milestone ledger).
-    public static final Set<String> ALLOWED_ELEMENTS = Set.of("svg", "path", "rect", "line");
+    /// per docs/sirentide-output-contract.md milestone ledger). `g` joined at the math-in-labels
+    /// milestone (RFC sirentide/39): SvgEmitter emits `<g transform="…">` to place an inline-math
+    /// fragment (a MathBox) on the label baseline. It carries ONLY a numeric `transform` (and, on
+    /// the fragment's own inner elements, `fill`) — no `role`/`data-*` yet; those ride the later
+    /// anchor-layer widening with Confluence's value-scrub + Lattice sign-off (Conf /41).
+    public static final Set<String> ALLOWED_ELEMENTS = Set.of("svg", "path", "rect", "line", "g");
 
     /// Per-element allowed attribute set. NOTE: `xmlns` is emitted on the root `<svg>` but is
     /// missing from docs/sirentide-output-contract.md's M1 attribute table — it is added here so
@@ -34,7 +38,9 @@ public final class SirentideContract {
         "svg", Set.of("xmlns", "viewBox", "width", "height"),
         "path", Set.of("d", "fill"),
         "rect", Set.of("x", "y", "width", "height", "fill"),
-        "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"));
+        "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"),
+        // math-in-labels widening: `g` carries ONLY a numeric-grammar `transform` (see TRANSFORM).
+        "g", Set.of("transform"));
 
     /// The presentation-colour INPUT grammar: a 6-digit hex, a 3-digit shorthand hex, `currentColor`,
     /// or `none`. Exactly the set the sanitizer preserves; anything else (url(), rgb(), named colours,
@@ -43,6 +49,16 @@ public final class SirentideContract {
     /// emitter, so the emitted wire form is ALWAYS 6-digit (canonical, sanitizer-safe regardless of
     /// whether the /docs sanitizer accepts the short form).
     public static final Pattern COLOR = Pattern.compile("#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|currentColor|none");
+
+    /// The `transform` value grammar admitted on `<g>` (and on math-fragment inner elements via
+    /// {@link FragmentGuard}): one or more `translate(...)`/`scale(...)`/`matrix(...)` whose args
+    /// are ONLY finite decimals, separated by commas/whitespace. NUMERIC-ONLY BY CONSTRUCTION —
+    /// no `url(...)`, no `rotate(...cx cy...)` reference tricks, no expressions — so a transform can
+    /// carry placement/scale but never a script hook or an external reference (RFC sirentide/39,
+    /// Conf /41: transform stays a producer-contract numeric grammar). A single finite number is
+    /// `-?\d+(\.\d+)?`; args are number(sep number)*; the whole value is one-or-more such ops.
+    public static final Pattern TRANSFORM = Pattern.compile(
+        "\\s*((translate|scale|matrix)\\(\\s*-?\\d+(\\.\\d+)?(\\s*[, ]\\s*-?\\d+(\\.\\d+)?)*\\s*\\)\\s*)+");
 
     /// True iff `v` is a contract-legal fill/stroke INPUT value (accepts both hex widths).
     public static boolean isColor(String v) {
@@ -130,6 +146,7 @@ public final class SirentideContract {
             case "d" -> isPathData(value);
             case "viewBox" -> isViewBox(value);
             case "xmlns" -> SVG_NS.equals(value);
+            case "transform" -> TRANSFORM.matcher(value).matches();
             // geometry scalars: x, y, width, height, x1, y1, x2, y2, stroke-width
             default -> isFiniteNumber(value);
         };

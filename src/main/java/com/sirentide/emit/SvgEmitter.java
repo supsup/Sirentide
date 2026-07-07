@@ -4,6 +4,7 @@ import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
+import com.sirentide.layout.MathBox;
 import com.sirentide.layout.Path;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
@@ -62,6 +63,11 @@ public final class SvgEmitter {
                 .append("\" x2=\"").append(fmt(l.x2())).append("\" y2=\"").append(fmt(l.y2()))
                 .append("\" stroke=\"").append(color(l.stroke()))
                 .append("\" stroke-width=\"").append(fmt(l.strokeWidth())).append("\"/>");
+            // An inline-math fragment: place it on the label baseline with a numeric translate and
+            // embed its already-contract-clean inner markup verbatim (FragmentGuard ran at layout
+            // time). The transform value stays inside SirentideContract.TRANSFORM's numeric grammar.
+            case MathBox b -> sb.append("<g transform=\"translate(").append(fmt(b.x())).append(' ')
+                .append(fmt(b.y())).append(")\">").append(b.innerSvg()).append("</g>");
         }
     }
 
