@@ -66,6 +66,9 @@ class BrewShotGalleryTest {
             "pie legend\n\"Ship\" : 40 #22c55e\n\"WIP\" : 25 #eab308\n\"Blocked\" : 20 #ef4444\n\"Backlog\" : 15 #64748b"),
         new Case("xychart", "Bar chart (signed axis)",
             "xychart\n\"Mon\" : 5\n\"Tue\" : -3\n\"Wed\" : 8\n\"Thu\" : 6"),
+        new Case("xychart-line", "Line chart (two series + legend)",
+            "xychart line legend\nseries: Revenue, Cost\n\"Q1\" : 5 8\n\"Q2\" : 8 4\n"
+                + "\"Q3\" : 3 6\n\"Q4\" : 9 2"),
         new Case("timeline", "Timeline (proportional)",
             "timeline\n\"Founded\" : 2000\n\"Series A\" : 2005\n\"Launch\" : 2020"),
         new Case("gantt", "Gantt",

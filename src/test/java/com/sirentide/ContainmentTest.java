@@ -38,6 +38,10 @@ class ContainmentTest {
         "xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n",
         "xychart\n",                                              // axes only
         "xychart\n  \"A\" : 5\n  \"B\" : -3\n",                    // negative magnitude
+        // multi-series LINE with a legend + NEGATIVE values + a missing (gap) point — exercises the
+        // disc/segment path, the left colour key, the signed domain, and the label clamp in-set.
+        "xychart line legend\n  series: Revenue, Cost\n  \"Q1\" : 5 -3\n  \"Q2\" : 8\n  \"Q3\" : -2 6\n",
+        "xychart scatter\n  \"A\" : 5 8\n  \"B\" : -3 2\n",       // scatter, multi-series, negative
         // timeline
         "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n",
         "timeline\n",                                             // axis only

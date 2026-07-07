@@ -50,6 +50,19 @@ xychart
 
 ![Bar chart (signed axis)](xychart.png)
 
+## Line chart (two series + legend)
+
+```
+xychart line legend
+series: Revenue, Cost
+"Q1" : 5 8
+"Q2" : 8 4
+"Q3" : 3 6
+"Q4" : 9 2
+```
+
+![Line chart (two series + legend)](xychart-line.png)
+
 ## Timeline (proportional)
 
 ```

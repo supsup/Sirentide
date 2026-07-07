@@ -6,9 +6,17 @@ import com.sirentide.ir.XyChart;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Pure xychart (bar chart) layout: values → bar heights, categories → evenly-spaced columns.
-/// Deterministic arithmetic, no graph optimization. Draws the x/y axes as lines, each bar as a
-/// filled rect, and category + value labels as glyph paths (docs/DESIGN.md §4/§6).
+/// Pure xychart layout: values → geometry, categories → evenly-spaced columns. Deterministic
+/// arithmetic, no graph optimization. Three render modes share the axis/tick machinery:
+/// - `bars` (default): each value a filled rect rising from a signed zero baseline. A SINGLE-series
+///   bar chart (the `series == null` legacy shape) takes {@link #layoutBars}, byte-identical to
+///   before (the xychart golden is the proof).
+/// - `line`: a small filled disc per point + N-1 connecting {@link Line} segments per series
+///   (contract-clean — no polyline, no stroked path). A missing point BREAKS the segment.
+/// - `scatter`: the discs only, no segments.
+/// Multi-series (or any line/scatter) also supports an optional left colour KEY (mirrors the pie
+/// legend geometry). Axes are `<line>`, discs are full-circle {@link Wedge}s, labels glyph paths
+/// (docs/DESIGN.md §4/§6).
 public final class XyChartLayout {
 
     private XyChartLayout() {}
@@ -24,18 +32,50 @@ public final class XyChartLayout {
     private static final double LABEL_SIZE = 11;
     private static final String AXIS_STROKE = "#94a3b8";
 
+    // -- line / scatter geometry ------------------------------------------------
+    /// Radius of a line-mode point disc.
+    private static final double LINE_DOT_R = 3.0;
+    /// Radius of a scatter-mode point disc (a touch larger — it stands alone with no segment).
+    private static final double SCATTER_DOT_R = 3.5;
+    /// Stroke width of a line-mode connecting segment.
+    private static final double SEGMENT_WIDTH = 1.5;
+    /// Inner gap between two grouped bars sharing a category slot.
+    private static final double GROUP_GAP = 2.0;
+
+    // -- legend (left colour key) geometry — mirrors PieLayout's constants ------
+    private static final double KEY_WIDTH = 140;
+    private static final double KEY_GAP = 20;
+    private static final double KEY_ROW_HEIGHT = 22;
+    private static final double SWATCH = 12;
+    private static final double KEY_PAD_LEFT = 12;
+    private static final double KEY_PAD_RIGHT = 8;
+    private static final double KEY_PAD_TOP = 12;
+    private static final double SWATCH_TEXT_GAP = 6;
+    private static final double KEY_TEXT_MAX =
+        KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
+
     private static final String[] PALETTE = {
         "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
         "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"
     };
 
+    /// Dispatches on the chart shape: the legacy single-series bar path (`series == null`, unchanged
+    /// output) vs the multi-series / line / scatter path.
     public static LaidOut layout(XyChart chart) {
+        if (chart.series() == null) {
+            return layoutBars(chart);
+        }
+        return layoutMulti(chart);
+    }
+
+    /// The original single-series bar layout — UNCHANGED so its bake stays byte-identical (guarded
+    /// by the xychart golden). Values → bar heights over a signed `[min(0,·), max(0,·)]` domain.
+    private static LaidOut layoutBars(XyChart chart) {
         double plotLeft = ML;
         double plotRight = W - MR;
         double plotTop = MT;
         double plotBottom = H - MB;
         double plotW = plotRight - plotLeft;
-        double plotH = plotBottom - plotTop;
 
         List<Shape> shapes = new ArrayList<>();
 
@@ -103,6 +143,198 @@ public final class XyChartLayout {
             centeredLabel(shapes, num(b.value()), cx, valueY, valueSize, textColor);
         }
         return new LaidOut(W, H, shapes);
+    }
+
+    /// Multi-series / line / scatter layout. Shares AxisScale, ticks, and category columns with the
+    /// bar path but plots per-series: grouped rects (`bars`), or a disc-per-point plus per-series
+    /// connecting segments (`line`) / discs alone (`scatter`). An optional left colour KEY (when
+    /// `legend` is set AND there is more than one series) widens the canvas like the pie legend.
+    private static LaidOut layoutMulti(XyChart chart) {
+        String textColor = chart.textColor();
+        String mode = chart.mode();
+        List<Slice> bars = chart.bars();          // category labels only
+        List<double[]> series = chart.series();
+        int nCat = bars.size();
+
+        int seriesCount = 0;
+        for (double[] row : series) {
+            seriesCount = Math.max(seriesCount, row.length);
+        }
+
+        boolean showLegend = chart.legend() && seriesCount > 1;
+        double keyShift = showLegend ? KEY_WIDTH + KEY_GAP : 0;
+
+        double canvasW = keyShift + W;
+        double canvasH = H;
+        if (showLegend) {
+            // Tall series sets grow the canvas so key rows never spill past the plot box.
+            double keyBlockH = seriesCount * KEY_ROW_HEIGHT;
+            canvasH = Math.max(H, keyBlockH + 2 * KEY_PAD_TOP);
+        }
+
+        double plotLeft = keyShift + ML;
+        double plotRight = canvasW - MR;
+        double plotTop = MT;
+        double plotBottom = canvasH - MB;
+        double plotW = plotRight - plotLeft;
+
+        List<Shape> shapes = new ArrayList<>();
+
+        if (nCat == 0 || seriesCount == 0) {
+            shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
+            shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1));
+            return new LaidOut(canvasW, canvasH, shapes);
+        }
+
+        // Domain = min/max across ALL series values. Grouped bars force a zero baseline so bars grow
+        // from zero (signed — negatives descend); line/scatter fit the pure data range with the
+        // x-axis drawn at the plot bottom as a reference edge.
+        double lo = Double.POSITIVE_INFINITY;
+        double hi = Double.NEGATIVE_INFINITY;
+        for (double[] row : series) {
+            for (double v : row) {
+                if (Double.isFinite(v)) {
+                    lo = Math.min(lo, v);
+                    hi = Math.max(hi, v);
+                }
+            }
+        }
+        if (lo > hi) {   // no finite value seen
+            lo = 0;
+            hi = 0;
+        }
+        boolean grouped = mode.equals("bars");
+        AxisScale axis = grouped
+            ? new AxisScale(Math.min(0, lo), Math.max(0, hi))
+            : new AxisScale(lo, hi);
+        double baselineY = grouped ? axis.project(0, plotBottom, plotTop) : plotBottom;
+
+        // y-axis (full height) + the baseline x-axis.
+        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
+        shapes.add(new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1));
+
+        for (double tick : axis.ticks()) {
+            double ty = axis.project(tick, plotBottom, plotTop);
+            shapes.add(new Line(plotLeft - 4, ty, plotLeft, ty, AXIS_STROKE, 1));
+            String tlabel = num(tick);
+            double tw = FONT.runWidth(tlabel, LABEL_SIZE - 2);
+            String td = FONT.textPathD(tlabel, plotLeft - 6 - tw, ty + (LABEL_SIZE - 2) * 0.35, LABEL_SIZE - 2);
+            if (!td.isBlank()) {
+                shapes.add(new GlyphRun(td, textColor));
+            }
+        }
+
+        double slot = plotW / nCat;
+        if (grouped) {
+            layoutGroupedBars(shapes, series, bars, seriesCount, axis,
+                plotLeft, plotBottom, plotTop, baselineY, slot, textColor);
+        } else {
+            layoutPoints(shapes, series, bars, seriesCount, axis, mode,
+                plotLeft, plotBottom, plotTop, slot, textColor);
+        }
+
+        if (showLegend) {
+            layoutKey(shapes, chart, seriesCount, canvasH);
+        }
+        return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// Grouped bars: each category slot is divided among the series with a {@link #GROUP_GAP} inner
+    /// gap. Series colour by palette index; a missing value = no bar for that series there.
+    private static void layoutGroupedBars(List<Shape> shapes, List<double[]> series, List<Slice> bars,
+                                          int seriesCount, AxisScale axis, double plotLeft,
+                                          double plotBottom, double plotTop, double baselineY,
+                                          double slot, String textColor) {
+        double groupW = slot * 0.6;
+        double barW = Math.max(0.5, (groupW - (seriesCount - 1) * GROUP_GAP) / seriesCount);
+        for (int i = 0; i < bars.size(); i++) {
+            double[] row = series.get(i);
+            double slotLeft = plotLeft + slot * i + (slot - groupW) / 2;
+            for (int s = 0; s < row.length; s++) {
+                double v = row[s];
+                if (!Double.isFinite(v)) {
+                    continue;
+                }
+                double endY = axis.project(v, plotBottom, plotTop);
+                double y = Math.min(baselineY, endY);
+                double h = Math.abs(baselineY - endY);
+                double x = slotLeft + s * (barW + GROUP_GAP);
+                shapes.add(new Rect(x, y, barW, h, PALETTE[s % PALETTE.length]));
+            }
+            double cx = plotLeft + slot * i + slot / 2;
+            String cat = FONT.ellipsize(bars.get(i).label(), slot - 2, LABEL_SIZE);
+            centeredLabel(shapes, cat, cx, plotBottom + 14, LABEL_SIZE, textColor);
+        }
+    }
+
+    /// Line / scatter points. Each present point is a full-circle {@link Wedge} disc; `line` mode
+    /// also draws a {@link Line} segment between each pair of CONSECUTIVE categories where the series
+    /// is present at BOTH — a missing point leaves a gap that breaks the line (never bridged, never
+    /// zeroed). Segments are drawn before discs so a disc sits on top of its segment ends.
+    private static void layoutPoints(List<Shape> shapes, List<double[]> series, List<Slice> bars,
+                                     int seriesCount, AxisScale axis, String mode, double plotLeft,
+                                     double plotBottom, double plotTop, double slot, String textColor) {
+        boolean line = mode.equals("line");
+        double dotR = line ? LINE_DOT_R : SCATTER_DOT_R;
+        int nCat = bars.size();
+        double[] px = new double[nCat];
+        for (int i = 0; i < nCat; i++) {
+            px[i] = plotLeft + slot * (i + 0.5);   // category column centre
+        }
+        for (int s = 0; s < seriesCount; s++) {
+            String col = PALETTE[s % PALETTE.length];
+            if (line) {
+                for (int i = 0; i + 1 < nCat; i++) {
+                    Double y0 = pointY(series.get(i), s, axis, plotBottom, plotTop);
+                    Double y1 = pointY(series.get(i + 1), s, axis, plotBottom, plotTop);
+                    if (y0 != null && y1 != null) {
+                        shapes.add(new Line(px[i], y0, px[i + 1], y1, col, SEGMENT_WIDTH));
+                    }
+                }
+            }
+            for (int i = 0; i < nCat; i++) {
+                Double y = pointY(series.get(i), s, axis, plotBottom, plotTop);
+                if (y != null) {
+                    shapes.add(new Wedge(px[i], y, dotR, 0, 2 * Math.PI, col));
+                }
+            }
+        }
+        for (int i = 0; i < nCat; i++) {
+            String cat = FONT.ellipsize(bars.get(i).label(), slot - 2, LABEL_SIZE);
+            centeredLabel(shapes, cat, px[i], plotBottom + 14, LABEL_SIZE, textColor);
+        }
+    }
+
+    /// The projected y of series `s` at a category row, or `null` when the series has NO point there
+    /// (a shorter row = trailing series absent; a non-finite value is likewise absent).
+    private static Double pointY(double[] row, int s, AxisScale axis, double plotBottom, double plotTop) {
+        if (s >= row.length || !Double.isFinite(row[s])) {
+            return null;
+        }
+        return axis.project(row[s], plotBottom, plotTop);
+    }
+
+    /// The left colour KEY: one swatch + series name per series, vertically centred, mirroring the
+    /// pie legend. Series names default to `Series 1..N` when the DSL did not name them.
+    private static void layoutKey(List<Shape> shapes, XyChart chart, int seriesCount, double canvasH) {
+        String textColor = chart.textColor();
+        List<String> names = chart.seriesNames();
+        double keyBlockH = seriesCount * KEY_ROW_HEIGHT;
+        double keyTop = (canvasH - keyBlockH) / 2;
+        double textX = KEY_PAD_LEFT + SWATCH + SWATCH_TEXT_GAP;
+        for (int s = 0; s < seriesCount; s++) {
+            String col = PALETTE[s % PALETTE.length];
+            double rowTop = keyTop + s * KEY_ROW_HEIGHT;
+            shapes.add(new Rect(KEY_PAD_LEFT, rowTop + (KEY_ROW_HEIGHT - SWATCH) / 2,
+                SWATCH, SWATCH, col));
+            String name = (names != null && s < names.size()) ? names.get(s) : "Series " + (s + 1);
+            String text = FONT.ellipsize(name, KEY_TEXT_MAX, LABEL_SIZE);
+            double baseline = rowTop + KEY_ROW_HEIGHT / 2 + LABEL_SIZE * 0.35;
+            String d = FONT.textPathD(text, textX, baseline, LABEL_SIZE);
+            if (!d.isBlank()) {
+                shapes.add(new GlyphRun(d, textColor));
+            }
+        }
     }
 
     private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,
