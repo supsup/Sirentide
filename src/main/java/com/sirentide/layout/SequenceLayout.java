@@ -1,10 +1,13 @@
 package com.sirentide.layout;
 
 import com.sirentide.font.FontMetrics;
+import com.sirentide.ir.Divider;
+import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -63,6 +66,26 @@ public final class SequenceLayout {
     private static final double ACT_OFFSET = 4;       // each nesting depth steps this far right
     private static final String ACT_FILL = "#c7d2fe"; // subtle soft-indigo "active" fill
 
+    // -- alt/loop/par FRAME blocks (M2). A stroke-only rectangle (four Lines — Rect carries fill only,
+    // and a stroke-only frame reads cleaner than a tint that stacks when nested) around a run of
+    // messages, with a filled corner TAB holding the kind (`alt`/`loop`/`par`) + a label, and dashed
+    // DIVIDER lines at each `else`/`and`. Emitted UNDER the lifelines/messages/activations so a frame
+    // never occludes the content it wraps. Nested frames inset by depth·FRAME_INSET.
+    private static final String FRAME_STROKE = "#b8c0cc";  // subtle frame border (unique — test-keyed)
+    private static final String TAB_FILL = "#e7ecff";      // pale-indigo label-tab background
+    private static final double FRAME_STROKE_W = 1;
+    private static final double FRAME_PAD_X = 12;     // horizontal padding beyond the outer lifelines
+    private static final double FRAME_INSET = 6;      // each nesting depth tightens the frame this far
+    private static final double FRAME_TOP_PAD = 24;   // space above the first message (holds the tab
+                                                      // clear of the first message's own label band)
+    private static final double FRAME_BOTTOM_PAD = 12; // space below the last message
+    private static final double TAB_H = 15;           // label-tab height
+    private static final double TAB_PAD = 5;          // horizontal padding inside the tab
+    private static final double TAB_SIZE = 10;        // kind/label glyph size
+    private static final double DIV_LIFT = 15;        // a divider sits this far above its branch's msg
+    private static final double DASH = 5;             // dashed-divider dash length (Line has no dash)
+    private static final double DASH_GAP = 4;         // dashed-divider gap length
+
     /// The visible-degrade message for a non-empty body that parsed to ZERO actors (every line
     /// malformed) — drawn as a glyph run so a mistyped sequence never renders as silent nothing.
     private static final String DEGRADE_MSG = "sequence: no messages parsed";
@@ -112,18 +135,36 @@ public final class SequenceLayout {
         // are skipped defensively (the parser guards this, but layout must tolerate a stray ref).
         List<SeqMessage> drawn = new ArrayList<>();
         double[] msgY = new double[seq.messages().size()];
+        // Blocks (M2) reference the FLAT message list by original index, but a skipped (unknown-actor)
+        // message shifts the drawn positions — so keep a parallel index→y map (NaN = skipped/not
+        // drawn) and index→bottom-extent (a self-message's hook drops ROW_H/2 below its row) so a
+        // frame can be pinned to the real geometry of the messages it wraps, not to a brittle constant.
+        int msgCount = seq.messages().size();
+        double[] yByMsg = new double[msgCount];
+        double[] bottomByMsg = new double[msgCount];
+        Arrays.fill(yByMsg, Double.NaN);
+        Arrays.fill(bottomByMsg, Double.NaN);
         double rowCursor = 0;
-        for (SeqMessage m : seq.messages()) {
+        for (int mi = 0; mi < msgCount; mi++) {
+            SeqMessage m = seq.messages().get(mi);
             Integer a = index.get(m.from());
             Integer b = index.get(m.to());
             if (a == null || b == null) {
                 continue;
             }
-            msgY[drawn.size()] = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
+            double y = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
+            msgY[drawn.size()] = y;
+            yByMsg[mi] = y;
+            boolean self = a.equals(b);
+            bottomByMsg[mi] = self ? y + ROW_H / 2 : y;   // a self-hook drops ROW_H/2 below its row
             drawn.add(m);
-            rowCursor += a.equals(b) ? SELF_ROWS : 1;
+            rowCursor += self ? SELF_ROWS : 1;
         }
         double contentBottom = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
+
+        // -- alt/loop/par frame geometry (M2). Resolve each block's message index range to a pixel
+        // rectangle + tab + dividers. Blocks with no drawn message in range are degenerate → skipped.
+        List<Frame> frames = buildFrames(seq.blocks(), yByMsg, bottomByMsg, cx, index, seq.messages());
 
         // -- activation bars (M2, IMPLICIT activation — the low-friction default). Walk the drawn
         // messages in time order maintaining a per-actor STACK of open activations:
@@ -183,11 +224,24 @@ public final class SequenceLayout {
             double right = cx[act.actor] - ACT_W / 2 + act.depth * ACT_OFFSET + ACT_W;
             canvasW = Math.max(canvasW, right + MARGIN);
         }
+        // Widen for any frame whose right edge (or its tab) reaches past the base width, so the
+        // containment invariant holds (no frame line/tab escapes the canvas). Grow the height too for
+        // a frame whose bottom pad drops below the content bottom (rare, but keep it inside).
         double canvasH = contentBottom + MARGIN;
+        for (Frame f : frames) {
+            canvasW = Math.max(canvasW, Math.max(f.right, f.left + f.tabW) + MARGIN);
+            canvasH = Math.max(canvasH, f.bottom + MARGIN);
+        }
 
-        // -- emit order (readability + the containment audit): lifelines UNDER, then message lines +
-        // arrowheads + labels, then head boxes, then head labels on top.
+        // -- emit order (readability + the containment audit): frames UNDER everything, then lifelines,
+        // then message lines + arrowheads + labels, then head boxes, then head labels on top.
         List<Shape> shapes = new ArrayList<>();
+
+        // 0) alt/loop/par frames FIRST — the block border + label tab + dividers draw BEHIND the
+        // lifelines, messages and activation bars so a frame never occludes the content it wraps.
+        for (Frame f : frames) {
+            emitFrame(shapes, f, textColor, canvasW);
+        }
 
         // 1) lifelines: a light vertical line from each head bottom to the diagram bottom.
         for (int i = 0; i < n; i++) {
@@ -314,6 +368,157 @@ public final class SequenceLayout {
             }
         }
     }
+
+    /// Resolves each {@link SeqBlock}'s FLAT message-index range to a pixel {@link Frame}. For every
+    /// block: scan the DRAWN messages in `[fromMsg, toMsg]` for the top y (first drawn), the bottom
+    /// extent (last drawn message's row, dropped ROW_H/2 for a self-hook), and the actor x-span
+    /// (min/max lifeline x of every endpoint, extended by SELF_W for a self-message hook). A block
+    /// with NO drawn message in range — an empty block (`toMsg < fromMsg`), an out-of-range range, or
+    /// one whose messages all skipped as unknown-actor — yields no frame (degenerate → inert, DESIGN
+    /// §6). Nesting insets the padding by `depth·FRAME_INSET` (clamped ≥ 4) so a nested frame sits
+    /// visibly inside its parent. Each `else`/`and` {@link Divider} becomes a {@link FrameDivider} at
+    /// its branch message's y (skipped when that message is out of range / not drawn). Returns an
+    /// EMPTY list for a block-free sequence, so the emit path adds nothing (byte-identical legacy bake).
+    private static List<Frame> buildFrames(List<SeqBlock> blocks, double[] yByMsg, double[] bottomByMsg,
+                                           double[] cx, Map<String, Integer> index,
+                                           List<SeqMessage> messages) {
+        List<Frame> frames = new ArrayList<>();
+        if (blocks.isEmpty()) {
+            return frames;   // legacy actor+message path — no frames, byte-identical bake
+        }
+        int msgCount = messages.size();
+        for (SeqBlock blk : blocks) {
+            int from = blk.fromMsg();
+            int to = Math.min(blk.toMsg(), msgCount - 1);
+            if (from < 0 || from >= msgCount || to < from) {
+                continue;   // empty/out-of-range block — no frame
+            }
+            double topY = Double.NaN;
+            double botY = Double.NEGATIVE_INFINITY;
+            double minX = Double.POSITIVE_INFINITY;
+            double maxX = Double.NEGATIVE_INFINITY;
+            for (int mi = from; mi <= to; mi++) {
+                double y = yByMsg[mi];
+                if (Double.isNaN(y)) {
+                    continue;   // a skipped (unknown-actor) message — not drawn, ignore
+                }
+                if (Double.isNaN(topY)) {
+                    topY = y;   // the first drawn message sets the top
+                }
+                botY = Math.max(botY, bottomByMsg[mi]);
+                SeqMessage m = messages.get(mi);
+                Integer a = index.get(m.from());
+                Integer b = index.get(m.to());
+                if (a != null) {
+                    minX = Math.min(minX, cx[a]);
+                    maxX = Math.max(maxX, cx[a]);
+                }
+                if (b != null) {
+                    minX = Math.min(minX, cx[b]);
+                    maxX = Math.max(maxX, cx[b]);
+                }
+                if (a != null && a.equals(b)) {
+                    maxX = Math.max(maxX, cx[a] + SELF_W);   // a self-hook reaches SELF_W to the right
+                }
+            }
+            if (Double.isNaN(topY) || !Double.isFinite(minX)) {
+                continue;   // no drawn message in range → no frame
+            }
+            double effPad = Math.max(4, FRAME_PAD_X - blk.depth() * FRAME_INSET);
+            double left = minX - effPad;
+            double right = maxX + effPad;
+            double top = topY - FRAME_TOP_PAD;
+            double bottom = botY + FRAME_BOTTOM_PAD;
+            double tabW = FONT.runWidth(blk.kind(), TAB_SIZE) + 2 * TAB_PAD;
+            // The block label rides to the right of the tab, ellipsized to the remaining frame width.
+            String label = blk.label() == null || blk.label().isEmpty() ? null
+                : FONT.ellipsize(blk.label(), Math.max(0, right - (left + tabW) - 2 * TAB_PAD), TAB_SIZE);
+            // Dividers: each else/and at its branch message's y (skipped when out of range / not drawn).
+            List<FrameDivider> divs = new ArrayList<>();
+            double innerW = Math.max(0, right - left - 2 * TAB_PAD);
+            for (Divider d : blk.dividers()) {
+                int at = d.atMsg();
+                if (at < from || at > to || Double.isNaN(yByMsg[at])) {
+                    continue;   // a divider with no in-range branch message → inert
+                }
+                String dl = d.label() == null || d.label().isEmpty() ? null
+                    : FONT.ellipsize(d.label(), innerW, TAB_SIZE);
+                divs.add(new FrameDivider(yByMsg[at] - DIV_LIFT, dl));
+            }
+            frames.add(new Frame(blk.kind(), label, left, right, top, bottom, tabW, divs));
+        }
+        return frames;
+    }
+
+    /// Emits one alt/loop/par {@link Frame}: a STROKE-ONLY border (four {@link Line}s — a {@link Rect}
+    /// carries fill only, and a stroke-only frame reads cleaner than a tint that darkens when nested),
+    /// a filled corner TAB with the kind (`alt`/`loop`/`par`, contrast-filled against the tab) and the
+    /// block label beside it, and a DASHED line per divider (Line has no dash attribute — the dividers
+    /// are drawn as short segments, staying inside the svg/rect/line/path alphabet). All glyph runs
+    /// are clamped in-canvas (the geometry-escape fix class). Emitted BEFORE the lifelines/messages so
+    /// the frame sits behind the content it wraps.
+    private static void emitFrame(List<Shape> shapes, Frame f, String textColor, double canvasW) {
+        // Border — a stroke-only rectangle as four lines.
+        shapes.add(new Line(f.left(), f.top(), f.right(), f.top(), FRAME_STROKE, FRAME_STROKE_W));
+        shapes.add(new Line(f.left(), f.bottom(), f.right(), f.bottom(), FRAME_STROKE, FRAME_STROKE_W));
+        shapes.add(new Line(f.left(), f.top(), f.left(), f.bottom(), FRAME_STROKE, FRAME_STROKE_W));
+        shapes.add(new Line(f.right(), f.top(), f.right(), f.bottom(), FRAME_STROKE, FRAME_STROKE_W));
+        // Dividers — a dashed horizontal line across the frame, plus a left-aligned label above it.
+        for (FrameDivider d : f.dividers()) {
+            emitDashedLine(shapes, f.left(), f.right(), d.y());
+            if (d.label() != null) {
+                double lw = FONT.runWidth(d.label(), TAB_SIZE);
+                double runX = clamp(f.left() + TAB_PAD, lw, canvasW);
+                String dd = FONT.textPathD(d.label(), runX, d.y() - LABEL_LIFT, TAB_SIZE);
+                if (!dd.isBlank()) {
+                    shapes.add(new GlyphRun(dd, textColor));
+                }
+            }
+        }
+        // Label tab — a filled rect holding the kind glyph (contrast-filled against the tab fill).
+        shapes.add(new Rect(f.left(), f.top(), f.tabW(), TAB_H, TAB_FILL));
+        double kw = FONT.runWidth(f.kind(), TAB_SIZE);
+        double baseline = f.top() + TAB_H / 2 + TAB_SIZE * 0.35;
+        String kd = FONT.textPathD(f.kind(), f.left() + (f.tabW() - kw) / 2, baseline, TAB_SIZE);
+        if (!kd.isBlank()) {
+            shapes.add(new GlyphRun(kd, Colors.contrastFill(TAB_FILL)));
+        }
+        // Block label — to the right of the tab, aligned on the tab baseline, clamped in-canvas.
+        if (f.label() != null) {
+            double lw = FONT.runWidth(f.label(), TAB_SIZE);
+            double runX = clamp(f.left() + f.tabW() + TAB_PAD, lw, canvasW);
+            String ld = FONT.textPathD(f.label(), runX, baseline, TAB_SIZE);
+            if (!ld.isBlank()) {
+                shapes.add(new GlyphRun(ld, textColor));
+            }
+        }
+    }
+
+    /// A DASHED horizontal line from `x1` to `x2` at `y`, approximated as short solid {@link Line}
+    /// segments (the emitter's `<line>` has no `stroke-dasharray` in the contract, so a dash is drawn
+    /// as geometry — a walk of DASH-long segments separated by DASH_GAP). Deterministic + bounded (the
+    /// segment count is the span / stride, itself bounded by the canvas). A degenerate span emits nothing.
+    private static void emitDashedLine(List<Shape> shapes, double x1, double x2, double y) {
+        double span = x2 - x1;
+        if (!Double.isFinite(span) || span <= 0) {
+            return;
+        }
+        double stride = DASH + DASH_GAP;
+        for (double x = x1; x < x2; x += stride) {
+            double end = Math.min(x + DASH, x2);
+            shapes.add(new Line(x, y, end, y, FRAME_STROKE, FRAME_STROKE_W));
+        }
+    }
+
+    /// One divider inside an emitted frame: its y (already lifted above the branch's first message)
+    /// and an optional (already ellipsized) label. Layout-internal.
+    private record FrameDivider(double y, String label) {}
+
+    /// One resolved alt/loop/par frame: the block `kind` + optional (ellipsized) `label`, the border
+    /// rectangle `[left,right]×[top,bottom]`, the label-tab width `tabW`, and the divider lines.
+    /// Layout-internal — {@link #emitFrame} turns it into border lines + a tab + dashed dividers.
+    private record Frame(String kind, String label, double left, double right, double top,
+                         double bottom, double tabW, List<FrameDivider> dividers) {}
 
     /// The VISIBLE degrade for a non-empty sequence body that parsed to zero actors: a small canvas
     /// with a single one-line glyph-run message (11px, `textColor` → `currentColor`), clamped

@@ -78,6 +78,15 @@ class ContainmentTest {
         // (no reply) closes at the diagram bottom — exercises the new ACT_FILL <rect>s through the
         // allowlist (rect is already in-set; this proves the activation rects obey the value grammar).
         "sequence\n  A ->> B : c1\n  A ->> B : c2\n  B -->> A : r2\n  B -->> A : r1\n  A ->> B : dangling\n",
+        // sequence alt/loop/par FRAME blocks (M2): an `alt`+`else` with a NESTED `loop`, a `par`+`and`
+        // across a third actor, a self-message inside a loop (frame must contain the hook), and a STRAY
+        // `end`/`else` + an UNCLOSED block (malformed→inert) — exercises the new frame border lines,
+        // the label-tab rect, the dashed divider segments, and the nesting inset through the allowlist.
+        "sequence\n  Alice ->> Bob : hello\n  alt is available\n    Bob -->> Alice : yes\n"
+            + "    loop every retry\n      Alice ->> Alice : think\n    end\n"
+            + "  else is busy\n    Bob -->> Alice : later\n  end\n"
+            + "  par to Bob\n    Alice ->> Bob : a\n  and to Carol\n    Alice ->> Carol : b\n  end\n"
+            + "  else stray divider\n  end\n  loop unclosed at eof\n    Alice ->> Bob : trailing\n",
         // state diagram (7th type): `[*]` start + end pseudostates (disc + bullseye Wedge paths), a
         // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
         // cycle handling plus the new disc geometry, all through the allowlist.
