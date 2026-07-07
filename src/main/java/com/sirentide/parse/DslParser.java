@@ -10,6 +10,7 @@ import com.sirentide.ir.Pie;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
+import com.sirentide.ir.StateDiagram;
 import com.sirentide.ir.Task;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
@@ -92,6 +93,9 @@ public final class DslParser {
             case "gantt" -> parseGantt(lines, textColor);
             case "flowchart" -> parseFlowchart(lines, header, textColor);
             case "sequence" -> parseSequence(lines, textColor);
+            // A mermaid-style state diagram — reuses the flowchart graph engine (§5); `statediagram`
+            // is an accepted alias of `state`.
+            case "state", "statediagram" -> parseStateDiagram(lines, textColor);
             default -> new Empty();
         };
     }
@@ -608,6 +612,134 @@ public final class DslParser {
     private static void registerActor(LinkedHashSet<String> actors, String id) {
         if (!actors.contains(id) && actors.size() < MAX_ACTORS) {
             actors.add(id);
+        }
+    }
+
+    /// The reserved pseudostate node ids — mermaid's `[*]` maps to `__start__` when it is a
+    /// transition SOURCE and `__end__` when it is a TARGET, so a single `[*]` token can resolve to
+    /// EITHER depending on its role in a given hop (they are registered as two DISTINCT nodes).
+    private static final String START_ID = "__start__";
+    private static final String END_ID = "__end__";
+    private static final String STATE_TOKEN = "[*]";
+
+    /// Parses a mermaid-style state diagram — a directed graph of states + transitions, layered by the
+    /// SAME engine flowcharts use (it wraps a {@link Flowchart} in a {@link StateDiagram}).
+    /// ```
+    /// state
+    /// [*] --> Idle
+    /// Idle --> Running : start
+    /// Running --> Idle : stop
+    /// Running --> [*]
+    /// ```
+    /// Each body line is either a TRANSITION (`SRC --> DST [ : label]`, chainable `A --> B --> C`) or
+    /// a bare STATE declaration (`S`, or `S : display name`). The transition label is mermaid-style —
+    /// it follows a `:` AFTER the destination, NOT `|pipes|`. So the line is split at its FIRST
+    /// top-level ` : ` into (edges-part, tail); the tail is a TRANSITION label when the edges-part has
+    /// arrows, or a state DISPLAY NAME when it does not. On a chained transition the label applies to
+    /// the LAST hop only (mermaid semantics). `[*]` is the START pseudostate (id `__start__`) when it
+    /// is a hop SOURCE and the END pseudostate (id `__end__`) when it is a hop TARGET; both carry an
+    /// EMPTY label so layout draws a disc/bullseye with no text. Arrow splitting reuses
+    /// {@link #topLevelArrows}. Malformed rows (empty endpoint, bare `[*]`) drop, never throw
+    /// (DESIGN §6). Caps {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph. Empty body → a state
+    /// diagram with no states (round-trips, NOT degraded to Empty).
+    private static Diagram parseStateDiagram(String[] lines, String textColor) {
+        LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
+        Map<String, String> nodeShapes = new java.util.HashMap<>();
+        List<FlowEdge> edges = new ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Split off the FIRST ` : ` tail. The colon FOLLOWS the destination, so scan arrows on the
+            // pre-colon segment: the tail is a transition label (arrows present) or a display name (not).
+            String edgesPart = line;
+            String tail = null;
+            int colon = line.indexOf(" : ");
+            if (colon >= 0) {
+                edgesPart = line.substring(0, colon).strip();
+                String raw = line.substring(colon + 3).strip();
+                tail = raw.isEmpty() ? null : cap(raw);
+            }
+            List<Integer> arrows = topLevelArrows(edgesPart);
+            if (arrows.isEmpty()) {
+                // Bare state declaration: `S` or `S : display name`. A bare `[*]` has no role → drop.
+                String id = cap(edgesPart);
+                if (id.isEmpty() || id.equals(STATE_TOKEN)) {
+                    continue;
+                }
+                registerState(nodeLabels, nodeShapes, id, tail);
+                continue;
+            }
+            // Tokenize the chain into endpoints separated by top-level `-->`, validate each is
+            // non-empty (drop the WHOLE line otherwise — never half-wire a chain, DESIGN §6).
+            List<String> endpoints = new ArrayList<>();
+            endpoints.add(edgesPart.substring(0, arrows.get(0)).strip());
+            for (int k = 0; k < arrows.size(); k++) {
+                int segStart = arrows.get(k) + 3;
+                int segEnd = (k + 1 < arrows.size()) ? arrows.get(k + 1) : edgesPart.length();
+                endpoints.add(edgesPart.substring(segStart, segEnd).strip());
+            }
+            boolean dropped = false;
+            for (String ep : endpoints) {
+                if (ep.isEmpty()) {
+                    dropped = true;
+                    break;
+                }
+            }
+            if (dropped) {
+                continue;
+            }
+            // Wire one edge per hop. `[*]` resolves per ROLE: as a hop's SOURCE it is __start__, as its
+            // TARGET it is __end__ (so the same token in `A --> [*] --> B` is END then START). The
+            // label rides the LAST hop only.
+            int lastHop = endpoints.size() - 2;
+            for (int k = 0; k < endpoints.size() - 1; k++) {
+                String from = endpoints.get(k).equals(STATE_TOKEN) ? START_ID : cap(endpoints.get(k));
+                String to = endpoints.get(k + 1).equals(STATE_TOKEN) ? END_ID : cap(endpoints.get(k + 1));
+                registerState(nodeLabels, nodeShapes, from, null);
+                registerState(nodeLabels, nodeShapes, to, null);
+                String hopLabel = (k == lastHop) ? tail : null;
+                if (edges.size() < MAX_EDGES
+                    && nodeLabels.containsKey(from) && nodeLabels.containsKey(to)) {
+                    edges.add(new FlowEdge(from, to, hopLabel));
+                }
+            }
+        }
+        List<FlowNode> nodes = new ArrayList<>();
+        for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
+            nodes.add(new FlowNode(e.getKey(), e.getValue(), nodeShapes.get(e.getKey())));
+        }
+        return new StateDiagram(new Flowchart(nodes, edges, "TD", textColor));
+    }
+
+    /// Registers a state (or pseudostate) in first-seen order, up to {@link #MAX_NODES}. The
+    /// pseudostates `__start__`/`__end__` get shape `"start"`/`"end"` and an EMPTY label (a disc, no
+    /// text); a normal state gets shape `"state"` and defaults its label to its id. A `displayName`
+    /// (from a bare `S : name` decl) UPGRADES a state whose label is still the default id — the first
+    /// display name wins, a later bare mention never overwrites it.
+    private static void registerState(LinkedHashMap<String, String> map, Map<String, String> shapes,
+                                      String id, String displayName) {
+        String shape;
+        String defaultLabel;
+        if (id.equals(START_ID)) {
+            shape = "start";
+            defaultLabel = "";
+        } else if (id.equals(END_ID)) {
+            shape = "end";
+            defaultLabel = "";
+        } else {
+            shape = "state";
+            defaultLabel = id;
+        }
+        if (!map.containsKey(id)) {
+            if (map.size() >= MAX_NODES) {
+                return;   // drop past the node cap (never throw / allocate unboundedly)
+            }
+            map.put(id, displayName != null ? displayName : defaultLabel);
+            shapes.put(id, shape);
+        } else if (displayName != null && map.get(id).equals(defaultLabel)) {
+            map.put(id, displayName);   // first display name upgrades the default id label
         }
     }
 

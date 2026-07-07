@@ -66,6 +66,10 @@ class ContainmentTest {
         // and the label-clamp, all through the allowlist.
         "sequence\n  Alice ->> Bob : Request a really long token label that must clamp in-canvas\n"
             + "  Bob -->> Alice : Token\n  Alice ->> Alice : Validate locally\n  Bob ->> Carol\n",
+        // state diagram (7th type): `[*]` start + end pseudostates (disc + bullseye Wedge paths), a
+        // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
+        // cycle handling plus the new disc geometry, all through the allowlist.
+        "state\n  [*] --> Idle\n  Idle --> Running : start\n  Running --> Idle : stop\n  Running --> [*]\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell
