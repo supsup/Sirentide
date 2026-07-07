@@ -267,4 +267,49 @@ class FlowchartTest {
         String dsl = "flowchart\nA[Start] --> B[Middle]\nB --> C[End]\nC --> A\n";
         assertEquals(Sirentide.render(dsl), Sirentide.render(dsl));
     }
+
+    // -- LR geometry ----------------------------------------------------------
+
+    /// Pulls the intrinsic width/height off the svg root (`<svg … width="W" height="H" …>`).
+    private static double[] svgSize(String svg) {
+        java.util.regex.Matcher w = java.util.regex.Pattern.compile("<svg[^>]*\\swidth=\"([0-9.]+)\"").matcher(svg);
+        java.util.regex.Matcher h = java.util.regex.Pattern.compile("<svg[^>]*\\sheight=\"([0-9.]+)\"").matcher(svg);
+        assertTrue(w.find() && h.find(), "svg root has width+height");
+        return new double[] {Double.parseDouble(w.group(1)), Double.parseDouble(h.group(1))};
+    }
+
+    @Test
+    void lrFlowsWideWhileTdFlowsTall() {
+        // The same chain lays out COLUMNS left→right in LR (wider than tall) but ROWS top→down in TD
+        // (taller than wide). A real geometry assertion off the emitted canvas box, not vacuous.
+        String chain = "A[One] --> B[Two]\nB --> C[Three]\nC --> D[Four]\n";
+        double[] lr = svgSize(Sirentide.render("flowchart LR\n" + chain));
+        double[] td = svgSize(Sirentide.render("flowchart TD\n" + chain));
+        assertTrue(lr[0] > lr[1], "LR chain is wider than tall: " + lr[0] + "x" + lr[1]);
+        assertTrue(td[1] > td[0], "TD chain is taller than wide: " + td[0] + "x" + td[1]);
+        // And the axes really swapped: LR is wider than TD, TD is taller than LR.
+        assertTrue(lr[0] > td[0] && td[1] > lr[1], "LR/TD are transposes, not scalings");
+    }
+
+    @Test
+    @Timeout(5)
+    void lrCycleTerminatesAndRendersAllNodes() {
+        // Mirror of the TD cycle test for LR: the back-edge C→A is excluded from layering (still
+        // drawn through a below-content lane), so layout terminates; assert all nodes render.
+        String dsl = "flowchart LR\nA --> B\nB --> C\nC --> A\n";
+        Flowchart fc = parse(dsl);
+        assertEquals(3, fc.nodes().size(), "all 3 cycle nodes present");
+        String svg = Sirentide.render(dsl);
+        assertNotNull(svg);
+        assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "cycle still renders a valid svg");
+        assertEquals(3, count(svg, "<rect"), "one box per node");
+    }
+
+    @Test
+    void lrLabeledEdgesRenderGlyphs() {
+        // An LR labeled diagram draws more glyph <path>s than its unlabeled twin (the label is drawn).
+        String labeled = Sirentide.render("flowchart LR\nA[Go] -->|yes| B[Ship]\n");
+        String plain = Sirentide.render("flowchart LR\nA[Go] --> B[Ship]\n");
+        assertTrue(count(labeled, "<path") > count(plain, "<path"), "the LR edge label adds glyph paths");
+    }
 }

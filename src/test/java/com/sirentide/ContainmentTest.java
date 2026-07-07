@@ -51,6 +51,9 @@ class ContainmentTest {
         // flowchart edge labels (M1.2) incl. a LABELED BACK-edge (its label rides the lane; the
         // canvas widens for it — author text through the glyph-path pipeline, never <text>).
         "flowchart\n  A{Ship?} -->|yes| B[Deploy]\n  A -->|no| C[Fix]\n  C -->|retry| A\n",   // + a DIAMOND decision node (M1.3)
+        // LR geometry (M1.4): columns flow left→right, back-edges lane BELOW the content, labeled —
+        // exercises the diamond, forward + back edge labels, and the cycle through the LR path.
+        "flowchart LR\n  A{Ship?} -->|yes| B[Deploy]\n  A -->|no| C[Fix]\n  C -->|retry| A\n  D[Lone]\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

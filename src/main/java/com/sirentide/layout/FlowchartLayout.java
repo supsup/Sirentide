@@ -137,6 +137,14 @@ public final class FlowchartLayout {
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 
+        // Layering/box-sizing above is direction-INDEPENDENT. TD (below) draws layers as ROWS flowing
+        // top→down; LR draws them as COLUMNS flowing left→right — a genuinely different coordinate +
+        // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
+        // path stays byte-identical (all existing goldens unchanged).
+        if ("LR".equals(fc.direction())) {
+            return layoutLr(fc, nodes, n, layerCount, byLayer, boxW, labels, edges, isBack, edgeLabels);
+        }
+
         // Canvas width = widest layer + margins.
         double maxLayerWidth = 0;
         for (List<Integer> row : byLayer) {
@@ -291,6 +299,178 @@ public final class FlowchartLayout {
 
         // 3) centered labels (glyph paths — never <text>).
         String textColor = fc.textColor();
+        for (int i = 0; i < n; i++) {
+            double cx = nx[i] + boxW[i] / 2;
+            double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
+            double w = FONT.runWidth(labels[i], LABEL_SIZE);
+            String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
+            if (!d.isBlank()) {
+                shapes.add(new GlyphRun(d, textColor));
+            }
+        }
+
+        return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// LEFT-RIGHT geometry: layers become COLUMNS, flow runs left→right. A full mirror of the TD
+    /// pass with the axes swapped — columns (not rows), vertical centering within the tallest column,
+    /// forward edges out the RIGHT side into the next column's LEFT side, and back-edges detouring
+    /// through horizontal lanes BELOW the content (mirror of TD's right-side vertical lanes). The
+    /// diamond path is untouched: its left/right vertices already land on the LR side anchors.
+    private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
+                                    List<List<Integer>> byLayer, double[] boxW, String[] labels,
+                                    List<int[]> edges, boolean[] isBack, List<String> edgeLabels) {
+        // -- columns: colW[L] = widest box in layer L; colX marches left→right by colW + LAYER_GAP.
+        double[] colW = new double[layerCount];
+        for (int L = 0; L < layerCount; L++) {
+            double w = 0;
+            for (int idx : byLayer.get(L)) {
+                w = Math.max(w, boxW[idx]);
+            }
+            colW[L] = w;
+        }
+        double[] colX = new double[layerCount];
+        double maxColumnStackH = 0;   // tallest column's stacked height → the vertical-centering datum
+        for (int L = 0; L < layerCount; L++) {
+            colX[L] = L == 0 ? MARGIN : colX[L - 1] + colW[L - 1] + LAYER_GAP;
+            int cnt = byLayer.get(L).size();
+            double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
+            maxColumnStackH = Math.max(maxColumnStackH, stackH);
+        }
+        double contentW = (layerCount == 0 ? MARGIN : colX[layerCount - 1] + colW[layerCount - 1]) + MARGIN;
+        double contentH = maxColumnStackH + 2 * MARGIN;
+
+        // Assign coordinates: within a column, nodes stack top→down in first-seen order, and the whole
+        // stack is CENTERED VERTICALLY on the tallest column (mirror of TD's per-row horizontal
+        // centering). Each node is centered horizontally within its column's width.
+        double[] nx = new double[n];
+        double[] ny = new double[n];
+        for (int L = 0; L < layerCount; L++) {
+            List<Integer> col = byLayer.get(L);
+            int cnt = col.size();
+            double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
+            double startY = (contentH - stackH) / 2;
+            double cursor = startY;
+            for (int idx : col) {
+                nx[idx] = colX[L] + (colW[L] - boxW[idx]) / 2;
+                ny[idx] = cursor;
+                cursor += NODE_H + NODE_GAP;
+            }
+        }
+
+        // Back-edges route through horizontal LANES reserved BELOW the content (mirror of TD's
+        // right-side vertical lanes); a labeled back-edge's label sits just below its lane, so the
+        // canvas grows DOWNWARD to fit the tallest such label.
+        int backCount = 0;
+        double maxBackLabelH = 0;
+        for (int ei = 0; ei < isBack.length; ei++) {
+            if (isBack[ei]) {
+                backCount++;
+                if (edgeLabels.get(ei) != null) {
+                    maxBackLabelH = Math.max(maxBackLabelH, EDGE_LABEL_GAP + EDGE_LABEL_SIZE);
+                }
+            }
+        }
+        double canvasW = contentW;
+        double canvasH = contentH + backCount * BACK_LANE_GAP + maxBackLabelH;
+
+        // -- emit order (readability + containment audit): edges under nodes, then boxes, then labels.
+        List<Shape> shapes = new ArrayList<>();
+        String textColor = fc.textColor();
+
+        // 1) edges. forward = right-middle → left-middle straight line + triangle arrowhead; back =
+        // a detour DOWN out the source's bottom, along a lane below the content, UP into the target's
+        // bottom with an up-pointing arrowhead.
+        int laneIdx = 0;
+        for (int ei = 0; ei < edges.size(); ei++) {
+            int[] e = edges.get(ei);
+            int u = e[0];
+            int v = e[1];
+            if (isBack[ei]) {
+                double laneY = contentH - MARGIN + BACK_LANE_GAP * (++laneIdx);
+                double sx = nx[u] + boxW[u] / 2;       // source bottom-middle
+                double sy = ny[u] + NODE_H;
+                double tx = nx[v] + boxW[v] / 2;        // target bottom-middle
+                double ty = ny[v] + NODE_H;
+                shapes.add(new Line(sx, sy, sx, laneY, EDGE_STROKE, EDGE_WIDTH));      // down out
+                shapes.add(new Line(sx, laneY, tx, laneY, EDGE_STROKE, EDGE_WIDTH));   // along the lane
+                shapes.add(new Line(tx, laneY, tx, ty + ARROW_LEN, EDGE_STROKE, EDGE_WIDTH)); // up in
+                // Up-pointing arrowhead, tip on the target's bottom edge.
+                String bd = "M " + fmt(tx) + " " + fmt(ty)
+                    + " L " + fmt(tx - ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
+                    + " L " + fmt(tx + ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
+                    + " Z";
+                shapes.add(new Path(bd, ARROW_FILL));
+                // Edge label: just below the lane's horizontal run (the canvas was grown for it).
+                String bl = edgeLabels.get(ei);
+                if (bl != null) {
+                    double lblX = (sx + tx) / 2 + EDGE_LABEL_GAP;
+                    double lblY = laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7;
+                    String ld = FONT.textPathD(bl, lblX, lblY, EDGE_LABEL_SIZE);
+                    if (!ld.isBlank()) {
+                        shapes.add(new GlyphRun(ld, textColor));
+                    }
+                }
+                continue;
+            }
+            double sx = nx[u] + boxW[u];             // source right-middle
+            double sy = ny[u] + NODE_H / 2;
+            double tx = nx[v];                        // target left-middle
+            double ty = ny[v] + NODE_H / 2;
+            double dx = tx - sx;
+            double dy = ty - sy;
+            double len = Math.hypot(dx, dy);
+            if (!Double.isFinite(len) || len < 1e-6) {
+                continue;   // degenerate anchor pair — skip (never emit NaN geometry)
+            }
+            double ux = dx / len;
+            double uy = dy / len;
+            // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
+            double baseX = tx - ARROW_LEN * ux;
+            double baseY = ty - ARROW_LEN * uy;
+            double px = -uy;   // unit perpendicular
+            double py = ux;
+            shapes.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
+            String d = "M " + fmt(tx) + " " + fmt(ty)
+                + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
+                + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
+                + " Z";
+            shapes.add(new Path(d, ARROW_FILL));
+            // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
+            // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it. Keeps a
+            // fan-out's labels ("yes"/"no") from colliding.
+            String fl = edgeLabels.get(ei);
+            if (fl != null) {
+                double midX = (sx + baseX) / 2;
+                double midY = (sy + baseY) / 2;
+                double lblY = dy > 0
+                    ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                    : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                String ld = FONT.textPathD(fl, midX + EDGE_LABEL_GAP, lblY, EDGE_LABEL_SIZE);
+                if (!ld.isBlank()) {
+                    shapes.add(new GlyphRun(ld, textColor));
+                }
+            }
+        }
+
+        // 2) node boxes: rect, or a DIAMOND path (its top/bottom/side vertices are the anchors edges
+        // attach to — identical construction to TD, no change needed for LR).
+        for (int i = 0; i < n; i++) {
+            if ("diamond".equals(nodes.get(i).shape())) {
+                double cx = nx[i] + boxW[i] / 2;
+                double cy = ny[i] + NODE_H / 2;
+                String d = "M " + fmt(cx) + " " + fmt(ny[i])
+                    + " L " + fmt(nx[i] + boxW[i]) + " " + fmt(cy)
+                    + " L " + fmt(cx) + " " + fmt(ny[i] + NODE_H)
+                    + " L " + fmt(nx[i]) + " " + fmt(cy)
+                    + " Z";
+                shapes.add(new Path(d, NODE_FILL));
+            } else {
+                shapes.add(new Rect(nx[i], ny[i], boxW[i], NODE_H, NODE_FILL));
+            }
+        }
+
+        // 3) centered labels (glyph paths — never <text>).
         for (int i = 0; i < n; i++) {
             double cx = nx[i] + boxW[i] / 2;
             double baseline = ny[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
