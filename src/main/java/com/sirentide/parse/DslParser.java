@@ -85,7 +85,7 @@ public final class DslParser {
             // pie/xychart values are magnitudes → plain numeric parse. `pie legend` (or the `pie
             // key` alias) opts into the left-side colour key; a bare `pie` is legend-off.
             case "pie" -> new Pie(parseData(lines, false), hasLegendModifier(header), textColor);
-            case "xychart" -> new XyChart(parseData(lines, false), textColor);
+            case "xychart" -> parseXyChart(lines, header, textColor);
             // timeline values are moments → date-aware parse (bare years stay numeric, ISO dates
             // map to epoch-day) so events place proportionally in time, not evenly by index.
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
@@ -125,6 +125,126 @@ public final class DslParser {
             }
         }
         return false;
+    }
+
+    /// The xychart render mode from an optional header modifier: `line` or `scatter`; anything else
+    /// (or absent) is the default `bars`. Order-independent with `legend`/`key`/`color=` — just
+    /// another header token, so a typo degrades to bars rather than failing the bake (DESIGN §6).
+    private static String parseXyMode(String[] header) {
+        for (int i = 1; i < header.length; i++) {
+            if (header[i].equals("line")) {
+                return "line";
+            }
+            if (header[i].equals("scatter")) {
+                return "scatter";
+            }
+        }
+        return "bars";
+    }
+
+    /// Parses an xychart: single-series bars (the default, byte-identical to before) OR a
+    /// multi-series line/scatter/grouped-bars chart.
+    ///
+    /// A category row is `"label" : v1 [v2 v3 …] [#hex]`. Whitespace-split numeric tokens after the
+    /// colon are the per-series values (series count = the MAX row's length); a shorter row means the
+    /// trailing series have NO point at that category (a gap, skipped — never zeroed). A trailing
+    /// `#hex` is honoured as the per-item bar colour ONLY on a single-value (single-series) row —
+    /// with more than one value there are no per-item colours (series colours come from the palette
+    /// by series index). An optional FIRST body line `series: A, B, C` names the legend series
+    /// (comma-split, `cap()`'d); otherwise the legend labels default to `Series 1..N`.
+    ///
+    /// BYTE-COMPAT: a single-series `bars` chart routes through the LEGACY {@link XyChart} shape
+    /// (a `Slice` list, `series == null`) so its layout/emit is unchanged.
+    private static Diagram parseXyChart(String[] lines, String[] header, String textColor) {
+        String mode = parseXyMode(header);
+        boolean legend = hasLegendModifier(header);
+
+        List<String> seriesNames = null;
+        List<String> labels = new ArrayList<>();
+        List<double[]> rows = new ArrayList<>();
+        List<String> singleColors = new ArrayList<>();   // per-row single-series colour (else null)
+        int maxSeries = 0;
+
+        for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            int colon = line.lastIndexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            String key = line.substring(0, colon).strip();
+            String rest = line.substring(colon + 1).strip();
+            // An optional `series: A, B, C` naming row — only when it is the FIRST body row seen.
+            if (seriesNames == null && rows.isEmpty() && key.equals("series")) {
+                seriesNames = new ArrayList<>();
+                for (String name : rest.split(",")) {
+                    String s = cap(name.strip());
+                    if (!s.isEmpty()) {
+                        seriesNames.add(s);
+                    }
+                }
+                continue;
+            }
+            String label = cap(unquote(key));
+            // Walk the whitespace-split value tokens: leading NUMERIC tokens are the series values;
+            // the FIRST non-numeric token stops the scan, and if it is the LAST token and a hex
+            // colour it becomes the (single-series-only) per-item fill.
+            String[] toks = rest.split("\\s+");
+            List<Double> vals = new ArrayList<>();
+            String color = null;
+            for (int t = 0; t < toks.length; t++) {
+                if (toks[t].isEmpty()) {
+                    continue;
+                }
+                double v;
+                try {
+                    v = Double.parseDouble(toks[t]);
+                } catch (NumberFormatException e) {
+                    // A trailing hex token → candidate per-item colour (kept only if single-series
+                    // below); any other non-numeric token just ends the value scan (never throws).
+                    if (t == toks.length - 1 && SirentideContract.isHexColor(toks[t])) {
+                        color = SirentideContract.normalizeColor(toks[t]);
+                    }
+                    break;
+                }
+                if (!Double.isFinite(v)) {
+                    break;   // NaN/Infinity (incl. "1e400") ends the scan — never reaches layout
+                }
+                vals.add(v);
+            }
+            if (vals.isEmpty()) {
+                continue;   // no numeric value → malformed row, skip (never fail the bake)
+            }
+            double[] arr = new double[vals.size()];
+            for (int k = 0; k < arr.length; k++) {
+                arr[k] = vals.get(k);
+            }
+            labels.add(label);
+            rows.add(arr);
+            singleColors.add(vals.size() == 1 ? color : null);
+            maxSeries = Math.max(maxSeries, arr.length);
+        }
+
+        // Single-series BARS → the legacy Slice-list shape (byte-identical output). A single-series
+        // line/scatter chart still routes through the multi path (it is a NEW render mode, not the
+        // pinned bar golden).
+        if (mode.equals("bars") && maxSeries <= 1) {
+            List<Slice> bars = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i++) {
+                bars.add(new Slice(labels.get(i), rows.get(i)[0], singleColors.get(i), null));
+            }
+            return new XyChart(bars, textColor);
+        }
+
+        // Multi-series (or line/scatter): `bars` carries only the category LABELS (its value slot
+        // holds series 0 for convenience, unused by the multi layout); `series` carries the grid.
+        List<Slice> bars = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            bars.add(new Slice(labels.get(i), rows.get(i)[0], null, null));
+        }
+        return new XyChart(bars, rows, seriesNames, mode, legend, textColor);
     }
 
     /// Parses gantt rows: `"Task" : start-end` (two numbers on a shared time axis). A malformed
