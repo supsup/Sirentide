@@ -32,3 +32,7 @@ Greenlit; **M1** in progress — the render pipeline, the font-metrics oracle, a
 ## License
 
 Apache-2.0.
+
+## Disclaimer
+
+This project is provided under the Apache License 2.0 on an "AS IS" basis, without warranties or conditions of any kind. See the LICENSE file for details.
