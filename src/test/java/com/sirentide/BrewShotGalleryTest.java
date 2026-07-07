@@ -71,7 +71,8 @@ class BrewShotGalleryTest {
         new Case("gantt", "Gantt",
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
         new Case("flowchart", "Flowchart (layered)",
-            "flowchart\nA[Open PR] --> B[Review]\nB --> C[Merge]\nB --> D[Request changes]\nD --> B"));
+            "flowchart\nA[Open PR] --> B[Review]\nB -->|approve| C[Merge]"
+                + "\nB -->|request changes| D[Revise]\nD -->|re-review| B"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

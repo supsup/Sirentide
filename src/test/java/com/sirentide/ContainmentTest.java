@@ -48,6 +48,9 @@ class ContainmentTest {
         // <path> arrowhead shape, the layered layout, and cycle-termination through the allowlist.
         "flowchart TD\n  A[Start] --> B[Process]\n  B --> C[End]\n"
             + "  A --> D[Side]\n  D --> C\n  C --> A\n  E[Lone]\n",
+        // flowchart edge labels (M1.2) incl. a LABELED BACK-edge (its label rides the lane; the
+        // canvas widens for it — author text through the glyph-path pipeline, never <text>).
+        "flowchart\n  A[Ship?] -->|yes| B[Deploy]\n  A -->|no| C[Fix]\n  C -->|retry| A\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

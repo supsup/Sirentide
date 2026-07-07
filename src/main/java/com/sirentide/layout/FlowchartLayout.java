@@ -44,6 +44,9 @@ public final class FlowchartLayout {
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
     private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
+    private static final double EDGE_LABEL_SIZE = 10;   // edge-label font size (M1.2, `-->|yes|`)
+    private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
+    private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
 
     public static LaidOut layout(Flowchart fc) {
         List<FlowNode> nodes = fc.nodes();
@@ -59,14 +62,18 @@ public final class FlowchartLayout {
             index.put(nodes.get(i).id(), i);
         }
 
-        // Edge endpoints as indices; drop any edge whose endpoint isn't a known node (defensive —
-        // the parser already guards this, but layout must tolerate a stray reference, never throw).
+        // Edge endpoints as indices (labels carried in a parallel list); drop any edge whose
+        // endpoint isn't a known node (defensive — the parser already guards this, but layout must
+        // tolerate a stray reference, never throw).
         List<int[]> edges = new ArrayList<>();
+        List<String> edgeLabels = new ArrayList<>();
         for (FlowEdge e : fc.edges()) {
             Integer u = index.get(e.from());
             Integer v = index.get(e.to());
             if (u != null && v != null) {
                 edges.add(new int[] {u, v});
+                edgeLabels.add(e.label() == null ? null
+                    : FONT.ellipsize(e.label(), MAX_EDGE_LABEL_W, EDGE_LABEL_SIZE));
             }
         }
 
@@ -140,12 +147,18 @@ public final class FlowchartLayout {
         // the straight up-line overlapped the forward chain, so a cycle looked like a plain chain.
         // One lane per back-edge, so multiple cycles don't overdraw each other.
         int backCount = 0;
-        for (boolean b : isBack) {
-            if (b) {
+        double maxBackLabelW = 0;   // a labeled back-edge's label sits RIGHT of its lane — widen for it
+        for (int ei = 0; ei < isBack.length; ei++) {
+            if (isBack[ei]) {
                 backCount++;
+                String bl = edgeLabels.get(ei);
+                if (bl != null) {
+                    maxBackLabelW = Math.max(maxBackLabelW,
+                        FONT.runWidth(bl, EDGE_LABEL_SIZE) + EDGE_LABEL_GAP);
+                }
             }
         }
-        double canvasW = contentW + backCount * BACK_LANE_GAP;
+        double canvasW = contentW + backCount * BACK_LANE_GAP + maxBackLabelW;
         double canvasH = layerCount * (NODE_H + LAYER_GAP) - LAYER_GAP + 2 * MARGIN;
 
         // Assign coordinates: each layer centered horizontally on the CONTENT width (the back-edge
@@ -199,6 +212,15 @@ public final class FlowchartLayout {
                     + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
+                // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
+                String bl = edgeLabels.get(ei);
+                if (bl != null) {
+                    double lblY = (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35;
+                    String ld = FONT.textPathD(bl, laneX + EDGE_LABEL_GAP, lblY, EDGE_LABEL_SIZE);
+                    if (!ld.isBlank()) {
+                        shapes.add(new GlyphRun(ld, fc.textColor()));
+                    }
+                }
                 continue;
             }
             double scx = nx[u] + boxW[u] / 2;
@@ -225,6 +247,21 @@ public final class FlowchartLayout {
                 + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
                 + " Z";
             shapes.add(new Path(d, ARROW_FILL));
+            // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
+            // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
+            // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
+            String fl = edgeLabels.get(ei);
+            if (fl != null) {
+                double midX = (scx + baseCx) / 2;
+                double lblX = dx >= 0
+                    ? midX + EDGE_LABEL_GAP
+                    : midX - EDGE_LABEL_GAP - FONT.runWidth(fl, EDGE_LABEL_SIZE);
+                double lblY = (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35;
+                String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
+                if (!ld.isBlank()) {
+                    shapes.add(new GlyphRun(ld, fc.textColor()));
+                }
+            }
         }
 
         // 2) node boxes.
