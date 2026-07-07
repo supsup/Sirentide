@@ -120,6 +120,25 @@ class ContainmentTest {
         checkElement(doc.getDocumentElement(), "math-in-labels");
     }
 
+    /// Conf F1 pin (RFC sirentide/49): the RECONCILED contract. FragmentGuard already permits
+    /// `fill` on an inner `<g>` and the SirentideContract doc-comment intends it, but
+    /// ALLOWED_ATTRS.g == {transform} — so a real (S2 LatteX) renderer emitting
+    /// `<g fill="currentColor">…</g>` passes the guard yet violates the containment allowlist.
+    /// This pins the reconciled rule: an inner `<g fill=…>` fragment STAYS inside the allowlist.
+    /// RED until F1 adds `fill` to ALLOWED_ATTRS.g (drift-guard-as-a-test: the failing test IS
+    /// the contract; F1's one-line change makes it green).
+    @Test
+    void mathFragmentInnerGWithFillStaysInsideTheAllowlist() throws Exception {
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g fill=\"currentColor\" transform=\"scale(0.5 0.5)\">"
+                    + "<path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>", 40, 12, 4));
+        String svg = Sirentide.render("flowchart TD\n  A[Energy $E=mc^2$] --> B[Done]\n", fake);
+        assertTrue(svg.contains("<g fill="), "the inner g-with-fill fragment was emitted: " + svg);
+        Document doc = parse(svg);
+        checkElement(doc.getDocumentElement(), "math-in-labels-inner-g-fill");
+    }
+
     /// Direct proof the non-finite leak is closed: `1e400` parses to Infinity in Java WITHOUT
     /// throwing; the emitter must never surface the literal string "Infinity" as a coordinate.
     @Test

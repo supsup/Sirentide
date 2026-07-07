@@ -114,6 +114,27 @@ class MathInLabelsTest {
         assertFalse(FragmentGuard.isClean("<g><foreignObject/></g>"));
     }
 
+    // -- Conf F3 pins (RFC sirentide/49): the belt-and-suspenders branches were vacuously
+    //    covered — every hostile case also tripped the element allowlist, so the stray-bracket
+    //    and null/blank checks could be deleted with the suite still green. Pin them directly so
+    //    a future mutant can't no-op them (these guard MALFORMED input, not injection — a real
+    //    <script> still hits the element allowlist).
+
+    @Test
+    void guard_rejectsStrayTailBracket() {
+        // well-formed path with an extra '>' hanging off the end — must not slip through
+        assertFalse(FragmentGuard.isClean("<path d=\"M0 0\" fill=\"none\"/>>"));
+        // a lone '<' with no tag, and a bare '>' between otherwise-clean tags
+        assertFalse(FragmentGuard.isClean("<path d=\"M0 0\" fill=\"none\"/> < <path d=\"M1 1\" fill=\"none\"/>"));
+    }
+
+    @Test
+    void guard_rejectsNullAndBlank() {
+        assertFalse(FragmentGuard.isClean(null));
+        assertFalse(FragmentGuard.isClean(""));
+        assertFalse(FragmentGuard.isClean("   "));
+    }
+
     // -- zero-behaviour-change pin (the load-bearing one) -------------------------
 
     @Test
