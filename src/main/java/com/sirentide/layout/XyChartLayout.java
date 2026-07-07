@@ -54,11 +54,6 @@ public final class XyChartLayout {
     private static final double KEY_TEXT_MAX =
         KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
 
-    private static final String[] PALETTE = {
-        "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
-        "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"
-    };
-
     /// Dispatches on the chart shape: the legacy single-series bar path (`series == null`, unchanged
     /// output) vs the multi-series / line / scatter path.
     public static LaidOut layout(XyChart chart) {
@@ -124,7 +119,7 @@ public final class XyChartLayout {
             double h = Math.abs(baselineY - barEndY);
             double x = plotLeft + slot * i + (slot - barW) / 2;
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
-            String fill = b.color() != null ? b.color() : PALETTE[i % PALETTE.length];
+            String fill = b.color() != null ? b.color() : Colors.PALETTE[i % Colors.PALETTE.length];
             shapes.add(new Rect(x, y, barW, h, fill));
 
             double cx = x + barW / 2;
@@ -259,7 +254,7 @@ public final class XyChartLayout {
                 double y = Math.min(baselineY, endY);
                 double h = Math.abs(baselineY - endY);
                 double x = slotLeft + s * (barW + GROUP_GAP);
-                shapes.add(new Rect(x, y, barW, h, PALETTE[s % PALETTE.length]));
+                shapes.add(new Rect(x, y, barW, h, Colors.PALETTE[s % Colors.PALETTE.length]));
             }
             double cx = plotLeft + slot * i + slot / 2;
             String cat = FONT.ellipsize(bars.get(i).label(), slot - 2, LABEL_SIZE);
@@ -282,7 +277,7 @@ public final class XyChartLayout {
             px[i] = plotLeft + slot * (i + 0.5);   // category column centre
         }
         for (int s = 0; s < seriesCount; s++) {
-            String col = PALETTE[s % PALETTE.length];
+            String col = Colors.PALETTE[s % Colors.PALETTE.length];
             if (line) {
                 for (int i = 0; i + 1 < nCat; i++) {
                     Double y0 = pointY(series.get(i), s, axis, plotBottom, plotTop);
@@ -323,7 +318,7 @@ public final class XyChartLayout {
         double keyTop = (canvasH - keyBlockH) / 2;
         double textX = KEY_PAD_LEFT + SWATCH + SWATCH_TEXT_GAP;
         for (int s = 0; s < seriesCount; s++) {
-            String col = PALETTE[s % PALETTE.length];
+            String col = Colors.PALETTE[s % Colors.PALETTE.length];
             double rowTop = keyTop + s * KEY_ROW_HEIGHT;
             shapes.add(new Rect(KEY_PAD_LEFT, rowTop + (KEY_ROW_HEIGHT - SWATCH) / 2,
                 SWATCH, SWATCH, col));

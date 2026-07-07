@@ -73,8 +73,8 @@ class BrewShotGalleryTest {
             "timeline\n\"Founded\" : 2000\n\"Series A\" : 2005\n\"Launch\" : 2020"),
         new Case("gantt", "Gantt",
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
-        new Case("flowchart", "Flowchart (layered)",
-            "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge]"
+        new Case("flowchart", "Flowchart (layered, custom node colour)",
+            "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge] #22c55e"
                 + "\nB -->|no| D[Revise]\nD -->|re-review| B"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"

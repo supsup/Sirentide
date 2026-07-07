@@ -8,10 +8,16 @@ import java.util.List;
 ///
 /// `direction` is the layout flow: `"TD"` (top-down, the M1 default + only implemented geometry) or
 /// `"LR"` (left-right — PARSED into this field but layout still lays out TD; LR geometry is a
-/// follow-up). `textColor` fills the node labels — defaults to `currentColor` so labels inherit the
-/// host page's text colour (legible on light AND dark), matching the other types' convention.
-public record Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor)
-    implements Diagram {
+/// follow-up). `textColor` fills the EDGE labels (they sit on the page background) — defaults to
+/// `currentColor` so they inherit the host page's text colour (legible on light AND dark). NODE
+/// labels no longer use `textColor`: they contrast against the node's resolved box fill (dark text
+/// on a light box, white on a dark one) so they stay legible on any theme.
+///
+/// `nodeColor` is the header `nodecolor=#hex` default box fill — a canonical `#rrggbb`, or `null`
+/// for the built-in `#dbe4ff`. It applies to every node WITHOUT its own {@link FlowNode#color()};
+/// a per-node colour always wins.
+public record Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor,
+                        String nodeColor) implements Diagram {
 
     public Flowchart {
         nodes = List.copyOf(nodes);
@@ -24,9 +30,14 @@ public record Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direc
         }
     }
 
-    /// Default construction (TD, `currentColor` labels) — keeps a caller that builds a Flowchart from
-    /// just its nodes+edges unchanged.
+    /// No header node colour — keeps a caller that supplies just direction+textColor unchanged.
+    public Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor) {
+        this(nodes, edges, direction, textColor, null);
+    }
+
+    /// Default construction (TD, `currentColor` edge labels, default box fill) — keeps a caller that
+    /// builds a Flowchart from just its nodes+edges unchanged.
     public Flowchart(List<FlowNode> nodes, List<FlowEdge> edges) {
-        this(nodes, edges, "TD", "currentColor");
+        this(nodes, edges, "TD", "currentColor", null);
     }
 }

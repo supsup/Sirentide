@@ -86,17 +86,17 @@ gantt
 
 ![Gantt](gantt.png)
 
-## Flowchart (layered)
+## Flowchart (layered, custom node colour)
 
 ```
 flowchart
 A[Open PR] --> B{Approve?}
-B -->|yes| C[Merge]
+B -->|yes| C[Merge] #22c55e
 B -->|no| D[Revise]
 D -->|re-review| B
 ```
 
-![Flowchart (layered)](flowchart.png)
+![Flowchart (layered, custom node colour)](flowchart.png)
 
 ## Sequence (API token flow)
 

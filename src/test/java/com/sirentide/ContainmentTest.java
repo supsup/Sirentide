@@ -82,6 +82,11 @@ class ContainmentTest {
         "pie\n  \"A\" : 60 currentColor\n  \"B\" : 40 none\n",     // per-item currentColor/none (H1 — palette fallback)
         "pie legend color=#334155\n  \"A\" : 60 #123456\n  \"B\" : 40\n", // color= header + per-item + legend
         "xychart color=#ffffff\n  \"Mon\" : 5 #abcdef\n  \"Tue\" : -3\n", // header + per-bar + negative
+        // NODE COLOUR flows: a per-node trailing #hex + a header nodecolor= default + contrast-derived
+        // node labels (author-string→fill/label paths) across flowchart, sequence heads, and state.
+        "flowchart nodecolor=#334155\n  A[Start] #22c55e --> B{Q?}\n  B -->|yes| C[End]\n",
+        "sequence nodecolor=#1a2233\n  Alice ->> Bob : hi\n  Bob -->> Alice : ok\n",
+        "state nodecolor=#334155\n  [*] --> Idle #22c55e\n  Idle --> Running : go\n  Running --> [*]\n",
         "pie\n  \"" + "x".repeat(4000) + "\" : 10\n");            // oversized label (capped)
 
     @Test

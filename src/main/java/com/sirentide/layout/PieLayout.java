@@ -55,12 +55,6 @@ public final class PieLayout {
     private static final double KEY_TEXT_MAX =
         KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
 
-    /// A small fixed palette of contract-clean hex fills (mid-tone, readable on light or dark).
-    private static final String[] PALETTE = {
-        "#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2",
-        "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"
-    };
-
     public static LaidOut layout(Pie pie) {
         // Legend mode is a wholly separate layout path (left key + shifted, label-suppressed pie),
         // kept apart so the bare-pie path below stays byte-for-byte identical to before.
@@ -102,7 +96,7 @@ public final class PieLayout {
                 // Comfortable slice: a centered inside label, contrast-aware fill (black or white by
                 // the slice colour's luminance — no more contrast-blind hardcoded white).
                 placeLabel(shapes, label, cx + LABEL_RADIUS * Math.cos(mid),
-                    cy + LABEL_RADIUS * Math.sin(mid), true, mid, contrastFill(fill));
+                    cy + LABEL_RADIUS * Math.sin(mid), true, mid, Colors.contrastFill(fill));
             } else {
                 // Thin slice: DEFER — anchor on the rim, collect it, and spread the whole set below
                 // so two near-co-located tiny slices ("Tiny"/"Other") no longer stack their labels.
@@ -262,29 +256,6 @@ public final class PieLayout {
     /// The wedge/swatch fill for a slice: its EXPLICIT per-item colour when the author supplied one
     /// (already a canonical `#rrggbb` from the parser), else the default palette entry by slice order.
     private static String fillFor(Slice s, int i) {
-        return s.color() != null ? s.color() : PALETTE[i % PALETTE.length];
-    }
-
-    /// Pick a black or white label fill by the slice colour's perceptual luminance, so the label
-    /// stays legible on both light and dark slice colours (the old hardcoded white vanished on the
-    /// palette's light slices).
-    private static String contrastFill(String hex) {
-        // Defense-in-depth (H1): the parse boundary already restricts per-item fills to hex, so this
-        // only ever sees `#rrggbb` — but a non-hex value must NEVER throw here (a swallowed
-        // NumberFormatException collapsed the whole diagram to a 0x0 inert shell). Fall back to a
-        // legible default on anything that isn't a clean 6-digit hex.
-        if (hex == null || hex.length() != 7 || hex.charAt(0) != '#') {
-            return "#ffffff";
-        }
-        int r, g, b;
-        try {
-            r = Integer.parseInt(hex.substring(1, 3), 16);
-            g = Integer.parseInt(hex.substring(3, 5), 16);
-            b = Integer.parseInt(hex.substring(5, 7), 16);
-        } catch (NumberFormatException e) {
-            return "#ffffff";
-        }
-        double luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-        return luminance > 0.55 ? "#000000" : "#ffffff";
+        return s.color() != null ? s.color() : Colors.PALETTE[i % Colors.PALETTE.length];
     }
 }
