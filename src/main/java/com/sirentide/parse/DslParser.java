@@ -9,6 +9,8 @@ import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
+import com.sirentide.ir.Divider;
+import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
@@ -18,7 +20,9 @@ import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.AxisScale;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,6 +55,9 @@ public final class DslParser {
     // Sequence-diagram cap (DESIGN §6/§7): a pathological actor count would blow up the lifeline
     // grid; extra first-seen actors past this are dropped (their messages then skip in layout).
     public static final int MAX_ACTORS = 50;
+    // Sequence block-nesting cap (M2): a pathological `alt`/`loop`/`par` nesting depth would stack
+    // unboundedly; opens past this are swallowed (their `end` hits an empty/other stack, inert).
+    public static final int MAX_BLOCK_DEPTH = 64;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -643,12 +650,28 @@ public final class DslParser {
     /// ids/labels `cap()`'d. A bare `sequence` body (no non-blank lines) → a Sequence with no actors
     /// and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY body that parses to zero
     /// actors (every line malformed) sets `bodyHadContent=true` so layout degrades VISIBLY.
+    ///
+    /// BLOCK KEYWORDS (M2 — alt/loop/par frames). A line whose FIRST token is `alt`/`loop`/`par`,
+    /// `else`/`and`, or `end` AND which carries NO arrow token is a BLOCK DIRECTIVE, not a message
+    /// (the no-arrow guard keeps a real message whose sender is spelled like a keyword — vanishingly
+    /// rare — parsing as a message, and keeps the split robust). We track a STACK of open blocks:
+    ///   • `alt`/`loop`/`par <label>` opens a block at the next message index, `depth` = the current
+    ///     open count (so nesting insets in layout).
+    ///   • `else <label>` (only when the innermost open block is an `alt`) / `and <label>` (only for
+    ///     `par`) records a {@link Divider} at the next message index. A stray `else`/`and` — none
+    ///     open, or the innermost block is the wrong kind — is IGNORED (malformed→inert, never throws).
+    ///   • `end` closes the innermost open block, spanning to the last message so far. A stray `end`
+    ///     (no open block) is IGNORED.
+    /// Any block still open at end-of-input is closed at the last message (never throws). `else`/`and`
+    /// on a block that ends up EMPTY, or a divider past the last message, is skipped in layout.
     private static Diagram parseSequence(String[] lines, String[] header, String textColor) {
         // Header `nodecolor=#hex` colours ALL actor heads (per-actor colours are a follow-up — no
         // actor-decl syntax yet). null → the layout's built-in head fill.
         String nodeColor = parseNodeColor(header);
         LinkedHashSet<String> actors = new LinkedHashSet<>();
         List<SeqMessage> messages = new ArrayList<>();
+        List<SeqBlock> blocks = new ArrayList<>();
+        Deque<OpenBlock> stack = new ArrayDeque<>();   // innermost open block on top
         boolean bodyHadContent = false;
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -656,6 +679,10 @@ public final class DslParser {
                 continue;
             }
             bodyHadContent = true;   // a non-blank body line existed (even if it turns out malformed)
+            // A leading block keyword on an ARROWLESS line is a directive, not a message.
+            if (scanSeqArrow(line) == null && handleBlockKeyword(line, messages, blocks, stack)) {
+                continue;
+            }
             // Peel the OPTIONAL label at the FIRST colon, ANY spacing (`B : hi`, `B: hi`, `B:hi` —
             // requiring " : " silently broke the common no-space form: Lattice, sirentide/33). The
             // arrow lives in the pre-colon HEAD, so an arrow token in the label is inert
@@ -682,7 +709,100 @@ public final class DslParser {
                 messages.add(new SeqMessage(from, to, label, arrow.reply()));
             }
         }
-        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor, bodyHadContent);
+        // Unclosed blocks at end-of-input close at the last message (innermost first). Never throw.
+        while (!stack.isEmpty()) {
+            blocks.add(stack.pop().close(messages.size() - 1));
+        }
+        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor, bodyHadContent, blocks);
+    }
+
+    /// The reserved leading block keywords (M2). A line whose first whitespace-delimited token is one
+    /// of these AND which has no arrow token is a block directive (never an actor name).
+    private static final String KW_ALT = "alt";
+    private static final String KW_LOOP = "loop";
+    private static final String KW_PAR = "par";
+    private static final String KW_ELSE = "else";
+    private static final String KW_AND = "and";
+    private static final String KW_END = "end";
+
+    /// Handles a block-directive line (already known to be arrowless). Returns true when the line WAS
+    /// a recognized block keyword (and was consumed — opened/divided/closed a block, or was an inert
+    /// stray), false when the first token is not a block keyword (so the caller falls through to the
+    /// normal message parse). `messages.size()` is the index the NEXT message will take — an opening
+    /// keyword anchors `fromMsg` there, a divider anchors `atMsg` there. Robustness (DESIGN §6): a
+    /// stray `else`/`and`/`end` — nothing open, or the wrong open kind — is swallowed, never throws.
+    private static boolean handleBlockKeyword(String line, List<SeqMessage> messages,
+                                              List<SeqBlock> blocks, Deque<OpenBlock> stack) {
+        String[] kwRest = splitKeyword(line);
+        String kw = kwRest[0];
+        String rest = kwRest[1];   // the free-text label after the keyword ("" when bare)
+        switch (kw) {
+            case KW_ALT, KW_LOOP, KW_PAR -> {
+                if (stack.size() < MAX_BLOCK_DEPTH) {
+                    stack.push(new OpenBlock(kw, cap(rest), messages.size(), stack.size()));
+                }
+                // Past the nesting cap the keyword is swallowed (its `end` will hit an empty/other
+                // stack and be inert) — never allocate unboundedly, never throw.
+                return true;
+            }
+            case KW_ELSE -> {
+                OpenBlock top = stack.peek();
+                if (top != null && top.kind.equals(KW_ALT) && top.dividers.size() < MAX_DATA_ROWS) {
+                    top.dividers.add(new Divider(messages.size(), cap(rest)));
+                }
+                return true;   // a stray `else` (no alt open) is inert
+            }
+            case KW_AND -> {
+                OpenBlock top = stack.peek();
+                if (top != null && top.kind.equals(KW_PAR) && top.dividers.size() < MAX_DATA_ROWS) {
+                    top.dividers.add(new Divider(messages.size(), cap(rest)));
+                }
+                return true;   // a stray `and` (no par open) is inert
+            }
+            case KW_END -> {
+                if (!stack.isEmpty()) {
+                    blocks.add(stack.pop().close(messages.size() - 1));
+                }
+                return true;   // a stray `end` (nothing open) is inert
+            }
+            default -> {
+                return false;   // not a block keyword → fall through to the message parse
+            }
+        }
+    }
+
+    /// Splits a directive line into `[keyword, rest]` — the first whitespace-delimited token and the
+    /// remaining free-text label (stripped; "" when the keyword stands alone, e.g. a bare `end`).
+    private static String[] splitKeyword(String line) {
+        int sp = line.indexOf(' ');
+        int tab = line.indexOf('\t');
+        int cut = sp < 0 ? tab : (tab < 0 ? sp : Math.min(sp, tab));
+        if (cut < 0) {
+            return new String[] {line, ""};
+        }
+        return new String[] {line.substring(0, cut), line.substring(cut + 1).strip()};
+    }
+
+    /// A mutable open-block accumulator on the parse stack: its kind/label/`fromMsg`/`depth` are fixed
+    /// at open time; `dividers` grow as `else`/`and` lines arrive; `close` freezes it to an immutable
+    /// {@link SeqBlock} spanning `[fromMsg, toMsg]`. Parse-internal, never surfaced in the IR.
+    private static final class OpenBlock {
+        final String kind;
+        final String label;
+        final int fromMsg;
+        final int depth;
+        final List<Divider> dividers = new ArrayList<>();
+
+        OpenBlock(String kind, String label, int fromMsg, int depth) {
+            this.kind = kind;
+            this.label = label;
+            this.fromMsg = fromMsg;
+            this.depth = depth;
+        }
+
+        SeqBlock close(int toMsg) {
+            return new SeqBlock(kind, label, fromMsg, toMsg, dividers, depth);
+        }
     }
 
     /// A located sequence-message arrow: byte `pos` in the head, token `len`, and whether it is a

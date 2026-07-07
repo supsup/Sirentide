@@ -111,6 +111,28 @@ Gateway -->> Client : 200 token
 
 ![Sequence (API token flow)](sequence.png)
 
+## Sequence (alt / loop / par frames)
+
+```
+sequence
+Alice ->> Bob : hello
+alt is available
+Bob -->> Alice : yes
+loop every retry
+Alice ->> Bob : ping
+end
+else is busy
+Bob -->> Alice : later
+end
+par to Bob
+Alice ->> Bob : a
+and to Carol
+Alice ->> Carol : b
+end
+```
+
+![Sequence (alt / loop / par frames)](sequence-blocks.png)
+
 ## State diagram (lifecycle)
 
 ```

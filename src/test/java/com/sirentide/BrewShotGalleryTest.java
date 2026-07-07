@@ -80,6 +80,11 @@ class BrewShotGalleryTest {
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"
                 + "\nGateway -->> Client : 200 token"),
+        new Case("sequence-blocks", "Sequence (alt / loop / par frames)",
+            "sequence\nAlice ->> Bob : hello\nalt is available\nBob -->> Alice : yes"
+                + "\nloop every retry\nAlice ->> Bob : ping\nend\nelse is busy"
+                + "\nBob -->> Alice : later\nend\npar to Bob\nAlice ->> Bob : a"
+                + "\nand to Carol\nAlice ->> Carol : b\nend"),
         new Case("state", "State diagram (lifecycle)",
             "state\n[*] --> Idle\nIdle --> Running : start\nRunning --> Idle : stop\nRunning --> [*]"),
         new Case("quadrant", "Quadrant chart (2×2 prioritization matrix)",

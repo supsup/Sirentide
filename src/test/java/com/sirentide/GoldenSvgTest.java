@@ -53,6 +53,14 @@ class GoldenSvgTest {
             "sequence\n  Client ->> Gateway : GET /token\n  Gateway ->> Auth : validate\n"
                 + "  Auth -->> Gateway : ok\n  Gateway ->> Gateway : sign JWT\n"
                 + "  Gateway -->> Client : 200 token\n");
+        // A sequence with alt/loop/par FRAME blocks (M2): an `alt`+`else` whose "available" branch
+        // NESTS a `loop`, then a `par`+`and` across a third actor — pins the frame border geometry,
+        // the label tabs, the dashed dividers, and the nesting inset byte-for-byte.
+        FIXTURES.put("sequence-blocks",
+            "sequence\n  Alice ->> Bob : hello\n  alt is available\n    Bob -->> Alice : yes\n"
+                + "    loop every retry\n      Alice ->> Bob : ping\n    end\n"
+                + "  else is busy\n    Bob -->> Alice : later\n  end\n"
+                + "  par to Bob\n    Alice ->> Bob : a\n  and to Carol\n    Alice ->> Carol : b\n  end\n");
         // A quadrant chart: both axis ends, all four quadrant labels, and points landing one per
         // quadrant plus one dead-centre — pins the affine unit-square mapping, the y-flip, the tints,
         // and the contrast-derived labels byte-for-byte.

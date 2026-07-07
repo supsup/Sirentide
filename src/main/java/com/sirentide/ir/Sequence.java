@@ -21,32 +21,45 @@ import java.util.List;
 /// intentional blank canvas) from an ERROR (a non-empty body where every line was malformed → zero
 /// actors). The former stays a minimal blank canvas; the latter degrades VISIBLY (layout draws a
 /// `sequence: no messages parsed` glyph-run) so a mistyped diagram never renders as silent nothing.
+///
+/// `blocks` are the labeled `alt`/`loop`/`par` FRAME blocks (M2) wrapping runs of messages by index
+/// range (see {@link SeqBlock}). EMPTY for the legacy actor+message path, so a block-free sequence
+/// lays out and bakes BYTE-IDENTICALLY to before (the block emission is skipped when the list is
+/// empty). Parse order; nesting is expressed via each block's `depth`, not the list order.
 public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
-                       String nodeColor, boolean bodyHadContent)
+                       String nodeColor, boolean bodyHadContent, List<SeqBlock> blocks)
     implements Diagram {
 
     public Sequence {
         actors = List.copyOf(actors);
         messages = List.copyOf(messages);
+        blocks = List.copyOf(blocks);
         if (textColor == null) {
             textColor = "currentColor";
         }
     }
 
+    /// No blocks (empty frame list) — keeps a caller supplying just actors+messages+textColor+
+    /// nodeColor+bodyHadContent unchanged, and byte-identical to the pre-block path.
+    public Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
+                    String nodeColor, boolean bodyHadContent) {
+        this(actors, messages, textColor, nodeColor, bodyHadContent, List.of());
+    }
+
     /// No body-content signal (bodyHadContent=false) — keeps a caller supplying just
     /// actors+messages+textColor+nodeColor unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages, String textColor, String nodeColor) {
-        this(actors, messages, textColor, nodeColor, false);
+        this(actors, messages, textColor, nodeColor, false, List.of());
     }
 
     /// No header node colour — keeps a caller that supplies just actors+messages+textColor unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages, String textColor) {
-        this(actors, messages, textColor, null, false);
+        this(actors, messages, textColor, null, false, List.of());
     }
 
     /// Default construction (`currentColor` message labels, default head fill) — keeps a caller that
     /// builds a Sequence from just its actors+messages unchanged.
     public Sequence(List<String> actors, List<SeqMessage> messages) {
-        this(actors, messages, "currentColor", null, false);
+        this(actors, messages, "currentColor", null, false, List.of());
     }
 }
