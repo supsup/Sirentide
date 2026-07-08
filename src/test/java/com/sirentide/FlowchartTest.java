@@ -87,6 +87,56 @@ class FlowchartTest {
         assertTrue(svg.startsWith("<svg"), "well-formed");
     }
 
+    private static Map<String, String> shapesById(Flowchart fc) {
+        return fc.nodes().stream().collect(Collectors.toMap(FlowNode::id, FlowNode::shape));
+    }
+
+    @Test
+    void nodeShapesParseByDelimiterLongestFirst() {
+        // Every mermaid node-shape delimiter maps to its shape, and the LONGEST delimiter wins at each
+        // position: `([` is a stadium (not a rect that happens to start with `(`), `((` a circle (not a
+        // rounded), `{{` a hexagon (not a diamond), `[[` a subroutine and `[(` a cylinder (not a rect).
+        Flowchart fc = parse("flowchart\n  R[rect] --> D{diamond}\n  N(round) --> S([stadium])\n"
+            + "  C((circle)) --> H{{hexagon}}\n  Y[(cylinder)] --> U[[subroutine]]\n");
+        Map<String, String> sh = shapesById(fc);
+        assertEquals("rect", sh.get("R"), "[..] is a rect");
+        assertEquals("diamond", sh.get("D"), "{..} is a diamond");
+        assertEquals("rounded", sh.get("N"), "(..) is a rounded box");
+        assertEquals("stadium", sh.get("S"), "([..]) is a stadium — longest-first beats [..]");
+        assertEquals("circle", sh.get("C"), "((..)) is a circle — longest-first beats (..)");
+        assertEquals("hexagon", sh.get("H"), "{{..}} is a hexagon — longest-first beats {..}");
+        assertEquals("cylinder", sh.get("Y"), "[(..)] is a cylinder — longest-first beats [..]");
+        assertEquals("subroutine", sh.get("U"), "[[..]] is a subroutine — longest-first beats [..]");
+        // Labels survive the longer delimiters intact.
+        Map<String, String> lbl = labelsById(fc);
+        assertEquals("stadium", lbl.get("S"));
+        assertEquals("circle", lbl.get("C"));
+        assertEquals("subroutine", lbl.get("U"));
+    }
+
+    @Test
+    void malformedShapeDelimitersDropTheLineNotThrow() {
+        // An UNCLOSED shape delimiter and a MISMATCHED pair are malformed → the whole line drops (inert),
+        // never a throw and never a half-shape. Each bad line here registers no node; the good ones do.
+        Flowchart fc = parse("flowchart\n  A([ok]) --> B[fine]\n"
+            + "  C([unterminated\n  D((one)\n  E{{one}\n  F[(mismatch]\n  G([mismatch}\n");
+        // Only A and B (the well-formed line) registered; every malformed line dropped whole.
+        assertEquals(List.of("A", "B"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "malformed shape lines drop whole — only the well-formed A([ok]) --> B[fine] survives");
+        assertEquals("stadium", shapesById(fc).get("A"));
+        assertEquals(1, fc.edges().size(), "one edge from the single well-formed line");
+    }
+
+    @Test
+    void rectAndDiamondShapesAreUnchangedByTheNewDelimiters() {
+        // Zero-behaviour-change guard at the PARSE level: a lone `[` is still a rect and a lone `{` still
+        // a diamond (the byte-identical goldens pin the RENDER; this pins the shape assignment).
+        Flowchart fc = parse("flowchart\n  A[box] --> B{decide}\n");
+        assertEquals("rect", shapesById(fc).get("A"));
+        assertEquals("diamond", shapesById(fc).get("B"));
+    }
+
     @Test
     void bareIdsUseIdAsLabel() {
         Flowchart fc = parse("flowchart\nA --> B\n");

@@ -151,20 +151,139 @@ public final class FlowchartLayout {
     /// flowchart golden is unchanged by the styler seam. State diagrams pass a different styler
     /// ({@link StateDiagramLayout}) to reskin the SAME boxes (discs for pseudostates) without forking
     /// this engine.
+    /// Inner-bar inset for a subroutine (`[[Label]]`) box — the vertical bar sits this far in from each
+    /// short side (inside the PAD_X padding, so it never overlaps the centered label).
+    private static final double SUBROUTINE_BAR = 6;
+    /// Lid depth (vertical semi-axis) of a cylinder's (`[(Label)]`) top/bottom ellipse rims.
+    private static final double CYL_LID = 6;
+    /// Line-segment count approximating a cylinder's visible front lid rim (a smooth-enough arc).
+    private static final int CYL_LID_SEGS = 10;
+
     static final NodeStyler DEFAULT_STYLER = (shapes, i, x, y, w, h, shape, fill) -> {
-        if ("diamond".equals(shape)) {
-            double cx = x + w / 2;
-            double cy = y + h / 2;
-            String d = "M " + fmt(cx) + " " + fmt(y)
-                + " L " + fmt(x + w) + " " + fmt(cy)
-                + " L " + fmt(cx) + " " + fmt(y + h)
-                + " L " + fmt(x) + " " + fmt(cy)
-                + " Z";
-            shapes.add(new Path(d, fill));
-        } else {
-            shapes.add(new Rect(x, y, w, h, fill));
+        switch (shape == null ? "rect" : shape) {
+            case "diamond" -> {
+                double cx = x + w / 2;
+                double cy = y + h / 2;
+                String d = "M " + fmt(cx) + " " + fmt(y)
+                    + " L " + fmt(x + w) + " " + fmt(cy)
+                    + " L " + fmt(cx) + " " + fmt(y + h)
+                    + " L " + fmt(x) + " " + fmt(cy)
+                    + " Z";
+                shapes.add(new Path(d, fill));
+            }
+            // Fully-rounded-ends pill: straight top/bottom + a semicircle cap (r = h/2) on each side.
+            case "stadium" -> shapes.add(new Path(stadiumPath(x, y, w, h), fill));
+            // A ring — a full ellipse traced as two arcs (a true circle when the box is square).
+            case "circle" -> shapes.add(new Path(ellipsePath(x, y, w, h), fill));
+            // A 6-point hexagon: flat top/bottom, a point on each side (all straight L segments).
+            case "hexagon" -> shapes.add(new Path(hexagonPath(x, y, w, h), fill));
+            // A soft-cornered box (Q-quadratic corners, no arcs) — distinct from the sharp default rect.
+            case "rounded" -> shapes.add(new Path(roundedRectPath(x, y, w, h), fill));
+            // Subroutine: the plain box PLUS an inner vertical bar just in from each short side.
+            case "subroutine" -> {
+                shapes.add(new Rect(x, y, w, h, fill));
+                String bar = Colors.contrastFill(fill);
+                shapes.add(new Line(x + SUBROUTINE_BAR, y, x + SUBROUTINE_BAR, y + h, bar, 1));
+                shapes.add(new Line(x + w - SUBROUTINE_BAR, y, x + w - SUBROUTINE_BAR, y + h, bar, 1));
+            }
+            // Database can: a filled silhouette (elliptical top + bottom) + a lid rim front-arc.
+            case "cylinder" -> emitCylinder(shapes, x, y, w, h, fill);
+            // Default is the sharp RECT (`[Label]` + every bare node) — byte-identical to before.
+            default -> shapes.add(new Rect(x, y, w, h, fill));
         }
     };
+
+    /// A pill/stadium (`([Label])`) outline: straight top and bottom edges joined by a semicircular cap
+    /// (radius h/2) at each short end. The caps are SVG elliptical arcs — `A r r 0 0 1 …` bulging out —
+    /// so the ends are fully round; the left/right vertices still sit on the box's mid-height edge
+    /// anchors, so edge routing is unchanged. Requires w >= h (always true: MIN_BOX_W 44 > NODE_H 36).
+    private static String stadiumPath(double x, double y, double w, double h) {
+        double r = h / 2;
+        return "M " + fmt(x + r) + " " + fmt(y)
+            + " L " + fmt(x + w - r) + " " + fmt(y)
+            + " A " + fmt(r) + " " + fmt(r) + " 0 0 1 " + fmt(x + w - r) + " " + fmt(y + h)
+            + " L " + fmt(x + r) + " " + fmt(y + h)
+            + " A " + fmt(r) + " " + fmt(r) + " 0 0 1 " + fmt(x + r) + " " + fmt(y)
+            + " Z";
+    }
+
+    /// A full ellipse (`((Label))` circle node) traced as two half-arcs — bottom half left→right, top
+    /// half right→left — filling the box [x,x+w]×[y,y+h]. rx = w/2, ry = h/2, so a SQUARE box (the
+    /// short-label case, w == h == NODE_H) bakes a true circle; a wider box is a horizontal ellipse.
+    /// The left/right/top/bottom extremes sit on the box edges, so edge anchors are unchanged.
+    private static String ellipsePath(double x, double y, double w, double h) {
+        double rx = w / 2;
+        double ry = h / 2;
+        double cy = y + ry;
+        return "M " + fmt(x) + " " + fmt(cy)
+            + " A " + fmt(rx) + " " + fmt(ry) + " 0 0 1 " + fmt(x + w) + " " + fmt(cy)
+            + " A " + fmt(rx) + " " + fmt(ry) + " 0 0 1 " + fmt(x) + " " + fmt(cy)
+            + " Z";
+    }
+
+    /// A 6-point hexagon (`{{Label}}`): a flat top and bottom edge, a single point on each side. The
+    /// side notch = min(h/2, w/4), so the left/right points sit on the box's mid-height edge anchors
+    /// (edge routing unchanged) and the top/bottom edges stay wide enough for the label. All straight
+    /// L segments (no curves), which is exactly what distinguishes it from the arc/curve shapes.
+    private static String hexagonPath(double x, double y, double w, double h) {
+        double notch = Math.min(h / 2, w / 4);
+        double cy = y + h / 2;
+        return "M " + fmt(x + notch) + " " + fmt(y)
+            + " L " + fmt(x + w - notch) + " " + fmt(y)
+            + " L " + fmt(x + w) + " " + fmt(cy)
+            + " L " + fmt(x + w - notch) + " " + fmt(y + h)
+            + " L " + fmt(x + notch) + " " + fmt(y + h)
+            + " L " + fmt(x) + " " + fmt(cy)
+            + " Z";
+    }
+
+    /// A soft-cornered rectangle (`(Label)` rounded node): straight H/V edges with a Q quadratic at
+    /// each corner (radius min(8, w/2, h/2)). Q corners (no arcs, no `<rect>`) distinguish it from both
+    /// the sharp default rect and the arc-based stadium/circle.
+    private static String roundedRectPath(double x, double y, double w, double h) {
+        double r = Math.min(8, Math.min(w, h) / 2);
+        return "M " + fmt(x + r) + " " + fmt(y)
+            + " L " + fmt(x + w - r) + " " + fmt(y)
+            + " Q " + fmt(x + w) + " " + fmt(y) + " " + fmt(x + w) + " " + fmt(y + r)
+            + " L " + fmt(x + w) + " " + fmt(y + h - r)
+            + " Q " + fmt(x + w) + " " + fmt(y + h) + " " + fmt(x + w - r) + " " + fmt(y + h)
+            + " L " + fmt(x + r) + " " + fmt(y + h)
+            + " Q " + fmt(x) + " " + fmt(y + h) + " " + fmt(x) + " " + fmt(y + h - r)
+            + " L " + fmt(x) + " " + fmt(y + r)
+            + " Q " + fmt(x) + " " + fmt(y) + " " + fmt(x + r) + " " + fmt(y)
+            + " Z";
+    }
+
+    /// A database CYLINDER (`[(Label)]`): a filled silhouette (top back-arc bulging up, straight sides,
+    /// bottom front-arc bulging down) plus the visible FRONT rim of the top lid drawn as a short
+    /// line-segment polyline (a Path fills but can't stroke a hairline arc, so the rim rides {@link Line}
+    /// segments — the same many-segment-line approximation ER's rings use). Both rims are shallow (semi-
+    /// axis {@link #CYL_LID}); the left/right of the body sit on the box edges so edge anchors hold.
+    private static void emitCylinder(List<Shape> shapes, double x, double y, double w, double h,
+                                     String fill) {
+        double rx = w / 2;
+        double ry = Math.min(CYL_LID, h / 4);
+        double cx = x + rx;
+        // Silhouette (filled): top back-arc up, right side down, bottom front-arc down, left side up.
+        String d = "M " + fmt(x) + " " + fmt(y + ry)
+            + " A " + fmt(rx) + " " + fmt(ry) + " 0 0 0 " + fmt(x + w) + " " + fmt(y + ry)
+            + " L " + fmt(x + w) + " " + fmt(y + h - ry)
+            + " A " + fmt(rx) + " " + fmt(ry) + " 0 0 0 " + fmt(x) + " " + fmt(y + h - ry)
+            + " Z";
+        shapes.add(new Path(d, fill));
+        // The lid rim: the front half of the top ellipse (dips to y+2·ry), as CYL_LID_SEGS line segments.
+        String rim = Colors.contrastFill(fill);
+        double px = x;
+        double py = y + ry;
+        for (int k = 1; k <= CYL_LID_SEGS; k++) {
+            double t = Math.PI * k / CYL_LID_SEGS;         // 0..π sweeps the front rim left→right
+            double nx = cx - rx * Math.cos(t);             // x (k=0) → x+w (k=CYL_LID_SEGS)
+            double ny = (y + ry) + ry * Math.sin(t);       // dips down to y + 2·ry at the middle
+            shapes.add(new Line(px, py, nx, ny, rim, 1));
+            px = nx;
+            py = ny;
+        }
+    }
 
     public static LaidOut layout(Flowchart fc) {
         return layout(fc, DEFAULT_STYLER, null);
@@ -287,13 +406,23 @@ public final class FlowchartLayout {
                 labels[i] = label;
                 lw = FONT.runWidth(label, LABEL_SIZE);
             }
-            // A DIAMOND (M1.3) must CONTAIN its centered label: with height fixed at NODE_H
-            // (half-diagonal b = NODE_H/2) and the label box ~±6px tall, the rhombus containment
-            // condition (w/2)/a + 6/b <= 1 needs a >= 0.75·labelW — so the diamond is 1.5× wider
-            // than the text (+ padding). Its top/bottom/side VERTICES land exactly on the rect's
-            // edge anchors, so edge routing needs no change at all.
-            boolean diamond = "diamond".equals(nodes.get(i).shape());
-            boxW[i] = Math.max(MIN_BOX_W, (diamond ? 1.5 * lw : lw) + 2 * PAD_X);
+            // Per-shape box width. RECT + DIAMOND stay EXACTLY as before (byte-identical): rect is
+            // label+padding; a DIAMOND (M1.3) is 1.5× the text so the rhombus CONTAINS its centered
+            // label ((w/2)/a + 6/b <= 1 with b=NODE_H/2 needs a >= 0.75·labelW). New shapes: a HEXAGON
+            // widens (1.4×) so its left/right side-points don't clip the inscribed label; a CIRCLE is
+            // sized SQUARISH (floored at NODE_H, no MIN_BOX_W floor) so a short label bakes a true
+            // 36×36 ring (a wide label degrades to an ellipse — the label still fits the inscribed box).
+            // STADIUM/ROUNDED/SUBROUTINE/CYLINDER fit the label the same as a rect (their extra chrome —
+            // pill caps, corners, inner bars, the DB lid — lives in the padding, not the text column).
+            String sh = nodes.get(i).shape();
+            double w;
+            switch (sh) {
+                case "diamond" -> w = Math.max(MIN_BOX_W, 1.5 * lw + 2 * PAD_X);
+                case "hexagon" -> w = Math.max(MIN_BOX_W, 1.4 * lw + 2 * PAD_X);
+                case "circle" -> w = Math.max(NODE_H, lw + 2 * PAD_X);   // square for a short label
+                default -> w = Math.max(MIN_BOX_W, lw + 2 * PAD_X);      // rect + stadium/rounded/sub/cyl
+            }
+            boxW[i] = w;
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 

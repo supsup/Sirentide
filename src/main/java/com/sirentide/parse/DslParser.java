@@ -700,20 +700,23 @@ public final class DslParser {
         if (tok.isEmpty()) {
             return null;
         }
+        // The FAMILY is the earliest opening delimiter char in the token — `[` (rect/subroutine/
+        // cylinder), `{` (diamond/hexagon), or `(` (rounded/circle/stadium) — mirroring the old
+        // `[` vs `{` earliest-index tie-break (now widened to `(`). Whichever family opens FIRST wins.
         int openB = tok.indexOf('[');
         int openC = tok.indexOf('{');
-        int open;
-        char closeCh;
-        String shape;
-        if (openB >= 0 && (openC < 0 || openB < openC)) {
+        int openP = tok.indexOf('(');
+        int open = -1;
+        if (openB >= 0) {
             open = openB;
-            closeCh = ']';
-            shape = "rect";
-        } else if (openC >= 0) {
+        }
+        if (openC >= 0 && (open < 0 || openC < open)) {
             open = openC;
-            closeCh = '}';
-            shape = "diamond";
-        } else {
+        }
+        if (openP >= 0 && (open < 0 || openP < open)) {
+            open = openP;
+        }
+        if (open < 0) {
             // Bare id: no delimiter. A trailing `#hex` on a bare id is ambiguous (a colour, or part of
             // a multi-word id?) → DROP rather than guess. Any other bare token stays a plain id.
             if (trailingHex(tok) != null) {
@@ -721,16 +724,63 @@ public final class DslParser {
             }
             return new String[] {cap(tok), null, null, null};   // bare id, default colour
         }
+        // The SHAPE within the family is decided LONGEST-DELIMITER-FIRST off the char that FOLLOWS the
+        // opener: `([`→stadium before `[`→rect, `((`→circle before `(`→rounded, `{{`→hexagon before
+        // `{`→diamond, `[[`→subroutine and `[(`→cylinder before `[`→rect. Rect + diamond stay EXACTLY
+        // as before (a lone `[`/`{`), so their bake is byte-identical. `closeStr` is the matching closer
+        // (its length == the opener's length, 1 or 2), so id/label/trailing slicing is uniform.
+        char oc = tok.charAt(open);
+        char nx = open + 1 < tok.length() ? tok.charAt(open + 1) : 0;
+        String shape;
+        String closeStr;
+        switch (oc) {
+            case '(' -> {
+                if (nx == '[') {
+                    shape = "stadium";
+                    closeStr = "])";
+                } else if (nx == '(') {
+                    shape = "circle";
+                    closeStr = "))";
+                } else {
+                    shape = "rounded";
+                    closeStr = ")";
+                }
+            }
+            case '[' -> {
+                if (nx == '(') {
+                    shape = "cylinder";
+                    closeStr = ")]";
+                } else if (nx == '[') {
+                    shape = "subroutine";
+                    closeStr = "]]";
+                } else {
+                    shape = "rect";
+                    closeStr = "]";
+                }
+            }
+            default -> {   // '{'
+                if (nx == '{') {
+                    shape = "hexagon";
+                    closeStr = "}}";
+                } else {
+                    shape = "diamond";
+                    closeStr = "}";
+                }
+            }
+        }
+        int openLen = closeStr.length();   // the opener is the same length as its closer (1 or 2)
         String id = tok.substring(0, open).strip();
         if (id.isEmpty()) {
             return null;
         }
-        int close = shapeCloser(tok, open + 1, closeCh);
+        int close = shapeCloser(tok, open + openLen, closeStr);
         if (close < 0) {
-            return null;   // unterminated delimiter (or the closer only appears inside a $…$ span) → drop
+            // Unterminated OR MISMATCHED delimiter (`([x` / `([x}` never yield the `])` closer), or the
+            // closer only appears inside a $…$ span → drop the whole line (malformed→inert, DESIGN §6).
+            return null;
         }
         String color = null;
-        String trailing = tok.substring(close + 1).strip();
+        String trailing = tok.substring(close + closeStr.length()).strip();
         if (!trailing.isEmpty()) {
             // AFTER the closer, ONLY a single `#hex` colour token is allowed; anything else drops the
             // whole line (never mint a plausible-but-wrong node from `A[Start] junk`).
@@ -740,7 +790,7 @@ public final class DslParser {
                 return null;   // trailing junk after the closer → drop (keeps the hardening pin green)
             }
         }
-        String label = tok.substring(open + 1, close);
+        String label = tok.substring(open + openLen, close);
         // A nested/unbalanced DSL delimiter inside the label means the operator-scan swallowed an arrow
         // (or the box is unbalanced) — malformed, drop rather than mint a plausible-but-wrong node.
         // EXCEPTION: braces/brackets INSIDE a well-formed `$…$` math span are LaTeX, not DSL structure,
@@ -760,8 +810,10 @@ public final class DslParser {
     /// real closer exactly as the old `indexOf(closeCh)` did. With no `$` at all the scan IS
     /// `indexOf(closeCh, from)` (byte-parity). Returns -1 when no such closer exists (→ the caller
     /// drops the line: an unterminated delimiter).
-    private static int shapeCloser(String tok, int from, char closeCh) {
+    private static int shapeCloser(String tok, int from, String close) {
         int n = tok.length();
+        char c0 = close.charAt(0);
+        char c1 = close.length() > 1 ? close.charAt(1) : 0;   // 0 = single-char closer
         int i = from;
         while (i < n) {
             char c = tok.charAt(i);
@@ -777,7 +829,10 @@ public final class DslParser {
                 }
                 // Unclosed or empty `$$` → not math; the `$` is literal — fall through and keep scanning.
             }
-            if (c == closeCh) {
+            // A single-char closer matches on `c0` alone (byte-identical to the old `c == closeCh`); a
+            // two-char closer additionally requires the NEXT char to be `c1` (`])`, `))`, `}}`, `]]`,
+            // `)]`) — so a lone `]`/`)`/`}` inside the label never prematurely ends a paired shape.
+            if (c == c0 && (c1 == 0 || (i + 1 < n && tok.charAt(i + 1) == c1))) {
                 return i;
             }
             i++;

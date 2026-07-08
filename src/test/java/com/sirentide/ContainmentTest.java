@@ -61,6 +61,15 @@ class ContainmentTest {
         // operator-scan hardening: a bracket-EMBEDDED arrow (label "a-->b", NOT an edge split) plus a
         // CHAINED multi-hop line (A→B→C) — bake-through safety that the parse-fix output stays in-set.
         "flowchart TD\n  A[a-->b] --> C\n  A --> B --> C\n",
+        // flowchart NODE SHAPES: every shape delimiter in one chain — a rounded `(…)`, a stadium
+        // `([…])`, a circle `((…))`, a hexagon `{{…}}`, a cylinder/database `[(…)]` (arc silhouette +
+        // line-segment lid rim), a subroutine `[[…]]` (rect + inner bars), plus a plain rect + a diamond
+        // — so the new arc/curve/polygon paths + the cylinder rim lines stay inside svg/path/rect/line.
+        "flowchart TD\n  A[Rect] --> B(Rounded)\n  B --> C([Stadium])\n  C --> D((Circle))\n"
+            + "  D --> E{{Hexagon}}\n  E --> F[(Database)]\n  F --> G[[Subroutine]]\n  G --> H{Decision?}\n",
+        // malformed shape delimiters (unclosed / mismatched pairs) must degrade to inert (drop the
+        // whole line, never throw): `([x` unclosed, `((y)` one-short, `{{z}` one-short, `[(w]` mismatched.
+        "flowchart TD\n  A([Good]) --> B[Fine]\n  C([unclosed\n  D((one)\n  E{{one}\n  F[(bad]\n",
         // flowchart SUBGRAPH clusters: an outer `subgraph … end`, a NESTED subgraph inside it, an
         // EMPTY subgraph (no members → no frame), and a STRAY `end` (malformed→inert) — exercises the
         // new cluster frame border lines, the title-band rect, the title glyph run, and the nesting
