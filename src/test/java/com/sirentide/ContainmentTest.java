@@ -58,6 +58,12 @@ class ContainmentTest {
         // LR geometry (M1.4): columns flow left→right, back-edges lane BELOW the content, labeled —
         // exercises the diamond, forward + back edge labels, and the cycle through the LR path.
         "flowchart LR\n  A{Ship?} -->|yes| B[Deploy]\n  A -->|no| C[Fix]\n  C -->|retry| A\n  D[Lone]\n",
+        // flowchart EDGE VARIANTS (plan flowchart-edge-types): an open link `---`, a dotted arrow
+        // `-.->`, a dotted open `-.-`, a thick arrow `==>`, a thick open `===`, plus a LABELED dotted +
+        // a LABELED thick — so the dashed short-segment lines, the wider-stroke lines, the omitted
+        // arrowheads, and the variant-edge labels all stay inside the svg/path/rect/line allowlist.
+        "flowchart TD\n  A[Start] --- B[Link]\n  B -.-> C[Retry]\n  C -.- D[Idle]\n"
+            + "  D ==> E[Ship]\n  E === F[Done]\n  A -.->|maybe| D\n  C ==>|force| F\n",
         // operator-scan hardening: a bracket-EMBEDDED arrow (label "a-->b", NOT an edge split) plus a
         // CHAINED multi-hop line (A→B→C) — bake-through safety that the parse-fix output stays in-set.
         "flowchart TD\n  A[a-->b] --> C\n  A --> B --> C\n",

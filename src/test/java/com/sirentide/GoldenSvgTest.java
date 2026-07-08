@@ -54,6 +54,14 @@ class GoldenSvgTest {
             "flowchart TD\n  A[Rect] --> B(Rounded)\n  B --> C([Stadium])\n  C --> D((Circle))\n"
                 + "  D --> E{{Hexagon}}\n  E --> F[(Database)]\n  F --> G[[Subroutine]]\n"
                 + "  G --> H{Decision?}\n");
+        // A flowchart exercising ALL 5 edge VARIANTS in one chart (plan flowchart-edge-types): an open
+        // link `---` (line, no head), a dotted arrow `-.->`, a dotted open `-.-`, a thick arrow `==>`, a
+        // thick open `===`, PLUS a LABELED dotted (`-.->|maybe|`) and a LABELED thick (`==>|force|`).
+        // Pins the per-style emission byte-for-byte: dotted = deterministic short segments, thick =
+        // wider stroke-width, open = the arrowhead <path> omitted, labels drawn on the variant edges.
+        FIXTURES.put("flowchart-edges",
+            "flowchart TD\n  A[Start] --- B[Link]\n  B -.-> C[Retry]\n  C -.- D[Idle]\n"
+                + "  D ==> E[Ship]\n  E === F[Done]\n  A -.->|maybe| D\n  C ==>|force| F\n");
         // A flowchart with a subgraph AND a NESTED subgraph: `outer` wraps C/D/F/G, `inner` (nested)
         // wraps D/F. Pins the cluster frame border geometry (four lines), the title band + glyph tab,
         // the nesting inset (inner padding tightens by depth), and the canvas grow-to-fit byte-for-byte.

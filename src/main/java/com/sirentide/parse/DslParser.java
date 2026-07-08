@@ -4,6 +4,7 @@ import com.sirentide.ir.ClassBox;
 import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
+import com.sirentide.ir.EdgeStyle;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.ErAttribute;
 import com.sirentide.ir.ErCardinality;
@@ -400,7 +401,7 @@ public final class DslParser {
     /// first-seen order.
     ///
     /// The `-->` split is OPERATOR-SCANNED, not a blind `indexOf`: it only splits on a `-->` that is
-    /// OUTSIDE any `[...]`, `{...}`, or `|...|` span (see {@link #topLevelArrows}). So `A[a-->b] --> C`
+    /// OUTSIDE any `[...]`, `{...}`, or `|...|` span (see {@link #topLevelEdges}). So `A[a-->b] --> C`
     /// is one edge A→C with A labeled `a-->b` (the bracket-embedded arrow is NOT a separator), and a
     /// label-embedded `|a-->b|` is inert. A malformed line drops WHOLE (loud-not-silent, DESIGN §6),
     /// never half-drawn: an unterminated `A[Start` (no `]`), trailing junk after a closed delimiter
@@ -439,8 +440,9 @@ public final class DslParser {
             if (line.isEmpty()) {
                 continue;
             }
-            // Operator-scan for the top-level `-->` positions (outside every bracket/brace/pipe span).
-            List<Integer> arrows = topLevelArrows(line);
+            // Operator-scan for the top-level edge operators (outside every bracket/brace/pipe span).
+            // Each carries its byte offset, its length, and its (style, arrow) — the 6 mermaid forms.
+            List<EdgeOp> arrows = topLevelEdges(line);
             if (arrows.isEmpty()) {
                 // A leading `subgraph`/`end` keyword on an ARROWLESS line is a CLUSTER directive, not a
                 // node (the no-arrow guard keeps a real node spelled `end`/`subgraph` — vanishingly
@@ -473,7 +475,7 @@ public final class DslParser {
             // Tokenize the chain: endpoints[0..k] separated by k arrows, each arrow carrying an
             // OPTIONAL leading `|label|` that annotates only its hop. The head endpoint precedes the
             // first arrow; each subsequent segment is `[|label|] endpoint`.
-            String[] head = parseEndpoint(line.substring(0, arrows.get(0)));
+            String[] head = parseEndpoint(line.substring(0, arrows.get(0).pos()));
             if (head == null) {
                 continue;   // malformed head endpoint → drop the whole line
             }
@@ -482,8 +484,9 @@ public final class DslParser {
             endpoints.add(head);
             boolean dropped = false;
             for (int k = 0; k < arrows.size(); k++) {
-                int segStart = arrows.get(k) + 3;
-                int segEnd = (k + 1 < arrows.size()) ? arrows.get(k + 1) : line.length();
+                // The segment starts AFTER this operator (its own length, not a fixed 3 — `-.->` is 4).
+                int segStart = arrows.get(k).pos() + arrows.get(k).len();
+                int segEnd = (k + 1 < arrows.size()) ? arrows.get(k + 1).pos() : line.length();
                 String seg = line.substring(segStart, segEnd).strip();
                 String label = null;
                 if (seg.startsWith("|")) {
@@ -522,7 +525,8 @@ public final class DslParser {
                 // dropped, so its edges are too) and while under the edge cap.
                 if (edges.size() < MAX_EDGES
                     && nodeLabels.containsKey(from) && nodeLabels.containsKey(to)) {
-                    edges.add(new FlowEdge(from, to, hopLabels.get(k)));
+                    EdgeOp op = arrows.get(k);   // hop k's operator carries its style + arrow
+                    edges.add(new FlowEdge(from, to, hopLabels.get(k), op.style(), op.arrow()));
                 }
             }
         }
@@ -610,16 +614,22 @@ public final class DslParser {
         }
     }
 
-    /// Scans a body line for the byte offsets of every top-level `-->` — one that lies OUTSIDE any
-    /// `[...]` / `{...}` / `|...|` span — so brackets, braces, and edge-label pipes never poison the
-    /// edge split (the old `indexOf("-->")` split blind, minting a phantom node from `A[a-->b]`).
-    /// A tiny state machine walks the line: a `[`/`{` opens a bracket span until its matching closer;
-    /// a `|` TOGGLES a pipe span; while inside either span the scanner ignores everything but the
-    /// span terminator. An unterminated span at end-of-line simply yields no further arrows (the
-    /// endpoint validator then drops the malformed line). Non-nesting by design — matches the DSL,
-    /// where a label may contain `-->` but not a nested delimiter.
-    private static List<Integer> topLevelArrows(String line) {
-        List<Integer> arrows = new ArrayList<>();
+    /// One recognized top-level edge operator: its byte `pos` in the line, its `len` (3 for every
+    /// form but `-.->`, which is 4), and its decoded `style` + `arrow` (has-arrowhead). Parse-internal.
+    private record EdgeOp(int pos, int len, EdgeStyle style, boolean arrow) {}
+
+    /// Scans a body line for every top-level edge OPERATOR — one that lies OUTSIDE any `[...]` /
+    /// `{...}` / `|...|` span — so brackets, braces, and edge-label pipes never poison the split (the
+    /// old blind `indexOf("-->")` minted a phantom node from `A[a-->b]`). A tiny state machine walks
+    /// the line: a `[`/`{` opens a bracket span until its matching closer; a `|` TOGGLES a pipe span;
+    /// while inside either span the scanner ignores everything but the span terminator. Outside a span,
+    /// {@link #matchEdgeOp} tries — LONGEST/most-specific first — to read one of the six mermaid forms
+    /// at the cursor; a match records the op and skips its whole length so a `-.->` (4 chars) is never
+    /// re-scanned as `-->` + a stray `.` (the classic disambiguation bug). An unterminated span at
+    /// end-of-line simply yields no further ops (the endpoint validator then drops the malformed line).
+    /// Non-nesting by design — a label may contain an operator but not a nested delimiter.
+    private static List<EdgeOp> topLevelEdges(String line) {
+        List<EdgeOp> arrows = new ArrayList<>();
         char bracketClose = 0;   // 0 = not in a bracket/brace span, else the awaited ']' or '}'
         boolean inPipe = false;
         int n = line.length();
@@ -645,14 +655,87 @@ public final class DslParser {
             } else if (c == '|') {
                 inPipe = true;
                 i++;
-            } else if (c == '-' && i + 2 < n && line.charAt(i + 1) == '-' && line.charAt(i + 2) == '>') {
-                arrows.add(i);
-                i += 3;
             } else {
-                i++;
+                EdgeOp op = matchEdgeOp(line, i);
+                if (op != null) {
+                    arrows.add(op);
+                    i += op.len();   // skip the WHOLE operator (never re-scan a `-.->` tail as `-->`)
+                } else {
+                    i++;
+                }
             }
         }
         return arrows;
+    }
+
+    /// Tries to read a mermaid edge operator at offset `i`, LONGEST/most-specific first, returning its
+    /// decoded {@link EdgeOp} or `null` when the cursor is not an operator. The six forms, disambiguated
+    /// purely by the char pattern (never by re-scanning a suffix):
+    ///   `-.->` (len 4) DOTTED + arrow   ·   `-.-`  (len 3) DOTTED + open
+    ///   `-->`  (len 3) SOLID  + arrow   ·   `---`  (len 3) SOLID  + open
+    ///   `==>`  (len 3) THICK  + arrow   ·   `===`  (len 3) THICK  + open
+    /// A dash cursor branches on the SECOND char: `.` → the dotted family (a 4th char `>` ⇒ `-.->`, else
+    /// `-.-`); `-` → the solid family (a 3rd char `>` ⇒ `-->`, `-` ⇒ `---`). An `=` cursor is the thick
+    /// family (`==>` vs `===`). A two-char run that is neither (a bare `--`, `-.`, `==`, a single `-`
+    /// inside a node id like `A-B`) returns `null` so it stays inert — byte-identical to the old scanner
+    /// for `-->`, and for `A-B`/`A--B` which never matched an operator before and still do not.
+    private static EdgeOp matchEdgeOp(String line, int i) {
+        int n = line.length();
+        char c = line.charAt(i);
+        char c1 = i + 1 < n ? line.charAt(i + 1) : 0;
+        char c2 = i + 2 < n ? line.charAt(i + 2) : 0;
+        if (c == '-') {
+            if (c1 == '.') {
+                // Dotted family: `-.->` (arrow) or `-.-` (open); a bare `-.` with no closing dash inert.
+                if (c2 == '-') {
+                    char c3 = i + 3 < n ? line.charAt(i + 3) : 0;
+                    if (c3 == '>') {
+                        return new EdgeOp(i, 4, EdgeStyle.DOTTED, true);    // -.->
+                    }
+                    return new EdgeOp(i, 3, EdgeStyle.DOTTED, false);       // -.-
+                }
+                return null;
+            }
+            if (c1 == '-') {
+                // Solid family: `-->` (arrow) or `---` (open link); a bare `--` (`A--B`) inert as before.
+                if (c2 == '>') {
+                    return new EdgeOp(i, 3, EdgeStyle.SOLID, true);         // -->
+                }
+                if (c2 == '-') {
+                    return new EdgeOp(i, 3, EdgeStyle.SOLID, false);        // ---
+                }
+                return null;
+            }
+            return null;   // a lone `-` (a node id like `A-B`) is not an operator
+        }
+        if (c == '=') {
+            // Thick family: `==>` (arrow) or `===` (open); a bare `==` inert.
+            if (c1 == '=') {
+                if (c2 == '>') {
+                    return new EdgeOp(i, 3, EdgeStyle.THICK, true);         // ==>
+                }
+                if (c2 == '=') {
+                    return new EdgeOp(i, 3, EdgeStyle.THICK, false);        // ===
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /// State-diagram transition scan: the byte offsets of every top-level SOLID `-->` (a state diagram
+    /// uses ONLY the plain transition arrow — the flowchart edge-variant operators are not state
+    /// syntax). Delegates to {@link #topLevelEdges} and keeps only the `-->` (SOLID + arrow, length 3)
+    /// ops, so a `---`/`-.->`/`==>` on a state line stays inert exactly as before this feature (its
+    /// position was never a `-->`, so the line degrades to a bare state declaration as it always did).
+    private static List<Integer> topLevelArrows(String line) {
+        List<Integer> out = new ArrayList<>();
+        for (EdgeOp op : topLevelEdges(line)) {
+            if (op.style() == EdgeStyle.SOLID && op.arrow()) {
+                out.add(op.pos());
+            }
+        }
+        return out;
     }
 
     /// Parses one flowchart endpoint token into `{id, labelOrNull, shapeOrNull, colorOrNull}`. A bare
