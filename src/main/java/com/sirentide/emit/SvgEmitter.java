@@ -201,10 +201,35 @@ public final class SvgEmitter {
     /// containing markup metacharacters (`A < B`, `a & b`, a stray `"`) can never break the SVG or
     /// smuggle an element. `&` is escaped FIRST so an already-produced entity isn't double-escaped.
     /// This is the containment guarantee for the one text-as-text seam in the output.
+    ///
+    /// Beyond entity-escaping, this ALSO DROPS every character that is not a legal XML 1.0 character
+    /// — the C0 control chars other than tab/LF/CR (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F), the two
+    /// non-characters U+FFFE/U+FFFF, and any UNPAIRED surrogate. Those are illegal in XML text
+    /// content: a label carrying a raw NUL/SOH/… would make the emitted `<title>`/`<desc>` — hence
+    /// the whole SVG — non-well-formed (an XML parser rejects it) even though nothing threw during
+    /// the bake. All VISIBLE text is baked to glyph paths, so this is the one text-as-text sink;
+    /// neutralizing illegal chars HERE keeps every baked SVG parseable on any adversarial input
+    /// (fuzz-invariant INV-2). Well-formed labels are untouched, so goldens stay byte-identical.
     private static String xmlEscape(String s) {
         StringBuilder out = new StringBuilder(s.length() + 16);
-        for (int i = 0; i < s.length(); i++) {
+        int i = 0;
+        int n = s.length();
+        while (i < n) {
             char c = s.charAt(i);
+            // A valid surrogate PAIR encodes one astral code point (legal XML) — keep it verbatim.
+            if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(s.charAt(i + 1))) {
+                int cp = Character.toCodePoint(c, s.charAt(i + 1));
+                if (isXmlChar(cp)) {
+                    out.append(c).append(s.charAt(i + 1));
+                }
+                i += 2;
+                continue;
+            }
+            // A lone surrogate or any XML-illegal BMP char (the control-char class) is dropped.
+            if (!isXmlChar(c)) {
+                i++;
+                continue;
+            }
             switch (c) {
                 case '&' -> out.append("&amp;");
                 case '<' -> out.append("&lt;");
@@ -212,8 +237,18 @@ public final class SvgEmitter {
                 case '"' -> out.append("&quot;");
                 default -> out.append(c);
             }
+            i++;
         }
         return out.toString();
+    }
+
+    /// True iff `c` is a legal XML 1.0 character (https://www.w3.org/TR/xml/#charsets): tab, LF, CR,
+    /// or a non-control code point up to U+10FFFF, EXCLUDING the surrogate block and U+FFFE/U+FFFF.
+    private static boolean isXmlChar(int c) {
+        return c == 0x9 || c == 0xA || c == 0xD
+            || (c >= 0x20 && c <= 0xD7FF)
+            || (c >= 0xE000 && c <= 0xFFFD)
+            || (c >= 0x10000 && c <= 0x10FFFF);
     }
 
     /// Deterministic, locale-independent number formatting: 3 decimal places, integer when
