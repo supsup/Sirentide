@@ -87,6 +87,9 @@ class BrewShotGalleryTest {
         new Case("flowchart-shapes", "Flowchart node shapes (stadium · circle · hexagon · cylinder · subroutine)",
             "flowchart TD\nA[Process] --> B(Rounded)\nB --> C([Stadium])\nC --> D((Go))\n"
                 + "D --> E{{Prepare}}\nE --> F[(Store)]\nF --> G[[Validate]]\nG --> H{OK?}"),
+        new Case("flowchart-edges", "Flowchart edge types (open · dotted · thick)",
+            "flowchart TD\nA[Solid] --> B[Open]\nB --- C[Dotted]\nC -.-> D[DotOpen]\n"
+                + "D -.- E[Thick]\nE ==> F[ThickOpen]\nF === G[End]"),
         new Case("flowchart-subgraph", "Flowchart (nested subgraph clusters)",
             "flowchart TD\nA[Start] --> B[Work]\nsubgraph outer [Build Pipeline]\nB --> C[Compile]"
                 + "\nsubgraph inner [Test Suite]\nC --> D[Unit]\nD --> F[Integration]\nend"
@@ -123,6 +126,9 @@ class BrewShotGalleryTest {
             "journey\ntitle My working day\nsection Go to work\nMake tea: 5: Me\n"
                 + "Commute: 3: Me, Cat\nArrive: 4: Me\nsection Do work\nCode: 5: Me\n"
                 + "Meetings: 2: Me, Boss\nLunch: 4: Me, Team"),
+        new Case("mindmap", "Mind map (indentation-defined tree)",
+            "mindmap\n  root Root idea\n    Origins\n      Long history\n      Popular\n"
+                + "    Research\n      On effect\n    Tools\n      Pen and paper\n      Mermaid"),
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),

@@ -238,7 +238,38 @@ class ShowcaseGenTest {
                 + "the default null renderer it degrades to the raw source as plain-text glyphs — "
                 + "loud, never blank. The math backend is the consumer's choice; the core ships "
                 + "zero runtime dependencies.",
-            "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", true));
+            "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", true),
+        new TypePage("gitGraph.html", "Git graph", "Git graph",
+            "A commit graph. <code>commit</code> adds a node to the current branch's lane; "
+                + "<code>branch name</code> / <code>checkout name</code> open and switch lanes "
+                + "(each a distinct palette colour); <code>merge name</code> draws an elbow "
+                + "connector from that branch's tip into a merge commit on the active lane. "
+                + "Commits advance in declaration order; <code>commit id: \"x\"</code> labels a node.",
+            "gitGraph\ncommit\ncommit id: \"init\"\nbranch develop\ncheckout develop\ncommit\n"
+                + "commit id: \"feature\"\ncheckout main\nmerge develop\ncommit id: \"release\"", false),
+        new TypePage("journey.html", "User journey", "User-journey map",
+            "A satisfaction map. <code>section Name</code> groups tasks; each "
+                + "<code>Task: score: Actor[, Actor]</code> plots a point at its 1-5 satisfaction "
+                + "score (higher sits higher), coloured on a red-to-green ramp, with the actors "
+                + "listed beneath. A line connects consecutive tasks; a per-section bracket spans "
+                + "its columns.",
+            "journey\ntitle My working day\nsection Go to work\nMake tea: 5: Me\n"
+                + "Commute: 3: Me, Cat\nArrive: 4: Me\nsection Do work\nCode: 5: Me\n"
+                + "Meetings: 2: Me, Boss\nLunch: 4: Me, Team", false),
+        new TypePage("mindmap.html", "Mindmap", "Mind map",
+            "An indentation-defined tree. The first line is the root; each deeper indentation "
+                + "level is a child of the nearest shallower line. Rendered as a left-to-right "
+                + "layered tree — depth sets the column, each parent centred on its children's "
+                + "span, elbow connectors linking parent to child, depth-banded node colours.",
+            "mindmap\n  root Root idea\n    Origins\n      Long history\n      Popular\n"
+                + "    Research\n      On effect\n    Tools\n      Pen and paper\n      Mermaid", false),
+        new TypePage("sankey.html", "Sankey", "Sankey flow diagram",
+            "A weighted-flow diagram. Each <code>source,target,value</code> row is a flow; nodes "
+                + "sit in depth columns (source-only leftmost), and a node's height is the greater "
+                + "of its in- and out-flow totals. Every flow draws as a band whose width is "
+                + "proportional to its value, tinted from its source node's colour.",
+            "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
+                + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5", false));
 
     @Test
     void showcaseRendersEveryTypeAndFeature() throws Exception {
