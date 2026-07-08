@@ -95,6 +95,14 @@ public final class MathLabel {
         }
     }
 
+    /// Render one LaTeX expression through the seam and re-validate it through the contract guard,
+    /// returning null on ANY failure path (see {@link #renderGuarded}). The PUBLIC entry the display
+    /// {@code mathblock} type uses to bake its whole body as ONE fragment WITHOUT the `$…$` splitting
+    /// — the caller places the returned fragment via a {@link MathBox} and degrades to text on null.
+    public static MathFragment renderFragment(String latex, double fontSizePx, MathFragmentRenderer math) {
+        return renderGuarded(latex, fontSizePx, math);
+    }
+
     /// Render one math run and re-validate it through the contract guard. Returns null on ANY
     /// failure path — null renderer, renderer threw, empty optional, or a fragment that escapes the
     /// contract — so the caller degrades it to text. A throwing renderer is caught here (kinder than

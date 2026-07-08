@@ -197,6 +197,9 @@ public final class Sirentide {
             case QuadrantChart q -> QuadrantChartLayout.layout(q, math);
             case com.sirentide.ir.ClassDiagram cd -> com.sirentide.layout.ClassDiagramLayout.layout(cd, math);
             case com.sirentide.ir.ErDiagram er -> com.sirentide.layout.ErDiagramLayout.layout(er, math);
+            // A standalone display-math block bakes its whole body full-size through `math`; a null
+            // renderer degrades to the raw LaTeX source as plain-text glyphs (never throws).
+            case com.sirentide.ir.MathBlock mb -> com.sirentide.layout.MathBlockLayout.layout(mb, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }
