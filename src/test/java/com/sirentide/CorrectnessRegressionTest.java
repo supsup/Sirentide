@@ -11,6 +11,7 @@ import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import com.sirentide.layout.AxisScale;
 import com.sirentide.layout.GanttLayout;
+import com.sirentide.layout.Group;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
 import com.sirentide.layout.PieLayout;
@@ -28,9 +29,25 @@ import org.junit.jupiter.api.Test;
 /// layout API is the load-bearing surface here (the emitted SVG merely serializes it).
 class CorrectnessRegressionTest {
 
+    /// Flatten the scene to its LEAF shapes, unwrapping any semantic-anchor {@link Group} (plan
+    /// sirentide-semantic-anchor-g) — pie slices are now wrapped in `<g>`s, so the geometry these
+    /// arithmetic regressions assert on lives one level inside a Group. A Group never nests a Group, so
+    /// one level suffices; a flat (un-anchored) scene passes through unchanged.
+    private static List<Shape> flat(LaidOut laid) {
+        List<Shape> out = new ArrayList<>();
+        for (Shape s : laid.shapes()) {
+            if (s instanceof Group g) {
+                out.addAll(g.members());
+            } else {
+                out.add(s);
+            }
+        }
+        return out;
+    }
+
     private static List<Wedge> wedges(LaidOut laid) {
         List<Wedge> out = new ArrayList<>();
-        for (Shape s : laid.shapes()) {
+        for (Shape s : flat(laid)) {
             if (s instanceof Wedge w) {
                 out.add(w);
             }
@@ -40,7 +57,7 @@ class CorrectnessRegressionTest {
 
     private static List<Rect> rects(LaidOut laid) {
         List<Rect> out = new ArrayList<>();
-        for (Shape s : laid.shapes()) {
+        for (Shape s : flat(laid)) {
             if (s instanceof Rect r) {
                 out.add(r);
             }
@@ -50,7 +67,7 @@ class CorrectnessRegressionTest {
 
     private static List<Line> lines(LaidOut laid) {
         List<Line> out = new ArrayList<>();
-        for (Shape s : laid.shapes()) {
+        for (Shape s : flat(laid)) {
             if (s instanceof Line l) {
                 out.add(l);
             }

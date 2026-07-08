@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
@@ -87,6 +88,12 @@ public final class PieLayout {
         String textColor = pie.textColor();
         List<Shape> shapes = new ArrayList<>();
         List<Outside> outside = new ArrayList<>();
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each drawn slice becomes ONE
+        // `<g data-sirentide-role="slice">`, seq in draw order, id sanitized from the slice LABEL. A
+        // skipped (value<=0) slice consumes no seq. The wedge (and, for a COMFORTABLE slice, its inside
+        // label) collect into the slice group; a THIN slice's deferred leader/outside-label stay BARE
+        // below (they are laid out later in spreadOutside), so slice grouping never reorders geometry.
+        AnchorAssigner assigner = new AnchorAssigner();
         double angle = -Math.PI / 2; // 12 o'clock
         List<Slice> slices = pie.slices();
         for (int i = 0; i < slices.size(); i++) {
@@ -97,7 +104,8 @@ public final class PieLayout {
             double sweep = (value / total) * 2 * Math.PI;
             double next = angle + sweep;
             String fill = fillFor(slices.get(i), i);
-            shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
+            List<Shape> sg = new ArrayList<>();
+            sg.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
 
             double mid = (angle + next) / 2;
             // Wrap-oracle wired in: a long slice label that would overrun the wedge is clipped with
@@ -114,9 +122,9 @@ public final class PieLayout {
                 if (math != null && MathLabel.hasMath(rawLabel)) {
                     MathLabel.Measured mm = MathLabel.measure(rawLabel, LABEL_SIZE, FONT, math);
                     MathLabel.emit(mm, lx - mm.width() / 2, ly + LABEL_SIZE * 0.35,
-                        Colors.contrastFill(fill), LABEL_SIZE, FONT, shapes);
+                        Colors.contrastFill(fill), LABEL_SIZE, FONT, sg);
                 } else {
-                    placeLabel(shapes, label, lx, ly, Colors.contrastFill(fill));
+                    placeLabel(sg, label, lx, ly, Colors.contrastFill(fill));
                 }
             } else {
                 // Thin slice: DEFER — anchor on the rim, collect it, and spread the whole set below
@@ -127,6 +135,7 @@ public final class PieLayout {
                     cy + (RADIUS + LEADER_LEN) * Math.sin(mid),                 // leader-end y (spread below)
                     mid, FONT.ellipsize(slices.get(i).label(), MAX_OUTSIDE_LABEL, LABEL_SIZE)));
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.SLICE, rawLabel), sg));
             angle = next;
         }
         spreadOutside(shapes, outside, textColor);
@@ -241,6 +250,9 @@ public final class PieLayout {
         double textX = KEY_PAD_LEFT + SWATCH + SWATCH_TEXT_GAP;
 
         List<Shape> shapes = new ArrayList<>();
+        // Per-diagram anchor factory: each drawn slice = ONE `<g role="slice">` wrapping its wedge +
+        // its key-row swatch + label glyphs (all emitted in the same iteration → naturally contiguous).
+        AnchorAssigner assigner = new AnchorAssigner();
         double angle = -Math.PI / 2; // 12 o'clock
         int row = 0;
         for (int i = 0; i < slices.size(); i++) {
@@ -251,22 +263,24 @@ public final class PieLayout {
             double sweep = (value / total) * 2 * Math.PI;
             double next = angle + sweep;
             String fill = fillFor(slices.get(i), i);
-            shapes.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
+            List<Shape> sg = new ArrayList<>();
+            sg.add(new Wedge(cx, cy, RADIUS, angle, next, fill));
             angle = next;
 
             // Key row: a colour swatch (same palette fill as the wedge) + label & value text. Text
             // uses the standard page-background fill (the row sits on white now, not on the slice),
             // and is ellipsized to the key column width so a long label can't overrun.
             double rowTop = keyTop + row * KEY_ROW_HEIGHT;
-            shapes.add(new Rect(KEY_PAD_LEFT, rowTop + (KEY_ROW_HEIGHT - SWATCH) / 2,
+            sg.add(new Rect(KEY_PAD_LEFT, rowTop + (KEY_ROW_HEIGHT - SWATCH) / 2,
                 SWATCH, SWATCH, fill));
             String text = FONT.ellipsize(
                 slices.get(i).label() + "  " + formatValue(value), KEY_TEXT_MAX, LABEL_SIZE);
             double baseline = rowTop + KEY_ROW_HEIGHT / 2 + LABEL_SIZE * 0.35;
             String d = FONT.textPathD(text, textX, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+                sg.add(new GlyphRun(d, textColor));
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.SLICE, slices.get(i).label()), sg));
             row++;
         }
         return new LaidOut(canvasW, canvasH, shapes);

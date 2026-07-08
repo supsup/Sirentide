@@ -2,7 +2,9 @@ package com.sirentide.emit;
 
 import com.sirentide.a11y.A11y;
 import com.sirentide.contract.SirentideContract;
+import com.sirentide.layout.Anchor;
 import com.sirentide.layout.GlyphRun;
+import com.sirentide.layout.Group;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
 import com.sirentide.layout.MathBox;
@@ -101,7 +103,30 @@ public final class SvgEmitter {
             case MathBox b -> sb.append("<g fill=\"").append(color(b.fill()))
                 .append("\" transform=\"translate(").append(fmt(b.x())).append(' ')
                 .append(fmt(b.y())).append(")\">").append(b.innerSvg()).append("</g>");
+            // A semantic anchor group (plan sirentide-semantic-anchor-g): wrap the element's shapes
+            // in a `<g>` carrying ONLY the closed data-sirentide-role/id/seq set — additive, no
+            // geometry. Members are re-dispatched through appendShape, so the inner emission is
+            // byte-identical to their ungrouped form.
+            case Group grp -> appendGroup(sb, grp);
         }
+    }
+
+    /// Emit a logical element's shapes wrapped in a semantic `<g>` carrying ONLY the closed anchor
+    /// attribute set (`data-sirentide-role`/`-id`/`-seq`; plan sirentide-semantic-anchor-g). The role
+    /// is the closed enum's wire string; the id was charset-sanitized to `[A-Za-z0-9_-]{1,32}` and the
+    /// seq range-checked when the {@link Anchor} was built — so NONE of the three can smuggle a quote,
+    /// angle bracket, or foreign attribute, and they are appended RAW (no escaping needed). The `<g>`
+    /// carries NO transform/fill/style: the members' geometry is byte-identical to their ungrouped
+    /// emission, so a grouped diagram differs from its ungrouped self only by these `<g>`/`</g>` tags.
+    private static void appendGroup(StringBuilder sb, Group grp) {
+        Anchor a = grp.anchor();
+        sb.append("<g data-sirentide-role=\"").append(a.role().wire())
+            .append("\" data-sirentide-id=\"").append(a.id())
+            .append("\" data-sirentide-seq=\"").append(a.seq()).append("\">");
+        for (Shape m : grp.members()) {
+            appendShape(sb, m);
+        }
+        sb.append("</g>");
     }
 
     private static void appendWedge(StringBuilder sb, Wedge w) {
