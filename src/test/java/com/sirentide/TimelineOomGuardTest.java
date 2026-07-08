@@ -79,11 +79,18 @@ class TimelineOomGuardTest {
 
         String rawSvg = Sirentide.render("timeline\n  \"" + longLabel + "\" : 2020\n");
         String truncSvg = Sirentide.render("timeline\n  \"" + expected + "\" : 2020\n");
-        // Compare GEOMETRY only: the a11y <desc> names the raw label (char-capped), which differs
-        // from the width-ellipsized VISIBLE form by construction — this test is about the LAYOUT
-        // ellipsization of the glyph run, not the a11y text, so strip the a11y block from both.
-        assertEquals(stripA11y(truncSvg), stripA11y(rawSvg),
+        // Compare GEOMETRY only: the a11y <desc> AND the semantic-anchor `<g data-sirentide-id>`
+        // (sanitized from the RAW label) both name the un-ellipsized label, so both differ from the
+        // width-ellipsized VISIBLE form by construction — this test is about the LAYOUT ellipsization
+        // of the glyph run, so strip the a11y block and the additive anchor wrappers from both.
+        assertEquals(stripAnchors(stripA11y(truncSvg)), stripAnchors(stripA11y(rawSvg)),
             "timeline must ellipsize its event label (else the long-label render diverges)");
+    }
+
+    /// Strip the additive semantic-anchor `<g data-sirentide-*>`/`</g>` wrappers so a pure-geometry
+    /// comparison ignores the anchor id (sanitized from the raw label → differs by construction).
+    private static String stripAnchors(String svg) {
+        return svg.replaceAll("<g data-sirentide-[^>]*>", "").replace("</g>", "");
     }
 
     /// The emitter's incremental byte-cap throws a plain RuntimeException (IllegalStateException)

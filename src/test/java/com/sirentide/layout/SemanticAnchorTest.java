@@ -106,19 +106,44 @@ class SemanticAnchorTest {
     // -- the closed role enum -----------------------------------------------------------------------
 
     @Test
-    void roleEnumIsClosedAndThisSliceEmitsOnlyNodeEdgeSlice() {
+    void roleEnumIsClosedAndFlowchartPieEmitNodeEdgeSlice() {
         assertTrue(SirentideRole.isWire("node"));
         assertTrue(SirentideRole.isWire("edge"));
         assertTrue(SirentideRole.isWire("slice"));
         assertFalse(SirentideRole.isWire("script"));
         assertFalse(SirentideRole.isWire("fx"));
         assertFalse(SirentideRole.isWire(null));
-        // Everything actually EMITTED this slice is one of the three proven roles.
+        // Flowchart + pie emit exactly node/edge/slice (the slice-1 types, unchanged by slice 2).
         String svg = Sirentide.render("flowchart TD\n  A[Start] --> B[End]\n")
             + Sirentide.render("pie\n  \"A\" : 50\n  \"B\" : 50\n");
         for (Anc a : anchors(svg)) {
             assertTrue(List.of("node", "edge", "slice").contains(a.role()),
-                "this slice emits only node/edge/slice, saw: " + a.role());
+                "flowchart/pie emit only node/edge/slice, saw: " + a.role());
+        }
+    }
+
+    /// Slice-2 CLOSED-SET guard: render one diagram of EVERY anchored type and assert every emitted
+    /// `data-sirentide-role` is a member of the closed {@link SirentideRole} enum — producer ⊆ contract
+    /// for the whole role vocabulary, not just the flowchart/pie subset above.
+    @Test
+    void everyAnchoredTypeEmitsOnlyRolesInTheClosedEnum() {
+        List<String> corpus = List.of(
+            "flowchart TD\n  A[Start] --> B[End]\n",
+            "pie\n  \"A\" : 50\n  \"B\" : 50\n",
+            "sequence\n  Alice ->> Bob : hi\n  Bob -->> Alice : ok\n",
+            "state\n  [*] --> Idle\n  Idle --> Running : go\n  Running --> [*]\n",
+            "quadrant\n  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.7, 0.2]\n",
+            "xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n",
+            "xychart line\n  series: R, C\n  \"Q1\" : 5 3\n  \"Q2\" : 8 6\n",
+            "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n",
+            "timeline\n  \"Founded\" : 2020\n  \"Launch\" : 2023\n",
+            "classDiagram\n  class Animal {\n    +eat() void\n  }\n  Animal <|-- Dog : inherits\n",
+            "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n");
+        for (String dsl : corpus) {
+            for (Anc a : anchors(Sirentide.render(dsl))) {
+                assertTrue(SirentideRole.isWire(a.role()),
+                    "role " + a.role() + " is not in the closed enum (dsl: " + dsl + ")");
+            }
         }
     }
 
@@ -198,5 +223,128 @@ class SemanticAnchorTest {
         List<Anc> a = anchors(Sirentide.render("pie\n  \"A\" : 10\n  \"Refund\" : -5\n  \"B\" : 10\n"));
         assertEquals(2, a.size(), "only the 2 positive slices are anchored, got " + a);
         assertEquals(List.of(0, 1), a.stream().map(Anc::seq).sorted().toList());
+    }
+
+    // -- slice-2 per-type proofs (the OTHER 9 label/element-bearing types) --------------------------
+
+    /// Every anchor's id matches the contract charset and every seq is 0..N-1 contiguous — the shared
+    /// invariant asserted for each per-type render below.
+    private static void assertWellFormed(List<Anc> a, int expected) {
+        assertEquals(expected, a.size(), "expected " + expected + " anchor groups, got " + a);
+        for (Anc x : a) {
+            assertTrue(SirentideContract.ANCHOR_ID.matcher(x.id()).matches(), "legal id: " + x.id());
+        }
+        List<Integer> seqs = a.stream().map(Anc::seq).sorted().toList();
+        List<Integer> want = new ArrayList<>();
+        for (int i = 0; i < expected; i++) {
+            want.add(i);
+        }
+        assertEquals(want, seqs, "seq is 0..N-1 contiguous, got " + seqs);
+    }
+
+    private static long countRole(List<Anc> a, String role) {
+        return a.stream().filter(x -> x.role().equals(role)).count();
+    }
+
+    /// MUTANT SENTINEL (receipt #3): a sequence with 2 actors + 2 messages must emit exactly 4 anchor
+    /// `<g>`s — one per message (role=message, id=from-to) + one per actor (role=actor, id=name) — with
+    /// seq 0..3 contiguous (messages first). DROP the message `<g>` wrapper in SequenceLayout (emit the
+    /// message shapes bare) and the message-count assertion falls to 0 → RED. Named + observed.
+    @Test
+    void sequenceEmitsAnchorGroupPerActorAndMessage() {
+        List<Anc> a = anchors(Sirentide.render(
+            "sequence\n  Alice ->> Bob : hi\n  Bob -->> Alice : ok\n"));
+        assertWellFormed(a, 4);
+        assertEquals(2, countRole(a, "message"), "two message anchors: " + a);
+        assertEquals(2, countRole(a, "actor"), "two actor anchors: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("message") && x.id().equals("Alice-Bob")),
+            "message id is from-to (Alice-Bob): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("actor") && x.id().equals("Alice")),
+            "actor id is the name (Alice): " + a);
+        // Messages emit before actors → messages carry the lower seq range.
+        int maxMsgSeq = a.stream().filter(x -> x.role().equals("message")).mapToInt(Anc::seq).max().orElse(-1);
+        int minActorSeq = a.stream().filter(x -> x.role().equals("actor")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxMsgSeq < minActorSeq, "messages seq before actors: " + a);
+    }
+
+    /// State diagram reuses the flowchart engine: states → node, transitions → edge. `[*]` start/end
+    /// pseudostates carry empty labels, so their id falls back to the `__start__`/`__end__` DSL id.
+    @Test
+    void stateEmitsNodeAndEdgeAnchors() {
+        List<Anc> a = anchors(Sirentide.render(
+            "state\n  [*] --> Idle\n  Idle --> Running : go\n  Running --> [*]\n"));
+        // 4 states ([*]-start, Idle, Running, [*]-end) + 3 transitions.
+        assertWellFormed(a, 7);
+        assertEquals(4, countRole(a, "node"), "four state nodes: " + a);
+        assertEquals(3, countRole(a, "edge"), "three transition edges: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("Idle")),
+            "state Idle is anchored: " + a);
+    }
+
+    @Test
+    void quadrantEmitsPointAnchors() {
+        List<Anc> a = anchors(Sirentide.render(
+            "quadrant\n  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.7, 0.2]\n"));
+        assertWellFormed(a, 2);
+        assertEquals(2, countRole(a, "point"), "two point anchors: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("FeatureA")), "point id from label: " + a);
+    }
+
+    @Test
+    void xychartEmitsBarAnchorPerBar() {
+        List<Anc> a = anchors(Sirentide.render("xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n"));
+        assertWellFormed(a, 3);
+        assertEquals(3, countRole(a, "bar"), "one bar anchor per bar: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("Mon")), "bar id from category: " + a);
+    }
+
+    @Test
+    void xychartLineEmitsBarAnchorPerPresentPoint() {
+        // 2 series × 2 categories, all present → 4 point discs, each role=bar (id = category, uniquified).
+        List<Anc> a = anchors(Sirentide.render(
+            "xychart line\n  series: R, C\n  \"Q1\" : 5 3\n  \"Q2\" : 8 6\n"));
+        assertWellFormed(a, 4);
+        assertEquals(4, countRole(a, "bar"), "one bar anchor per present point: " + a);
+    }
+
+    @Test
+    void ganttEmitsBarAnchorPerTask() {
+        List<Anc> a = anchors(Sirentide.render("gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n"));
+        assertWellFormed(a, 2);
+        assertEquals(2, countRole(a, "bar"), "one bar anchor per task: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("Design")), "bar id from task label: " + a);
+    }
+
+    @Test
+    void timelineEmitsEventAnchorPerEvent() {
+        List<Anc> a = anchors(Sirentide.render(
+            "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n"));
+        assertWellFormed(a, 3);
+        assertEquals(3, countRole(a, "event"), "one event anchor per event: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("Founded")), "event id from label: " + a);
+    }
+
+    @Test
+    void classEmitsClassAndEdgeAnchors() {
+        List<Anc> a = anchors(Sirentide.render(
+            "classDiagram\n  class Animal {\n    +eat() void\n  }\n  Animal <|-- Dog : inherits\n"));
+        // Animal + auto-vivified Dog = 2 classes; 1 relation.
+        assertWellFormed(a, 3);
+        assertEquals(2, countRole(a, "class"), "two class anchors: " + a);
+        assertEquals(1, countRole(a, "edge"), "one relation edge: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("Animal-Dog")),
+            "edge id is left-right (Animal-Dog): " + a);
+    }
+
+    @Test
+    void erEmitsEntityAndEdgeAnchors() {
+        List<Anc> a = anchors(Sirentide.render(
+            "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n"));
+        // CUSTOMER + ORDER auto-vivified = 2 entities; 1 relation.
+        assertWellFormed(a, 3);
+        assertEquals(2, countRole(a, "entity"), "two entity anchors: " + a);
+        assertEquals(1, countRole(a, "edge"), "one relation edge: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("CUSTOMER-ORDER")),
+            "edge id is left-right (CUSTOMER-ORDER): " + a);
     }
 }

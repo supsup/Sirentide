@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -106,13 +107,18 @@ public final class QuadrantChartLayout {
         // 4. Points: a palette disc at (x,y) in the unit square (y flipped UP) + its label to the
         // right, ellipsized to the room before the canvas edge. The label's contrast fill keys off
         // the quadrant tint the disc lands in (all tints light → a dark, page-theme-agnostic ink).
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each drawn point → ONE
+        // `<g role="point">` wrapping its disc + label (both emitted contiguously per point, so the
+        // grouping preserves emit order exactly). seq runs 0..P-1 in point order; id from the label.
         List<Point> points = q.points();
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < points.size(); i++) {
             Point p = points.get(i);
             double px = plotLeft + p.x() * PLOT;
             double py = plotBottom - p.y() * PLOT;   // y UP: y=0 → bottom, y=1 → top
             String fill = Colors.PALETTE[i % Colors.PALETTE.length];
-            shapes.add(new Wedge(px, py, DOT_R, 0, 2 * Math.PI, fill));
+            List<Shape> pg = new ArrayList<>();
+            pg.add(new Wedge(px, py, DOT_R, 0, 2 * Math.PI, fill));
             String tint = TINTS[quadrantIndex(p.x(), p.y())];
             double originX = px + DOT_R + GAP;
             double baseline = py + LABEL_SIZE * 0.35;
@@ -121,17 +127,18 @@ public final class QuadrantChartLayout {
             // of its disc on its composite width. A plain label is byte-identical to before.
             if (math != null && MathLabel.hasMath(p.label())) {
                 MathLabel.Measured mm = MathLabel.measure(p.label(), LABEL_SIZE, FONT, math);
-                MathLabel.emit(mm, originX, baseline, Colors.contrastFill(tint), LABEL_SIZE, FONT, shapes);
+                MathLabel.emit(mm, originX, baseline, Colors.contrastFill(tint), LABEL_SIZE, FONT, pg);
             } else {
                 double room = canvasW - originX - CLAMP_MARGIN;
                 String label = FONT.ellipsize(p.label(), room, LABEL_SIZE);
                 if (!label.isBlank()) {
                     String d = FONT.textPathD(label, originX, baseline, LABEL_SIZE);
                     if (!d.isBlank()) {
-                        shapes.add(new GlyphRun(d, Colors.contrastFill(tint)));
+                        pg.add(new GlyphRun(d, Colors.contrastFill(tint)));
                     }
                 }
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.POINT, p.label()), pg));
         }
 
         // 5. Axis-end labels on the page background (textColor). x ends sit in the bottom margin,

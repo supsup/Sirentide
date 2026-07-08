@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.Timeline;
@@ -73,6 +74,13 @@ public final class TimelineLayout {
         MathLabel.Measured[] topMeasures = new MathLabel.Measured[n];
         double[] topW = new double[n];
         double[] botW = new double[n];
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each event's DOT is wrapped in
+        // ONE `<g role="event">` (seq in event order, id from the event label). Only the dot rides in
+        // the group — the top/bottom labels are laid out later (de-collision needs the full set) and
+        // stay bare, exactly as a pie thin-slice's deferred outside label stays bare; the dot IS the
+        // event's anchor point. Grouping the dot in place preserves emit order (dots emit here, labels
+        // in the pass below).
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
@@ -96,7 +104,8 @@ public final class TimelineLayout {
             botW[i] = FONT.runWidth(botText[i], VALUE_SIZE);
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = e.color() != null ? e.color() : Colors.PALETTE[i % Colors.PALETTE.length];
-            shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill));
+            shapes.add(new Group(assigner.assign(SirentideRole.EVENT, e.label()),
+                List.<Shape>of(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill))));
         }
         // DE-COLLISION: labels of events close in value share nearly the same x and their boxes
         // overlap ("Founded"/"Series A" in the screenshot). Measure each label's width and, where an

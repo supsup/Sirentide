@@ -141,7 +141,7 @@ class ErDiagramLayoutTest {
         ErDiagram er = (ErDiagram) DslParser.parse(
             "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n");
         LaidOut laid = ErDiagramLayout.layout(er);
-        List<Line> markerLines = laid.shapes().stream()
+        List<Line> markerLines = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && MK.equals(l.stroke()))
             .map(s -> (Line) s)
             .toList();
@@ -157,7 +157,7 @@ class ErDiagramLayoutTest {
         ErDiagram er = (ErDiagram) DslParser.parse(
             "erDiagram\n  CUSTOMER {\n    string name PK\n    string email\n    int age\n  }\n");
         LaidOut laid = ErDiagramLayout.layout(er);
-        List<Double> ys = laid.shapes().stream()
+        List<Double> ys = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && near(l.y1(), l.y2()) && BORDER_STROKE(l))
             .map(s -> ((Line) s).y1())
             .sorted()
@@ -171,7 +171,7 @@ class ErDiagramLayoutTest {
     void anAttributelessEntityCollapsesToASingleNameBox() {
         ErDiagram er = (ErDiagram) DslParser.parse("erDiagram\n  LONER\n");
         LaidOut laid = ErDiagramLayout.layout(er);
-        long horiz = laid.shapes().stream()
+        long horiz = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && near(l.y1(), l.y2()) && BORDER_STROKE(l)).count();
         assertEquals(2, horiz, "an attribute-less entity is a single box: top + bottom borders, no divider");
     }

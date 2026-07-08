@@ -145,7 +145,9 @@ class SequenceBlockTest {
     private static List<Shape> shapes(String dsl) {
         Sequence s = parse(dsl);
         LaidOut laid = SequenceLayout.layout(s);
-        return laid.shapes();
+        // Flatten the additive semantic-anchor `<g>` groups to their leaf shapes — this test asserts on
+        // frame/lifeline/divider geometry, which anchoring wraps but leaves byte-for-byte unchanged.
+        return com.sirentide.layout.Group.flatten(laid.shapes());
     }
 
     /// The four frame-border lines (FRAME_STROKE), returned as the bounding box {left, top, right,

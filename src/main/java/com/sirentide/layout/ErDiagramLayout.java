@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.ErAttribute;
 import com.sirentide.ir.ErCardinality;
@@ -196,25 +197,36 @@ public final class ErDiagramLayout {
 
         List<Shape> shapes = new ArrayList<>();
 
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each relation → ONE
+        // `<g role="edge">` (id = the left-right entity-name pair), each entity → ONE `<g role="entity">`
+        // (id = the entity name). Relations emit first, so seq runs 0..R-1 over relations then R..R+n-1
+        // over entities — the deterministic emit-order index. Grouping is additive: geometry unchanged.
+        AnchorAssigner assigner = new AnchorAssigner();
+
         // -- 3) relationship edges + cardinality markers FIRST (under the tables, so a table border
         // cleanly caps the line while the markers — in the gap between tables — stay visible on top).
+        // Each relation's edge line + both cardinality combos + label collect into ONE `<g role="edge">`.
         for (ErRelation r : er.relations()) {
             Integer li = index.get(r.left());
             Integer ri = index.get(r.right());
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced entity (defensive) — skip, never throw
             }
-            emitRelation(shapes, placed, li, ri, r, er.textColor(), canvasW, canvasH, math);
+            List<Shape> eg = new ArrayList<>();
+            emitRelation(eg, placed, li, ri, r, er.textColor(), canvasW, canvasH, math);
+            shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
-        // -- 4) tables: background rect, name band, border, and (when populated) the header/rows divider.
+        // -- 4) + 5) each entity → ONE `<g role="entity">` folding its table geometry (background rect,
+        // name band, border, header/rows divider) AND its text (name centered, rows left-aligned). The
+        // grid places tables in disjoint slots and a table's text never leaves its table, so folding the
+        // table and text per entity (vs the old two passes) introduces no cross-entity z-order change:
+        // geometry byte-identical, visually identical (the same fold the class boxes use).
         for (int k = 0; k < n; k++) {
-            emitTable(shapes, placed[k]);
-        }
-
-        // -- 5) text: name centered in the header, rows left-aligned (glyph paths, never <text>).
-        for (int k = 0; k < n; k++) {
-            emitTableText(shapes, placed[k], math);
+            List<Shape> tg = new ArrayList<>();
+            emitTable(tg, placed[k]);
+            emitTableText(tg, placed[k], math);
+            shapes.add(new Group(assigner.assign(SirentideRole.ENTITY, placed[k].entity().name()), tg));
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
