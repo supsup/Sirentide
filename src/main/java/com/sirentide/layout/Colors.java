@@ -44,4 +44,28 @@ final class Colors {
         double luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
         return luminance > 0.55 ? "#000000" : "#ffffff";
     }
+
+    /// Blend a `#rrggbb` hex colour toward WHITE by fraction `t` (0 = the colour unchanged, 1 = pure
+    /// white), returning a canonical `#rrggbb` — used for the sankey flow bands, which read as a LIGHTER
+    /// TINT of their source node's fill (the contract fill is opaque `#rrggbb`, so a tint is the way to
+    /// signal "same source, softer" without alpha). Deterministic + bounded; a non-hex input (defensive,
+    /// the layout only ever passes a palette hex) falls back to a legible mid-grey rather than throwing.
+    static String lighten(String hex, double t) {
+        if (hex == null || hex.length() != 7 || hex.charAt(0) != '#') {
+            return "#cccccc";
+        }
+        int r, g, b;
+        try {
+            r = Integer.parseInt(hex.substring(1, 3), 16);
+            g = Integer.parseInt(hex.substring(3, 5), 16);
+            b = Integer.parseInt(hex.substring(5, 7), 16);
+        } catch (NumberFormatException e) {
+            return "#cccccc";
+        }
+        double f = Math.max(0, Math.min(1, t));
+        int nr = (int) Math.round(r + (255 - r) * f);
+        int ng = (int) Math.round(g + (255 - g) * f);
+        int nb = (int) Math.round(b + (255 - b) * f);
+        return String.format("#%02x%02x%02x", nr, ng, nb);
+    }
 }

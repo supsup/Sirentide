@@ -27,6 +27,8 @@ import com.sirentide.ir.MindmapNode;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
+import com.sirentide.ir.Sankey;
+import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqLifecycle;
@@ -151,6 +153,10 @@ public final class DslParser {
             // A mermaid-style mindmap — an INDENTATION-defined hierarchy tree. The first (shallowest)
             // body line is the root; each deeper line is a child of the nearest shallower line.
             case "mindmap" -> parseMindmap(lines, textColor);
+            // A mermaid-style weighted-flow diagram — CSV-ish `source,target,value` rows; a flow draws
+            // as a band whose width tracks its value. `sankey-beta` is mermaid's spelling; `sankey` is
+            // the short alias.
+            case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
             default -> new Empty();
         };
     }
@@ -2084,6 +2090,58 @@ public final class DslParser {
             nodeCount++;
         }
         return new Mindmap(root == null ? null : root.freeze(), textColor);
+    }
+
+    /// Parses a mermaid-style `sankey-beta` — CSV-ish `source,target,value` rows into a
+    /// {@link Sankey}. Each body line is split on COMMAS into exactly three fields; each is stripped.
+    /// ```
+    /// sankey
+    ///   Coal,Electricity,25
+    ///   Gas,Electricity,15
+    ///   Electricity,Homes,20
+    /// ```
+    /// A row is DROPPED WHOLE (loud-not-silent, never throws — DESIGN §6) when it is malformed: not
+    /// exactly three comma-fields, an empty source or target, a non-numeric / non-finite / non-positive
+    /// value (zero or negative — a band needs a positive width), or a SELF-flow (`A,A` — a node flowing
+    /// to itself has no column separation to draw a band across, so it is dropped, documented). Fields
+    /// are `cap()`'d. Flows past {@link #MAX_DATA_ROWS} are dropped (bounds the band + node count). An
+    /// empty body (no valid rows) → a Sankey with no flows — still a sankey (round-trips), laid out to a
+    /// minimal inert canvas, NOT degraded to Empty.
+    private static Diagram parseSankey(String[] lines, String textColor) {
+        List<SankeyFlow> flows = new ArrayList<>();
+        for (int i = 1; i < lines.length && flows.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Split into at most 4 so a 4th comma-field is detected as malformed (not silently joined).
+            String[] parts = line.split(",", -1);
+            if (parts.length != 3) {
+                continue;   // not exactly source,target,value → malformed, drop
+            }
+            String source = cap(parts[0].strip());
+            String target = cap(parts[1].strip());
+            String valueTok = parts[2].strip();
+            if (source.isEmpty() || target.isEmpty()) {
+                continue;   // a missing endpoint → malformed, drop
+            }
+            if (source.equals(target)) {
+                continue;   // a self-flow (A,A) → dropped (no column separation to draw a band); documented
+            }
+            double value;
+            try {
+                value = Double.parseDouble(valueTok);
+            } catch (NumberFormatException e) {
+                continue;   // non-numeric value → malformed, drop (never fail the bake)
+            }
+            // Non-finite (NaN / Infinity, incl. "1e400" == Infinity which throws NO exception) or a
+            // non-positive value (zero/negative — a band must have a positive width) → drop the row.
+            if (!Double.isFinite(value) || value <= 0) {
+                continue;
+            }
+            flows.add(new SankeyFlow(source, target, value));
+        }
+        return new Sankey(flows, textColor);
     }
 
     /// The leading-INDENT column count of a raw line: a space is 1 column, a tab is

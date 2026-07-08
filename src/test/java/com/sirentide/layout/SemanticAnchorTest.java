@@ -142,7 +142,9 @@ class SemanticAnchorTest {
             "gitGraph\n  commit\n  branch develop\n  checkout develop\n  commit\n  checkout main\n"
                 + "  merge develop\n",
             "journey\n  title Day\n  section Go\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n",
-            "mindmap\n  root Root\n    Origins\n      History\n    Tools\n      Mermaid\n");
+            "mindmap\n  root Root\n    Origins\n      History\n    Tools\n      Mermaid\n",
+            "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
+                + "  Electricity,Industry,20\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -437,5 +439,32 @@ class SemanticAnchorTest {
         int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge")).mapToInt(Anc::seq).max().orElse(-1);
         int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
         assertTrue(maxEdgeSeq < minNodeSeq, "edges seq before nodes: " + a);
+    }
+
+    /// sankey (receipt #2): every derived node's bar + label wraps in ONE `<g role="node">` (id = the
+    /// node name, uniquified) and every flow band in ONE `<g role="flow">` (id = source-target). The
+    /// Coal/Gas → Electricity → Homes/Industry graph has 5 derived nodes + 4 flows → 4 flow anchors + 5
+    /// node anchors; flows emit before nodes (lower seq range). Proves a sankey node emits role="node"
+    /// AND a band emits the NEW role="flow". DROP the node `<g>` wrapper in SankeyLayout and the node
+    /// count falls to 0 → RED.
+    @Test
+    void sankeyEmitsANodeAnchorPerNodeAndAFlowAnchorPerBand() {
+        List<Anc> a = anchors(Sirentide.render(
+            "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
+                + "  Electricity,Industry,20\n"));
+        // 5 nodes (Coal, Electricity, Gas, Homes, Industry) + 4 flows.
+        assertWellFormed(a, 9);
+        assertEquals(5, countRole(a, "node"), "five node anchors: " + a);
+        assertEquals(4, countRole(a, "flow"), "four flow anchors (one per band): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("Electricity")),
+            "the middle node anchors under its name (Electricity): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("flow") && x.id().equals("Coal-Electricity")),
+            "a flow id is source-target (Coal-Electricity): " + a);
+        // "flow" is a member of the closed role enum.
+        assertTrue(SirentideRole.isWire("flow"), "flow is a closed-enum role");
+        // Flows emit before nodes → flows carry the lower seq range.
+        int maxFlowSeq = a.stream().filter(x -> x.role().equals("flow")).mapToInt(Anc::seq).max().orElse(-1);
+        int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxFlowSeq < minNodeSeq, "flows seq before nodes: " + a);
     }
 }

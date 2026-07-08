@@ -20,7 +20,8 @@ import java.util.Set;
 /// journey tasks → {@link #TASK} (each task's point disc + name + actor labels); the satisfaction line,
 /// axes, and section-header brackets are decorative and un-anchored. mindmap nodes → {@link #NODE}
 /// (each node's box + label), parent→child connectors → {@link #EDGE} (its elbow lines) — the tree
-/// reuses the existing graph node/edge vocabulary, no new role.
+/// reuses the existing graph node/edge vocabulary, no new role. sankey nodes → {@link #NODE} (each
+/// node's box + label), flow bands → {@link #FLOW} (each source→target band quadrilateral).
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
@@ -56,6 +57,10 @@ public enum SirentideRole {
     // "the Commute task, scored 3" distinctly from the chart bar/point vocabulary. Each task's point
     // disc + name label + actor labels anchor together as one TASK group.
     TASK("task"),
+    // -- sankey flow band (added in the sankey slice) — its own closed value so a narrator can say "the
+    // Coal to Electricity flow" distinctly from the graph edge vocabulary. Each flow's filled band
+    // quadrilateral anchors as one FLOW group; the sankey NODE boxes reuse the shared NODE role.
+    FLOW("flow"),
     // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
     CLUSTER("cluster"),
     AXIS("axis");
