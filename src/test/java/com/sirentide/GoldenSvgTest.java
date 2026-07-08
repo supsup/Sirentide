@@ -45,6 +45,15 @@ class GoldenSvgTest {
         FIXTURES.put("flowchart",
             "flowchart TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Build] --> D[Ship]\n"
                 + "  B -->|no| E[Fix] --> A\n");
+        // A flowchart exercising ALL the node SHAPES in one chain: a rect (byte-identical default), a
+        // rounded box `(…)`, a stadium `([…])`, a circle `((…))`, a hexagon `{{…}}`, a cylinder/database
+        // `[(…)]`, a subroutine `[[…]]`, and a diamond `{…}`. Pins each shape's path/line geometry AND
+        // the longest-delimiter-first delimiter mapping byte-for-byte (the plain `[Rect]`/`{Decision?}`
+        // must stay identical to the flowchart golden's rect/diamond).
+        FIXTURES.put("flowchart-shapes",
+            "flowchart TD\n  A[Rect] --> B(Rounded)\n  B --> C([Stadium])\n  C --> D((Circle))\n"
+                + "  D --> E{{Hexagon}}\n  E --> F[(Database)]\n  F --> G[[Subroutine]]\n"
+                + "  G --> H{Decision?}\n");
         // A flowchart with a subgraph AND a NESTED subgraph: `outer` wraps C/D/F/G, `inner` (nested)
         // wraps D/F. Pins the cluster frame border geometry (four lines), the title band + glyph tab,
         // the nesting inset (inner padding tightens by depth), and the canvas grow-to-fit byte-for-byte.

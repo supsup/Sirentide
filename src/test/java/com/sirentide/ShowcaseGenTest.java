@@ -57,6 +57,14 @@ class ShowcaseGenTest {
                 + "auto-contrast with any fill you pick.",
             "flowchart\nStart[Commit] --> Test{Tests green?}\nTest -->|yes| Ship[Ship it] #22c55e\n"
                 + "Test -->|no| Fix[Fix] #ef4444\nFix -->|retry| Test"),
+        new Card("Flowchart — node shapes", "flowchart",
+            "The mermaid node vocabulary, keyed by delimiter: <code>[rect]</code>, "
+                + "<code>(rounded)</code>, <code>([stadium])</code>, <code>((circle))</code>, "
+                + "<code>{{hexagon}}</code>, <code>[(database)]</code>, <code>[[subroutine]]</code>, and "
+                + "the <code>{diamond}</code> decision — each baked to pure path/line geometry, labels "
+                + "auto-fitted inside.",
+            "flowchart TD\nA[Process] --> B(Rounded)\nB --> C([Stadium])\nC --> D((Go))\n"
+                + "D --> E{{Prepare}}\nE --> F[(Store)]\nF --> G[[Validate]]\nG --> H{OK?}"),
         new Card("Sequence", "sequence",
             "Actors, lifelines, calls (filled heads), replies (open-V), self-message hooks, and "
                 + "activation bars that grow while an actor is busy.",

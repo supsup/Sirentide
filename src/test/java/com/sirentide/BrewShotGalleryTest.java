@@ -84,6 +84,9 @@ class BrewShotGalleryTest {
         new Case("flowchart", "Flowchart (layered, custom node colour)",
             "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge] #22c55e"
                 + "\nB -->|no| D[Revise]\nD -->|re-review| B"),
+        new Case("flowchart-shapes", "Flowchart node shapes (stadium · circle · hexagon · cylinder · subroutine)",
+            "flowchart TD\nA[Process] --> B(Rounded)\nB --> C([Stadium])\nC --> D((Go))\n"
+                + "D --> E{{Prepare}}\nE --> F[(Store)]\nF --> G[[Validate]]\nG --> H{OK?}"),
         new Case("flowchart-subgraph", "Flowchart (nested subgraph clusters)",
             "flowchart TD\nA[Start] --> B[Work]\nsubgraph outer [Build Pipeline]\nB --> C[Compile]"
                 + "\nsubgraph inner [Test Suite]\nC --> D[Unit]\nD --> F[Integration]\nend"

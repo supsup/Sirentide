@@ -98,6 +98,21 @@ D -->|re-review| B
 
 ![Flowchart (layered, custom node colour)](flowchart.png)
 
+## Flowchart node shapes (stadium · circle · hexagon · cylinder · subroutine)
+
+```
+flowchart TD
+A[Process] --> B(Rounded)
+B --> C([Stadium])
+C --> D((Go))
+D --> E{{Prepare}}
+E --> F[(Store)]
+F --> G[[Validate]]
+G --> H{OK?}
+```
+
+![Flowchart node shapes (stadium · circle · hexagon · cylinder · subroutine)](flowchart-shapes.png)
+
 ## Flowchart (nested subgraph clusters)
 
 ```
