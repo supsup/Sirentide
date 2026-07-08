@@ -117,7 +117,10 @@ public final class Sirentide {
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             stage = STAGE_EMIT;
-            String svg = SvgEmitter.emit(laid);
+            // Thread the a11y payload exactly as render() does, so renderWithDiagnostics().svg()
+            // stays byte-identical to render() (both emit <title>/<desc>/role).
+            com.sirentide.a11y.A11y a11y = com.sirentide.a11y.A11yDescriber.describe(ir);
+            String svg = SvgEmitter.emit(laid, a11y);
             if (svg.length() > MAX_OUTPUT_BYTES) {
                 // The post-emit cap branch — the exact degrade `render` takes. The emitter's
                 // incremental guard normally throws FIRST (classified in the catch below); this
