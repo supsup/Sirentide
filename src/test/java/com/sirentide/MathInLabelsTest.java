@@ -160,7 +160,10 @@ class MathInLabelsTest {
         String off = Sirentide.render(dsl);            // feature off (no renderer)
         String nul = Sirentide.render(dsl, null);      // explicit null renderer
         assertEquals(off, nul, "null renderer must equal the no-renderer overload");
-        assertFalse(off.contains("<g"), "no <g> when the feature is off — $ is a literal glyph");
+        // No MATH `<g fill=… translate>` when the feature is off — $ is a literal glyph. (Semantic-
+        // anchor `<g data-sirentide-*>` wrappers ARE present now and are identical in both renders,
+        // already pinned byte-for-byte by the assertEquals above.)
+        assertFalse(off.contains("<g fill="), "no MathBox <g> when the feature is off: " + off);
     }
 
     @Test
@@ -213,7 +216,7 @@ class MathInLabelsTest {
     void failedRender_fallsBackToRawText_noG() {
         // FAIL sentinel → renderer returns empty → the raw "$FAIL$" renders as ordinary glyphs.
         String svg = Sirentide.render("flowchart TD\n  A[$FAIL$]\n", FAKE);
-        assertFalse(svg.contains("<g"), "no MathBox when the render fails: " + svg);
+        assertFalse(svg.contains("<g fill="), "no MathBox when the render fails: " + svg);
     }
 
     @Test
@@ -222,7 +225,7 @@ class MathInLabelsTest {
         MathFragmentRenderer hostile = (latex, size) ->
             Optional.of(new MathFragment("<script>x</script>", 40, 12, 4));
         String svg = Sirentide.render("flowchart TD\n  A[$x$]\n", hostile);
-        assertFalse(svg.contains("<g"), "guard rejects the hostile fragment → raw-text fallback: " + svg);
+        assertFalse(svg.contains("<g fill="), "guard rejects the hostile fragment → raw-text fallback: " + svg);
         assertFalse(svg.contains("<script"), "hostile markup never reaches output: " + svg);
     }
 
@@ -233,7 +236,7 @@ class MathInLabelsTest {
         MathFragmentRenderer boom = (latex, size) -> { throw new RuntimeException("boom"); };
         String svg = Sirentide.render("flowchart TD\n  A[$x$] --> B[ok]\n", boom);
         assertTrue(svg.contains("<rect"), "the flowchart still renders (not the inert shell): " + svg);
-        assertFalse(svg.contains("<g"), "the throwing fragment degraded to text: " + svg);
+        assertFalse(svg.contains("<g fill="), "the throwing fragment degraded to text: " + svg);
     }
 
     private static double firstRectWidth(String svg) {

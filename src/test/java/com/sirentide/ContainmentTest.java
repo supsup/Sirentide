@@ -201,6 +201,62 @@ class ContainmentTest {
         }
     }
 
+    /// The semantic-anchor widening (plan sirentide-semantic-anchor-g, contract sirentide/67): a real
+    /// flowchart now bakes `<g data-sirentide-role/-id/-seq>` around each node/edge, and those must
+    /// stay INSIDE the allowlist (the per-element walk checks role ∈ enum, id ∈ charset, seq ∈ digits).
+    /// Proves producer ⊆ contract for the anchor attrs.
+    @Test
+    void anchorGroupAttrsStayInsideTheAllowlist() throws Exception {
+        String svg = Sirentide.render("flowchart TD\n  A[Start] --> B[End]\n");
+        assertTrue(svg.contains("data-sirentide-role=\"node\""), "a node anchor was baked: " + svg);
+        assertTrue(svg.contains("data-sirentide-role=\"edge\""), "an edge anchor was baked: " + svg);
+        assertTrue(svg.contains("data-sirentide-id=") && svg.contains("data-sirentide-seq="),
+            "anchor id + seq were baked: " + svg);
+        Document doc = parse(svg);
+        checkElement(doc.getDocumentElement(), "flowchart-anchors");
+
+        // A pie bakes slice anchors too.
+        String pie = Sirentide.render("pie\n  \"Reviews\" : 40\n  \"Builds\" : 60\n");
+        assertTrue(pie.contains("data-sirentide-role=\"slice\""), "a slice anchor was baked: " + pie);
+        checkElement(parse(pie).getDocumentElement(), "pie-anchors");
+    }
+
+    /// The allowlist stays NON-VACUOUS for the anchor widen: a `<g>` carrying a FOREIGN data-* (the
+    /// separately-gated `data-sirentide-fx`), an `onclick` handler, a bad ROLE (not in the closed
+    /// enum), or a bad ID (a char outside the `[A-Za-z0-9_-]` charset) must ALL still fail the
+    /// containment walk. Proves the widen admitted ONLY the three closed anchor attrs with their
+    /// value grammars — not arbitrary data-*/on*/values.
+    @Test
+    void anchorGuardIsNotVacuous() throws Exception {
+        String head = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\" "
+            + "viewBox=\"0 0 1 1\">";
+        // (a) a foreign data-* attribute on <g> — data-sirentide-fx is a later, separately-gated ask.
+        assertGRejected(head + "<g data-sirentide-fx=\"x\"></g></svg>", "data-sirentide-fx");
+        // (b) an event handler on <g>.
+        assertGRejected(head + "<g onclick=\"alert(1)\"></g></svg>", "onclick");
+        // (c) a role OUTSIDE the closed enum (value violation, attr name is allowed).
+        assertGRejected(head + "<g data-sirentide-role=\"script\" data-sirentide-id=\"a\" "
+            + "data-sirentide-seq=\"0\"></g></svg>", "data-sirentide-role");
+        // (d) an id carrying an illegal char (a quote/space/angle-bracket the sanitizer would strip).
+        assertGRejected(head + "<g data-sirentide-role=\"node\" data-sirentide-id=\"a b\" "
+            + "data-sirentide-seq=\"0\"></g></svg>", "data-sirentide-id");
+        // (e) a non-numeric seq.
+        assertGRejected(head + "<g data-sirentide-role=\"node\" data-sirentide-id=\"a\" "
+            + "data-sirentide-seq=\"1x\"></g></svg>", "data-sirentide-seq");
+    }
+
+    /// Assert a hand-crafted SVG fails the containment walk with a message naming the offending token.
+    private void assertGRejected(String hostile, String needle) throws Exception {
+        Document doc = parse(hostile);
+        try {
+            checkElement(doc.getDocumentElement(), "hostile-g:" + needle);
+            fail("a <g> carrying " + needle + " must fail the allowlist — the anchor guard is vacuous");
+        } catch (AssertionError expected) {
+            assertTrue(expected.getMessage().contains(needle),
+                "the failure names " + needle + ": " + expected.getMessage());
+        }
+    }
+
     private void collectTags(Element el, java.util.Set<String> into) {
         into.add(el.getTagName());
         NodeList kids = el.getChildNodes();

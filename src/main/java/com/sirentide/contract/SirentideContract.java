@@ -65,7 +65,26 @@ public final class SirentideContract {
         // an optional `fill` (F1, Conf pins sirentide/51): the MathBox wrapper stamps the label's
         // contrast fill so `currentColor` math inherits it (not black-on-dark), and the guard
         // already permits inner-element `fill` — this reconciles contract == guard == doc-intent.
-        "g", Set.of("transform", "fill"));
+        // semantic-anchor widening (plan sirentide-semantic-anchor-g, contract sirentide/67): `g`
+        // additionally carries the CLOSED anchor set — `data-sirentide-role` (value ∈ the closed
+        // {@link SirentideRole} enum), `data-sirentide-id` (matches {@link #ANCHOR_ID}), and
+        // `data-sirentide-seq` (matches {@link #ANCHOR_SEQ}). These wrap ONE logical element's shapes
+        // (a flowchart node/edge, a pie slice) for the queryable/narratable "spin". NOTHING else is
+        // admitted — no data-sirentide-fx, no style/href/on*/class (see {@link #attributeValueValid}).
+        "g", Set.of("transform", "fill",
+            "data-sirentide-role", "data-sirentide-id", "data-sirentide-seq"));
+
+    /// The `data-sirentide-id` grammar (plan sirentide-semantic-anchor-g): a page-local identifier of
+    /// 1..32 chars from `[A-Za-z0-9_-]` ONLY. Deliberately NARROW — a raw element label is sanitized
+    /// to this charset ({@link com.sirentide.layout.Anchor#sanitizeId}) before it can reach the
+    /// attribute, so the id can never carry a quote, angle bracket, whitespace, or markup metacharacter
+    /// that would break out of the `<g>` (the reason this layer was security-gated).
+    public static final Pattern ANCHOR_ID = Pattern.compile("[A-Za-z0-9_-]{1,32}");
+
+    /// The `data-sirentide-seq` grammar: a non-negative decimal integer (the element's emit-order
+    /// index), length-bounded so a pathological value can't be unbounded. Digits only — no sign, no
+    /// decimal point, no exponent.
+    public static final Pattern ANCHOR_SEQ = Pattern.compile("[0-9]{1,9}");
 
     /// The presentation-colour INPUT grammar: a 6-digit hex, a 3-digit shorthand hex, `currentColor`,
     /// or `none`. Exactly the set the sanitizer preserves; anything else (url(), rgb(), named colours,
@@ -174,6 +193,12 @@ public final class SirentideContract {
             // a11y: `role` on the root <svg> is the single fixed value "img" — nothing else is legal.
             case "role" -> "img".equals(value);
             case "transform" -> TRANSFORM.matcher(value).matches();
+            // semantic-anchor (plan sirentide-semantic-anchor-g): role ∈ the closed enum, id matches
+            // the narrow charset pattern, seq is a bounded non-negative integer. Any other value is a
+            // containment violation.
+            case "data-sirentide-role" -> SirentideRole.isWire(value);
+            case "data-sirentide-id" -> value != null && ANCHOR_ID.matcher(value).matches();
+            case "data-sirentide-seq" -> value != null && ANCHOR_SEQ.matcher(value).matches();
             // geometry scalars: x, y, width, height, x1, y1, x2, y2, stroke-width
             default -> isFiniteNumber(value);
         };

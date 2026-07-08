@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.FlowEdge;
@@ -190,6 +191,13 @@ public final class FlowchartLayout {
             return LaidOut.of(MIN_W, MIN_H);
         }
 
+        // Semantic-anchor gate (plan sirentide-semantic-anchor-g): wrap each node/edge in a
+        // `<g data-sirentide-*>` ONLY for a REAL flowchart (the DEFAULT_STYLER). The state diagram
+        // drives this same engine through its OWN styler, so `anchored` is false there and its bake
+        // stays byte-identical (state is a follow-up type). Reference equality on the singleton styler
+        // is the whole gate — no new signature, no per-type flag threading.
+        boolean anchored = styler == DEFAULT_STYLER;
+
         // id → index (first-seen order). A duplicate id can't occur — the parser deduped on it.
         Map<String, Integer> index = new HashMap<>();
         for (int i = 0; i < n; i++) {
@@ -309,7 +317,8 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler, measures, math);
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack,
+                styler, measures, math, anchored);
         }
 
         // Canvas width = widest layer (real + virtual slots) + margins.
@@ -392,11 +401,19 @@ public final class FlowchartLayout {
         // src bottom-center to the dst top-center + a triangle arrowhead on the FINAL segment; BACK-
         // edges = an orthogonal detour through a right-side lane (M1.1) — out the source's right side,
         // up the lane, back into the target's right side.
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): assigns each edge/node its
+        // role+unique-id+emit-order-seq. Edges are assigned FIRST (emit before nodes), so seq runs
+        // 0..E-1 over edges then E..E+N-1 over nodes — the element's emit-order index. Unused when
+        // !anchored (state diagram): the shapes go straight onto the flat list, byte-identical.
+        AnchorAssigner assigner = new AnchorAssigner();
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
             int v = e.v();
+            // When anchored, an edge's shapes collect into `tgt` and are wrapped in ONE `<g>`; when
+            // not, `tgt` IS the flat list, so the emission order/bytes are exactly the pre-anchor path.
+            List<Shape> tgt = anchored ? new ArrayList<>() : shapes;
             if (isBack[ei]) {
                 // The lane base tracks the (possibly cluster-shifted) content, so a back-edge lane
                 // still clears the nodes after a subgraph shift (offX is 0 for a cluster-free chart).
@@ -405,108 +422,140 @@ public final class FlowchartLayout {
                 double sx = vx[u] + boxW[u];
                 double ty = vy[v] + NODE_H / 2;        // target right-middle
                 double tx = vx[v] + boxW[v];
-                shapes.add(new Line(sx, sy, laneX, sy, EDGE_STROKE, EDGE_WIDTH));      // out right
-                shapes.add(new Line(laneX, sy, laneX, ty, EDGE_STROKE, EDGE_WIDTH));   // up the lane
-                shapes.add(new Line(laneX, ty, tx + ARROW_LEN, ty, EDGE_STROKE, EDGE_WIDTH)); // back in
+                tgt.add(new Line(sx, sy, laneX, sy, EDGE_STROKE, EDGE_WIDTH));      // out right
+                tgt.add(new Line(laneX, sy, laneX, ty, EDGE_STROKE, EDGE_WIDTH));   // up the lane
+                tgt.add(new Line(laneX, ty, tx + ARROW_LEN, ty, EDGE_STROKE, EDGE_WIDTH)); // back in
                 // Left-pointing arrowhead, tip on the target's right edge.
                 String bd = "M " + fmt(tx) + " " + fmt(ty)
                     + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty - ARROW_HALF_W)
                     + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
                     + " Z";
-                shapes.add(new Path(bd, ARROW_FILL));
+                tgt.add(new Path(bd, ARROW_FILL));
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
-                emitEdgeLabel(shapes, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
+                emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
                     false, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
-                continue;
-            }
-            int[] chain = rt.chain.get(ei);
-            double scx = vx[u] + boxW[u] / 2;
-            double sBottom = vy[u] + NODE_H;
-            double dcx = vx[v] + boxW[v] / 2;
-            double dTop = vy[v];
-            if (chain.length == 2) {
-                // Straight span-1 edge — byte-for-byte the original emission (all existing goldens).
-                double dx = dcx - scx;
-                double dy = dTop - sBottom;
-                double len = Math.hypot(dx, dy);
-                if (!Double.isFinite(len) || len < 1e-6) {
-                    continue;   // degenerate anchor pair — skip (never emit NaN geometry)
-                }
-                double ux = dx / len;
-                double uy = dy / len;
-                // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
-                double baseCx = dcx - ARROW_LEN * ux;
-                double baseCy = dTop - ARROW_LEN * uy;
-                double px = -uy;   // unit perpendicular
-                double py = ux;
-                // The line stops at the arrow base so it doesn't overshoot the filled triangle.
-                shapes.add(new Line(scx, sBottom, baseCx, baseCy, EDGE_STROKE, EDGE_WIDTH));
-                String d = "M " + fmt(dcx) + " " + fmt(dTop)
-                    + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
-                    + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
-                    + " Z";
-                shapes.add(new Path(d, ARROW_FILL));
-                // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
-                // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
-                // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
-                emitEdgeLabel(shapes, e.label(), (scx + baseCx) / 2,
-                    (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35,
-                    dx < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
-                continue;
-            }
-            // LONG edge: route as a POLYLINE src-anchor → waypoint centres → dst-anchor. Each virtual
-            // slot sits BESIDE the intermediate boxes (barycenter placed it), so the polyline bends
-            // AROUND them instead of grazing them. Arrowhead ONLY on the final segment.
-            int k = chain.length;
-            double[] xs = new double[k];
-            double[] ys = new double[k];
-            xs[0] = scx;
-            ys[0] = sBottom;
-            for (int j = 1; j < k - 1; j++) {
-                int w = chain[j];
-                // Use the routed virtual width (matches the LR path) so a future variable-width
-                // virtual can't make TD and LR waypoints diverge (Conf sirentide/44 #5).
-                xs[j] = vx[w] + rt.vWidth[w] / 2;
-                ys[j] = vy[w] + NODE_H / 2;
-            }
-            xs[k - 1] = dcx;
-            ys[k - 1] = dTop;
-            emitPolyline(shapes, xs, ys);
-            // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
-            emitEdgeLabel(shapes, e.label(), (xs[0] + xs[1]) / 2,
-                (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
-                (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
-        }
-
-        // 2) node boxes via the STYLER seam (default = rect / diamond `<path>` for a decision node;
-        // the four diamond vertices are the box's top/bottom-center + left/right-middle, i.e. exactly
-        // the anchors the edges already attach to). Boxes emit in NODE-INDEX (first-seen) order — the
-        // barycenter reorder only moves COORDINATES, never the emission sequence. Virtual waypoints
-        // are NOT drawn (this loop stops at n).
-        for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
-        }
-
-        // 3) centered labels (glyph paths — never <text>). A node label sits ON its box, so it fills
-        // with the CONTRAST of the box colour (dark on a light box, white on a dark one) — never the
-        // page-theme textColor, which vanished white-on-light under a dark theme. Edge labels (above)
-        // keep textColor: they sit on the page background, not on a box.
-        for (int i = 0; i < n; i++) {
-            double cx = vx[i] + boxW[i] / 2;
-            double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
-            if (measures[i] != null) {
-                MathLabel.emit(measures[i], cx - measures[i].width() / 2, baseline,
-                    Colors.contrastFill(nodeFill[i]), LABEL_SIZE, FONT, shapes);
             } else {
-                double w = FONT.runWidth(labels[i], LABEL_SIZE);
-                String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
-                if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+                int[] chain = rt.chain.get(ei);
+                double scx = vx[u] + boxW[u] / 2;
+                double sBottom = vy[u] + NODE_H;
+                double dcx = vx[v] + boxW[v] / 2;
+                double dTop = vy[v];
+                if (chain.length == 2) {
+                    // Straight span-1 edge — byte-for-byte the original emission (all existing goldens).
+                    double dx = dcx - scx;
+                    double dy = dTop - sBottom;
+                    double len = Math.hypot(dx, dy);
+                    if (Double.isFinite(len) && len >= 1e-6) {
+                        double ux = dx / len;
+                        double uy = dy / len;
+                        // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge.
+                        double baseCx = dcx - ARROW_LEN * ux;
+                        double baseCy = dTop - ARROW_LEN * uy;
+                        double px = -uy;   // unit perpendicular
+                        double py = ux;
+                        // The line stops at the arrow base so it doesn't overshoot the filled triangle.
+                        tgt.add(new Line(scx, sBottom, baseCx, baseCy, EDGE_STROKE, EDGE_WIDTH));
+                        String d = "M " + fmt(dcx) + " " + fmt(dTop)
+                            + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
+                            + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
+                            + " Z";
+                        tgt.add(new Path(d, ARROW_FILL));
+                        // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going
+                        // edge's label sits right of the line, a left-going one's left of it.
+                        emitEdgeLabel(tgt, e.label(), (scx + baseCx) / 2,
+                            (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35,
+                            dx < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
+                    }
+                    // else: degenerate anchor pair — skip (never emit NaN geometry). The (possibly
+                    // empty) edge group is still emitted below so seq stays aligned with the edge set.
+                } else {
+                    // LONG edge: route as a POLYLINE src-anchor → waypoint centres → dst-anchor. Each
+                    // virtual slot sits BESIDE the intermediate boxes so the polyline bends AROUND
+                    // them. Arrowhead ONLY on the final segment.
+                    int k = chain.length;
+                    double[] xs = new double[k];
+                    double[] ys = new double[k];
+                    xs[0] = scx;
+                    ys[0] = sBottom;
+                    for (int j = 1; j < k - 1; j++) {
+                        int w = chain[j];
+                        // Use the routed virtual width (matches the LR path) so a future variable-width
+                        // virtual can't make TD and LR waypoints diverge (Conf sirentide/44 #5).
+                        xs[j] = vx[w] + rt.vWidth[w] / 2;
+                        ys[j] = vy[w] + NODE_H / 2;
+                    }
+                    xs[k - 1] = dcx;
+                    ys[k - 1] = dTop;
+                    emitPolyline(tgt, xs, ys);
+                    // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
+                    emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2,
+                        (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
+                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
                 }
+            }
+            if (anchored) {
+                shapes.add(new Group(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e)), tgt));
+            }
+        }
+
+        // 2) node boxes (STYLER seam) + 3) centered labels. When ANCHORED, each node's box AND label
+        // are collected into ONE `<g data-sirentide-role="node">` (emit-order per node index) — the
+        // label rides inside its node's group. When NOT anchored (state diagram), the original TWO
+        // passes run verbatim (all boxes, then all labels), so the bake is byte-identical. Boxes/labels
+        // carry identical coordinates either way — the only difference is the `<g>` wrap + the
+        // interleave, and a node label never extends beyond its own box (box width = label + padding),
+        // so no cross-node z-order changes: visually identical, geometry byte-identical.
+        if (anchored) {
+            for (int i = 0; i < n; i++) {
+                List<Shape> ng = new ArrayList<>();
+                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                    measures[i], labels[i], nodeFill[i]);
+                shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+            }
+            for (int i = 0; i < n; i++) {
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                    measures[i], labels[i], nodeFill[i]);
             }
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// Emit one node's centered label (glyph paths — never `<text>`) into `tgt`. A node label sits ON
+    /// its box, so it fills with the CONTRAST of the box colour (dark on a light box, white on a dark
+    /// one). Extracted from the label pass so the anchored (per-node group) and unanchored (flat two-
+    /// pass) paths share EXACTLY the same label bytes.
+    private static void emitNodeLabel(List<Shape> tgt, double cx, double baseline,
+                                      MathLabel.Measured measure, String label, String nodeFill) {
+        if (measure != null) {
+            MathLabel.emit(measure, cx - measure.width() / 2, baseline,
+                Colors.contrastFill(nodeFill), LABEL_SIZE, FONT, tgt);
+        } else {
+            double w = FONT.runWidth(label, LABEL_SIZE);
+            String d = FONT.textPathD(label, cx - w / 2, baseline, LABEL_SIZE);
+            if (!d.isBlank()) {
+                tgt.add(new GlyphRun(d, Colors.contrastFill(nodeFill)));
+            }
+        }
+    }
+
+    /// The `data-sirentide-id` base for a NODE: its human label (SANITIZED downstream), so a label
+    /// with spaces/symbols yields a legal id and two same-label nodes get uniquified. Falls back to the
+    /// DSL id when the label is blank (never the case for a real flowchart node; defensive).
+    private static String nodeBaseId(FlowNode node) {
+        String label = node.label();
+        return label != null && !label.isBlank() ? label : node.id();
+    }
+
+    /// The `data-sirentide-id` base for an EDGE: `<fromId>-<toId>` from the endpoint node DSL ids —
+    /// stable, always present, and narratable ("A-B"). Uniquified downstream for parallel edges.
+    private static String edgeBaseId(List<FlowNode> nodes, Edge e) {
+        return nodes.get(e.u()).id() + "-" + nodes.get(e.v()).id();
     }
 
     /// LEFT-RIGHT geometry: layers become COLUMNS, flow runs left→right. A full mirror of the TD
@@ -520,7 +569,7 @@ public final class FlowchartLayout {
                                     Routing rt, double[] boxW, String[] labels,
                                     String[] nodeFill, List<Edge> edges, boolean[] isBack,
                                     NodeStyler styler, MathLabel.Measured[] measures,
-                                    MathFragmentRenderer math) {
+                                    MathFragmentRenderer math, boolean anchored) {
         // -- columns: colW[L] = widest slot (real box or virtual) in layer L; colX marches left→right.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -618,11 +667,15 @@ public final class FlowchartLayout {
         // 1) edges. forward = right-middle → left-middle straight line (or a POLYLINE through waypoint
         // centres) + a triangle arrowhead on the FINAL segment; back = a detour DOWN out the source's
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
+        // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
+        AnchorAssigner assigner = new AnchorAssigner();
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
             int v = e.v();
+            // Anchored → collect into `tgt`, wrap in one `<g>`; else `tgt` IS the flat list (byte-identical).
+            List<Shape> tgt = anchored ? new ArrayList<>() : shapes;
             if (isBack[ei]) {
                 // The lane base tracks the (possibly cluster-shifted) content (offY is 0 for a
                 // cluster-free chart, so the byte-identical bake holds).
@@ -631,99 +684,99 @@ public final class FlowchartLayout {
                 double sy = vy[u] + NODE_H;
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
                 double ty = vy[v] + NODE_H;
-                shapes.add(new Line(sx, sy, sx, laneY, EDGE_STROKE, EDGE_WIDTH));      // down out
-                shapes.add(new Line(sx, laneY, tx, laneY, EDGE_STROKE, EDGE_WIDTH));   // along the lane
-                shapes.add(new Line(tx, laneY, tx, ty + ARROW_LEN, EDGE_STROKE, EDGE_WIDTH)); // up in
+                tgt.add(new Line(sx, sy, sx, laneY, EDGE_STROKE, EDGE_WIDTH));      // down out
+                tgt.add(new Line(sx, laneY, tx, laneY, EDGE_STROKE, EDGE_WIDTH));   // along the lane
+                tgt.add(new Line(tx, laneY, tx, ty + ARROW_LEN, EDGE_STROKE, EDGE_WIDTH)); // up in
                 // Up-pointing arrowhead, tip on the target's bottom edge.
                 String bd = "M " + fmt(tx) + " " + fmt(ty)
                     + " L " + fmt(tx - ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
                     + " L " + fmt(tx + ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
                     + " Z";
-                shapes.add(new Path(bd, ARROW_FILL));
+                tgt.add(new Path(bd, ARROW_FILL));
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
-                emitEdgeLabel(shapes, e.label(), (sx + tx) / 2,
+                emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
                     laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
                     false, EDGE_LABEL_GAP, canvasW, textColor, math);
-                continue;
-            }
-            int[] chain = rt.chain.get(ei);
-            double sx = vx[u] + boxW[u];             // source right-middle
-            double sy = vy[u] + NODE_H / 2;
-            double tx = vx[v];                        // target left-middle
-            double ty = vy[v] + NODE_H / 2;
-            if (chain.length == 2) {
-                // Straight span-1 edge — byte-for-byte the original LR emission.
-                double dx = tx - sx;
-                double dy = ty - sy;
-                double len = Math.hypot(dx, dy);
-                if (!Double.isFinite(len) || len < 1e-6) {
-                    continue;   // degenerate anchor pair — skip (never emit NaN geometry)
-                }
-                double ux = dx / len;
-                double uy = dy / len;
-                // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge, ARROW_HALF_W wide.
-                double baseX = tx - ARROW_LEN * ux;
-                double baseY = ty - ARROW_LEN * uy;
-                double px = -uy;   // unit perpendicular
-                double py = ux;
-                shapes.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
-                String d = "M " + fmt(tx) + " " + fmt(ty)
-                    + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
-                    + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
-                    + " Z";
-                shapes.add(new Path(d, ARROW_FILL));
-                // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
-                // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it.
-                double lblY = dy > 0
-                    ? (sy + baseY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
-                    : (sy + baseY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                emitEdgeLabel(shapes, e.label(), (sx + baseX) / 2, lblY,
-                    false, EDGE_LABEL_GAP, canvasW, textColor, math);
-                continue;
-            }
-            // LONG edge: POLYLINE right-anchor → waypoint centres → left-anchor, arrowhead on the last.
-            int k = chain.length;
-            double[] xs = new double[k];
-            double[] ys = new double[k];
-            xs[0] = sx;
-            ys[0] = sy;
-            for (int j = 1; j < k - 1; j++) {
-                int w = chain[j];
-                xs[j] = vx[w] + rt.vWidth[w] / 2;
-                ys[j] = vy[w] + NODE_H / 2;
-            }
-            xs[k - 1] = tx;
-            ys[k - 1] = ty;
-            emitPolyline(shapes, xs, ys);
-            // Edge label anchors on the FIRST segment's midpoint (LR outside rule + clamp).
-            double lblY = (ys[1] - ys[0]) > 0
-                ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
-                : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-            emitEdgeLabel(shapes, e.label(), (xs[0] + xs[1]) / 2, lblY,
-                false, EDGE_LABEL_GAP, canvasW, textColor, math);
-        }
-
-        // 2) node boxes via the STYLER seam (default = rect / diamond `<path>`; identical construction
-        // to TD, no change needed for LR — the diamond's left/right vertices already land on the LR
-        // side anchors). Boxes emit in NODE-INDEX order; virtual waypoints are not drawn (loop < n).
-        for (int i = 0; i < n; i++) {
-            styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
-        }
-
-        // 3) centered labels (glyph paths — never <text>). Node labels contrast against the box fill
-        // (see the TD pass); edge labels above keep textColor (they sit on the page background).
-        for (int i = 0; i < n; i++) {
-            double cx = vx[i] + boxW[i] / 2;
-            double baseline = vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35;
-            if (measures[i] != null) {
-                MathLabel.emit(measures[i], cx - measures[i].width() / 2, baseline,
-                    Colors.contrastFill(nodeFill[i]), LABEL_SIZE, FONT, shapes);
             } else {
-                double w = FONT.runWidth(labels[i], LABEL_SIZE);
-                String d = FONT.textPathD(labels[i], cx - w / 2, baseline, LABEL_SIZE);
-                if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, Colors.contrastFill(nodeFill[i])));
+                int[] chain = rt.chain.get(ei);
+                double sx = vx[u] + boxW[u];             // source right-middle
+                double sy = vy[u] + NODE_H / 2;
+                double tx = vx[v];                        // target left-middle
+                double ty = vy[v] + NODE_H / 2;
+                if (chain.length == 2) {
+                    // Straight span-1 edge — byte-for-byte the original LR emission.
+                    double dx = tx - sx;
+                    double dy = ty - sy;
+                    double len = Math.hypot(dx, dy);
+                    if (Double.isFinite(len) && len >= 1e-6) {
+                        double ux = dx / len;
+                        double uy = dy / len;
+                        // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge.
+                        double baseX = tx - ARROW_LEN * ux;
+                        double baseY = ty - ARROW_LEN * uy;
+                        double px = -uy;   // unit perpendicular
+                        double py = ux;
+                        tgt.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
+                        String d = "M " + fmt(tx) + " " + fmt(ty)
+                            + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
+                            + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
+                            + " Z";
+                        tgt.add(new Path(d, ARROW_FILL));
+                        // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of TD) — an
+                        // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it.
+                        double lblY = dy > 0
+                            ? (sy + baseY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                            : (sy + baseY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                        emitEdgeLabel(tgt, e.label(), (sx + baseX) / 2, lblY,
+                            false, EDGE_LABEL_GAP, canvasW, textColor, math);
+                    }
+                    // else degenerate — skip; the (possibly empty) group still emits so seq stays aligned.
+                } else {
+                    // LONG edge: POLYLINE right-anchor → waypoint centres → left-anchor, head on the last.
+                    int k = chain.length;
+                    double[] xs = new double[k];
+                    double[] ys = new double[k];
+                    xs[0] = sx;
+                    ys[0] = sy;
+                    for (int j = 1; j < k - 1; j++) {
+                        int w = chain[j];
+                        xs[j] = vx[w] + rt.vWidth[w] / 2;
+                        ys[j] = vy[w] + NODE_H / 2;
+                    }
+                    xs[k - 1] = tx;
+                    ys[k - 1] = ty;
+                    emitPolyline(tgt, xs, ys);
+                    // Edge label anchors on the FIRST segment's midpoint (LR outside rule + clamp).
+                    double lblY = (ys[1] - ys[0]) > 0
+                        ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                        : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                    emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2, lblY,
+                        false, EDGE_LABEL_GAP, canvasW, textColor, math);
                 }
+            }
+            if (anchored) {
+                shapes.add(new Group(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e)), tgt));
+            }
+        }
+
+        // 2) node boxes (STYLER seam) + 3) centered labels. Anchored → one `<g role="node">` per node
+        // (box + label together); not anchored → the original two passes (byte-identical). See the TD
+        // path for the geometry-unchanged rationale.
+        if (anchored) {
+            for (int i = 0; i < n; i++) {
+                List<Shape> ng = new ArrayList<>();
+                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                    measures[i], labels[i], nodeFill[i]);
+                shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+            }
+            for (int i = 0; i < n; i++) {
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                    measures[i], labels[i], nodeFill[i]);
             }
         }
 
