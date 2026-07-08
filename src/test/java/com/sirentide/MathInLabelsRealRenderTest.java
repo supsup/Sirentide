@@ -28,11 +28,11 @@ import org.w3c.dom.NodeList;
 /// the THESIS — a `$E=mc^2$` label bakes to STIX glyph paths and a fraction bakes to a real bar
 /// `<rect>`, the whole fragment staying inside the emitter contract.
 ///
-/// DSL NOTE: the fraction is written `$\frac vr$` (single-token args), not `$\frac{v^2}{r}$`. The
-/// Sirentide flowchart DSL treats `{`/`}` inside a `[...]` node label as a nested delimiter and
-/// DROPS the line (DslParser.parseEndpoint), so a braced fraction never reaches the renderer — a
-/// PARSER limit, out of scope for this renderer-swap slice. `\frac vr` renders the same fraction
-/// bar (a `<rect>`) brace-free, so the load-bearing rect-widen case is still exercised.
+/// DSL NOTE: the fraction is now written `$\frac{v^2}{r}$` — the BRACED common form. It used to be
+/// `$\frac vr$` (single-token args) because DslParser.parseEndpoint treated `{`/`}` inside a `[...]`
+/// label as a nested delimiter and DROPPED the line; the math-span-aware brace handling
+/// (sirentide-flowchart-label-brace-math, {@link com.sirentide.parse.DslParser#shapeCloser}) lifted
+/// that limit, so braced LaTeX in a label now reaches the renderer and bakes its fraction bar.
 ///
 /// DELETE-MUTANT WITNESS: {@link #realRenderBakesTheFractionBarRect} — it asserts the real render
 /// emits STRICTLY MORE `<rect>`s than the same DSL with the feature off (the extra rect IS the
@@ -45,7 +45,7 @@ class MathInLabelsRealRenderTest {
     /// The moat DSL: a text+math label (`Energy $E=mc^2$`) and an all-math fraction label
     /// (`$\frac vr$`), wired by an edge so the flowchart lays out normally.
     private static final String DSL =
-        "flowchart TD\n  A[Energy $E=mc^2$] --> B[$\\frac vr$]\n";
+        "flowchart TD\n  A[Energy $E=mc^2$] --> B[$\\frac{v^2}{r}$]\n";
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
 

@@ -512,6 +512,17 @@ public final class DslParser {
     /// NON-COLOUR trailing junk after a closed delimiter (`A[Start] junk`), a NESTED/unbalanced
     /// delimiter inside the label (`A[Start --> B[End]`), or a BARE id with a trailing `#hex`
     /// (`A #22c55e` — ambiguous with a multi-word id, so it drops rather than guessing).
+    ///
+    /// MATH-SPAN EXCEPTION (the moat, sirentide/39): `{`/`}`/`[`/`]` INSIDE a well-formed `$…$`
+    /// inline-math span in the label are LaTeX structure (`\frac{a}{b}`, `\sqrt{2}`, `x^{2n}`,
+    /// `\left[…\right]`), NOT DSL delimiters, so a braced math label (`A[$\frac{a}{b}$]`) is NO LONGER
+    /// dropped — it bakes. Two seams enforce this with the exact unescaped-`$` notion {@link LabelRuns}
+    /// splits on: the closer scan ({@link #shapeCloser}) skips a closer that falls inside a span, and
+    /// the nesting check ({@link #hasDslDelimiterOutsideMath}) tests only the TEXT (non-math) runs.
+    /// The malformed→inert invariant holds: an UNTERMINATED `$` is NOT a span (its `$` stays literal),
+    /// so a stray dollar in prose (`A[Cost $5]`) still finds its real closer exactly as before, and any
+    /// stray delimiter OUTSIDE a span still drops the line. An unterminated node delimiter whose closer
+    /// only appears inside a span (`A[$x`) still drops (closer scan returns -1).
     /// Peel a trailing `: label` off a diagram line at the FIRST colon (any
     /// surrounding spacing), returning {@code [preColonHead, label]} where label
     /// is null when absent/empty. Only the first colon delimits, so a colon
@@ -559,9 +570,9 @@ public final class DslParser {
         if (id.isEmpty()) {
             return null;
         }
-        int close = tok.indexOf(closeCh, open);
+        int close = shapeCloser(tok, open + 1, closeCh);
         if (close < 0) {
-            return null;   // unterminated delimiter → drop
+            return null;   // unterminated delimiter (or the closer only appears inside a $…$ span) → drop
         }
         String color = null;
         String trailing = tok.substring(close + 1).strip();
@@ -575,13 +586,67 @@ public final class DslParser {
             }
         }
         String label = tok.substring(open + 1, close);
-        // A nested/unbalanced delimiter inside the label means the operator-scan swallowed an arrow
+        // A nested/unbalanced DSL delimiter inside the label means the operator-scan swallowed an arrow
         // (or the box is unbalanced) — malformed, drop rather than mint a plausible-but-wrong node.
-        if (label.indexOf('[') >= 0 || label.indexOf(']') >= 0
-            || label.indexOf('{') >= 0 || label.indexOf('}') >= 0) {
+        // EXCEPTION: braces/brackets INSIDE a well-formed `$…$` math span are LaTeX, not DSL structure,
+        // so test only the TEXT runs (everything OUTSIDE math) — the moat feature (sirentide/39).
+        if (hasDslDelimiterOutsideMath(label)) {
             return null;
         }
         return new String[] {cap(id), cap(label.strip()), shape, color};
+    }
+
+    /// Finds the node-shape closer: the first `closeCh` at or after `from` that is NOT inside a
+    /// well-formed `$…$` inline-math span — so a `]`/`}` that is really LaTeX (a `{…}` diamond wrapping
+    /// `\frac{a}{b}`, or a `$\left]…$`) does not prematurely end the label. Mirrors {@link LabelRuns}
+    /// EXACTLY: `\$` is a literal dollar (never a toggle); an unescaped `$` opens a span the next
+    /// unescaped `$` closes and its interior is skipped whole; an UNCLOSED or EMPTY `$$` is NOT math
+    /// (the `$` is literal, the scan continues), so a stray dollar in prose (`A[Cost $5]`) finds its
+    /// real closer exactly as the old `indexOf(closeCh)` did. With no `$` at all the scan IS
+    /// `indexOf(closeCh, from)` (byte-parity). Returns -1 when no such closer exists (→ the caller
+    /// drops the line: an unterminated delimiter).
+    private static int shapeCloser(String tok, int from, char closeCh) {
+        int n = tok.length();
+        int i = from;
+        while (i < n) {
+            char c = tok.charAt(i);
+            if (c == '\\' && i + 1 < n && tok.charAt(i + 1) == '$') {
+                i += 2;   // \$ is a literal dollar (LabelRuns rule) — neither a span toggle nor a closer
+                continue;
+            }
+            if (c == '$') {
+                int mathClose = LabelRuns.indexOfUnescapedDollar(tok, i + 1);
+                if (mathClose > i + 1) {
+                    i = mathClose + 1;   // skip the whole well-formed span (its closers are LaTeX)
+                    continue;
+                }
+                // Unclosed or empty `$$` → not math; the `$` is literal — fall through and keep scanning.
+            }
+            if (c == closeCh) {
+                return i;
+            }
+            i++;
+        }
+        return -1;
+    }
+
+    /// True iff the label carries a DSL delimiter (`[`/`]`/`{`/`}`) OUTSIDE every well-formed `$…$`
+    /// math span — a nested/unbalanced node delimiter, which drops the line (loud-not-silent). Braces
+    /// inside a math span are LaTeX and are IGNORED. Reuses {@link LabelRuns#split} so the notion of
+    /// "inside math" is byte-for-byte the moat splitter's: an unterminated `$` is NOT a span (its `$`
+    /// stays in a {@link LabelRuns.Text} run), so a stray delimiter next to it is still caught here. A
+    /// label with no `$` is one Text run, so this is exactly the old four-char scan (byte-parity).
+    private static boolean hasDslDelimiterOutsideMath(String label) {
+        for (LabelRuns.Run run : LabelRuns.split(label)) {
+            if (run instanceof LabelRuns.Text text) {
+                String s = text.s();
+                if (s.indexOf('[') >= 0 || s.indexOf(']') >= 0
+                    || s.indexOf('{') >= 0 || s.indexOf('}') >= 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// If `tok`'s LAST whitespace-separated token is a contract-legal `#hex` colour, returns that

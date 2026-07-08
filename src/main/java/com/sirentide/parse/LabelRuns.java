@@ -79,7 +79,9 @@ public final class LabelRuns {
     }
 
     /// Index of the next `$` at or after `from` that is not escaped by a preceding `\`, or -1.
-    private static int indexOfUnescapedDollar(String s, int from) {
+    /// Package-visible so {@link DslParser} can find node-label math spans with the EXACT same
+    /// unescaped-`$` notion this splitter uses (braced LaTeX in `[…]`/`{…}` labels, sirentide/39).
+    static int indexOfUnescapedDollar(String s, int from) {
         for (int j = from; j < s.length(); j++) {
             char c = s.charAt(j);
             if (c == '\\') {
