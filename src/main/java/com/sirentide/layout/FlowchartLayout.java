@@ -3,6 +3,7 @@ package com.sirentide.layout;
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
+import com.sirentide.ir.EdgeStyle;
 import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
@@ -49,6 +50,13 @@ public final class FlowchartLayout {
     private static final String EDGE_STROKE = "#94a3b8";
     private static final String ARROW_FILL = "#94a3b8";
     private static final double EDGE_WIDTH = 1.5;
+    // Edge-variant styling (plan flowchart-edge-types). THICK edges (`==>`/`===`) draw at a wider
+    // stroke so they read heavier than a solid `-->`. DOTTED edges (`-.->`/`-.-`) are drawn as short
+    // solid Line segments (the `<line>` contract has NO stroke-dasharray — dashes are geometry, like
+    // the sequence alt/loop/par dividers), striding DASH-on + DASH-gap along the edge vector.
+    private static final double EDGE_WIDTH_THICK = 3.0;   // thick-edge stroke width (vs EDGE_WIDTH 1.5)
+    private static final double EDGE_DASH = 4;            // dotted-edge dash (drawn-segment) length
+    private static final double EDGE_DASH_GAP = 3;        // dotted-edge gap length between segments
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
     private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
@@ -85,10 +93,12 @@ public final class FlowchartLayout {
     private static final int SWEEP_PASSES = 4;
 
     /// One laid-out edge: endpoint node indices `u`→`v`, the (already-ellipsized) `label` (`null`
-    /// when unlabeled), and `dataIdx` — the edge's index into {@code fc.edges()} BEFORE the
+    /// when unlabeled), `dataIdx` — the edge's index into {@code fc.edges()} BEFORE the
     /// unknown-endpoint filter, so downstream (Confluence fx-readiness) can map a drawn edge back to
-    /// its source authoring row. Replaces the old parallel `List<int[]>` + `List<String>` pair.
-    private record Edge(int u, int v, String label, int dataIdx) {}
+    /// its source authoring row — plus the edge-variant `style` ({@link EdgeStyle}) and `arrow`
+    /// (has-arrowhead) carried through from the {@link FlowEdge}. Replaces the old parallel `List<int[]>`
+    /// + `List<String>` pair.
+    private record Edge(int u, int v, String label, int dataIdx, EdgeStyle style, boolean arrow) {}
 
     /// Shared in-frame clamp: keep a label's whole glyph box in [CLAMP_MARGIN, canvasW-CLAMP_MARGIN-w].
     /// The outside-of-edge origin rule keeps its natural value; the clamp only engages at the boundary
@@ -143,6 +153,48 @@ public final class FlowchartLayout {
         String ld = FONT.textPathD(fl, lblX, baselineY, EDGE_LABEL_SIZE);
         if (!ld.isBlank()) {
             shapes.add(new GlyphRun(ld, color));
+        }
+    }
+
+    /// The stroke width for an edge STYLE: THICK draws heavier, everything else at the normal width.
+    /// (A DOTTED edge still uses the normal width — its distinction is the gapped geometry, not weight.)
+    private static double strokeFor(EdgeStyle style) {
+        return style == EdgeStyle.THICK ? EDGE_WIDTH_THICK : EDGE_WIDTH;
+    }
+
+    /// Emit ONE edge segment (x1,y1)→(x2,y2) honouring its STYLE, with NO arrowhead. A SOLID/THICK
+    /// edge is a single {@link Line} (SOLID at EDGE_WIDTH is byte-identical to the pre-feature emission);
+    /// a DOTTED edge is a walk of short {@link #emitDashedSegment} pieces. Shared by every edge shape —
+    /// TD/LR, straight/polyline/back-edge — so a style is applied uniformly in one place.
+    private static void emitEdgeLine(List<Shape> shapes, double x1, double y1, double x2, double y2,
+                                     EdgeStyle style) {
+        if (style == EdgeStyle.DOTTED) {
+            emitDashedSegment(shapes, x1, y1, x2, y2, EDGE_WIDTH);
+        } else {
+            shapes.add(new Line(x1, y1, x2, y2, EDGE_STROKE, strokeFor(style)));
+        }
+    }
+
+    /// A DASHED segment along an ARBITRARY vector (x1,y1)→(x2,y2), approximated as short solid
+    /// {@link Line} pieces (the `<line>` contract has no stroke-dasharray, mirroring the sequence
+    /// dashed dividers). Walks the unit direction in EDGE_DASH-on + EDGE_DASH_GAP-off strides, emitting
+    /// a piece per stride. DETERMINISTIC + bounded (piece count = length / stride, itself bounded by the
+    /// canvas). A degenerate (zero/NaN-length) span emits nothing (never NaN geometry, DESIGN §6).
+    private static void emitDashedSegment(List<Shape> shapes, double x1, double y1, double x2, double y2,
+                                          double width) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        double len = Math.hypot(dx, dy);
+        if (!Double.isFinite(len) || len < 1e-6) {
+            return;
+        }
+        double ux = dx / len;
+        double uy = dy / len;
+        double stride = EDGE_DASH + EDGE_DASH_GAP;
+        for (double d = 0; d < len; d += stride) {
+            double end = Math.min(d + EDGE_DASH, len);
+            shapes.add(new Line(x1 + ux * d, y1 + uy * d, x1 + ux * end, y1 + uy * end,
+                EDGE_STROKE, width));
         }
     }
 
@@ -338,7 +390,7 @@ public final class FlowchartLayout {
             if (u != null && v != null) {
                 String lbl = e.label() == null ? null
                     : FONT.ellipsize(e.label(), MAX_EDGE_LABEL_W, EDGE_LABEL_SIZE);
-                edges.add(new Edge(u, v, lbl, di));
+                edges.add(new Edge(u, v, lbl, di, e.style(), e.arrow()));
             }
         }
 
@@ -554,15 +606,20 @@ public final class FlowchartLayout {
                 double sx = vx[u] + boxW[u];
                 double ty = vy[v] + NODE_H / 2;        // target right-middle
                 double tx = vx[v] + boxW[v];
-                tgt.add(new Line(sx, sy, laneX, sy, EDGE_STROKE, EDGE_WIDTH));      // out right
-                tgt.add(new Line(laneX, sy, laneX, ty, EDGE_STROKE, EDGE_WIDTH));   // up the lane
-                tgt.add(new Line(laneX, ty, tx + ARROW_LEN, ty, EDGE_STROKE, EDGE_WIDTH)); // back in
-                // Left-pointing arrowhead, tip on the target's right edge.
-                String bd = "M " + fmt(tx) + " " + fmt(ty)
-                    + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty - ARROW_HALF_W)
-                    + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
-                    + " Z";
-                tgt.add(new Path(bd, ARROW_FILL));
+                emitEdgeLine(tgt, sx, sy, laneX, sy, e.style());      // out right
+                emitEdgeLine(tgt, laneX, sy, laneX, ty, e.style());   // up the lane
+                if (e.arrow()) {
+                    emitEdgeLine(tgt, laneX, ty, tx + ARROW_LEN, ty, e.style());   // back in to arrow base
+                    // Left-pointing arrowhead, tip on the target's right edge.
+                    String bd = "M " + fmt(tx) + " " + fmt(ty)
+                        + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty - ARROW_HALF_W)
+                        + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
+                        + " Z";
+                    tgt.add(new Path(bd, ARROW_FILL));
+                } else {
+                    // OPEN back-edge: run to the target's right edge itself, NO arrowhead.
+                    emitEdgeLine(tgt, laneX, ty, tx, ty, e.style());
+                }
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
                 emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
                     false, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
@@ -573,29 +630,41 @@ public final class FlowchartLayout {
                 double dcx = vx[v] + boxW[v] / 2;
                 double dTop = vy[v];
                 if (chain.length == 2) {
-                    // Straight span-1 edge — byte-for-byte the original emission (all existing goldens).
+                    // Straight span-1 edge. A SOLID+arrow edge is byte-for-byte the original emission
+                    // (all existing goldens); the STYLE routes the line through emitEdgeLine (dotted =
+                    // dashed pieces, thick = wider) and an OPEN edge (`---`/`-.-`/`===`) omits the head.
                     double dx = dcx - scx;
                     double dy = dTop - sBottom;
                     double len = Math.hypot(dx, dy);
                     if (Double.isFinite(len) && len >= 1e-6) {
                         double ux = dx / len;
                         double uy = dy / len;
-                        // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge.
-                        double baseCx = dcx - ARROW_LEN * ux;
-                        double baseCy = dTop - ARROW_LEN * uy;
-                        double px = -uy;   // unit perpendicular
-                        double py = ux;
-                        // The line stops at the arrow base so it doesn't overshoot the filled triangle.
-                        tgt.add(new Line(scx, sBottom, baseCx, baseCy, EDGE_STROKE, EDGE_WIDTH));
-                        String d = "M " + fmt(dcx) + " " + fmt(dTop)
-                            + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
-                            + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
-                            + " Z";
-                        tgt.add(new Path(d, ARROW_FILL));
+                        double lblAx;
+                        double lblAy;
+                        if (e.arrow()) {
+                            // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge; the
+                            // line stops at the base so it doesn't overshoot the filled triangle.
+                            double baseCx = dcx - ARROW_LEN * ux;
+                            double baseCy = dTop - ARROW_LEN * uy;
+                            double px = -uy;   // unit perpendicular
+                            double py = ux;
+                            emitEdgeLine(tgt, scx, sBottom, baseCx, baseCy, e.style());
+                            String d = "M " + fmt(dcx) + " " + fmt(dTop)
+                                + " L " + fmt(baseCx + ARROW_HALF_W * px) + " " + fmt(baseCy + ARROW_HALF_W * py)
+                                + " L " + fmt(baseCx - ARROW_HALF_W * px) + " " + fmt(baseCy - ARROW_HALF_W * py)
+                                + " Z";
+                            tgt.add(new Path(d, ARROW_FILL));
+                            lblAx = (scx + baseCx) / 2;
+                            lblAy = (sBottom + baseCy) / 2;
+                        } else {
+                            // OPEN link: the line runs to the dst anchor itself, NO arrowhead path.
+                            emitEdgeLine(tgt, scx, sBottom, dcx, dTop, e.style());
+                            lblAx = (scx + dcx) / 2;
+                            lblAy = (sBottom + dTop) / 2;
+                        }
                         // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going
                         // edge's label sits right of the line, a left-going one's left of it.
-                        emitEdgeLabel(tgt, e.label(), (scx + baseCx) / 2,
-                            (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35,
+                        emitEdgeLabel(tgt, e.label(), lblAx, lblAy + EDGE_LABEL_SIZE * 0.35,
                             dx < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
                     }
                     // else: degenerate anchor pair — skip (never emit NaN geometry). The (possibly
@@ -618,7 +687,7 @@ public final class FlowchartLayout {
                     }
                     xs[k - 1] = dcx;
                     ys[k - 1] = dTop;
-                    emitPolyline(tgt, xs, ys);
+                    emitPolyline(tgt, xs, ys, e.style(), e.arrow());
                     // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
                     emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2,
                         (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
@@ -815,15 +884,20 @@ public final class FlowchartLayout {
                 double sy = vy[u] + NODE_H;
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
                 double ty = vy[v] + NODE_H;
-                tgt.add(new Line(sx, sy, sx, laneY, EDGE_STROKE, EDGE_WIDTH));      // down out
-                tgt.add(new Line(sx, laneY, tx, laneY, EDGE_STROKE, EDGE_WIDTH));   // along the lane
-                tgt.add(new Line(tx, laneY, tx, ty + ARROW_LEN, EDGE_STROKE, EDGE_WIDTH)); // up in
-                // Up-pointing arrowhead, tip on the target's bottom edge.
-                String bd = "M " + fmt(tx) + " " + fmt(ty)
-                    + " L " + fmt(tx - ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
-                    + " L " + fmt(tx + ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
-                    + " Z";
-                tgt.add(new Path(bd, ARROW_FILL));
+                emitEdgeLine(tgt, sx, sy, sx, laneY, e.style());      // down out
+                emitEdgeLine(tgt, sx, laneY, tx, laneY, e.style());   // along the lane
+                if (e.arrow()) {
+                    emitEdgeLine(tgt, tx, laneY, tx, ty + ARROW_LEN, e.style());   // up in to arrow base
+                    // Up-pointing arrowhead, tip on the target's bottom edge.
+                    String bd = "M " + fmt(tx) + " " + fmt(ty)
+                        + " L " + fmt(tx - ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
+                        + " L " + fmt(tx + ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
+                        + " Z";
+                    tgt.add(new Path(bd, ARROW_FILL));
+                } else {
+                    // OPEN back-edge: run up to the target's bottom edge itself, NO arrowhead.
+                    emitEdgeLine(tgt, tx, laneY, tx, ty, e.style());
+                }
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
                 emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
                     laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
@@ -835,30 +909,42 @@ public final class FlowchartLayout {
                 double tx = vx[v];                        // target left-middle
                 double ty = vy[v] + NODE_H / 2;
                 if (chain.length == 2) {
-                    // Straight span-1 edge — byte-for-byte the original LR emission.
+                    // Straight span-1 edge. SOLID+arrow is byte-for-byte the original LR emission; the
+                    // STYLE routes the line through emitEdgeLine and an OPEN edge omits the arrowhead.
                     double dx = tx - sx;
                     double dy = ty - sy;
                     double len = Math.hypot(dx, dy);
                     if (Double.isFinite(len) && len >= 1e-6) {
                         double ux = dx / len;
                         double uy = dy / len;
-                        // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge.
-                        double baseX = tx - ARROW_LEN * ux;
-                        double baseY = ty - ARROW_LEN * uy;
-                        double px = -uy;   // unit perpendicular
-                        double py = ux;
-                        tgt.add(new Line(sx, sy, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
-                        String d = "M " + fmt(tx) + " " + fmt(ty)
-                            + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
-                            + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
-                            + " Z";
-                        tgt.add(new Path(d, ARROW_FILL));
+                        double endX;
+                        double endY;
+                        if (e.arrow()) {
+                            // Arrowhead: tip at the dst anchor, base ARROW_LEN back along the edge.
+                            double baseX = tx - ARROW_LEN * ux;
+                            double baseY = ty - ARROW_LEN * uy;
+                            double px = -uy;   // unit perpendicular
+                            double py = ux;
+                            emitEdgeLine(tgt, sx, sy, baseX, baseY, e.style());
+                            String d = "M " + fmt(tx) + " " + fmt(ty)
+                                + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
+                                + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
+                                + " Z";
+                            tgt.add(new Path(d, ARROW_FILL));
+                            endX = baseX;
+                            endY = baseY;
+                        } else {
+                            // OPEN link: the line runs to the dst anchor itself, NO arrowhead path.
+                            emitEdgeLine(tgt, sx, sy, tx, ty, e.style());
+                            endX = tx;
+                            endY = ty;
+                        }
                         // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of TD) — an
                         // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it.
                         double lblY = dy > 0
-                            ? (sy + baseY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
-                            : (sy + baseY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                        emitEdgeLabel(tgt, e.label(), (sx + baseX) / 2, lblY,
+                            ? (sy + endY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                            : (sy + endY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                        emitEdgeLabel(tgt, e.label(), (sx + endX) / 2, lblY,
                             false, EDGE_LABEL_GAP, canvasW, textColor, math);
                     }
                     // else degenerate — skip; the (possibly empty) group still emits so seq stays aligned.
@@ -876,7 +962,7 @@ public final class FlowchartLayout {
                     }
                     xs[k - 1] = tx;
                     ys[k - 1] = ty;
-                    emitPolyline(tgt, xs, ys);
+                    emitPolyline(tgt, xs, ys, e.style(), e.arrow());
                     // Edge label anchors on the FIRST segment's midpoint (LR outside rule + clamp).
                     double lblY = (ys[1] - ys[0]) > 0
                         ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
@@ -1042,23 +1128,31 @@ public final class FlowchartLayout {
         }
     }
 
-    /// Emit a routed polyline: every segment but the last as a full {@link Line}, then the final
-    /// segment truncated at the arrow base with a triangle arrowhead at its tip (reuses the straight-
-    /// edge arrowhead math). Points are (xs[i], ys[i]); the arrow points into (xs[last], ys[last]).
-    private static void emitPolyline(List<Shape> shapes, double[] xs, double[] ys) {
+    /// Emit a routed polyline honouring the edge STYLE + arrow: every segment but the last through
+    /// {@link #emitEdgeLine} (dotted = dashed pieces, thick = wider, SOLID+arrow = byte-for-byte the
+    /// original {@link Line} emission), then — when `arrow` — the final segment truncated at the arrow
+    /// base with a triangle arrowhead at its tip (reuses the straight-edge arrowhead math), or — when
+    /// OPEN — the final segment simply run to the tip with no head. Points are (xs[i], ys[i]); the arrow
+    /// points into (xs[last], ys[last]).
+    private static void emitPolyline(List<Shape> shapes, double[] xs, double[] ys,
+                                     EdgeStyle style, boolean arrow) {
         int last = xs.length - 1;
         for (int j = 0; j < last - 1; j++) {
-            shapes.add(new Line(xs[j], ys[j], xs[j + 1], ys[j + 1], EDGE_STROKE, EDGE_WIDTH));
+            emitEdgeLine(shapes, xs[j], ys[j], xs[j + 1], ys[j + 1], style);
         }
         double px0 = xs[last - 1];
         double py0 = ys[last - 1];
         double tx = xs[last];
         double ty = ys[last];
+        if (!arrow) {
+            emitEdgeLine(shapes, px0, py0, tx, ty, style);   // OPEN edge — final segment, no head
+            return;
+        }
         double dx = tx - px0;
         double dy = ty - py0;
         double len = Math.hypot(dx, dy);
         if (!Double.isFinite(len) || len < 1e-6) {
-            shapes.add(new Line(px0, py0, tx, ty, EDGE_STROKE, EDGE_WIDTH));   // degenerate — no head
+            emitEdgeLine(shapes, px0, py0, tx, ty, style);   // degenerate — no head
             return;
         }
         double ux = dx / len;
@@ -1067,7 +1161,7 @@ public final class FlowchartLayout {
         double baseY = ty - ARROW_LEN * uy;
         double px = -uy;   // unit perpendicular
         double py = ux;
-        shapes.add(new Line(px0, py0, baseX, baseY, EDGE_STROKE, EDGE_WIDTH));
+        emitEdgeLine(shapes, px0, py0, baseX, baseY, style);
         String d = "M " + fmt(tx) + " " + fmt(ty)
             + " L " + fmt(baseX + ARROW_HALF_W * px) + " " + fmt(baseY + ARROW_HALF_W * py)
             + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)

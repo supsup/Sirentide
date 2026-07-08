@@ -65,6 +65,15 @@ class ShowcaseGenTest {
                 + "auto-fitted inside.",
             "flowchart TD\nA[Process] --> B(Rounded)\nB --> C([Stadium])\nC --> D((Go))\n"
                 + "D --> E{{Prepare}}\nE --> F[(Store)]\nF --> G[[Validate]]\nG --> H{OK?}"),
+        new Card("Flowchart — edge types", "flowchart",
+            "The mermaid edge vocabulary, keyed by operator: <code>--&gt;</code> solid arrow, "
+                + "<code>---</code> open link (no head), <code>-.-&gt;</code> dotted arrow, "
+                + "<code>-.-</code> dotted open, <code>==&gt;</code> thick arrow, <code>===</code> thick "
+                + "open — each still carries an optional <code>|label|</code>. Dotted lines are baked as "
+                + "deterministic short segments (the output has no stroke-dasharray); thick lines draw a "
+                + "heavier stroke; open links drop the arrowhead.",
+            "flowchart TD\nA[Start] --- B[Link]\nB -.->|retry| C[Retry]\nC -.- D[Idle]\n"
+                + "D ==>|ship| E[Ship]\nE === F[Done]"),
         new Card("Sequence", "sequence",
             "Actors, lifelines, calls (filled heads), replies (open-V), self-message hooks, and "
                 + "activation bars that grow while an actor is busy.",
