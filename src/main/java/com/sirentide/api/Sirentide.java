@@ -74,6 +74,106 @@ public final class Sirentide {
         }
     }
 
+    /// The pipeline stages, used both as the {@link Diagnostics#stage()} value and to localize which
+    /// choke point a caught throwable escaped from (parse vs layout vs emit).
+    private static final String STAGE_PARSE = "parse";
+    private static final String STAGE_LAYOUT = "layout";
+    private static final String STAGE_EMIT = "emit";
+
+    /// Diagnostic twin of {@link #render(String)} — same guarded pipeline, same byte-identical SVG,
+    /// PLUS a structured {@link Diagnostics} that says WHY (plan sirentide-render-diagnostics). See
+    /// {@link #renderWithDiagnostics(String, MathFragmentRenderer)}.
+    public static RenderResult renderWithDiagnostics(String dsl) {
+        return renderWithDiagnostics(dsl, null);
+    }
+
+    /// Diagnostic twin of {@link #render(String, MathFragmentRenderer)}: it runs the IDENTICAL
+    /// parse→layout→emit pipeline and returns a {@link RenderResult} whose `svg` is byte-identical to
+    /// what `render` produces (the inert shell on any failure), plus a {@link Diagnostics} that
+    /// classifies the outcome. It exists because `render`'s single `catch (RuntimeException |
+    /// StackOverflowError)` plus the output-cap degrade collapse EVERY parse-typo, unsupported
+    /// construct, output-cap hit, and genuine renderer bug into one indistinguishable blank; an author
+    /// whose diagram renders empty gets no signal. This channel adds the signal WITHOUT touching the
+    /// sacred inert-shell bake.
+    ///
+    /// The safety invariant holds here too: this method NEVER throws. It classifies AT the existing
+    /// choke points — the pipeline's `catch` (mapping the caught throwable + the stage it escaped to
+    /// an {@link Outcome}) and the output-cap branch (a KNOWN degrade, distinct from a failure).
+    ///
+    /// v1 SCOPING (deliberate): classification keys on the exception TYPE/message and which STAGE
+    /// threw, plus a non-blank source that degraded to the {@link Empty} target (an unrecognized
+    /// diagram type). Precise line/token attribution — and splitting UNSUPPORTED_CONSTRUCT out of
+    /// PARSE_ERROR — needs deep {@code DslParser} annotation that is EXPLICITLY DEFERRED (a concurrent
+    /// worker owns that file), so {@link Diagnostics#line()} is `-1` when unknown and an unknown type
+    /// folds into {@link Outcome#PARSE_ERROR}. See the record javadocs for the follow-up slots.
+    public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        String stage = STAGE_PARSE;
+        try {
+            Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            stage = STAGE_LAYOUT;
+            LaidOut laid = layout(ir, math);
+            stage = STAGE_EMIT;
+            String svg = SvgEmitter.emit(laid);
+            if (svg.length() > MAX_OUTPUT_BYTES) {
+                // The post-emit cap branch — the exact degrade `render` takes. The emitter's
+                // incremental guard normally throws FIRST (classified in the catch below); this
+                // covers the defensive path where a single shape crossed the cap in one append.
+                return new RenderResult(INERT_SHELL, new Diagnostics(
+                    Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                    "The baked SVG exceeded the " + MAX_OUTPUT_BYTES + "-byte output cap, so it "
+                        + "degraded to the empty shell. Reduce the number of rows/nodes or the label sizes.",
+                    -1, "post-emit length " + svg.length() + " > MAX_OUTPUT_BYTES"));
+            }
+            // The bake SUCCEEDED and `svg` is byte-identical to `render`. One nuance: a NON-BLANK
+            // source that resolved to the Empty degrade target means the parser did not recognize the
+            // input (an unknown type keyword on line 1, or an over-input-cap source) — the author sees
+            // an intentional-looking empty shell but their DSL was never understood. Surface that as a
+            // parse-level signal. `svg` is still returned unchanged (== render's output for Empty).
+            if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                return new RenderResult(svg, new Diagnostics(
+                    Outcome.PARSE_ERROR, STAGE_PARSE,
+                    "The diagram source was not recognized: line 1's diagram-type keyword is unknown "
+                        + "(or the source exceeded the input cap), so it degraded to the empty shell. "
+                        + "Check the diagram type on the first line.",
+                    -1, "parse resolved to the Empty degrade target for non-blank input"));
+            }
+            return new RenderResult(svg, new Diagnostics(
+                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+        } catch (RuntimeException | StackOverflowError e) {
+            // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
+            // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
+            return new RenderResult(INERT_SHELL, classifyFailure(stage, e));
+        }
+    }
+
+    /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
+    /// {@link Diagnostics}. The emitter's incremental output-cap surfaces as an
+    /// {@link IllegalStateException} naming {@code MAX_OUTPUT_BYTES}: a KNOWN, bounded degrade
+    /// ({@link Outcome#OUTPUT_CAP_EXCEEDED}), NOT a renderer bug — so it is distinguished from a
+    /// genuine failure. A throwable from parse is a PARSE_ERROR (the hand-written parser is designed
+    /// not to throw, so this is defensive); anything unexpected from layout/emit is a
+    /// {@link Outcome#RENDER_BUG}, localized by stage.
+    private static Diagnostics classifyFailure(String stage, Throwable e) {
+        String msg = e.getMessage();
+        String detail = e.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+        if (STAGE_EMIT.equals(stage) && msg != null && msg.contains("MAX_OUTPUT_BYTES")) {
+            return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                "The baked SVG exceeded the " + MAX_OUTPUT_BYTES + "-byte output cap, so it degraded "
+                    + "to the empty shell. Reduce the number of rows/nodes or the label sizes.",
+                -1, detail);
+        }
+        if (STAGE_PARSE.equals(stage)) {
+            return new Diagnostics(Outcome.PARSE_ERROR, STAGE_PARSE,
+                "The diagram source could not be parsed, so it degraded to the empty shell. Check the "
+                    + "syntax on the first line.",
+                -1, detail);
+        }
+        return new Diagnostics(Outcome.RENDER_BUG, stage,
+            "The renderer hit an unexpected failure during " + stage + ", so it degraded to the empty "
+                + "shell. This is a renderer bug, not a problem with your diagram — please report it.",
+            -1, detail);
+    }
+
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. Only the
     /// flowchart consumes `math` in this slice (node labels); every other type ignores it until a
     /// later slice threads a renderer through its labels.
