@@ -5,6 +5,11 @@ import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.ErAttribute;
+import com.sirentide.ir.ErCardinality;
+import com.sirentide.ir.ErDiagram;
+import com.sirentide.ir.ErEntity;
+import com.sirentide.ir.ErRelation;
 import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.RelationKind;
 import com.sirentide.ir.FlowEdge;
@@ -114,6 +119,9 @@ public final class DslParser {
             case "quadrant" -> parseQuadrant(lines, textColor);
             // A mermaid-style UML class diagram — `class X { members }` blocks + typed relationships.
             case "classDiagram" -> parseClassDiagram(lines, textColor);
+            // A mermaid-style entity-relationship diagram — `ENTITY { rows }` tables + crow-foot
+            // cardinality relationships (`A ||--o{ B : label`).
+            case "erDiagram" -> parseErDiagram(lines, textColor);
             default -> new Empty();
         };
     }
@@ -1477,6 +1485,249 @@ public final class DslParser {
     private static final class ClassAcc {
         final List<String> attributes = new ArrayList<>();
         final List<String> methods = new ArrayList<>();
+    }
+
+    /// The reserved key markers on an ER attribute row (`PK` primary / `FK` foreign / `UK` unique).
+    /// Matched case-insensitively; any other trailing token is not a key (ignored).
+    private static String erKeyMarker(String tok) {
+        String u = tok.toUpperCase(java.util.Locale.ROOT);
+        return (u.equals("PK") || u.equals("FK") || u.equals("UK")) ? u : null;
+    }
+
+    /// Parses a mermaid-style entity-relationship diagram — entity TABLES + crow-foot relationships.
+    /// ```
+    /// erDiagram
+    ///   CUSTOMER ||--o{ ORDER : places
+    ///   ORDER ||--|{ LINE-ITEM : contains
+    ///   CUSTOMER {
+    ///     string name PK
+    ///     string email
+    ///   }
+    /// ```
+    /// An `ENTITY {` line OPENS an attribute block (mirrors the class-diagram `class X { }` block);
+    /// every line until a lone `}` is an attribute row `type name [PK|FK|UK]` (whitespace-split: the
+    /// first token is the type, the second the name, and any later `PK`/`FK`/`UK` token the key — a
+    /// single-token row has an EMPTY type and the token as its name). A bare `ENTITY` (no brace) — or
+    /// an entity named only in a relationship — is an attribute-less name box.
+    ///
+    /// OUTSIDE a block a line is a RELATIONSHIP `LEFT <leftCard>OP<rightCard> RIGHT [: label]` where
+    /// OP is `--` (identifying, solid) or `..` (non-identifying, dashed) and each two-char cardinality
+    /// is one of the crow-foot tokens ({@link #scanErOperator}). Each operand references an entity,
+    /// auto-vivified as an attribute-less entity when never given a block (mermaid semantics — so a
+    /// relationship to an unblocked `ADDRESS` still renders it). Entities register in FIRST-SEEN order
+    /// (declared or referenced).
+    ///
+    /// Robustness (DESIGN §6, never throw): a line that is neither an entity directive, an attribute
+    /// (inside a block), nor a well-formed relationship is DROPPED. A relationship with an empty
+    /// endpoint or an unrecognized cardinality drops. An UNCLOSED `{` at end-of-input CLOSES gracefully
+    /// at EOF (the entity keeps the rows gathered so far) rather than throwing. Caps: {@link #MAX_NODES}
+    /// entities, {@link #MAX_EDGES} relationships, {@link #MAX_DATA_ROWS} rows per entity; names/rows
+    /// `cap()`'d. Empty body → an ErDiagram with no entities (round-trips, NOT degraded to Empty).
+    private static Diagram parseErDiagram(String[] lines, String textColor) {
+        // Insertion-ordered name → attribute accumulator: preserves first-seen entity order (declared
+        // or relationship-referenced). A relationship-referenced name auto-vivifies an empty one.
+        LinkedHashMap<String, List<ErAttribute>> entities = new LinkedHashMap<>();
+        List<ErRelation> relations = new ArrayList<>();
+        List<ErAttribute> open = null;   // the currently-open `ENTITY { … }` block, or null when outside
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (open != null) {
+                // Inside an attribute block: a lone `}` closes it; anything else is an attribute row.
+                if (line.equals("}")) {
+                    open = null;
+                    continue;
+                }
+                // A trailing `}` glued to the last row (`int age }`) also closes the block.
+                String row = line;
+                boolean closes = false;
+                if (row.endsWith("}")) {
+                    row = row.substring(0, row.length() - 1).strip();
+                    closes = true;
+                }
+                addErAttribute(open, row);
+                if (closes) {
+                    open = null;
+                }
+                continue;
+            }
+            // Outside a block. Try a relationship first (its operator is unambiguous); otherwise the
+            // line is an entity directive (`ENTITY` or `ENTITY {`).
+            String[] peeled = peelLabel(line);
+            String head = peeled[0];
+            String label = peeled[1] == null ? null : cap(peeled[1]);
+            ErOpScan op = scanErOperator(head);
+            if (op != null) {
+                String left = cap(head.substring(0, op.pos()).strip());
+                String right = cap(head.substring(op.pos() + op.len()).strip());
+                if (left.isEmpty() || right.isEmpty()) {
+                    continue;   // an empty endpoint → malformed relation, drop (never throw)
+                }
+                registerEntity(entities, left);
+                registerEntity(entities, right);
+                if (relations.size() < MAX_EDGES
+                    && entities.containsKey(left) && entities.containsKey(right)) {
+                    relations.add(new ErRelation(left, right, op.leftCard(), op.rightCard(),
+                        op.identifying(), label));
+                }
+                continue;
+            }
+            // Not a relationship → an entity directive: `ENTITY {` opens a block, a bare `ENTITY`
+            // declares a name box. In BOTH forms the entity name must be a SINGLE whitespace-free token
+            // (a valid identifier). This drops the malformed-relation residue whose stray `{` (a
+            // cardinality char like `o{`, e.g. `X |bad--o{ Y`) would otherwise spoof a block-open — the
+            // pre-brace `X |bad--o` has spaces, so it is not a name. A quoted multi-word entity name is
+            // not supported in v1 (RESIDUAL). No colon-peel here: a bare entity carries no label.
+            int brace = line.indexOf('{');
+            if (brace < 0) {
+                // Bare `ENTITY` — an attribute-less entity, only when the whole line is one clean token.
+                String name = cap(line.strip());
+                if (isSingleToken(name)) {
+                    registerEntity(entities, name);
+                }
+                continue;   // multi-token / empty → garbage line, drop (never throw)
+            }
+            String name = cap(line.substring(0, brace).strip());
+            if (!isSingleToken(name)) {
+                continue;   // no clean name before `{` → malformed, drop (and do NOT open a block)
+            }
+            List<ErAttribute> acc = registerEntity(entities, name);
+            // `ENTITY {}` / `{ }` on one line opens-and-closes empty; otherwise the block stays open
+            // for the following rows. Inline rows after `{` on the SAME line are not supported (ignored).
+            String afterBrace = line.substring(brace + 1).strip();
+            open = afterBrace.startsWith("}") ? null : acc;
+        }
+        List<ErEntity> table = new ArrayList<>();
+        for (Map.Entry<String, List<ErAttribute>> e : entities.entrySet()) {
+            table.add(new ErEntity(e.getKey(), e.getValue()));
+        }
+        return new ErDiagram(table, relations, textColor);
+    }
+
+    /// Registers an ER entity by name in first-seen order (up to {@link #MAX_NODES}), returning its
+    /// attribute accumulator. An already-seen name returns the existing list (a later `{}` block adds
+    /// to it); past the cap a brand-new entity is dropped and a THROWAWAY list is returned so the
+    /// caller never NPEs (its rows simply never reach the IR — never throw, never unbounded).
+    private static List<ErAttribute> registerEntity(LinkedHashMap<String, List<ErAttribute>> entities,
+                                                    String name) {
+        List<ErAttribute> acc = entities.get(name);
+        if (acc != null) {
+            return acc;
+        }
+        if (entities.size() >= MAX_NODES) {
+            return new ArrayList<>();   // over-cap: a detached list (its rows are dropped)
+        }
+        List<ErAttribute> fresh = new ArrayList<>();
+        entities.put(name, fresh);
+        return fresh;
+    }
+
+    /// Adds one attribute row `type name [PK|FK|UK]` to an entity accumulator. Whitespace-split: the
+    /// first token is the type, the second the name; a single-token row has an EMPTY type and the token
+    /// as its name (a bare `id` still renders). The FIRST later `PK`/`FK`/`UK` token (any case) becomes
+    /// the key. A blank row is ignored. Rows are bounded by {@link #MAX_DATA_ROWS} so a pathological
+    /// block can't allocate unboundedly (never throw). Type/name/key are `cap()`'d.
+    private static void addErAttribute(List<ErAttribute> acc, String row) {
+        String r = row.strip();
+        if (r.isEmpty() || acc.size() >= MAX_DATA_ROWS) {
+            return;
+        }
+        String[] toks = r.split("\\s+");
+        String type;
+        String name;
+        int keyFrom;
+        if (toks.length == 1) {
+            type = "";
+            name = toks[0];
+            keyFrom = 1;
+        } else {
+            type = toks[0];
+            name = toks[1];
+            keyFrom = 2;
+        }
+        String key = null;
+        for (int i = keyFrom; i < toks.length; i++) {
+            String k = erKeyMarker(toks[i]);
+            if (k != null) {
+                key = k;
+                break;   // first key marker wins
+            }
+        }
+        acc.add(new ErAttribute(cap(type), cap(name), key));
+    }
+
+    /// True iff `s` is a single non-empty token with no interior whitespace — the shape a bare/blocked
+    /// ER entity name must take (a `LINE-ITEM` passes; a `X |bad--o` with spaces does not). Guards the
+    /// entity-directive path from adopting malformed-relation residue as a spurious entity.
+    private static boolean isSingleToken(String s) {
+        if (s.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// A located ER relationship operator: byte `pos` in the head (where the LEFT cardinality begins),
+    /// token `len` (leftCard + `--`/`..` + rightCard, always 6), the two resolved cardinalities, and
+    /// whether the operator is identifying (solid `--`) vs non-identifying (dashed `..`).
+    private record ErOpScan(int pos, int len, ErCardinality leftCard, ErCardinality rightCard,
+                            boolean identifying) {}
+
+    /// Scans a relationship head for the FIRST (leftmost) crow-foot operator: a two-char LEFT
+    /// cardinality, then `--` (identifying) or `..` (non-identifying), then a two-char RIGHT
+    /// cardinality — e.g. `||--o{`, `}o..o|`. The two-char cardinalities are validated against the
+    /// crow-foot token tables ({@link #leftCardinality}/{@link #rightCardinality}); a `--`/`..` whose
+    /// flanking chars are not valid cardinalities is NOT an operator (so a hyphen inside an entity name
+    /// like `LINE-ITEM` never spoofs one — its `-` is single, and `LINE--ITEM` would need cardinality
+    /// chars around it). Returns null when the head carries no well-formed operator (→ the caller treats
+    /// the line as an entity directive, then drops it if that fails too — never throws).
+    private static ErOpScan scanErOperator(String head) {
+        int n = head.length();
+        for (int i = 2; i + 4 <= n; i++) {
+            boolean solid = head.charAt(i) == '-' && head.charAt(i + 1) == '-';
+            boolean dashed = head.charAt(i) == '.' && head.charAt(i + 1) == '.';
+            if (!solid && !dashed) {
+                continue;
+            }
+            ErCardinality left = leftCardinality(head.substring(i - 2, i));
+            ErCardinality right = rightCardinality(head.substring(i + 2, i + 4));
+            if (left != null && right != null) {
+                return new ErOpScan(i - 2, 6, left, right, solid);
+            }
+        }
+        return null;
+    }
+
+    /// The LEFT-end crow-foot cardinality token (the entity is to the LEFT, so the outer symbol is the
+    /// SECOND char): `|o`→zero-or-one, `||`→exactly-one, `}o`→zero-or-many, `}|`→one-or-many. Any other
+    /// two-char string is not a cardinality (returns null).
+    private static ErCardinality leftCardinality(String tok) {
+        return switch (tok) {
+            case "|o" -> ErCardinality.ZERO_OR_ONE;
+            case "||" -> ErCardinality.EXACTLY_ONE;
+            case "}o" -> ErCardinality.ZERO_OR_MANY;
+            case "}|" -> ErCardinality.ONE_OR_MANY;
+            default -> null;
+        };
+    }
+
+    /// The RIGHT-end crow-foot cardinality token (the entity is to the RIGHT, so the tokens mirror the
+    /// left ones): `o|`→zero-or-one, `||`→exactly-one, `o{`→zero-or-many, `|{`→one-or-many. Any other
+    /// two-char string is not a cardinality (returns null).
+    private static ErCardinality rightCardinality(String tok) {
+        return switch (tok) {
+            case "o|" -> ErCardinality.ZERO_OR_ONE;
+            case "||" -> ErCardinality.EXACTLY_ONE;
+            case "o{" -> ErCardinality.ZERO_OR_MANY;
+            case "|{" -> ErCardinality.ONE_OR_MANY;
+            default -> null;
+        };
     }
 
     /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row
