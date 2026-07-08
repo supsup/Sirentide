@@ -17,9 +17,12 @@ import java.util.Optional;
 /// LatteX jar on its own classpath, then injects it at the seam. The core stays hermetic; the math
 /// backend is the consumer's choice.
 ///
-/// The mapping is a straight field copy: LatteX's `com.lattex.api.MathFragment` has the SAME record
-/// shape as Sirentide's `com.sirentide.api.MathFragment` (innerSvg, widthPx, heightPx, depthPx) and
-/// the SAME coordinate contract (origin = left end of the baseline, glyphs up = negative local y).
+/// The mapping copies the four render-geometry fields explicitly: LatteX's
+/// `com.lattex.api.MathFragment` shares Sirentide's `(innerSvg, widthPx, heightPx, depthPx)` and the
+/// SAME coordinate contract (origin = left end of the baseline, glyphs up = negative local y). As of
+/// LatteX 0.6.0 its MathFragment ALSO carries a `glyphmap` token-identity sidecar (the producer half
+/// of token-aware math); Sirentide's MathFragment has no such field yet, so this adapter deliberately
+/// DROPS it — token-aware Part 2 (RFC sirentide/94) is what will thread it through the label anchors.
 /// LatteX's `innerSvg` is already FragmentGuard-clean `{g,path,rect}` with numeric transforms — the
 /// caller re-validates it through {@link com.sirentide.contract.FragmentGuard} regardless, so a
 /// contract-violating fragment degrades to raw text exactly like a render failure.

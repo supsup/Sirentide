@@ -38,7 +38,7 @@ dependencies {
     // (MathInLabelsRealRenderTest + LatteXMathFragmentRenderer). TEST SCOPE ONLY — the core bake
     // stays hermetic (ZERO runtime dependencies). A downstream consumer that wants baked math
     // supplies this jar + a renderer itself; Sirentide never depends on LatteX at runtime.
-    testImplementation(files("libs/lattex-0.5.0.jar"))
+    testImplementation(files("libs/lattex-0.6.0.jar"))
 }
 
 tasks.test {
