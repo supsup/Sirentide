@@ -21,14 +21,14 @@ Honest tradeoff, accepted: more layout work, and we trail mermaid on breadth (es
 
 Mermaid has ~zero native animation (a single CSS marching-ants dash loop); all its interactivity is post-render browser JS, never baked. A baked narrative layer is a category it never entered.
 
-- **★ LatteX-math IN diagram labels** *(lead feature)* — a node/axis/bar label that IS a real baked LaTeX formula. Sirentide calls LatteX at bake; the two minimal-alphabet emitters compose for free. Mermaid's math is runtime KaTeX — impossible in a CSP-clean static bake.
-- **Directable / playable flows** — step through a flow; reveals in reading order; the active step pulses. A process as a narrated slideshow, not a snapshot.
-- **Effects bound to meaning** — "glow the critical path", "flash the error edge" — keyed off semantics we emit as stable anchors.
+- **★ LatteX-math IN diagram labels** *(lead feature — **SHIPPED**)* — a node/edge/message/axis label that IS a real baked LaTeX formula (incl. braced `\frac{a}{b}`/`\sqrt{x}`, and standalone `mathblock`). Sirentide calls LatteX's `renderFragment` at bake; the two minimal-alphabet emitters compose for free. Mermaid's math is runtime KaTeX — impossible in a CSP-clean static bake.
+- **Directable / playable flows** *(planned — the thesis frontier)* — step through a flow; reveals in reading order; the active step pulses. A process as a narrated slideshow, not a snapshot. Rides on the semantic anchors (slice 1 shipped: flowchart+pie).
+- **Effects bound to meaning** *(planned — `data-sirentide-fx`, the one still-gated anchor)* — "glow the critical path", "flash the error edge" — keyed off semantics we emit as stable anchors.
 - **Publication-grade typography** — LatteX-grade font-metrics discipline on labels.
 
 ## 4. Architecture
 
-- **Separate project; thin one-way dependency** Sirentide → LatteX. Pinned immutable `com.lattex:lattex:0.1.0`; API surface = `render` / `renderInline` only (no internals). Likely first API ask: `renderMeasured({svg,w,h,baseline})` — Confluence owns extending LatteX's public API. Contract, not coupling.
+- **Separate project; thin one-way dependency** Sirentide → LatteX. Pinned immutable `com.lattex:lattex:0.5.0`; API surface = `render` / `renderInline` / **`renderFragment`** — the embedded-math API that shipped for math-in-labels (returns `{innerSvg, widthPx, heightPx, depthPx}`, left-end-of-baseline origin, FragmentGuard-clean; no internals). Confluence owns LatteX's public API. Contract, not coupling. **Hermetic:** in Sirentide's core the LatteX dep is *test-scope only* — a consumer injects a `MathFragmentRenderer`, so the core stays zero-runtime-dependency.
 - **Separate pure LAYOUT (→ coordinates) from pure EMIT (coordinates → SVG string)**, over a single typed **immutable IR** all diagram types project into (the shared IR mermaid never built). Own **font-metrics oracle** — no DOM, deterministic, byte-identical caches.
 - **Two contracts** (Confluence authors; drift-guarded shared source): the emitter alphabet (`sirentide-output-contract`) and the per-element anchor security model (§5).
 
@@ -60,15 +60,18 @@ The invariant shifts from *"inner is affordance-free"* to *"inner carries only a
 - **Re-implement, don't port** — read mermaid for geometry ideas; rebuild clean on our IR.
 - **text = paths** — deterministic, byte-identical caches, no view-time font dependency; `<title>`/`<desc>`/`aria-label` carry the a11y text.
 
-## 7. Milestones
+## 7. Status & milestones
 
-The renderer moved faster than the ladder first drew it: the graph and time-axis types (`flowchart`, `gantt`, `timeline`) landed on the current path/line alphabet, so they are **built now** rather than deferred to M3/M-gate. Six diagram types ship today. What remains is the *thesis* layer (play-through, effects, math) and the denser `sequence` machinery.
+**Eleven diagram types ship today**, all on the minimal `svg/g/path/rect/line` + text-as-paths alphabet:
+`pie` · `xychart` · `timeline` · `gantt` · `flowchart` (layered `TD`/`LR`, rect/diamond nodes, per-hop edge labels, chained/cyclic edges, **subgraph/cluster** containers) · `sequence` (calls/replies/self + **activation bars** + **alt/loop/par** frames) · `state` · `quadrant` · `classDiagram` (UML — name/attribute/method compartments + the five relationship markers: inheritance/composition/aggregation/association/dependency) · `erDiagram` (entity tables + crow-foot cardinality) · `mathblock` (standalone full-size display math).
 
-- **M0 — built.** The two contracts + the label font (**STIX Two Math**, OFL, reused from LatteX — `resources/com/sirentide/font/`, SHA `49b22767…`; same face LatteX renders formulas in, so prose labels + embedded math are one coherent family; build-time-only via text=paths) + the font-metrics *oracle* (sfnt parse + text-run/wrap/multi-line — new work vs LatteX's single-glyph advances) + theming-without-`<style>` (inline fills, `currentColor` for light/dark) + bake-time error handling (malformed → inert, never raw HTML) + own-DSL decision + core scaffold (IR, layout/emit split, font-metrics oracle). Emitter alphabet is minimal and matches the output contract: `svg/path/rect/line` + text-as-paths + geometry + numeric `fill/stroke/stroke-width`; **no `g`, no `marker`/`defs` yet** (arrowheads are inline `<path>` triangles). The LatteX thin dep and math-in-labels composition remain *planned* — the emitter and contract are ready for it, but it is not yet wired.
-- **M1 — built (renderer); GO/NO-GO on the *effect* still open.** `pie` + `xychart` (arithmetic layout) **plus a minimal linear sequence** (grid arithmetic — `->>` calls, `-->>` replies, self-messages; no alt/loop/par blocks). The linear-sequence demonstrator ships; the **play-through** and semantic-anchor layer that ride it — the thing that proves the *spin* — are *planned*. A math-in-a-label demo is *planned* (pending the LatteX wire-in).
-- **M2 — planned.** Full sequence (alt/loop/par, activations) at its real size; `marker`/`defs` added value-constrained (same-doc `#id` refs only).
-- **M3 — built.** `gantt` + `timeline` (proportional time axis; ISO dates shown as dates; degenerate domains still draw markers).
-- **M-gate — built (bounded).** `flowchart` (`TD`/`LR`, rect/diamond nodes, per-hop edge labels, chained edges, cycle-tolerant with visible back-edge lanes) on a **layered, deterministic** layout. Full graph auto-layout — crossing-minimization (NP-hard), **ELK/dagre-class** — is deliberately *not* attempted; if ever pursued it stays an explicit re-decision, not a default.
+**The moat is live.** ★ **LatteX-math in labels** shipped end to end: real baked LaTeX renders in **every** label-bearing type (node / edge / message / state / quadrant / …), including **braced** constructs (`\frac{a}{b}`, `\sqrt{x}`, `x^{2n}`) and standalone display math (`mathblock`). Sirentide calls **LatteX 0.5.0's `renderFragment`** at bake through a hermetic seam — the core keeps its **zero runtime dependency** (LatteX is a test-scope demonstrator; a consumer injects the `MathFragmentRenderer`). Mermaid's runtime-KaTeX is impossible in a CSP-clean static bake.
+
+**The emitter now emits `<g>`** — for **accessibility** (`<title>`/`<desc>`/`role="img"`, deterministic, baked from the IR), for placed **math fragments**, and for **semantic anchors** (`data-sirentide-role`/`-id`/`-seq`, the §5 vocabulary — Lattice-approved, currently slice 1: flowchart + pie). The whitelist id-sanitizer (§5) is built. Also shipped: `renderWithDiagnostics` — a why-is-my-diagram-empty channel that classifies parse/layout/emit/cap failures while keeping the inert-shell bake byte-identical.
+
+**Remaining — the thesis "spin" layer + reach:** play-through / step-reveal; effects bound to meaning (`data-sirentide-fx`, the one still-gated anchor); semantic anchors on the other 9 types; the Stafficy `constrainSirentideWrappers` sanitizer pass **and a Sirentide→`/docs` integration** (vendor jar + converter, mirroring LatteX's) — the anchors and the whole renderer are **not reachable via `/docs` until that lands**. `marker`/`defs` (value-constrained, same-doc `#id` only) if/when an effect needs them. Full graph auto-layout — crossing-minimization (NP-hard), **ELK/dagre-class** — is deliberately **not** attempted; an explicit re-decision, never a default (current grid/layered layouts are v1, with a layout-quality pass queued).
+
+*(Historical milestone ladder M0–M-gate is preserved in git history; the renderer outran it — every M-level is built, and the once-"planned" M1 effect layer + M2 full-sequence both shipped.)*
 
 ## 8. Ownership
 

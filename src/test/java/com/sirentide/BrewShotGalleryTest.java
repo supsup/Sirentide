@@ -5,7 +5,9 @@ import com.brewshot.BrewShot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
+import com.sirentide.math.LatteXMathFragmentRenderer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -56,7 +58,13 @@ class BrewShotGalleryTest {
         })()
         """;
 
-    private record Case(String name, String title, String dsl) {}
+    /// A `renderer` of {@code null} bakes with the default (null) math renderer; a non-null one (the
+    /// real {@link LatteXMathFragmentRenderer}) bakes the `$…$` math for real — the moat cases.
+    private record Case(String name, String title, String dsl, MathFragmentRenderer renderer) {
+        Case(String name, String title, String dsl) { this(name, title, dsl, null); }
+    }
+
+    private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
 
     private static final List<Case> GALLERY = List.of(
         new Case("pie", "Pie", "pie\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
@@ -112,7 +120,12 @@ class BrewShotGalleryTest {
         new Case("timeline-endpoints", "Timeline endpoint labels (clamped)",
             "timeline\n\"very long left endpoint label\" : 0\n\"very long right endpoint label\" : 10"),
         new Case("flowchart-left-label", "Flowchart left-going edge label (clamped)",
-            "flowchart\nA --> C\nB -->|this forward label can escape left| C"));
+            "flowchart\nA --> C\nB -->|this forward label can escape left| C"),
+        // THE MOAT — real baked LaTeX (via the injected LatteX renderer), audited to stay in-canvas.
+        new Case("mathblock", "Display math (standalone, baked LaTeX)",
+            "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", REAL),
+        new Case("math-in-labels", "Math baked inside flowchart labels",
+            "flowchart TD\nA[Energy $E=mc^2$] --> B[$\\frac{v^2}{r}$]", REAL));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();
@@ -130,7 +143,9 @@ class BrewShotGalleryTest {
 
         try (BrewShot shot = BrewShot.launch(520, 320)) {
             for (Case c : GALLERY) {
-                String svg = Sirentide.render(c.dsl());
+                String svg = c.renderer() == null
+                    ? Sirentide.render(c.dsl())
+                    : Sirentide.render(c.dsl(), c.renderer());
                 shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
                     + svg + "</body></html>");
                 shot.settle(120);

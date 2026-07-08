@@ -46,6 +46,9 @@ tasks.test {
     // Forward the golden-regen switch to the forked test JVM so
     // `./gradlew test -Dsirentide.updateGolden=true` actually reaches GoldenSvgTest.
     systemProperty("sirentide.updateGolden", System.getProperty("sirentide.updateGolden", "false"))
+    // Same for the showcase-page regen switch, so
+    // `./gradlew test -Dsirentide.updateShowcase=true` reaches ShowcaseGenTest.
+    systemProperty("sirentide.updateShowcase", System.getProperty("sirentide.updateShowcase", "false"))
 }
 
 application {
