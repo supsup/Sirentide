@@ -138,7 +138,9 @@ class SemanticAnchorTest {
             "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n",
             "timeline\n  \"Founded\" : 2020\n  \"Launch\" : 2023\n",
             "classDiagram\n  class Animal {\n    +eat() void\n  }\n  Animal <|-- Dog : inherits\n",
-            "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n");
+            "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n",
+            "gitGraph\n  commit\n  branch develop\n  checkout develop\n  commit\n  checkout main\n"
+                + "  merge develop\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -369,5 +371,28 @@ class SemanticAnchorTest {
         assertEquals(1, countRole(a, "edge"), "one relation edge: " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("CUSTOMER-ORDER")),
             "edge id is left-right (CUSTOMER-ORDER): " + a);
+    }
+
+    /// gitGraph: every commit dot is wrapped in a `<g role="commit">` (id = the commit id, else its
+    /// branch name, uniquified) and every drawn branch lane in a `<g role="branch">` (id = branch
+    /// name). Two commits on main + one on develop + a merge commit = 4 commit anchors; main + develop
+    /// = 2 branch anchors. Proves a commit emits role="commit" (receipt #2).
+    @Test
+    void gitGraphEmitsCommitAndBranchAnchors() {
+        List<Anc> a = anchors(Sirentide.render(
+            "gitGraph\n  commit\n  commit id: \"fix\"\n  branch develop\n  checkout develop\n"
+                + "  commit\n  checkout main\n  merge develop\n"));
+        // 3 explicit commits + 1 merge commit = 4 commit anchors; main + develop = 2 branch anchors.
+        assertWellFormed(a, 6);
+        assertEquals(4, countRole(a, "commit"), "four commit anchors (3 commits + 1 merge): " + a);
+        assertEquals(2, countRole(a, "branch"), "two branch anchors (main + develop): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("commit") && x.id().equals("fix")),
+            "the id-labeled commit anchors under its id (fix): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("branch") && x.id().equals("develop")),
+            "the develop branch lane is anchored: " + a);
+        // Branch anchors emit before commit anchors → branches carry the lower seq range.
+        int maxBranchSeq = a.stream().filter(x -> x.role().equals("branch")).mapToInt(Anc::seq).max().orElse(-1);
+        int minCommitSeq = a.stream().filter(x -> x.role().equals("commit")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxBranchSeq < minCommitSeq, "branches seq before commits: " + a);
     }
 }

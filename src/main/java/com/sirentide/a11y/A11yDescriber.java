@@ -13,6 +13,8 @@ import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Gantt;
+import com.sirentide.ir.GitGraph;
+import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -67,8 +69,102 @@ public final class A11yDescriber {
             case ClassDiagram cd -> classDiagram(cd);
             case ErDiagram er -> erDiagram(er);
             case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
+            case GitGraph gg -> gitGraph(gg);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Git graph: "Git graph with 4 commits across 2 branches. Branches: main, develop. Commits:
+    /// (main), \"fix\" (main), (develop), (main); …. Merges: develop into main; …". The op list is
+    /// REPLAYED with the SAME inert rules the layout uses (a commit before any branch → implicit main;
+    /// an unknown-branch checkout/merge, a duplicate branch, a self-merge, a merge of an empty branch →
+    /// all dropped) so the desc reflects exactly what is drawn — branches that actually received a
+    /// commit, commits in declaration order, and the valid merges. Deterministic + bounded.
+    private static A11y gitGraph(GitGraph gg) {
+        java.util.LinkedHashSet<String> declared = new java.util.LinkedHashSet<>();
+        declared.add("main");
+        java.util.Set<String> hasCommit = new java.util.HashSet<>();
+        String current = "main";
+        java.util.List<String[]> commits = new java.util.ArrayList<>();   // {branch, idOrNull}
+        java.util.List<String[]> merges = new java.util.ArrayList<>();    // {source, target}
+        for (GitOp op : gg.ops()) {
+            switch (op) {
+                case GitOp.Commit c -> {
+                    hasCommit.add(current);
+                    commits.add(new String[] {current, c.id()});
+                }
+                case GitOp.Branch b -> {
+                    if (!declared.contains(b.name())) {
+                        declared.add(b.name());
+                        current = b.name();
+                    }
+                }
+                case GitOp.Checkout co -> {
+                    if (declared.contains(co.name())) {
+                        current = co.name();
+                    }
+                }
+                case GitOp.Merge mg -> {
+                    if (declared.contains(mg.name()) && !mg.name().equals(current)
+                        && hasCommit.contains(mg.name())) {
+                        hasCommit.add(current);
+                        commits.add(new String[] {current, null});
+                        merges.add(new String[] {mg.name(), current});
+                    }
+                }
+            }
+        }
+        java.util.List<String> branches = new java.util.ArrayList<>();
+        for (String b : declared) {
+            if (hasCommit.contains(b)) {
+                branches.add(b);
+            }
+        }
+        int commitCount = commits.size();
+        int branchCount = branches.size();
+        StringBuilder d = new StringBuilder("Git graph with ")
+            .append(commitCount).append(commitCount == 1 ? " commit" : " commits")
+            .append(" across ").append(branchCount).append(branchCount == 1 ? " branch" : " branches")
+            .append('.');
+        if (branchCount > 0) {
+            d.append(" Branches: ");
+            int shown = Math.min(branchCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(branches.get(i)));
+            }
+            d.append(branchCount > shown ? ", …." : ".");
+        }
+        if (commitCount > 0) {
+            d.append(" Commits: ");
+            int shown = Math.min(commitCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                String[] c = commits.get(i);
+                if (c[1] != null && !c[1].isBlank()) {
+                    d.append('"').append(label(c[1])).append("\" ");
+                }
+                d.append('(').append(label(c[0])).append(')');
+            }
+            d.append(commitCount > shown ? ", …." : ".");
+        }
+        int mergeCount = merges.size();
+        if (mergeCount > 0) {
+            d.append(" Merges: ");
+            int shown = Math.min(mergeCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                d.append(label(merges.get(i)[0])).append(" into ").append(label(merges.get(i)[1]));
+            }
+            d.append(mergeCount > shown ? "; …." : ".");
+        }
+        return new A11y("Git graph", d.toString());
     }
 
     /// ER diagram: "Entity-relationship diagram with N entities and M relationships. Entities:

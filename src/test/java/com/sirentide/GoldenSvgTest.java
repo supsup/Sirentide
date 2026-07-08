@@ -111,6 +111,14 @@ class GoldenSvgTest {
         // MathBlockRealRenderTest, which injects the LatteX renderer GoldenSvgTest deliberately lacks.
         FIXTURES.put("mathblock",
             "mathblock\n  \\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n");
+        // A git commit graph (12th type): a main lane with two commits (one id-labeled), a `develop`
+        // branch off the second, two commits on develop, then a merge back into main + a final commit —
+        // pins the per-lane y offset, the two distinct branch colours, the branch-point elbow connector
+        // (drop + run), the merge elbow connector (run + rise), the full-circle commit discs, and the
+        // commit/branch anchor groups byte-for-byte.
+        FIXTURES.put("gitgraph",
+            "gitGraph\n  commit\n  commit id: \"fix\"\n  branch develop\n  checkout develop\n"
+                + "  commit\n  commit\n  checkout main\n  merge develop\n  commit\n");
     }
 
     @Test
