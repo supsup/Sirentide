@@ -18,6 +18,9 @@ import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
 import com.sirentide.ir.GitOp;
+import com.sirentide.ir.Journey;
+import com.sirentide.ir.JourneySection;
+import com.sirentide.ir.JourneyTask;
 import com.sirentide.ir.MathBlock;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
@@ -133,6 +136,9 @@ public final class DslParser {
             // A mermaid-style git commit graph — commit dots on a time axis, one lane per branch, with
             // branch/merge connectors. `gitgraph` is an accepted lowercase alias of `gitGraph`.
             case "gitGraph", "gitgraph" -> parseGitGraph(lines, textColor);
+            // A mermaid-style user-journey satisfaction map — an optional `title`, `section` groups,
+            // and `<task>: <score 1-5>: <actor>[, …]` rows; tasks plot along x, score on a 1..5 y-axis.
+            case "journey" -> parseJourney(lines, textColor);
             default -> new Empty();
         };
     }
@@ -1942,6 +1948,105 @@ public final class DslParser {
             }
         }
         return new String[] {tok, null};
+    }
+
+    /// The reserved leading journey keywords: `title <text>` sets the (single) diagram title, `section
+    /// <name>` opens a new task group. Any other leading token is a TASK row (`<name>: <score>: <actor>…`).
+    private static final String KW_TITLE = "title";
+    private static final String KW_SECTION = "section";
+
+    /// Parses a mermaid-style `journey` — a user-journey satisfaction map.
+    /// ```
+    /// journey
+    ///   title My working day
+    ///   section Go to work
+    ///     Make tea: 5: Me
+    ///     Commute: 3: Me, Cat
+    ///   section Do work
+    ///     Code: 5: Me
+    ///     Meetings: 2: Me, Boss
+    /// ```
+    /// An optional `title` line names the diagram; a `section <name>` line opens a group; every other
+    /// non-blank line is a task `<name>: <score 1-5>: <actor>[, <actor2>…]`. Robustness (DESIGN §6,
+    /// never fails the bake): a task with NO numeric score is DROPPED; a task appearing BEFORE any
+    /// `section` is DROPPED (it has no group to join); an out-of-range score is CLAMPED into 1..5 (in
+    /// {@link JourneyTask}); the actor list is optional (a scoreless-but-actorless task keeps an empty
+    /// actor list). A bare `journey` body (no sections/tasks) round-trips as a Journey (never Empty).
+    private static Diagram parseJourney(String[] lines, String textColor) {
+        String title = null;
+        List<JourneySection> sections = new ArrayList<>();
+        String sectionName = null;
+        List<JourneyTask> current = null;   // null until the first `section` opens one
+        int taskCount = 0;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String[] kw = splitKeyword(line);
+            if (kw[0].equals(KW_TITLE)) {
+                String t = cap(kw[1].strip());
+                title = t.isEmpty() ? null : t;
+                continue;
+            }
+            if (kw[0].equals(KW_SECTION)) {
+                if (current != null) {
+                    sections.add(new JourneySection(sectionName, current));
+                }
+                sectionName = cap(kw[1].strip());
+                current = new ArrayList<>();
+                continue;
+            }
+            // A task row (`<name>: <score>: <actor>…`). Dropped if malformed OR outside any section.
+            JourneyTask task = parseJourneyTask(line);
+            if (task == null || current == null || taskCount >= MAX_DATA_ROWS) {
+                continue;
+            }
+            current.add(task);
+            taskCount++;
+        }
+        if (current != null) {
+            sections.add(new JourneySection(sectionName, current));
+        }
+        return new Journey(title, sections, textColor);
+    }
+
+    /// Parses one journey task row `<name>: <score>: <actor>[, <actor2>…]` into a {@link JourneyTask},
+    /// or null when malformed (→ the caller drops it, inert). The FIRST colon peels the task name; the
+    /// NEXT colon peels the score from the actor list (a row with only one colon has a score but no
+    /// actors). The score must parse as a finite number (else the row is dropped) and is clamped into
+    /// 1..5 by {@link JourneyTask}. Actors are comma-split, `cap()`'d, empties dropped. Never throws.
+    private static JourneyTask parseJourneyTask(String line) {
+        int c1 = line.indexOf(':');
+        if (c1 < 0) {
+            return null;   // no colon → not a task row, drop
+        }
+        String name = cap(line.substring(0, c1).strip());
+        if (name.isEmpty()) {
+            return null;   // an empty task name → malformed, drop
+        }
+        String rest = line.substring(c1 + 1).strip();
+        int c2 = rest.indexOf(':');
+        String scoreTok = (c2 < 0 ? rest : rest.substring(0, c2)).strip();
+        String actorsPart = c2 < 0 ? "" : rest.substring(c2 + 1).strip();
+        double raw;
+        try {
+            raw = Double.parseDouble(scoreTok);
+        } catch (NumberFormatException e) {
+            return null;   // no numeric score → malformed, drop (never fail the bake)
+        }
+        if (!Double.isFinite(raw)) {
+            return null;   // NaN/Infinity score → drop
+        }
+        int score = (int) Math.max(1, Math.min(5, Math.round(raw)));   // clamp into 1..5 (documented)
+        List<String> actors = new ArrayList<>();
+        for (String a : actorsPart.split(",")) {
+            String s = cap(a.strip());
+            if (!s.isEmpty()) {
+                actors.add(s);
+            }
+        }
+        return new JourneyTask(name, score, actors);
     }
 
     private static String unquote(String s) {

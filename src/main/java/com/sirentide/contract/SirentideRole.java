@@ -17,6 +17,8 @@ import java.util.Set;
 /// {@link #EDGE}; ER entities → {@link #ENTITY}, relations → {@link #EDGE}. mathblock has no discrete
 /// elements, so it emits no anchor group. gitGraph commit dots → {@link #COMMIT}, branch lanes →
 /// {@link #BRANCH} (its spine + name label); a branch/merge connector is decorative and un-anchored.
+/// journey tasks → {@link #TASK} (each task's point disc + name + actor labels); the satisfaction line,
+/// axes, and section-header brackets are decorative and un-anchored.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
@@ -48,6 +50,10 @@ public enum SirentideRole {
     // vocabulary. A commit dot anchors as COMMIT; a branch's lane spine + name label anchor as BRANCH.
     COMMIT("commit"),
     BRANCH("branch"),
+    // -- journey task point (added in the journey slice) — its own closed value so a narrator can say
+    // "the Commute task, scored 3" distinctly from the chart bar/point vocabulary. Each task's point
+    // disc + name label + actor labels anchor together as one TASK group.
+    TASK("task"),
     // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
     CLUSTER("cluster"),
     AXIS("axis");

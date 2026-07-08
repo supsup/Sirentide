@@ -119,6 +119,15 @@ class GoldenSvgTest {
         FIXTURES.put("gitgraph",
             "gitGraph\n  commit\n  commit id: \"fix\"\n  branch develop\n  checkout develop\n"
                 + "  commit\n  commit\n  checkout main\n  merge develop\n  commit\n");
+        // A user-journey satisfaction map (13th type): a title, two sections, several scored tasks, a
+        // MULTI-ACTOR task (Commute: Me, Cat), and an out-of-range score CLAMPED to 5 (Arrive: 9) —
+        // pins the score→y map (higher sits higher), the per-task point discs coloured by score, the
+        // connecting satisfaction line, the section-header brackets + labels, and the stacked actor
+        // labels byte-for-byte.
+        FIXTURES.put("journey",
+            "journey\n  title My working day\n  section Go to work\n    Make tea: 5: Me\n"
+                + "    Commute: 3: Me, Cat\n    Arrive: 9: Me\n  section Do work\n    Code: 5: Me\n"
+                + "    Meetings: 2: Me, Boss\n");
     }
 
     @Test
