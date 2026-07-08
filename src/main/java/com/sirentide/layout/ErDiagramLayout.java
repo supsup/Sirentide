@@ -89,8 +89,15 @@ public final class ErDiagramLayout {
 
     /// One placed entity table: its grid rectangle plus the pre-measured header height and the
     /// (ellipsized) display lines, so the emit pass draws band/rows/text without re-measuring.
+    /// `nameMeasure`/`rowMeasures` are the composite measures for lines carrying `$…$` math (null for
+    /// plain text); `nameRowH`/`rowRowH` are the per-row heights — the fixed pitch for a plain or
+    /// short-math row, GROWN (via {@link MathLabel#boxHeight}) for a row whose fragment is TALLER than
+    /// one line (a matrix / cases / stacked fraction). A row grows iff its height differs from the fixed
+    /// pitch (plan sirentide-tall-math-labels — the attribute row now consumes the fragment HEIGHT).
     private record Placed(ErEntity entity, double x, double y, double w, double h,
-                          double headerH, String name, List<String> rows) {
+                          double headerH, String name, List<String> rows,
+                          MathLabel.Measured nameMeasure, List<MathLabel.Measured> rowMeasures,
+                          double nameRowH, List<Double> rowRowH) {
         double centerX() {
             return x + w / 2;
         }
@@ -120,25 +127,45 @@ public final class ErDiagramLayout {
         double[] headerH = new double[n];
         String[] names = new String[n];
         List<List<String>> rowLines = new ArrayList<>();
+        // Composite measures (null for plain lines) + per-row heights (pitch for plain/short math, GROWN
+        // for a tall multi-row fragment). Parallel to the string lists; consumed by the emit pass.
+        MathLabel.Measured[] nameMeasures = new MathLabel.Measured[n];
+        List<List<MathLabel.Measured>> rowMeasures = new ArrayList<>();
+        double[] nameRowH = new double[n];
+        List<List<Double>> rowRowHs = new ArrayList<>();
         double rowPitch = FONT.lineHeight(ROW_SIZE);
         double namePitch = FONT.lineHeight(NAME_SIZE);
         for (int i = 0; i < n; i++) {
             ErEntity e = entities.get(i);
-            String name = FONT.ellipsize(e.name(), MAX_LABEL_W, NAME_SIZE);
-            names[i] = name;
-            double widest = measure(name, NAME_SIZE, math);
+            Disp nd = disp(e.name(), NAME_SIZE, math);
+            names[i] = nd.display();
+            nameMeasures[i] = nd.measure();
+            nameRowH[i] = rowHeight(nd.measure(), namePitch, NAME_SIZE);
+            double widest = widthOf(nd.display(), nd.measure(), NAME_SIZE);
             List<String> rows = new ArrayList<>();
+            List<MathLabel.Measured> rm = new ArrayList<>();
+            List<Double> rrh = new ArrayList<>();
+            double rowsSum = 0;
             for (ErAttribute a : e.attributes()) {
-                String line = FONT.ellipsize(a.display(), MAX_LABEL_W, ROW_SIZE);
-                rows.add(line);
-                widest = Math.max(widest, measure(line, ROW_SIZE, math));
+                Disp d = disp(a.display(), ROW_SIZE, math);
+                rows.add(d.display());
+                rm.add(d.measure());
+                double rh = rowHeight(d.measure(), rowPitch, ROW_SIZE);
+                rrh.add(rh);
+                rowsSum += rh;
+                widest = Math.max(widest, widthOf(d.display(), d.measure(), ROW_SIZE));
             }
             rowLines.add(rows);
+            rowMeasures.add(rm);
+            rowRowHs.add(rrh);
             boxW[i] = Math.max(MIN_BOX_W, widest + 2 * PAD_X);
-            headerH[i] = namePitch + 2 * PAD_Y;
+            headerH[i] = nameRowH[i] + 2 * PAD_Y;
             // An entity with rows shows the header band + the rows compartment; an attribute-less
-            // entity collapses to a single header box (no rows band, no dividers).
-            double rowsH = e.hasAttributes() ? rows.size() * rowPitch + 2 * PAD_Y : 0;
+            // entity collapses to a single header box (no rows band, no dividers). The rows compartment
+            // is the SUM of its (possibly grown) row heights + padding — for an all-plain / short-math
+            // entity every row is one pitch, so this reduces to the pre-growth `count · pitch + 2·PAD_Y`
+            // and the table is byte-identical.
+            double rowsH = e.hasAttributes() ? rowsSum + 2 * PAD_Y : 0;
             boxH[i] = headerH[i] + rowsH;
         }
 
@@ -192,7 +219,8 @@ public final class ErDiagramLayout {
         Placed[] placed = new Placed[n];
         for (int k = 0; k < n; k++) {
             placed[k] = new Placed(entities.get(k), px[k], py[k], boxW[k], boxH[k],
-                headerH[k], names[k], rowLines.get(k));
+                headerH[k], names[k], rowLines.get(k),
+                nameMeasures[k], rowMeasures.get(k), nameRowH[k], rowRowHs.get(k));
         }
 
         List<Shape> shapes = new ArrayList<>();
@@ -241,6 +269,36 @@ public final class ErDiagramLayout {
         return FONT.runWidth(line, size);
     }
 
+    /// The DISPLAY form of a raw table line plus its composite measure. A `$…$` line (with a renderer)
+    /// SKIPS ellipsization — a formula must never be cut mid-run, which would break the `$…$` delimiters
+    /// and silently drop the math (the reason the class/ER inline-math previously only worked for short
+    /// fragments) — and is measured as a composite; a plain line is ellipsized to MAX_LABEL_W and carries
+    /// a `null` measure (the byte-identical fixed-pitch text path). Mirrors the flowchart engine's
+    /// math-skips-ellipsize rule.
+    private record Disp(String display, MathLabel.Measured measure) {}
+
+    private static Disp disp(String raw, double size, MathFragmentRenderer math) {
+        if (math != null && MathLabel.hasMath(raw)) {
+            return new Disp(raw, MathLabel.measure(raw, size, FONT, math));
+        }
+        return new Disp(FONT.ellipsize(raw, MAX_LABEL_W, size), null);
+    }
+
+    /// A line's advance width from its (possibly null) composite measure — the fragment's composite
+    /// width when it carries math, else the plain glyph advance. Keeps table-sizing byte-identical for
+    /// plain text (same value the old {@link #measure} returned).
+    private static double widthOf(String line, MathLabel.Measured m, double size) {
+        return m != null ? m.width() : FONT.runWidth(line, size);
+    }
+
+    /// The height ONE table row should occupy: the fixed `pitch` for a plain / short-math row
+    /// (byte-identical), else the fragment's grown height via {@link MathLabel#boxHeight} when it is
+    /// TALLER than one line (a matrix / cases / stacked fraction). The seam owns the growth policy; a
+    /// `null` measure (plain row) always yields `pitch`. `rowH != pitch` iff the row grew.
+    private static double rowHeight(MathLabel.Measured m, double pitch, double size) {
+        return m != null ? MathLabel.boxHeight(m, pitch, size, FONT) : pitch;
+    }
+
     /// Emits one entity table's geometry: the rows background rect, the name-band rect, the four border
     /// lines, and (for a populated entity) the header/rows divider. An attribute-less entity is a single
     /// name-filled box with no divider.
@@ -268,7 +326,13 @@ public final class ErDiagramLayout {
     /// in the rows compartment, top-to-bottom (glyph paths / MathBoxes via {@link MathLabel}).
     private static void emitTableText(List<Shape> shapes, Placed p, MathFragmentRenderer math) {
         double cx = p.centerX();
-        double nameBaseline = p.y() + p.headerH() / 2 + NAME_SIZE * 0.35;
+        double namePitch = FONT.lineHeight(NAME_SIZE);
+        // Name — centered in the header band. A GROWN name row (a tall fragment) centers the fragment
+        // ink in the whole band via {@link MathLabel#baselineInBox}; a plain / short-math name keeps the
+        // EXACT legacy baseline (band midpoint), so its bytes are unchanged.
+        double nameBaseline = p.nameRowH() != namePitch
+            ? MathLabel.baselineInBox(p.nameMeasure(), p.y(), p.headerH())
+            : p.y() + p.headerH() / 2 + NAME_SIZE * 0.35;
         emitLine(shapes, p.name(), cx, nameBaseline, NAME_SIZE, true, Colors.contrastFill(NAME_FILL), math);
         if (!p.entity().hasAttributes()) {
             return;
@@ -276,11 +340,19 @@ public final class ErDiagramLayout {
         double rowPitch = FONT.lineHeight(ROW_SIZE);
         double ascent = FONT.ascent(ROW_SIZE);
         double leftX = p.x() + PAD_X;
-        double rowsTop = p.y() + p.headerH();
+        // Rows — march a cursor by each row's (possibly grown) height. A plain / short-math row takes one
+        // `rowPitch` and lands at the EXACT legacy baseline (`rowTop + ascent`); a tall fragment grows its
+        // row and centers its ink via {@link MathLabel#baselineInBox}, pushing the rows below it down.
+        // All-plain entities march by rowPitch → byte-identical.
+        double y = p.y() + p.headerH() + PAD_Y;
         for (int k = 0; k < p.rows().size(); k++) {
-            double baseline = rowsTop + PAD_Y + ascent + k * rowPitch;
+            double rowH = p.rowRowH().get(k);
+            double baseline = rowH != rowPitch
+                ? MathLabel.baselineInBox(p.rowMeasures().get(k), y, rowH)
+                : y + ascent;
             emitLine(shapes, p.rows().get(k), leftX, baseline, ROW_SIZE, false,
                 Colors.contrastFill(BOX_FILL), math);
+            y += rowH;
         }
     }
 

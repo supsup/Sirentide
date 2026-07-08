@@ -106,6 +106,14 @@ class ShowcaseGenTest {
             "erDiagram\nCUSTOMER ||--o{ ORDER : places\nORDER ||--|{ LINE-ITEM : contains\n"
                 + "CUSTOMER }o--o| ADDRESS : has\nCUSTOMER {\nstring name PK\nstring email\nint age\n}\n"
                 + "ORDER {\nint id PK\ndate created\n}"),
+        new Card("Class diagram — tall math", "classDiagram",
+            "A compartment row GROWS to contain a tall multi-row fragment — a matrix, cases, or a "
+                + "stacked fraction — reusing the same math seam the flowchart nodes use. The rows "
+                + "below it shift down, the box grows, and the relationship anchor tracks the taller "
+                + "border. Short / plain labels stay byte-identical (they never grow).",
+            "classDiagram\nclass Matrix {\n+grid $\\begin{matrix} a & b \\\\ c & d \\end{matrix}$\n"
+                + "+int rank\n+det() double\n}\nMatrix --> Scalar : maps",
+            true),
         new Card("Display math", "mathblock",
             "A standalone full-size equation — the whole body is one LaTeX expression, baked "
                 + "centered to real glyph paths and a fraction-bar <code>&lt;rect&gt;</code>. Paste an "
