@@ -96,6 +96,11 @@ class BrewShotGalleryTest {
                 + "\nquadrant-1 \"Major project\"\nquadrant-2 \"Quick win\"\nquadrant-3 \"Deprioritize\""
                 + "\nquadrant-4 \"Fill-in\"\n\"Feature A\" : [0.3, 0.6]\n\"Feature B\" : [0.75, 0.8]"
                 + "\n\"Feature C\" : [0.5, 0.2]\n\"Feature D\" : [0.85, 0.35]"),
+        new Case("classDiagram", "Class diagram (UML — all five relationship markers)",
+            "classDiagram\nclass Animal {\n+String name\n+int age\n+eat() void\n+sleep()\n}\n"
+                + "class Dog {\n+bark() void\n}\nAnimal <|-- Dog : inherits\n"
+                + "Animal *-- Collar : composition\nAnimal o-- Owner : aggregation\n"
+                + "Dog --> Bone : association\nDog ..> Vet : dependency"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

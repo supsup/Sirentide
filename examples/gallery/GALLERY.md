@@ -181,6 +181,28 @@ quadrant-4 "Fill-in"
 
 ![Quadrant chart (2×2 prioritization matrix)](quadrant.png)
 
+## Class diagram (UML — all five relationship markers)
+
+```
+classDiagram
+class Animal {
++String name
++int age
++eat() void
++sleep()
+}
+class Dog {
++bark() void
+}
+Animal <|-- Dog : inherits
+Animal *-- Collar : composition
+Animal o-- Owner : aggregation
+Dog --> Bone : association
+Dog ..> Vet : dependency
+```
+
+![Class diagram (UML — all five relationship markers)](classDiagram.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

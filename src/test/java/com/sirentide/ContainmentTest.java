@@ -112,6 +112,19 @@ class ContainmentTest {
         // bare quadrant: no axis/quadrant labels, no points → a valid EMPTY 2×2 grid (still in-set,
         // never the inert shell — the type round-trips even with an empty body).
         "quadrant\n",
+        // class diagram (9th type): a POPULATED three-compartment class + all FIVE relationship markers
+        // (hollow-triangle inheritance, filled-diamond composition, hollow-diamond aggregation, open-arrow
+        // association, dashed-open-arrow dependency), an auto-vivified empty class, an UNCLOSED block, and
+        // a MALFORMED relation (empty endpoint) — exercises the marker paths/lines + the dashed-segment
+        // edge + the compartment bands/dividers through the allowlist (all in svg/path/rect/line/glyph).
+        "classDiagram\n  class Animal {\n    +String name\n    +eat() void\n  }\n  class Dog {\n"
+            + "    +bark() void\n  }\n  Animal <|-- Dog : inherits\n  Animal *-- Collar : composition\n"
+            + "  Animal o-- Owner : aggregation\n  Dog --> Bone : association\n  Dog ..> Vet : dependency\n"
+            + "  Animal *-- \n  garbage line here\n",
+        // bare class diagram: no classes → a valid empty canvas (round-trips, never the inert shell).
+        "classDiagram\n",
+        // class diagram unclosed brace: degrade-not-throw (closes at EOF) — must stay in-set.
+        "classDiagram\n  class A {\n    +x\n    +go()\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell
