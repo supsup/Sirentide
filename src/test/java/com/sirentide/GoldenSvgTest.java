@@ -45,6 +45,13 @@ class GoldenSvgTest {
         FIXTURES.put("flowchart",
             "flowchart TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Build] --> D[Ship]\n"
                 + "  B -->|no| E[Fix] --> A\n");
+        // A flowchart with a subgraph AND a NESTED subgraph: `outer` wraps C/D/F/G, `inner` (nested)
+        // wraps D/F. Pins the cluster frame border geometry (four lines), the title band + glyph tab,
+        // the nesting inset (inner padding tightens by depth), and the canvas grow-to-fit byte-for-byte.
+        FIXTURES.put("flowchart-subgraph",
+            "flowchart TD\n  A[Start] --> B[Work]\n  subgraph outer [Outer]\n    B --> C[Compile]\n"
+                + "    subgraph inner [Inner]\n      C --> D[Test]\n      D --> F[Lint]\n    end\n"
+                + "    F --> G[Package]\n  end\n  G --> E[Ship]\n");
         // A 3-actor sequence with ACTIVATION bars (M2): Client→Gateway opens Gateway's bar,
         // Gateway→Auth opens Auth's, Auth-->>Gateway closes Auth's, a NESTED self-call on Gateway
         // stacks an offset bar, and the final reply closes it — pinning the activation-rect geometry

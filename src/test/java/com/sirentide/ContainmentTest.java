@@ -61,6 +61,16 @@ class ContainmentTest {
         // operator-scan hardening: a bracket-EMBEDDED arrow (label "a-->b", NOT an edge split) plus a
         // CHAINED multi-hop line (A→B→C) — bake-through safety that the parse-fix output stays in-set.
         "flowchart TD\n  A[a-->b] --> C\n  A --> B --> C\n",
+        // flowchart SUBGRAPH clusters: an outer `subgraph … end`, a NESTED subgraph inside it, an
+        // EMPTY subgraph (no members → no frame), and a STRAY `end` (malformed→inert) — exercises the
+        // new cluster frame border lines, the title-band rect, the title glyph run, and the nesting
+        // inset through the allowlist (rect/line already in-set; proves the frame obeys the grammar).
+        "flowchart TD\n  A[Start] --> B[Work]\n  subgraph outer [Outer]\n    B --> C[Compile]\n"
+            + "    subgraph inner [Inner]\n      C --> D[Test]\n    end\n  end\n"
+            + "  subgraph empty [Nothing declared here]\n  end\n  end\n  D --> E[Ship]\n",
+        // LR subgraph cluster: a subgraph in the left→right geometry — the frame must contain its
+        // members and stay in-set after the LR coordinate pass + any grow-to-fit shift.
+        "flowchart LR\n  A --> B\n  subgraph grp [Group]\n    B --> C\n    C --> D\n  end\n  D --> E\n",
         // sequence (6th type): a call `->>` + a reply `-->>` + a SELF-message + an UNLABELED message
         // — exercises the filled-triangle arrowhead, the open-V (line-pair) reply head, the self-hook,
         // and the label-clamp, all through the allowlist.

@@ -2,6 +2,7 @@ package com.sirentide.parse;
 
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
@@ -377,6 +378,13 @@ public final class DslParser {
         Map<String, String> nodeShapes = new java.util.HashMap<>();
         Map<String, String> nodeColors = new java.util.HashMap<>();
         List<FlowEdge> edges = new ArrayList<>();
+        // subgraph/end CLUSTER tracking (mirrors the sequence alt/loop/par block stack): a stack of
+        // OPEN clusters (innermost on top) whose member lists grow as nodes are FIRST SEEN inside
+        // them, plus the closed clusters ready for the IR. A node newly registered while clusters are
+        // open joins EVERY open cluster (transitive membership → the outer box encloses inner members).
+        Deque<OpenCluster> clusterStack = new ArrayDeque<>();
+        List<FlowCluster> clusters = new ArrayList<>();
+        int clusterCounter = 0;
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
@@ -385,12 +393,31 @@ public final class DslParser {
             // Operator-scan for the top-level `-->` positions (outside every bracket/brace/pipe span).
             List<Integer> arrows = topLevelArrows(line);
             if (arrows.isEmpty()) {
+                // A leading `subgraph`/`end` keyword on an ARROWLESS line is a CLUSTER directive, not a
+                // node (the no-arrow guard keeps a real node spelled `end`/`subgraph` — vanishingly
+                // rare — parsing normally). `subgraph <id> [title]` opens; `end` closes the innermost.
+                String[] kwRest = splitKeyword(line);
+                if (kwRest[0].equals(KW_SUBGRAPH)) {
+                    if (clusterStack.size() < MAX_BLOCK_DEPTH) {
+                        clusterStack.push(parseSubgraphOpen(kwRest[1], clusterStack.size(), ++clusterCounter));
+                    }
+                    // Past the nesting cap the open is swallowed; its `end` closes an inert/other
+                    // cluster or hits an empty stack (never allocate unboundedly, never throw).
+                    continue;
+                }
+                if (kwRest[0].equals(KW_END)) {
+                    if (!clusterStack.isEmpty()) {
+                        clusters.add(clusterStack.pop().freeze());
+                    }
+                    // A stray `end` (nothing open) is inert (malformed→inert, DESIGN §6).
+                    continue;
+                }
                 // No edge operator at top level → the whole line is a lone node declaration. A
                 // bracket-swallowed arrow (`A[Start --> B[End]`) lands here too and drops via the
                 // endpoint validator (nested `[` → malformed), NOT as a plausible node.
                 String[] nd = parseEndpoint(line);
-                if (nd != null) {
-                    registerNode(nodeLabels, nodeShapes, nodeColors, nd);
+                if (nd != null && registerNode(nodeLabels, nodeShapes, nodeColors, nd)) {
+                    joinOpenClusters(clusterStack, nd[0]);
                 }
                 continue;
             }
@@ -432,9 +459,12 @@ public final class DslParser {
                 continue;
             }
             // Register every endpoint (only after the whole chain validated — a partial line never
-            // half-registers), then wire one edge per hop with that hop's own label.
+            // half-registers), then wire one edge per hop with that hop's own label. A newly-seen
+            // endpoint joins every open cluster (transitive membership).
             for (String[] ep : endpoints) {
-                registerNode(nodeLabels, nodeShapes, nodeColors, ep);
+                if (registerNode(nodeLabels, nodeShapes, nodeColors, ep)) {
+                    joinOpenClusters(clusterStack, ep[0]);
+                }
             }
             for (int k = 0; k < hopLabels.size(); k++) {
                 String from = endpoints.get(k)[0];
@@ -447,12 +477,88 @@ public final class DslParser {
                 }
             }
         }
+        // Any cluster still open at end-of-input closes here (innermost first) — an unclosed
+        // `subgraph` degrades gracefully to a cluster spanning to EOF, never throws (DESIGN §6).
+        while (!clusterStack.isEmpty()) {
+            clusters.add(clusterStack.pop().freeze());
+        }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
             nodes.add(new FlowNode(e.getKey(), e.getValue(),
                 nodeShapes.getOrDefault(e.getKey(), "rect"), nodeColors.get(e.getKey())));
         }
-        return new Flowchart(nodes, edges, direction, textColor, nodeColor);
+        return new Flowchart(nodes, edges, direction, textColor, nodeColor, clusters);
+    }
+
+    /// The reserved leading CLUSTER keywords: `subgraph <id> [title]` opens a cluster box, `end`
+    /// closes the innermost open one (shared with the sequence block `end`). A line whose first token
+    /// is one of these AND which carries no top-level arrow is a cluster directive, never a node.
+    private static final String KW_SUBGRAPH = "subgraph";
+
+    /// Parses a `subgraph` directive's tail into an {@link OpenCluster}. Accepted forms (the rest is
+    /// everything after the `subgraph` keyword): `id`, `id [Free title]`, `id ["Quoted title"]`, a
+    /// bare `"Quoted title"` (id == title), or empty (an anonymous cluster, id `__cluster_N__`). The
+    /// FIRST `[` (with a matching `]`) delimits an explicit title; before it is the id. Without a
+    /// bracket the whole tail is the (unquoted) title and its first whitespace token is the id.
+    /// Title/id are `cap()`'d; a missing title defaults to the id (mermaid semantics). Never throws.
+    private static OpenCluster parseSubgraphOpen(String rest, int depth, int counter) {
+        String id;
+        String title;
+        int open = rest.indexOf('[');
+        int close = open >= 0 ? rest.indexOf(']', open + 1) : -1;
+        if (open >= 0 && close > open) {
+            title = cap(unquote(rest.substring(open + 1, close).strip()));
+            String idPart = rest.substring(0, open).strip();
+            id = idPart.isEmpty() ? (title.isEmpty() ? autoClusterId(counter) : title) : cap(idPart);
+        } else if (rest.isEmpty()) {
+            id = autoClusterId(counter);
+            title = "";
+        } else {
+            title = cap(unquote(rest));
+            int sp = rest.indexOf(' ');
+            String idPart = (rest.startsWith("\"") || sp < 0) ? title : cap(rest.substring(0, sp).strip());
+            id = idPart.isEmpty() ? autoClusterId(counter) : idPart;
+        }
+        // A blank title falls back to the id so the frame's top band always says something.
+        if (title.isEmpty()) {
+            title = id;
+        }
+        return new OpenCluster(id, title, depth);
+    }
+
+    private static String autoClusterId(int counter) {
+        return "__cluster_" + counter + "__";
+    }
+
+    /// Adds a node id to EVERY currently-open cluster (transitive membership: the node belongs to the
+    /// innermost open cluster and all its ancestors, so an outer frame encloses inner members). A
+    /// bounded per-cluster member list guards against a pathological node count (DESIGN §6/§7).
+    private static void joinOpenClusters(Deque<OpenCluster> stack, String nodeId) {
+        for (OpenCluster c : stack) {
+            if (c.members.size() < MAX_NODES) {
+                c.members.add(nodeId);
+            }
+        }
+    }
+
+    /// A mutable open-cluster accumulator on the parse stack: id/title/depth fixed at open time,
+    /// `members` grow as nodes are first seen inside; `freeze` snapshots it to an immutable
+    /// {@link FlowCluster}. Parse-internal, never surfaced in the IR.
+    private static final class OpenCluster {
+        final String id;
+        final String title;
+        final int depth;
+        final List<String> members = new ArrayList<>();
+
+        OpenCluster(String id, String title, int depth) {
+            this.id = id;
+            this.title = title;
+            this.depth = depth;
+        }
+
+        FlowCluster freeze() {
+            return new FlowCluster(id, title, members, depth);
+        }
     }
 
     /// Scans a body line for the byte offsets of every top-level `-->` — one that lies OUTSIDE any
@@ -669,17 +775,21 @@ public final class DslParser {
     /// id itself when bare), subject to {@link #MAX_NODES}. An already-seen id UPGRADES from a
     /// default (label == id) to its first decorated label; the first DECORATED occurrence also sets
     /// the shape AND the colour (a later mention never changes any of them — first decoration wins).
-    private static void registerNode(LinkedHashMap<String, String> map, Map<String, String> shapes,
-                                     Map<String, String> colors, String[] nd) {
+    /// Returns true IFF this call NEWLY registered the id (so the caller assigns cluster membership on
+    /// first sight only) — false for an already-seen id or one dropped past the node cap.
+    private static boolean registerNode(LinkedHashMap<String, String> map, Map<String, String> shapes,
+                                        Map<String, String> colors, String[] nd) {
         String id = nd[0];
         String decoratedLabel = nd[1];   // null when the token was bare
         String shape = nd[2];            // null when the token was bare
         String color = nd[3];            // null when no trailing `#hex` colour
+        boolean newlyRegistered = false;
         if (!map.containsKey(id)) {
             if (map.size() >= MAX_NODES) {
-                return;   // drop past the node cap (never throw / never allocate unboundedly)
+                return false;   // drop past the node cap (never throw / never allocate unboundedly)
             }
             map.put(id, decoratedLabel != null ? decoratedLabel : id);
+            newlyRegistered = true;
         } else if (decoratedLabel != null && map.get(id).equals(id)) {
             map.put(id, decoratedLabel);   // first decorated occurrence upgrades a bare default
         }
@@ -689,6 +799,7 @@ public final class DslParser {
         if (color != null && map.containsKey(id) && !colors.containsKey(id)) {
             colors.put(id, color);   // first colour-bearing occurrence wins the colour
         }
+        return newlyRegistered;
     }
 
     /// Parses a sequence diagram: actors across the top and time-ordered messages between them.

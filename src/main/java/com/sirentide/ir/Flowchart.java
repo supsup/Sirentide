@@ -16,12 +16,17 @@ import java.util.List;
 /// `nodeColor` is the header `nodecolor=#hex` default box fill — a canonical `#rrggbb`, or `null`
 /// for the built-in `#dbe4ff`. It applies to every node WITHOUT its own {@link FlowNode#color()};
 /// a per-node colour always wins.
+///
+/// `clusters` are the `subgraph … end` {@link FlowCluster} boxes (empty for a subgraph-free chart —
+/// additive, so the pre-cluster bake is byte-identical). Each cluster names the member nodes it
+/// encloses and its nesting depth; layout draws a titled frame UNDER the nodes/edges.
 public record Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor,
-                        String nodeColor) implements Diagram {
+                        String nodeColor, List<FlowCluster> clusters) implements Diagram {
 
     public Flowchart {
         nodes = List.copyOf(nodes);
         edges = List.copyOf(edges);
+        clusters = List.copyOf(clusters);
         if (direction == null || !direction.equals("LR")) {
             direction = "TD";   // TD is the default; only TD and LR are recognized
         }
@@ -30,14 +35,21 @@ public record Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direc
         }
     }
 
+    /// No subgraph clusters — keeps a caller that supplies nodes+edges+direction+textColor+nodeColor
+    /// (every pre-cluster caller, incl. the state-diagram wrapper) byte-for-byte unchanged.
+    public Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor,
+                     String nodeColor) {
+        this(nodes, edges, direction, textColor, nodeColor, List.of());
+    }
+
     /// No header node colour — keeps a caller that supplies just direction+textColor unchanged.
     public Flowchart(List<FlowNode> nodes, List<FlowEdge> edges, String direction, String textColor) {
-        this(nodes, edges, direction, textColor, null);
+        this(nodes, edges, direction, textColor, null, List.of());
     }
 
     /// Default construction (TD, `currentColor` edge labels, default box fill) — keeps a caller that
     /// builds a Flowchart from just its nodes+edges unchanged.
     public Flowchart(List<FlowNode> nodes, List<FlowEdge> edges) {
-        this(nodes, edges, "TD", "currentColor", null);
+        this(nodes, edges, "TD", "currentColor", null, List.of());
     }
 }
