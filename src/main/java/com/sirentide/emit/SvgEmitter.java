@@ -1,5 +1,6 @@
 package com.sirentide.emit;
 
+import com.sirentide.a11y.A11y;
 import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
@@ -24,15 +25,45 @@ public final class SvgEmitter {
     /// (H2: a legal timeline of MAX_DATA_ROWS × MAX_LABEL_LEN labels reached ~5.9 GB and OOM'd).
     static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG — mirrors Sirentide.MAX_OUTPUT_BYTES
 
+    /// Back-compat overload: emit with NO accessibility payload (the inert/degenerate path and the
+    /// direct-emit tests). Byte-identical to the pre-a11y output.
     public static String emit(LaidOut laid) {
+        return emit(laid, A11y.NONE);
+    }
+
+    /// Emit a laid-out scene to SVG, carrying a deterministic accessibility payload: a root
+    /// `role="img"`, a `<title>` (the diagram type/name), and a `<desc>` (the reading-order
+    /// description built from the IR by {@link com.sirentide.a11y.A11yDescriber}). `<title>`/`<desc>`
+    /// are the ONE place text lives as real text in Sirentide's output — they are not rendered
+    /// visually, so their content is XML-escaped here rather than baked to glyph paths. A BLANK
+    /// payload ({@link A11y#isBlank}) emits none of it, so the empty/inert shell is unchanged.
+    public static String emit(LaidOut laid, A11y a11y) {
         StringBuilder sb = new StringBuilder();
         // Emit explicit width/height ALONGSIDE the viewBox. A viewBox-only root collapses/overlaps
         // inside the Stafficy /docs MD->HTML sanitizer (Confluence-flagged); intrinsic width/height
         // give it a concrete box. Added to SirentideContract's svg allowlist as an M1 widening.
+        boolean a11yOn = a11y != null && !a11y.isBlank();
         sb.append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"")
             .append(fmt(laid.width())).append("\" height=\"").append(fmt(laid.height()))
             .append("\" viewBox=\"0 0 ")
-            .append(fmt(laid.width())).append(' ').append(fmt(laid.height())).append("\">");
+            .append(fmt(laid.width())).append(' ').append(fmt(laid.height())).append('"');
+        // role="img" is the standard SVG a11y hook: it makes the graphic an atomic image node whose
+        // accessible name/description come from the <title>/<desc> below. Skipped (with them) for the
+        // inert shell so a bare/failed bake stays byte-identical. The contract allows role only here.
+        if (a11yOn) {
+            sb.append(" role=\"img\"");
+        }
+        sb.append('>');
+        if (a11yOn) {
+            // <title> = the short accessible name; <desc> = the long reading-order description. Both
+            // are the top-level diagram's a11y text (NEVER emitted inside a math fragment / nested).
+            if (!a11y.title().isBlank()) {
+                sb.append("<title>").append(xmlEscape(a11y.title())).append("</title>");
+            }
+            if (!a11y.desc().isBlank()) {
+                sb.append("<desc>").append(xmlEscape(a11y.desc())).append("</desc>");
+            }
+        }
         for (Shape shape : laid.shapes()) {
             appendShape(sb, shape);
             // Bound the buffer as it grows: a cheap sb.length() compare after each shape stops a
@@ -112,6 +143,25 @@ public final class SvgEmitter {
                 "Sirentide emitter: non-contract fill/stroke value reached the sink: \"" + c + "\"");
         }
         return c;
+    }
+
+    /// XML-escape a11y TEXT for `<title>`/`<desc>`: `&`, `<`, `>`, `"` become entities so a label
+    /// containing markup metacharacters (`A < B`, `a & b`, a stray `"`) can never break the SVG or
+    /// smuggle an element. `&` is escaped FIRST so an already-produced entity isn't double-escaped.
+    /// This is the containment guarantee for the one text-as-text seam in the output.
+    private static String xmlEscape(String s) {
+        StringBuilder out = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '&' -> out.append("&amp;");
+                case '<' -> out.append("&lt;");
+                case '>' -> out.append("&gt;");
+                case '"' -> out.append("&quot;");
+                default -> out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     /// Deterministic, locale-independent number formatting: 3 decimal places, integer when

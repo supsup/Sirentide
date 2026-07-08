@@ -1,0 +1,342 @@
+package com.sirentide.a11y;
+
+import com.sirentide.ir.Diagram;
+import com.sirentide.ir.Empty;
+import com.sirentide.ir.Flowchart;
+import com.sirentide.ir.FlowEdge;
+import com.sirentide.ir.FlowNode;
+import com.sirentide.ir.Gantt;
+import com.sirentide.ir.Pie;
+import com.sirentide.ir.Point;
+import com.sirentide.ir.QuadrantChart;
+import com.sirentide.ir.SeqMessage;
+import com.sirentide.ir.Sequence;
+import com.sirentide.ir.Slice;
+import com.sirentide.ir.StateDiagram;
+import com.sirentide.ir.Task;
+import com.sirentide.ir.Timeline;
+import com.sirentide.ir.XyChart;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/// Builds the deterministic {@link A11y} (title + reading-order description) for a baked SVG,
+/// PURELY from the {@link Diagram} IR — no geometry, no timestamps, no randomness. Called once per
+/// bake by {@link com.sirentide.api.Sirentide#render}; the string it returns is a byte-stable
+/// function of the diagram, so two renders of the same DSL produce the identical `<title>`/`<desc>`.
+///
+/// The description reads in the diagram's own order (nodes/edges/slices/messages as declared) and
+/// names each element by its LABEL text + role — the a11y equivalent of the visual reading order.
+/// Flowchart, pie, and sequence get RICH per-type descriptions (nodes+edges, slices+values,
+/// actors+messages); xychart/timeline/gantt/state/quadrant get a lighter type+members description;
+/// {@link Empty} gets {@link A11y#NONE} (the inert shell carries no a11y, staying byte-identical to
+/// the pre-a11y shell).
+///
+/// Bounds: every enumerated label is capped ({@link #LABEL_CAP}) and every list is capped
+/// ({@link #ITEM_CAP}) with a trailing `…`, so an oversized/adversarial label can't inflate the
+/// `<desc>` — the description is bounded by construction, same discipline as the emitter's byte-cap.
+public final class A11yDescriber {
+
+    private A11yDescriber() {}
+
+    /// Max characters kept from a single label before it is ellipsized in the description.
+    private static final int LABEL_CAP = 80;
+
+    /// Max members enumerated from any one list (nodes/edges/slices/messages/…) before a trailing
+    /// `…`. Keeps the `<desc>` bounded regardless of diagram size (deterministic truncation).
+    private static final int ITEM_CAP = 40;
+
+    /// Build the a11y payload for a diagram. Exhaustive over the sealed IR; a blank/degenerate
+    /// diagram yields {@link A11y#NONE}.
+    public static A11y describe(Diagram ir) {
+        return switch (ir) {
+            case Pie pie -> pie(pie);
+            case Flowchart fc -> flowchart(fc, "Flowchart");
+            case Sequence s -> sequence(s);
+            case StateDiagram sd -> state(sd);
+            case XyChart chart -> xychart(chart);
+            case Timeline tl -> timeline(tl);
+            case Gantt gantt -> gantt(gantt);
+            case QuadrantChart q -> quadrant(q);
+            case Empty ignored -> A11y.NONE;
+        };
+    }
+
+    // ---- rich types -------------------------------------------------------------------------
+
+    /// Pie: "Pie chart with N slices: Reviews 40, Builds 30, Docs 30." Values format with the same
+    /// integer-when-whole rule the emitter uses, so the desc reads like the on-slice labels.
+    private static A11y pie(Pie pie) {
+        int n = pie.slices().size();
+        StringBuilder d = new StringBuilder("Pie chart with ").append(n)
+            .append(n == 1 ? " slice" : " slices");
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                Slice s = pie.slices().get(i);
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(s.label())).append(' ').append(num(s.value()));
+            }
+            if (n > shown) {
+                d.append(", …");
+            }
+        }
+        d.append('.');
+        return new A11y("Pie chart", d.toString());
+    }
+
+    /// Flowchart: "Flowchart with N nodes and M edges. Nodes: A, B, C. A leads to B labeled \"yes\";
+    /// …". Nodes and edges are read in declaration order; each edge resolves its endpoints to their
+    /// display labels. Shared with the state diagram (which reuses the flowchart engine).
+    private static A11y flowchart(Flowchart fc, String typeWord) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (FlowNode node : fc.nodes()) {
+            labels.put(node.id(), node.label());
+        }
+        int nodeCount = fc.nodes().size();
+        int edgeCount = fc.edges().size();
+        StringBuilder d = new StringBuilder(typeWord).append(" with ")
+            .append(nodeCount).append(nodeCount == 1 ? " node" : " nodes")
+            .append(" and ").append(edgeCount).append(edgeCount == 1 ? " edge" : " edges").append('.');
+        if (nodeCount > 0) {
+            d.append(" Nodes: ");
+            int shown = Math.min(nodeCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(nodeLabel(labels, fc.nodes().get(i).id(), fc.nodes().get(i).label())));
+            }
+            d.append(nodeCount > shown ? ", …." : ".");
+        }
+        if (edgeCount > 0) {
+            d.append(' ');
+            int shown = Math.min(edgeCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                FlowEdge e = fc.edges().get(i);
+                d.append(label(nodeLabel(labels, e.from(), e.from())))
+                    .append(" leads to ")
+                    .append(label(nodeLabel(labels, e.to(), e.to())));
+                if (e.label() != null && !e.label().isBlank()) {
+                    d.append(" labeled \"").append(label(e.label())).append('"');
+                }
+            }
+            d.append(edgeCount > shown ? "; …." : ".");
+        }
+        return new A11y(typeWord, d.toString());
+    }
+
+    /// Sequence: "Sequence diagram with N actors: Alice, Bob. Messages: Alice to Bob: Request;
+    /// Bob to Alice: Token (reply); …". Actors in first-seen order, messages in declaration order,
+    /// each tagged call/reply and self where relevant.
+    private static A11y sequence(Sequence s) {
+        int actorCount = s.actors().size();
+        int msgCount = s.messages().size();
+        StringBuilder d = new StringBuilder("Sequence diagram with ")
+            .append(actorCount).append(actorCount == 1 ? " actor" : " actors");
+        if (actorCount > 0) {
+            d.append(": ");
+            int shown = Math.min(actorCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(s.actors().get(i)));
+            }
+            d.append(actorCount > shown ? ", …" : "");
+        }
+        d.append('.');
+        if (msgCount > 0) {
+            d.append(" Messages: ");
+            int shown = Math.min(msgCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                SeqMessage m = s.messages().get(i);
+                d.append(label(m.from())).append(" to ").append(label(m.to()));
+                if (m.label() != null && !m.label().isBlank()) {
+                    d.append(": ").append(label(m.label()));
+                }
+                if (m.reply()) {
+                    d.append(" (reply)");
+                }
+            }
+            d.append(msgCount > shown ? "; …." : ".");
+        }
+        return new A11y("Sequence diagram", d.toString());
+    }
+
+    /// State diagram: reuses the flowchart description over its wrapped graph, mapping the
+    /// `__start__`/`__end__` pseudostates to readable "start"/"end" so the desc reads naturally.
+    private static A11y state(StateDiagram sd) {
+        Flowchart g = sd.graph();
+        // Re-label the pseudostates so the shared flowchart describer reads "start"/"end", not the
+        // internal ids. A tiny relabel-and-delegate; geometry is untouched (this is desc-only).
+        java.util.List<FlowNode> nodes = new java.util.ArrayList<>();
+        for (FlowNode n : g.nodes()) {
+            nodes.add(new FlowNode(n.id(), pseudo(n.id(), n.label()), n.shape(), n.color()));
+        }
+        Flowchart relabeled = new Flowchart(nodes, g.edges(), g.direction(), g.textColor(), g.nodeColor());
+        A11y base = flowchart(relabeled, "State diagram");
+        return new A11y("State diagram", base.desc());
+    }
+
+    private static String pseudo(String id, String label) {
+        return switch (id) {
+            case "__start__" -> "start";
+            case "__end__" -> "end";
+            default -> label;
+        };
+    }
+
+    // ---- lighter types (type + members) -----------------------------------------------------
+
+    /// Xychart: names the render mode (bar/line/scatter) and enumerates the categories.
+    private static A11y xychart(XyChart chart) {
+        String mode = switch (chart.mode()) {
+            case "line" -> "Line chart";
+            case "scatter" -> "Scatter chart";
+            default -> "Bar chart";
+        };
+        int n = chart.bars().size();
+        StringBuilder d = new StringBuilder(mode).append(" with ").append(n)
+            .append(n == 1 ? " category" : " categories");
+        appendSliceLabels(d, chart.bars(), n);
+        return new A11y(mode, d.toString());
+    }
+
+    /// Timeline: enumerates the events (label + value/year) in order.
+    private static A11y timeline(Timeline tl) {
+        int n = tl.events().size();
+        StringBuilder d = new StringBuilder("Timeline with ").append(n)
+            .append(n == 1 ? " event" : " events");
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                Slice s = tl.events().get(i);
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(s.label())).append(' ')
+                    .append(s.valueLabel() != null ? label(s.valueLabel()) : num(s.value()));
+            }
+            d.append(n > shown ? ", …" : "");
+        }
+        d.append('.');
+        return new A11y("Timeline", d.toString());
+    }
+
+    /// Gantt: enumerates the tasks (name + start–end span) in order.
+    private static A11y gantt(Gantt gantt) {
+        int n = gantt.tasks().size();
+        StringBuilder d = new StringBuilder("Gantt chart with ").append(n)
+            .append(n == 1 ? " task" : " tasks");
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                Task t = gantt.tasks().get(i);
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(t.label())).append(' ').append(num(t.start()))
+                    .append(" to ").append(num(t.end()));
+            }
+            d.append(n > shown ? ", …" : "");
+        }
+        d.append('.');
+        return new A11y("Gantt chart", d.toString());
+    }
+
+    /// Quadrant chart: names the axis ends (when present) and enumerates the plotted points.
+    private static A11y quadrant(QuadrantChart q) {
+        int n = q.points().size();
+        StringBuilder d = new StringBuilder("Quadrant chart");
+        if (q.xLo() != null || q.xHi() != null) {
+            d.append(", x-axis ").append(label(orEmpty(q.xLo()))).append(" to ")
+                .append(label(orEmpty(q.xHi())));
+        }
+        if (q.yLo() != null || q.yHi() != null) {
+            d.append(", y-axis ").append(label(orEmpty(q.yLo()))).append(" to ")
+                .append(label(orEmpty(q.yHi())));
+        }
+        d.append(", with ").append(n).append(n == 1 ? " point" : " points");
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                Point p = q.points().get(i);
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(p.label()));
+            }
+            d.append(n > shown ? ", …" : "");
+        }
+        d.append('.');
+        return new A11y("Quadrant chart", d.toString());
+    }
+
+    // ---- helpers ----------------------------------------------------------------------------
+
+    private static void appendSliceLabels(StringBuilder d, java.util.List<Slice> items, int n) {
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(items.get(i).label()));
+            }
+            d.append(n > shown ? ", …" : "");
+        }
+        d.append('.');
+    }
+
+    private static String nodeLabel(Map<String, String> labels, String id, String fallback) {
+        String l = labels.get(id);
+        return l != null ? l : fallback;
+    }
+
+    private static String orEmpty(String s) {
+        return s == null ? "" : s;
+    }
+
+    /// Clean a label for the description: drop inline `$…$` math spans (raw LaTeX like `$E=mc^2$` or
+    /// `$\frac vr$` is NOISE to a screen reader — the math renders VISUALLY to baked glyph paths, so
+    /// the desc names only the textual portion; this also keeps the math-baking moat intact: no LaTeX
+    /// source leaks into the output text), collapse whitespace/newlines to single spaces, and cap the
+    /// length (ellipsized) so no single label can inflate the `<desc>`. Deterministic. RESIDUAL: the
+    /// math itself is not VERBALIZED in the desc (a mathspeak translation is a follow-up).
+    private static String label(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        // Strip balanced `$…$` inline-math spans (non-greedy, single-line by construction — labels
+        // are one line). A lone unmatched `$` is left as-is (it is not a math span).
+        String noMath = raw.replaceAll("\\$[^$]*\\$", "");
+        String flat = noMath.replaceAll("\\s+", " ").trim();
+        if (flat.length() > LABEL_CAP) {
+            return flat.substring(0, LABEL_CAP) + "…";
+        }
+        return flat;
+    }
+
+    /// Format a numeric value the way the emitter formats geometry: integer when whole, else a
+    /// plain decimal. Keeps the desc's numbers reading like the diagram's own value labels.
+    private static String num(double v) {
+        if (!Double.isFinite(v)) {
+            return "0";
+        }
+        double r = Math.round(v * 1000.0) / 1000.0;
+        return r == Math.rint(r) ? Long.toString((long) r) : Double.toString(r);
+    }
+}

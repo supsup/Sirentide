@@ -23,6 +23,18 @@ class TimelineTest {
         return n;
     }
 
+    /// Drop the a11y `<title>…</title><desc>…</desc>` block so GEOMETRY-token counts (e.g. the arc
+    /// letter `" A "`) aren't polluted by natural-language a11y text — a label like "Series A"
+    /// legitimately contains `" A "` in the desc, which is not an arc command.
+    private static String geometry(String svg) {
+        int t = svg.indexOf("<title>");
+        int d = svg.indexOf("</desc>");
+        if (t >= 0 && d > t) {
+            return svg.substring(0, t) + svg.substring(d + "</desc>".length());
+        }
+        return svg;
+    }
+
     @Test
     void a2_isoDateEventsRememberTheirDateForDisplay() {
         // REGRESSION (A2, deep-review sirentide/14): an ISO date parses to an opaque epoch-day for
@@ -55,9 +67,10 @@ class TimelineTest {
               "Series A" : 2021
               "Launch"   : 2023
             """);
-        assertEquals(1, count(svg, "<line"), "one horizontal axis");
-        assertEquals(6, count(svg, " A "), "3 event dots, each a two-arc disc");
-        assertEquals(9, count(svg, "<path"), "3 dots + 3 labels + 3 values");
+        String geom = geometry(svg);
+        assertEquals(1, count(geom, "<line"), "one horizontal axis");
+        assertEquals(6, count(geom, " A "), "3 event dots, each a two-arc disc");
+        assertEquals(9, count(geom, "<path"), "3 dots + 3 labels + 3 values");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
     }
 

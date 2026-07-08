@@ -33,6 +33,18 @@ class TimelineOomGuardTest {
     private static final int MAX_LABEL_LEN = 512;
     private static final int MAX_OUTPUT_BYTES = 5_000_000;
 
+    /// Drop the a11y `<title>…</title><desc>…</desc>` block — this test compares LAYOUT geometry,
+    /// and the desc names the raw (char-capped) label, which differs from the width-ellipsized
+    /// visible glyph run by construction.
+    private static String stripA11y(String svg) {
+        int t = svg.indexOf("<title>");
+        int d = svg.indexOf("</desc>");
+        if (t >= 0 && d > t) {
+            return svg.substring(0, t) + svg.substring(d + "</desc>".length());
+        }
+        return svg;
+    }
+
     /// THE regression proof: a timeline near the parse caps renders fast, doesn't throw/hang, and
     /// produces bounded output. Before the fix this allocated ~5.9 GB and took ~4.5 s (or OOM'd);
     /// with per-label ellipsization + the emitter's incremental cap it is bounded and quick.
@@ -67,7 +79,10 @@ class TimelineOomGuardTest {
 
         String rawSvg = Sirentide.render("timeline\n  \"" + longLabel + "\" : 2020\n");
         String truncSvg = Sirentide.render("timeline\n  \"" + expected + "\" : 2020\n");
-        assertEquals(truncSvg, rawSvg,
+        // Compare GEOMETRY only: the a11y <desc> names the raw label (char-capped), which differs
+        // from the width-ellipsized VISIBLE form by construction — this test is about the LAYOUT
+        // ellipsization of the glyph run, not the a11y text, so strip the a11y block from both.
+        assertEquals(stripA11y(truncSvg), stripA11y(rawSvg),
             "timeline must ellipsize its event label (else the long-label render diverges)");
     }
 
