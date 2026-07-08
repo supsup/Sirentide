@@ -301,7 +301,39 @@ public final class A11yDescriber {
             }
             d.append(msgCount > shown ? "; …." : ".");
         }
+        // Notes (M2 enrichment): "Notes: right of Bob: Bob thinks; over Alice, Bob: a shared note."
+        // Appended only when notes exist, so a note-free sequence's desc is byte-identical to before.
+        int noteCount = s.notes().size();
+        if (noteCount > 0) {
+            d.append(" Notes: ");
+            int shown = Math.min(noteCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                com.sirentide.ir.SeqNote note = s.notes().get(i);
+                d.append(notePosition(note.position())).append(' ');
+                for (int k = 0; k < note.actors().size(); k++) {
+                    if (k > 0) {
+                        d.append(", ");
+                    }
+                    d.append(label(note.actors().get(k)));
+                }
+                d.append(": ").append(label(note.text()));
+            }
+            d.append(noteCount > shown ? "; …." : ".");
+        }
         return new A11y("Sequence diagram", d.toString());
+    }
+
+    /// The note-position keyword spoken naturally in the desc.
+    private static String notePosition(String pos) {
+        return switch (pos) {
+            case "over" -> "over";
+            case "left" -> "left of";
+            case "right" -> "right of";
+            default -> pos;
+        };
     }
 
     /// State diagram: reuses the flowchart description over its wrapped graph, mapping the

@@ -17,6 +17,9 @@ import java.util.Set;
 /// {@link #EDGE}; ER entities → {@link #ENTITY}, relations → {@link #EDGE}. mathblock has no discrete
 /// elements, so it emits no anchor group.
 ///
+/// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
+/// element — it only modifies the lifeline it names — so it emits no anchor group).
+///
 /// {@link #CLUSTER} (subgraph frames) and {@link #AXIS} (chart axes) stay RESERVED — those decorative
 /// structures are not anchored yet; the allowlist already admits them for a future slice. Adding a
 /// role here (not at a call site) is the single reviewed choke point that keeps the role vocabulary
@@ -35,6 +38,10 @@ public enum SirentideRole {
     // graph-flavored node/class vocabulary. Kept as their own closed values (documented above).
     EVENT("event"),
     ENTITY("entity"),
+    // -- sequence note-box annotation (added in the note + create/destroy enrichment slice) — its own
+    // closed value so a narrator can say "the note over Alice, Bob" distinctly from the message/actor
+    // vocabulary. A create/destroy modifies only its lifeline, so it adds no anchor.
+    NOTE("note"),
     // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
     CLUSTER("cluster"),
     AXIS("axis");

@@ -5,7 +5,9 @@ import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
+import com.sirentide.ir.SeqLifecycle;
 import com.sirentide.ir.SeqMessage;
+import com.sirentide.ir.SeqNote;
 import com.sirentide.ir.Sequence;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -88,6 +90,30 @@ public final class SequenceLayout {
     private static final double DASH = 5;             // dashed-divider dash length (Line has no dash)
     private static final double DASH_GAP = 4;         // dashed-divider gap length
 
+    // -- NOTE boxes (M2 enrichment). A bordered box (a filled Rect background + four border Lines +
+    // centred glyph text) pinned at the current time position: `over A` centred on A's lifeline, `over
+    // A,B` spanning A..B, `left of`/`right of` to the side. The box injects its own vertical BAND
+    // between the surrounding messages so it never overlaps them. The fill is a soft sticky-note tint;
+    // the text contrast-fills against it so it reads on any theme (same discipline as the head labels).
+    private static final String NOTE_FILL = "#fff8c5";    // soft sticky-note yellow (unique — test-keyed)
+    private static final String NOTE_STROKE = "#d4a72c";  // amber note border
+    private static final double NOTE_STROKE_W = 1;
+    private static final double NOTE_SIZE = 11;        // note-text glyph size
+    private static final double NOTE_PAD_X = 8;        // horizontal padding inside the box
+    private static final double NOTE_H = 22;           // note-box height (single text line)
+    private static final double NOTE_MARGIN = 8;       // vertical gap above AND below the box in its band
+    private static final double NOTE_BAND = NOTE_H + 2 * NOTE_MARGIN;   // the injected row height
+    private static final double MIN_NOTE_W = 40;       // minimum note-box width
+    private static final double MAX_NOTE_W = 220;      // note text ellipsizes past this content width
+    private static final double NOTE_SIDE_GAP = 12;    // gap between a lifeline and a left/right note
+    private static final double NOTE_SPAN_PAD = 10;    // an `over A,B` note extends this far past A..B
+
+    // -- CREATE / DESTROY (M2 enrichment). A created actor's head + lifeline start mid-diagram (an
+    // injected band of ACTOR_H + MSG_TOP_PAD holds the head above the message that first reaches it); a
+    // destroyed actor's lifeline ENDS at the destroy y with an `X` mark (two short crossed lines).
+    private static final String DESTROY_STROKE = "#64748b";   // the X mark (matches the call stroke)
+    private static final double DESTROY_X_HALF = 5;           // half-length of each X stroke
+
     /// The visible-degrade message for a non-empty body that parsed to ZERO actors (every line
     /// malformed) — drawn as a glyph run so a mistyped sequence never renders as silent nothing.
     private static final String DEGRADE_MSG = "sequence: no messages parsed";
@@ -154,6 +180,34 @@ public final class SequenceLayout {
         }
         double headBottom = MARGIN + ACTOR_H;
 
+        // -- CREATE / DESTROY resolution (M2 enrichment): the FIRST create / destroy per actor wins
+        // (a later duplicate is inert). `createAt[i]`/`destroyAt[i]` hold the anchoring message index,
+        // or -1 when the actor is not created / destroyed. Empty lists → all -1 → the legacy path
+        // (head at top, lifeline head-bottom→content-bottom), byte-identical.
+        int[] createAt = new int[n];
+        int[] destroyAt = new int[n];
+        Arrays.fill(createAt, -1);
+        Arrays.fill(destroyAt, -1);
+        for (SeqLifecycle lc : seq.lifecycles()) {
+            Integer ai = index.get(lc.actor());
+            if (ai == null) {
+                continue;
+            }
+            if (lc.create() && createAt[ai] < 0) {
+                createAt[ai] = lc.atMsg();
+            } else if (!lc.create() && destroyAt[ai] < 0) {
+                destroyAt[ai] = lc.atMsg();
+            }
+        }
+
+        // -- head/lifeline start y per actor. A NORMAL actor's head sits at the top (MARGIN) and its
+        // lifeline starts at headBottom. A CREATED actor's head + lifeline start mid-diagram — set
+        // during the row walk when its create boundary is reached.
+        double[] headTop = new double[n];
+        double[] lifeTop = new double[n];
+        Arrays.fill(headTop, MARGIN);
+        Arrays.fill(lifeTop, headBottom);
+
         // -- assign each message a row y (self-messages consume 1.5 rows). Unknown-actor messages
         // are skipped defensively (the parser guards this, but layout must tolerate a stray ref).
         List<SeqMessage> drawn = new ArrayList<>();
@@ -167,23 +221,71 @@ public final class SequenceLayout {
         double[] bottomByMsg = new double[msgCount];
         Arrays.fill(yByMsg, Double.NaN);
         Arrays.fill(bottomByMsg, Double.NaN);
-        double rowCursor = 0;
-        for (int mi = 0; mi < msgCount; mi++) {
-            SeqMessage m = seq.messages().get(mi);
-            Integer a = index.get(m.from());
-            Integer b = index.get(m.to());
-            if (a == null || b == null) {
-                continue;
+        // Walk the message boundaries K = 0..msgCount, accumulating an ABSOLUTE y cursor. Before each
+        // message we INJECT any note bands + created-head bands anchored at that boundary (atMsg == K),
+        // growing the diagram so the annotation never overlaps its neighbours. With no notes/creates
+        // every injected band is zero → the cursor advances by exactly ROW_H (or SELF_ROWS·ROW_H) per
+        // drawn message, byte-identical to the pre-enrichment `headBottom + MSG_TOP_PAD + rowCursor·ROW_H`.
+        List<NoteBox> noteBoxes = new ArrayList<>();
+        double cursorY = headBottom + MSG_TOP_PAD;
+        for (int K = 0; K <= msgCount; K++) {
+            // Notes anchored at this boundary (declaration order): each injects its own vertical band.
+            for (SeqNote note : seq.notes()) {
+                if (note.atMsg() != K) {
+                    continue;
+                }
+                NoteBox nb = layoutNote(note, cursorY + NOTE_MARGIN, cx, index);
+                if (nb != null) {
+                    noteBoxes.add(nb);
+                    cursorY += NOTE_BAND;   // the note consumes its band; the next message drops below it
+                }
             }
-            double y = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
-            msgY[drawn.size()] = y;
-            yByMsg[mi] = y;
-            boolean self = a.equals(b);
-            bottomByMsg[mi] = self ? y + ROW_H / 2 : y;   // a self-hook drops ROW_H/2 below its row
-            drawn.add(m);
-            rowCursor += self ? SELF_ROWS : 1;
+            // Created heads anchored at this boundary: one shared band (ACTOR_H head + MSG_TOP_PAD gap)
+            // holds every actor created here, placed above the message that first reaches it.
+            boolean anyCreate = false;
+            for (int i = 0; i < n; i++) {
+                if (createAt[i] == K) {
+                    anyCreate = true;
+                }
+            }
+            if (anyCreate) {
+                for (int i = 0; i < n; i++) {
+                    if (createAt[i] == K) {
+                        headTop[i] = cursorY;
+                        lifeTop[i] = cursorY + ACTOR_H;
+                    }
+                }
+                cursorY += ACTOR_H + MSG_TOP_PAD;
+            }
+            if (K < msgCount) {
+                SeqMessage m = seq.messages().get(K);
+                Integer a = index.get(m.from());
+                Integer b = index.get(m.to());
+                if (a == null || b == null) {
+                    continue;
+                }
+                msgY[drawn.size()] = cursorY;
+                yByMsg[K] = cursorY;
+                boolean self = a.equals(b);
+                bottomByMsg[K] = self ? cursorY + ROW_H / 2 : cursorY;   // a self-hook drops ROW_H/2 below
+                drawn.add(m);
+                cursorY += self ? SELF_ROWS * ROW_H : ROW_H;
+            }
         }
-        double contentBottom = headBottom + MSG_TOP_PAD + rowCursor * ROW_H;
+        double contentBottom = cursorY;
+
+        // -- lifeline END y per actor: the diagram bottom by default, or the destroy y (the row of the
+        // message the `destroy` precedes; the diagram bottom when that message is out of range / not
+        // drawn — a `destroy` at end-of-input). A `destroy` above the lifeline start is degenerate and
+        // draws no lifeline (guarded at emit).
+        double[] endY = new double[n];
+        Arrays.fill(endY, contentBottom);
+        for (int i = 0; i < n; i++) {
+            if (destroyAt[i] >= 0) {
+                int dk = destroyAt[i];
+                endY[i] = (dk < msgCount && !Double.isNaN(yByMsg[dk])) ? yByMsg[dk] : contentBottom;
+            }
+        }
 
         // -- alt/loop/par frame geometry (M2). Resolve each block's message index range to a pixel
         // rectangle + tab + dividers. Blocks with no drawn message in range are degenerate → skipped.
@@ -254,6 +356,12 @@ public final class SequenceLayout {
             canvasW = Math.max(canvasW, Math.max(f.right, f.left + f.tabW) + MARGIN);
             canvasH = Math.max(canvasH, f.bottom + MARGIN);
         }
+        // Widen for any note box whose right edge reaches past the base width (a `right of` note on the
+        // trailing actor, or a wide `over A,B` span) so the containment invariant holds — no note rect
+        // x+width escapes the canvas.
+        for (NoteBox nb : noteBoxes) {
+            canvasW = Math.max(canvasW, nb.left + nb.width + MARGIN);
+        }
 
         // -- emit order (readability + the containment audit): frames UNDER everything, then lifelines,
         // then message lines + arrowheads + labels, then head boxes, then head labels on top.
@@ -265,9 +373,27 @@ public final class SequenceLayout {
             emitFrame(shapes, f, textColor, canvasW);
         }
 
-        // 1) lifelines: a light vertical line from each head bottom to the diagram bottom.
+        // 1) lifelines: a light vertical line from each actor's start y (head bottom — the top for a
+        // normal actor, the mid-diagram create point for a created one) to its end y (the diagram
+        // bottom, or the destroy y). A degenerate span (destroy at/above the start) draws no lifeline.
         for (int i = 0; i < n; i++) {
-            shapes.add(new Line(cx[i], headBottom, cx[i], contentBottom, LIFELINE_STROKE, LIFELINE_WIDTH));
+            if (endY[i] > lifeTop[i]) {
+                shapes.add(new Line(cx[i], lifeTop[i], cx[i], endY[i], LIFELINE_STROKE, LIFELINE_WIDTH));
+            }
+        }
+        // 1.1) destroy X marks: two short crossed lines centred on a destroyed actor's lifeline at its
+        // end y (the `X` that reads "this participant is gone"). Emitted after the lifelines so the mark
+        // sits on top of the line it terminates. create/destroy add no anchor group (they only modify
+        // the lifeline) — the X is emitted bare, like the lifelines.
+        for (int i = 0; i < n; i++) {
+            if (destroyAt[i] >= 0 && Double.isFinite(endY[i])) {
+                double ex = cx[i];
+                double ey = endY[i];
+                shapes.add(new Line(ex - DESTROY_X_HALF, ey - DESTROY_X_HALF,
+                    ex + DESTROY_X_HALF, ey + DESTROY_X_HALF, DESTROY_STROKE, MSG_WIDTH));
+                shapes.add(new Line(ex - DESTROY_X_HALF, ey + DESTROY_X_HALF,
+                    ex + DESTROY_X_HALF, ey - DESTROY_X_HALF, DESTROY_STROKE, MSG_WIDTH));
+            }
         }
 
         // 1.5) activation bars: a thin ACT_FILL rect per activation, centred on its actor's lifeline
@@ -314,8 +440,8 @@ public final class SequenceLayout {
         // byte-identical, visually identical) — the same box+label fold the flowchart nodes use.
         for (int i = 0; i < n; i++) {
             List<Shape> ag = new ArrayList<>();
-            ag.add(new Rect(cx[i] - headW[i] / 2, MARGIN, headW[i], ACTOR_H, headFill));
-            double baseline = MARGIN + ACTOR_H / 2 + LABEL_SIZE * 0.35;
+            ag.add(new Rect(cx[i] - headW[i] / 2, headTop[i], headW[i], ACTOR_H, headFill));
+            double baseline = headTop[i] + ACTOR_H / 2 + LABEL_SIZE * 0.35;
             if (headMeasures[i] != null) {
                 MathLabel.emit(headMeasures[i], cx[i] - headMeasures[i].width() / 2, baseline,
                     headLabelFill, LABEL_SIZE, FONT, ag);
@@ -327,6 +453,14 @@ public final class SequenceLayout {
                 }
             }
             shapes.add(new Group(assigner.assign(SirentideRole.ACTOR, actors.get(i)), ag));
+        }
+
+        // 4) notes — each note box is ONE `<g role="note">` (a filled Rect + four border Lines +
+        // centred glyph text), emitted LAST so it draws on top of the lifelines it annotates. Its id is
+        // the sanitized note text, its seq the emit-order index after the messages + actors — so a
+        // note-free sequence never mints a note anchor (the message/actor seq range is unchanged).
+        for (NoteBox nb : noteBoxes) {
+            emitNote(shapes, nb, canvasW, assigner);
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
@@ -435,6 +569,103 @@ public final class SequenceLayout {
             return MathLabel.measure(raw, MSG_LABEL_SIZE, FONT, math).width();
         }
         return FONT.runWidth(FONT.ellipsize(raw, MAX_HEAD_LABEL_W, MSG_LABEL_SIZE), MSG_LABEL_SIZE);
+    }
+
+    /// A resolved note box: its top-left corner + size, the (already ellipsized) display text, and the
+    /// RAW note text (the anchor-id source). Layout-internal — {@link #emitNote} turns it into a filled
+    /// Rect + four border Lines + a centred glyph run inside one `<g role="note">`.
+    private static final class NoteBox {
+        final double left;
+        final double top;
+        final double width;
+        final double height;
+        final String display;
+        final String rawText;
+
+        NoteBox(double left, double top, double width, double height, String display, String rawText) {
+            this.left = left;
+            this.top = top;
+            this.width = width;
+            this.height = height;
+            this.display = display;
+            this.rawText = rawText;
+        }
+    }
+
+    /// Resolves a {@link SeqNote} to a {@link NoteBox} at the given box-top y, or null when it does not
+    /// resolve (an actor unknown to the layout index — the parser already guards this, but layout
+    /// tolerates a stray ref). `over` centres on one lifeline or spans two; `left`/`right` place the box
+    /// beside a single lifeline. The text ellipsizes to MAX_NOTE_W and the box grows to fit (down to
+    /// MIN_NOTE_W). The left edge is clamped ≥ EDGE_PAD so a side note never escapes off the left of the
+    /// canvas (the containment invariant).
+    private static NoteBox layoutNote(SeqNote note, double top, double[] cx, Map<String, Integer> index) {
+        List<Integer> idxs = new ArrayList<>();
+        for (String a : note.actors()) {
+            Integer i = index.get(a);
+            if (i == null) {
+                return null;
+            }
+            idxs.add(i);
+        }
+        if (idxs.isEmpty() || note.text() == null) {
+            return null;
+        }
+        String display = FONT.ellipsize(note.text(), MAX_NOTE_W, NOTE_SIZE);
+        double textW = FONT.runWidth(display, NOTE_SIZE);
+        double contentW = textW + 2 * NOTE_PAD_X;
+        double left;
+        double width;
+        switch (note.position()) {
+            case "over" -> {
+                if (idxs.size() >= 2) {
+                    double spanL = Math.min(cx[idxs.get(0)], cx[idxs.get(1)]);
+                    double spanR = Math.max(cx[idxs.get(0)], cx[idxs.get(1)]);
+                    left = spanL - NOTE_SPAN_PAD;
+                    width = (spanR + NOTE_SPAN_PAD) - left;
+                    if (width < contentW) {
+                        left -= (contentW - width) / 2;   // grow symmetrically to fit the text
+                        width = contentW;
+                    }
+                } else {
+                    width = Math.max(MIN_NOTE_W, contentW);
+                    left = cx[idxs.get(0)] - width / 2;
+                }
+            }
+            case "left" -> {
+                width = Math.max(MIN_NOTE_W, contentW);
+                left = cx[idxs.get(0)] - NOTE_SIDE_GAP - width;
+            }
+            default -> {   // "right"
+                width = Math.max(MIN_NOTE_W, contentW);
+                left = cx[idxs.get(0)] + NOTE_SIDE_GAP;
+            }
+        }
+        if (left < EDGE_PAD) {
+            left = EDGE_PAD;
+        }
+        return new NoteBox(left, top, width, NOTE_H, display, note.text());
+    }
+
+    /// Emits one {@link NoteBox}: a filled background Rect, a stroke-only border (four Lines — a Rect
+    /// carries fill only), and the centred note text (glyph paths, contrast-filled against the note
+    /// fill, clamped in-canvas), all folded into ONE `<g role="note">` via the assigner.
+    private static void emitNote(List<Shape> shapes, NoteBox nb, double canvasW, AnchorAssigner assigner) {
+        List<Shape> ng = new ArrayList<>();
+        ng.add(new Rect(nb.left, nb.top, nb.width, nb.height, NOTE_FILL));
+        double right = nb.left + nb.width;
+        double bottom = nb.top + nb.height;
+        ng.add(new Line(nb.left, nb.top, right, nb.top, NOTE_STROKE, NOTE_STROKE_W));
+        ng.add(new Line(nb.left, bottom, right, bottom, NOTE_STROKE, NOTE_STROKE_W));
+        ng.add(new Line(nb.left, nb.top, nb.left, bottom, NOTE_STROKE, NOTE_STROKE_W));
+        ng.add(new Line(right, nb.top, right, bottom, NOTE_STROKE, NOTE_STROKE_W));
+        double tw = FONT.runWidth(nb.display, NOTE_SIZE);
+        double runX = clamp(nb.left + (nb.width - tw) / 2, tw, canvasW);
+        double baseline = nb.top + nb.height / 2 + NOTE_SIZE * 0.35;
+        String d = FONT.textPathD(nb.display, runX, baseline, NOTE_SIZE);
+        if (!d.isBlank()) {
+            ng.add(new GlyphRun(d, Colors.contrastFill(NOTE_FILL)));
+        }
+        shapes.add(new Group(assigner.assign(SirentideRole.NOTE, nb.rawText), ng));
     }
 
     /// Resolves each {@link SeqBlock}'s FLAT message-index range to a pixel {@link Frame}. For every

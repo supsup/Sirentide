@@ -22,7 +22,9 @@ import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
+import com.sirentide.ir.SeqLifecycle;
 import com.sirentide.ir.SeqMessage;
+import com.sirentide.ir.SeqNote;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.StateDiagram;
@@ -865,6 +867,8 @@ public final class DslParser {
         LinkedHashSet<String> actors = new LinkedHashSet<>();
         List<SeqMessage> messages = new ArrayList<>();
         List<SeqBlock> blocks = new ArrayList<>();
+        List<SeqNote> notes = new ArrayList<>();
+        List<SeqLifecycle> lifecycles = new ArrayList<>();
         Deque<OpenBlock> stack = new ArrayDeque<>();   // innermost open block on top
         boolean bodyHadContent = false;
         for (int i = 1; i < lines.length; i++) {
@@ -873,9 +877,16 @@ public final class DslParser {
                 continue;
             }
             bodyHadContent = true;   // a non-blank body line existed (even if it turns out malformed)
-            // A leading block keyword on an ARROWLESS line is a directive, not a message.
-            if (scanSeqArrow(line) == null && handleBlockKeyword(line, messages, blocks, stack)) {
-                continue;
+            // A leading block / note / lifecycle keyword on an ARROWLESS line is a directive, not a
+            // message (the no-arrow guard keeps a real message whose sender is spelled like a keyword
+            // parsing as a message). Try the block keywords first, then note/create/destroy.
+            if (scanSeqArrow(line) == null) {
+                if (handleBlockKeyword(line, messages, blocks, stack)) {
+                    continue;
+                }
+                if (handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size())) {
+                    continue;
+                }
             }
             // Peel the OPTIONAL label at the FIRST colon, ANY spacing (`B : hi`, `B: hi`, `B:hi` —
             // requiring " : " silently broke the common no-space form: Lattice, sirentide/33). The
@@ -907,7 +918,128 @@ public final class DslParser {
         while (!stack.isEmpty()) {
             blocks.add(stack.pop().close(messages.size() - 1));
         }
-        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor, bodyHadContent, blocks);
+        return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor, bodyHadContent,
+            blocks, notes, lifecycles);
+    }
+
+    /// The reserved leading NOTE / LIFECYCLE keywords (M2 enrichment). A line whose first token is one
+    /// of these AND which has no arrow token is a note/lifecycle directive (never an actor name).
+    private static final String KW_NOTE = "note";
+    private static final String KW_CREATE = "create";
+    private static final String KW_DESTROY = "destroy";
+    /// An optional `participant` filler after `create`/`destroy` (mermaid `create participant X`).
+    private static final String KW_PARTICIPANT = "participant";
+
+    /// Handles a note / create / destroy directive line (already known to be arrowless). Returns true
+    /// when the first token WAS one of those keywords (consumed — added a note / lifecycle event, or
+    /// was an inert malformed directive), false when it is none (so the caller falls through to the
+    /// normal message parse). `atMsg` is `messages.size()` — the index the NEXT message will take, so a
+    /// note/create/destroy anchors between the surrounding messages (the same index convention the
+    /// block keywords use). Robustness (DESIGN §6): a malformed note (bad position / unknown actor / no
+    /// text) or an unknown-actor create/destroy is swallowed inert, never throws.
+    private static boolean handleNoteOrLifecycle(String line, LinkedHashSet<String> actors,
+                                                 List<SeqNote> notes, List<SeqLifecycle> lifecycles,
+                                                 int atMsg) {
+        String[] kwRest = splitKeyword(line);
+        switch (kwRest[0]) {
+            case KW_NOTE -> {
+                SeqNote note = parseNote(kwRest[1], actors, atMsg);
+                if (note != null) {
+                    notes.add(note);
+                }
+                return true;   // a malformed note is consumed but inert (never a stray message)
+            }
+            case KW_CREATE -> {
+                // `create [participant] X` REGISTERS the actor first-seen (create introduces it) and
+                // starts its lifeline mid-diagram. An empty/over-cap actor is inert.
+                String actor = cap(stripParticipant(kwRest[1]).strip());
+                if (!actor.isEmpty()) {
+                    registerActor(actors, actor);
+                    if (actors.contains(actor)) {
+                        lifecycles.add(new SeqLifecycle(actor, true, atMsg));
+                    }
+                }
+                return true;
+            }
+            case KW_DESTROY -> {
+                // `destroy [participant] X` ends an ALREADY-REGISTERED actor's lifeline. An unknown /
+                // empty actor is inert (destroying a non-existent participant is meaningless).
+                String actor = cap(stripParticipant(kwRest[1]).strip());
+                if (!actor.isEmpty() && actors.contains(actor)) {
+                    lifecycles.add(new SeqLifecycle(actor, false, atMsg));
+                }
+                return true;
+            }
+            default -> {
+                return false;   // not a note/lifecycle keyword → fall through to the message parse
+            }
+        }
+    }
+
+    /// Strips an optional leading `participant ` filler token (mermaid `create participant X` ==
+    /// `create X`). A bare id (no filler) is returned unchanged.
+    private static String stripParticipant(String rest) {
+        String s = rest.strip();
+        if (s.equals(KW_PARTICIPANT)) {
+            return "";
+        }
+        if (s.startsWith(KW_PARTICIPANT + " ") || s.startsWith(KW_PARTICIPANT + "\t")) {
+            return s.substring(KW_PARTICIPANT.length()).strip();
+        }
+        return s;
+    }
+
+    /// Parses a `note` directive tail (everything after the `note` keyword) into a {@link SeqNote}, or
+    /// null when malformed (→ the caller drops it, inert). Form:
+    /// `(over|left of|right of) <actor>[,<actor2>] : text`. The label is peeled at the FIRST colon
+    /// (the text); the pre-colon head names the position + actor(s). `over` takes 1 OR 2 actors (a
+    /// two-actor note SPANS them); `left of`/`right of` take a SINGLE actor (a second is ignored). Every
+    /// referenced actor must be KNOWN (first-seen already) — an unknown actor, a missing/empty text, an
+    /// unrecognized position, or no resolvable actor all yield null (malformed→inert, DESIGN §6).
+    private static SeqNote parseNote(String rest, LinkedHashSet<String> actors, int atMsg) {
+        String[] peeled = peelLabel(rest);
+        String head = peeled[0].strip();
+        String text = peeled[1] == null ? null : cap(peeled[1]);
+        if (text == null) {
+            return null;   // a textless note is dropped
+        }
+        String position;
+        String actorsPart;
+        if (head.startsWith("over ")) {
+            position = "over";
+            actorsPart = head.substring("over ".length()).strip();
+        } else if (head.startsWith("left of ")) {
+            position = "left";
+            actorsPart = head.substring("left of ".length()).strip();
+        } else if (head.startsWith("right of ")) {
+            position = "right";
+            actorsPart = head.substring("right of ".length()).strip();
+        } else {
+            return null;   // unrecognized position keyword → inert
+        }
+        // Resolve the referenced actors: every non-empty token must be a KNOWN actor (a note does not
+        // register new actors — it annotates existing ones). Any unknown token drops the whole note.
+        List<String> resolved = new ArrayList<>();
+        for (String tok : actorsPart.split(",")) {
+            String a = cap(tok.strip());
+            if (a.isEmpty()) {
+                continue;
+            }
+            if (!actors.contains(a)) {
+                return null;   // an unknown referenced actor → malformed, drop
+            }
+            resolved.add(a);
+        }
+        if (resolved.isEmpty()) {
+            return null;   // no resolvable actor → inert
+        }
+        // left/right annotate a SINGLE actor; over spans up to 2 (extra tokens are trimmed).
+        if (!position.equals("over")) {
+            resolved = List.of(resolved.get(0));
+        } else if (resolved.size() > 2) {
+            resolved = resolved.subList(0, 2);
+        }
+        return new SeqNote(position, resolved, text, atMsg);
     }
 
     /// The reserved leading block keywords (M2). A line whose first whitespace-delimited token is one

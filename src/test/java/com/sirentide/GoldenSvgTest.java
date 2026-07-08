@@ -68,6 +68,15 @@ class GoldenSvgTest {
                 + "    loop every retry\n      Alice ->> Bob : ping\n    end\n"
                 + "  else is busy\n    Bob -->> Alice : later\n  end\n"
                 + "  par to Bob\n    Alice ->> Bob : a\n  and to Carol\n    Alice ->> Carol : b\n  end\n");
+        // A sequence with NOTES + CREATE/DESTROY (M2 enrichment): a `note right of` a single actor, a
+        // `note over A,B` spanning two, a `create participant` starting a lifeline MID-DIAGRAM, and a
+        // `destroy` ending one with an X mark (plus a message FROM the destroyed actor — the documented
+        // draw-anyway degrade). Pins the note-box geometry (bordered box + centred glyph text), the
+        // injected note bands, the created head/lifeline start y, and the destroy-X byte-for-byte.
+        FIXTURES.put("sequence-notes",
+            "sequence\n  Alice ->> Bob : hello\n  note right of Bob : Bob thinks\n"
+                + "  note over Alice,Bob : a shared note\n  create participant Carol\n"
+                + "  Bob ->> Carol : spawn\n  destroy Carol\n  Carol -->> Bob : done\n");
         // A quadrant chart: both axis ends, all four quadrant labels, and points landing one per
         // quadrant plus one dead-centre — pins the affine unit-square mapping, the y-flip, the tints,
         // and the contrast-derived labels byte-for-byte.
