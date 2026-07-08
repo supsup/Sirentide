@@ -56,7 +56,11 @@ class MathGalleryBrewShotTest {
                 + "  Server -->> Client : $\\Delta t$ latency\n"),
         new Case("math-state",
             "state\n  [*] --> Idle\n  Idle --> Busy : work $\\frac{n}{2}$\n"
-                + "  Busy --> Idle : done $O(1)$\n  Busy --> [*]\n"));
+                + "  Busy --> Idle : done $O(1)$\n  Busy --> [*]\n"),
+        // The mathblock moat demo (plan sirentide-mathblock): a standalone full-size display-math
+        // block — the whole body is ONE expression, baked centered. The purest paste-an-equation demo.
+        new Case("math-block",
+            "mathblock\n  \\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n"));
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();

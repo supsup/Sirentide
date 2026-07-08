@@ -95,6 +95,13 @@ class GoldenSvgTest {
             "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ORDER ||--|{ LINE-ITEM : contains\n"
                 + "  CUSTOMER {\n    string name PK\n    string email\n  }\n"
                 + "  ORDER {\n    int id PK\n    date created\n  }\n");
+        // A display-math block (11th type): a sum-with-limits equals a fraction. GoldenSvgTest renders
+        // with the DEFAULT (null) renderer, so THIS golden pins the NULL-RENDERER DEGRADE — the raw
+        // LaTeX source baked as plain-text glyph paths, centered with padding (deterministic). The REAL
+        // typeset bake (glyph paths + a fraction-bar <rect>) is proven separately in
+        // MathBlockRealRenderTest, which injects the LatteX renderer GoldenSvgTest deliberately lacks.
+        FIXTURES.put("mathblock",
+            "mathblock\n  \\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n");
     }
 
     @Test

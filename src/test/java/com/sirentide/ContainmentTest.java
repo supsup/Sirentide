@@ -138,6 +138,12 @@ class ContainmentTest {
             + "  ORDER {\n    int id PK\n    date created\n    string sku UK\n",   // unclosed block (EOF)
         // bare ER diagram: no entities → a valid empty canvas (round-trips, never the inert shell).
         "erDiagram\n",
+        // mathblock (11th type): a full-size display-math block. The CORPUS renders with the null
+        // renderer, so this exercises the DEGRADE — the raw LaTeX source baked as plain-text glyph
+        // paths — which must stay in-set (the real typeset bake's containment is proven in
+        // MathBlockRealRenderTest). Includes a multi-line body (joined) with braces + a sum.
+        "mathblock\n  \\sum_{i=1}^{n} i\n  = \\frac{n(n+1)}{2}\n",
+        "mathblock\n",   // empty body → inert empty canvas (round-trips, never a throw)
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

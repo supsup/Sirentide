@@ -16,6 +16,7 @@ import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
+import com.sirentide.ir.MathBlock;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -122,6 +123,9 @@ public final class DslParser {
             // A mermaid-style entity-relationship diagram — `ENTITY { rows }` tables + crow-foot
             // cardinality relationships (`A ||--o{ B : label`).
             case "erDiagram" -> parseErDiagram(lines, textColor);
+            // A standalone full-size display-math block: the WHOLE body is ONE LaTeX expression
+            // (no `$` delimiters), baked centered through the MathFragment seam.
+            case "mathblock" -> parseMathBlock(lines);
             default -> new Empty();
         };
     }
@@ -1814,5 +1818,28 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// Parses a `mathblock`: the WHOLE body (every line after the header) is ONE raw LaTeX
+    /// expression. It is NOT `$…$`-split — a mathblock body is all math, so there are no delimiters;
+    /// the joined body IS the expression (plan sirentide-mathblock). Body lines are stripped and
+    /// joined with a single space (LaTeX treats a newline as ordinary whitespace, so a multi-line
+    /// expression joins cleanly), blank lines dropped. The result is `cap()`'d to {@link #MAX_LABEL_LEN}
+    /// (the same length bound every author string obeys — a demo equation fits comfortably); an empty
+    /// body yields a `MathBlock` with empty latex, which layout renders as the inert empty canvas.
+    /// Never throws (DESIGN §6).
+    private static Diagram parseMathBlock(String[] lines) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(line);
+        }
+        return new MathBlock(cap(sb.toString()));
     }
 }

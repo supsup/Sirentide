@@ -66,6 +66,7 @@ public final class A11yDescriber {
             case QuadrantChart q -> quadrant(q);
             case ClassDiagram cd -> classDiagram(cd);
             case ErDiagram er -> erDiagram(er);
+            case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
             case Empty ignored -> A11y.NONE;
         };
     }
@@ -178,6 +179,18 @@ public final class A11yDescriber {
             case ASSOCIATION -> left + " is associated with " + right;
             case DEPENDENCY -> left + " depends on " + right;
         };
+    }
+
+    /// Math block: a GENERIC, non-empty description — "Display math expression." — that does NOT
+    /// dump the raw LaTeX source into the desc. This mirrors {@link #label}, which strips `$…$` math
+    /// from every other type's desc: the moat is that math renders VISUALLY to baked glyph paths and
+    /// no LaTeX source leaks into the output text, so verbalizing `\sum_{i=1}^{n}` to a screen reader
+    /// would be noise AND a leak. A bare `mathblock` (empty body) still reads as an empty math block.
+    /// RESIDUAL: a mathspeak translation (speaking the equation) is a deliberate follow-up.
+    private static A11y mathBlock(com.sirentide.ir.MathBlock mb) {
+        boolean empty = mb.latex() == null || mb.latex().isBlank();
+        String desc = empty ? "Empty math block." : "Display math expression.";
+        return new A11y("Math block", desc);
     }
 
     // ---- rich types -------------------------------------------------------------------------
