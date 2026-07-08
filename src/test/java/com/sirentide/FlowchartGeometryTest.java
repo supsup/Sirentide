@@ -92,7 +92,7 @@ class FlowchartGeometryTest {
 
     // The cluster title-band fill + padding — mirrors FlowchartLayout's constants.
     private static final String BAND_FILL = "#eef2ff";
-    private static final double CLUSTER_PAD = 10;      // depth-0 padding
+    private static final double CLUSTER_PAD = 14;      // depth-0 padding (breathing room; mirrors FlowchartLayout)
     private static final double CLUSTER_BAND_H = 14;
 
     @Test

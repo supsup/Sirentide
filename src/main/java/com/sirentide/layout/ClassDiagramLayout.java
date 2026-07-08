@@ -27,12 +27,14 @@ import java.util.Map;
 ///   - a DEPENDENCY additionally draws its edge line DASHED (a run of short {@link Line} segments —
 ///     the contract has no `stroke-dasharray`, so the dash is baked as segments; deterministic).
 ///
-/// PLACEMENT (v1): a simple row-major GRID (`ceil(sqrt(n))` columns), first-seen class order, boxes
-/// sized to their widest compartment line. Edges route straight between box BORDERS (center-to-center,
-/// clipped to the rectangle) with the marker at the marked end. The canvas grows to fit the grid +
-/// margin so nothing escapes (containment). Deterministic; text baked to glyph paths, markers to
-/// paths/lines. RESIDUAL: grid placement + straight edges are v1 — a layered "inheritance flows down"
-/// pass and orthogonal routing are follow-ups.
+/// PLACEMENT: a row-major GRID (`ceil(sqrt(n))` columns), boxes sized to their widest compartment
+/// line. The slot ORDER is relationship-aware (via {@link GridOrder} — related classes land in
+/// adjacent slots) so edges stay short and a straight centre-to-centre edge is far less likely to
+/// cross a third box. Edges route straight between box BORDERS (clipped to the rectangle) with the
+/// marker at the marked end. The canvas grows to fit the grid + margin so nothing escapes
+/// (containment). Deterministic; text baked to glyph paths, markers to paths/lines. RESIDUAL:
+/// crossing REDUCTION not MINIMIZATION (DESIGN §7) — a long diagonal edge can still clip a box; a
+/// layered "inheritance flows down" pass and orthogonal routing are follow-ups.
 public final class ClassDiagramLayout {
 
     private ClassDiagramLayout() {}
@@ -143,9 +145,25 @@ public final class ClassDiagramLayout {
             boxH[i] = nameH[i] + attrH[i] + methodH[i];
         }
 
-        // -- 2) grid placement: ceil(sqrt(n)) columns, row-major, first-seen order. Each row's height
-        // is its tallest box; boxes march left→right with COL_GAP, rows down with ROW_GAP. Canvas grows
-        // to fit (containment: nothing escapes the margin box).
+        // -- 2) grid placement: ceil(sqrt(n)) columns, row-major. The slot ORDER is relationship-aware
+        // (related classes land in adjacent slots via {@link GridOrder}) so edges are short and a
+        // straight edge is far less likely to cross a third box — quality over the v1 first-seen order,
+        // still fully deterministic. Each row's height is its tallest box; boxes march left→right with
+        // COL_GAP, rows down with ROW_GAP. Canvas grows to fit (containment: nothing escapes the margin).
+        Map<String, Integer> index = new HashMap<>();
+        for (int k = 0; k < n; k++) {
+            index.put(classes.get(k).name(), k);
+        }
+        List<int[]> edgeList = new ArrayList<>();
+        for (ClassRelation r : cd.relations()) {
+            Integer a = index.get(r.left());
+            Integer b = index.get(r.right());
+            if (a != null && b != null) {
+                edgeList.add(new int[] {a, b});
+            }
+        }
+        int[] perm = GridOrder.order(n, edgeList.toArray(new int[0][]));
+
         int cols = (int) Math.ceil(Math.sqrt(n));
         if (cols < 1) {
             cols = 1;
@@ -154,31 +172,30 @@ public final class ClassDiagramLayout {
         double[] py = new double[n];
         double rowTop = MARGIN;
         double canvasW = MIN_W;
-        int i = 0;
-        while (i < n) {
-            int rowEnd = Math.min(i + cols, n);
+        int slot = 0;
+        while (slot < n) {
+            int rowEnd = Math.min(slot + cols, n);
             double rowH = 0;
-            for (int j = i; j < rowEnd; j++) {
-                rowH = Math.max(rowH, boxH[j]);
+            for (int s = slot; s < rowEnd; s++) {
+                rowH = Math.max(rowH, boxH[perm[s]]);
             }
             double cursor = MARGIN;
-            for (int j = i; j < rowEnd; j++) {
-                px[j] = cursor;
-                py[j] = rowTop;
-                cursor += boxW[j] + COL_GAP;
+            for (int s = slot; s < rowEnd; s++) {
+                int node = perm[s];
+                px[node] = cursor;
+                py[node] = rowTop;
+                cursor += boxW[node] + COL_GAP;
             }
             canvasW = Math.max(canvasW, cursor - COL_GAP + MARGIN);
             rowTop += rowH + ROW_GAP;
-            i = rowEnd;
+            slot = rowEnd;
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
         Placed[] placed = new Placed[n];
-        Map<String, Integer> index = new HashMap<>();
         for (int k = 0; k < n; k++) {
             placed[k] = new Placed(classes.get(k), px[k], py[k], boxW[k], boxH[k],
                 nameH[k], attrH[k], methodH[k], names[k], attrLines.get(k), methodLines.get(k));
-            index.put(classes.get(k).name(), k);
         }
 
         List<Shape> shapes = new ArrayList<>();
@@ -191,7 +208,7 @@ public final class ClassDiagramLayout {
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced class (defensive) — skip, never throw
             }
-            emitRelation(shapes, placed[li], placed[ri], r, cd.textColor(), canvasW, math);
+            emitRelation(shapes, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math);
         }
 
         // -- 4) boxes: background rect, name band, border, and (when populated) the two compartment
@@ -298,9 +315,14 @@ public final class ClassDiagramLayout {
     }
 
     /// Routes one relationship between two placed boxes: the edge line between box borders (dashed for a
-    /// dependency) + its UML marker at the marked end + an optional `: label` at the edge midpoint.
-    private static void emitRelation(List<Shape> shapes, Placed left, Placed right, ClassRelation r,
-                                     String textColor, double canvasW, MathFragmentRenderer math) {
+    /// dependency) + its UML marker at the marked end + an optional `: label` at the edge midpoint. When
+    /// the straight edge would cross a THIRD box, {@link EdgeRouter} bends it around via one waypoint
+    /// (the marker then points along the first/last leg), so an edge never runs over a non-endpoint box.
+    private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri,
+                                     ClassRelation r, String textColor, double canvasW, double canvasH,
+                                     MathFragmentRenderer math) {
+        Placed left = placed[li];
+        Placed right = placed[ri];
         double lcx = left.centerX();
         double lcy = left.centerY();
         double rcx = right.centerX();
@@ -308,44 +330,75 @@ public final class ClassDiagramLayout {
         double[] lb = clipToRect(lcx, lcy, left.w(), left.h(), rcx, rcy);    // left box border point
         double[] rb = clipToRect(rcx, rcy, right.w(), right.h(), lcx, lcy);  // right box border point
 
+        // Route around any third box (placement removes most crossings; this bends the residual).
+        List<double[]> others = new ArrayList<>();
+        for (int k = 0; k < placed.length; k++) {
+            if (k == li || k == ri) {
+                continue;
+            }
+            Placed p = placed[k];
+            others.add(new double[] {p.x(), p.y(), p.w(), p.h()});
+        }
+        EdgeRouter.Route route = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+
+        // The first onward point from the left border and the previous point into the right border are
+        // the waypoint when bent, else the opposite border — so the marker points ALONG the leg it caps.
+        double lNextX = route.hasBend() ? route.wx() : rb[0];
+        double lNextY = route.hasBend() ? route.wy() : rb[1];
+        double rPrevX = route.hasBend() ? route.wx() : lb[0];
+        double rPrevY = route.hasBend() ? route.wy() : lb[1];
+
         double edgeStartX;
         double edgeStartY;
         double edgeEndX;
         double edgeEndY;
         if (r.kind().markerAtLeft()) {
-            // Marker at the LEFT operand (whole/parent). dir points from the left border toward right.
-            double[] dir = unit(rb[0] - lb[0], rb[1] - lb[1]);
+            // Marker at the LEFT operand (whole/parent). dir points from the left border along the edge.
+            double[] dir = unit(lNextX - lb[0], lNextY - lb[1]);
             List<Shape> mk = marker(r.kind(), lb[0], lb[1], dir[0], dir[1], MARKER);
             double markLen = markerLength(r.kind());
             edgeStartX = lb[0] + dir[0] * markLen;
             edgeStartY = lb[1] + dir[1] * markLen;
             edgeEndX = rb[0];
             edgeEndY = rb[1];
-            emitEdgeLine(shapes, edgeStartX, edgeStartY, edgeEndX, edgeEndY, r.kind().dashed());
+            emitEdgeChain(shapes, edgeStartX, edgeStartY, edgeEndX, edgeEndY, route, r.kind().dashed());
             shapes.addAll(mk);
         } else {
-            // Marker at the RIGHT operand (arrow target). dir points from the right border toward left.
-            double[] dir = unit(lb[0] - rb[0], lb[1] - rb[1]);
+            // Marker at the RIGHT operand (arrow target). dir points from the right border along the edge.
+            double[] dir = unit(rPrevX - rb[0], rPrevY - rb[1]);
             List<Shape> mk = marker(r.kind(), rb[0], rb[1], dir[0], dir[1], MARKER);
             double markLen = markerLength(r.kind());
             edgeStartX = lb[0];
             edgeStartY = lb[1];
             edgeEndX = rb[0] + dir[0] * markLen;
             edgeEndY = rb[1] + dir[1] * markLen;
-            emitEdgeLine(shapes, edgeStartX, edgeStartY, edgeEndX, edgeEndY, r.kind().dashed());
+            emitEdgeChain(shapes, edgeStartX, edgeStartY, edgeEndX, edgeEndY, route, r.kind().dashed());
             shapes.addAll(mk);
         }
 
-        // Optional `: label` at the edge midpoint, clamped in-canvas.
+        // Optional `: label` — at the bend (when routed) else the straight midpoint, clamped in-canvas.
         if (r.label() != null && !r.label().isBlank()) {
-            double midX = (edgeStartX + edgeEndX) / 2;
-            double midY = (edgeStartY + edgeEndY) / 2 - 3;
+            double midX = route.hasBend() ? route.wx() : (edgeStartX + edgeEndX) / 2;
+            double midY = (route.hasBend() ? route.wy() : (edgeStartY + edgeEndY) / 2) - 3;
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w = (math != null && MathLabel.hasMath(lbl))
                 ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
                 : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
             double originX = Math.max(2, Math.min(midX - w / 2, canvasW - 2 - w));
             emitLine(shapes, lbl, originX, midY, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
+        }
+    }
+
+    /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,
+    /// else a two-leg polyline through the detour waypoint (`x1,y1 → W → x2,y2`) so the edge bends
+    /// around a third box. Each leg honours the dashed flag independently.
+    private static void emitEdgeChain(List<Shape> shapes, double x1, double y1, double x2, double y2,
+                                      EdgeRouter.Route route, boolean dashed) {
+        if (route.hasBend()) {
+            emitEdgeLine(shapes, x1, y1, route.wx(), route.wy(), dashed);
+            emitEdgeLine(shapes, route.wx(), route.wy(), x2, y2, dashed);
+        } else {
+            emitEdgeLine(shapes, x1, y1, x2, y2, dashed);
         }
     }
 
