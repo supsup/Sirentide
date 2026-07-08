@@ -196,6 +196,7 @@ public final class Sirentide {
             case StateDiagram sd -> StateDiagramLayout.layout(sd, math);
             case QuadrantChart q -> QuadrantChartLayout.layout(q, math);
             case com.sirentide.ir.ClassDiagram cd -> com.sirentide.layout.ClassDiagramLayout.layout(cd, math);
+            case com.sirentide.ir.ErDiagram er -> com.sirentide.layout.ErDiagramLayout.layout(er, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

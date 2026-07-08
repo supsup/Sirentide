@@ -86,6 +86,15 @@ class GoldenSvgTest {
             "classDiagram\n  class Animal {\n    +String name\n    +int age\n    +eat() void\n"
                 + "    +sleep()\n  }\n  class Dog {\n    +bark() void\n  }\n"
                 + "  Animal <|-- Dog : inherits\n  Animal *-- Collar : composition\n");
+        // An entity-relationship diagram (10th type): two POPULATED entity tables (CUSTOMER + ORDER,
+        // each with a PK) plus an auto-vivified LINE-ITEM, a ZERO-OR-MANY relation (CUSTOMER ||--o{
+        // ORDER — a bar-combo at the one end, a crow's-foot+circle at the many end) AND a ONE-OR-MANY
+        // relation (ORDER ||--|{ LINE-ITEM — a crow's-foot+bar at the many end). Pins the header/rows
+        // table stacking, the grid placement, and the crow-foot cardinality glyph combos byte-for-byte.
+        FIXTURES.put("erDiagram",
+            "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ORDER ||--|{ LINE-ITEM : contains\n"
+                + "  CUSTOMER {\n    string name PK\n    string email\n  }\n"
+                + "  ORDER {\n    int id PK\n    date created\n  }\n");
     }
 
     @Test

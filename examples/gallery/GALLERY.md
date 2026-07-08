@@ -203,6 +203,26 @@ Dog ..> Vet : dependency
 
 ![Class diagram (UML — all five relationship markers)](classDiagram.png)
 
+## ER diagram (crow-foot cardinalities)
+
+```
+erDiagram
+CUSTOMER ||--o{ ORDER : places
+ORDER ||--|{ LINE-ITEM : contains
+CUSTOMER }o--o| ADDRESS : has
+CUSTOMER {
+string name PK
+string email
+int age
+}
+ORDER {
+int id PK
+date created
+}
+```
+
+![ER diagram (crow-foot cardinalities)](erDiagram.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

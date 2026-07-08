@@ -125,6 +125,19 @@ class ContainmentTest {
         "classDiagram\n",
         // class diagram unclosed brace: degrade-not-throw (closes at EOF) — must stay in-set.
         "classDiagram\n  class A {\n    +x\n    +go()\n",
+        // ER diagram (10th type): two populated entity tables (typed rows + PK/FK/UK keys), ALL FOUR
+        // crow-foot cardinalities across the ends (zero-or-one, exactly-one, zero-or-many, one-or-many),
+        // an identifying `--` AND a non-identifying `..` (dashed) relation, an auto-vivified entity, an
+        // UNCLOSED block, and a MALFORMED relation (bad cardinality) — exercises the crow-foot / bar /
+        // hollow-ring marker lines + the dashed-segment edge + the header/rows table bands through the
+        // allowlist (all in svg/path/rect/line/glyph — the ring is a many-segment LINE polygon).
+        "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  ORDER ||--|{ LINE-ITEM : contains\n"
+            + "  CUSTOMER }o--o| ADDRESS : has\n  ORDER ||..|| INVOICE : bills\n"
+            + "  A |o--o| B\n  X |bad--o{ Y\n  Z ||-- \n  garbage row here\n"
+            + "  CUSTOMER {\n    string name PK\n    string email\n    int customer_id FK\n  }\n"
+            + "  ORDER {\n    int id PK\n    date created\n    string sku UK\n",   // unclosed block (EOF)
+        // bare ER diagram: no entities → a valid empty canvas (round-trips, never the inert shell).
+        "erDiagram\n",
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

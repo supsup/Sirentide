@@ -101,6 +101,10 @@ class BrewShotGalleryTest {
                 + "class Dog {\n+bark() void\n}\nAnimal <|-- Dog : inherits\n"
                 + "Animal *-- Collar : composition\nAnimal o-- Owner : aggregation\n"
                 + "Dog --> Bone : association\nDog ..> Vet : dependency"),
+        new Case("erDiagram", "ER diagram (crow-foot cardinalities)",
+            "erDiagram\nCUSTOMER ||--o{ ORDER : places\nORDER ||--|{ LINE-ITEM : contains\n"
+                + "CUSTOMER }o--o| ADDRESS : has\nCUSTOMER {\nstring name PK\nstring email\nint age\n}\n"
+                + "ORDER {\nint id PK\ndate created\n}"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

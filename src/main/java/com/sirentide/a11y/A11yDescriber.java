@@ -5,6 +5,10 @@ import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.ErCardinality;
+import com.sirentide.ir.ErDiagram;
+import com.sirentide.ir.ErEntity;
+import com.sirentide.ir.ErRelation;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
@@ -61,7 +65,65 @@ public final class A11yDescriber {
             case Gantt gantt -> gantt(gantt);
             case QuadrantChart q -> quadrant(q);
             case ClassDiagram cd -> classDiagram(cd);
+            case ErDiagram er -> erDiagram(er);
             case Empty ignored -> A11y.NONE;
+        };
+    }
+
+    /// ER diagram: "Entity-relationship diagram with N entities and M relationships. Entities:
+    /// CUSTOMER, ORDER. Relationships: CUSTOMER (exactly one) to ORDER (zero or many) labeled
+    /// \"places\"; …". Entities in first-seen order; each relationship reads BOTH ends' cardinalities
+    /// (the marker's meaning) and whether it is identifying.
+    private static A11y erDiagram(ErDiagram er) {
+        int entityCount = er.entities().size();
+        int relCount = er.relations().size();
+        StringBuilder d = new StringBuilder("Entity-relationship diagram with ")
+            .append(entityCount).append(entityCount == 1 ? " entity" : " entities")
+            .append(" and ").append(relCount).append(relCount == 1 ? " relationship" : " relationships")
+            .append('.');
+        if (entityCount > 0) {
+            d.append(" Entities: ");
+            int shown = Math.min(entityCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                ErEntity e = er.entities().get(i);
+                d.append(label(e.name()));
+                if (e.hasAttributes()) {
+                    d.append(" (").append(e.attributes().size())
+                        .append(e.attributes().size() == 1 ? " attribute)" : " attributes)");
+                }
+            }
+            d.append(entityCount > shown ? ", …." : ".");
+        }
+        if (relCount > 0) {
+            d.append(" Relationships: ");
+            int shown = Math.min(relCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                ErRelation r = er.relations().get(i);
+                d.append(label(r.left())).append(" (").append(cardinality(r.leftCard())).append(") to ")
+                    .append(label(r.right())).append(" (").append(cardinality(r.rightCard())).append(")");
+                d.append(r.identifying() ? ", identifying" : ", non-identifying");
+                if (r.label() != null && !r.label().isBlank()) {
+                    d.append(" labeled \"").append(label(r.label())).append('"');
+                }
+            }
+            d.append(relCount > shown ? "; …." : ".");
+        }
+        return new A11y("Entity-relationship diagram", d.toString());
+    }
+
+    /// A crow-foot cardinality spoken in words (the marker combo's meaning).
+    private static String cardinality(ErCardinality c) {
+        return switch (c) {
+            case ZERO_OR_ONE -> "zero or one";
+            case EXACTLY_ONE -> "exactly one";
+            case ZERO_OR_MANY -> "zero or many";
+            case ONE_OR_MANY -> "one or many";
         };
     }
 
