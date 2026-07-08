@@ -78,6 +78,14 @@ class GoldenSvgTest {
                 + "  quadrant-3 \"Deprioritize\"\n  quadrant-4 \"Fill-in\"\n"
                 + "  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.75, 0.8]\n"
                 + "  \"Feature C\" : [0.5, 0.2]\n");
+        // A UML class diagram (9th type): two POPULATED three-compartment classes (Animal with attrs +
+        // methods, Dog with a method), an INHERITANCE edge (hollow-triangle marker) AND a COMPOSITION
+        // edge (filled-diamond marker), the latter to an auto-vivified empty class (Collar). Pins the
+        // compartment stacking, the grid placement, and the two distinct marker glyphs byte-for-byte.
+        FIXTURES.put("classDiagram",
+            "classDiagram\n  class Animal {\n    +String name\n    +int age\n    +eat() void\n"
+                + "    +sleep()\n  }\n  class Dog {\n    +bark() void\n  }\n"
+                + "  Animal <|-- Dog : inherits\n  Animal *-- Collar : composition\n");
     }
 
     @Test

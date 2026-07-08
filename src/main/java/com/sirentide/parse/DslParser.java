@@ -1,8 +1,12 @@
 package com.sirentide.parse;
 
+import com.sirentide.ir.ClassBox;
+import com.sirentide.ir.ClassDiagram;
+import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.FlowCluster;
+import com.sirentide.ir.RelationKind;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
@@ -108,6 +112,8 @@ public final class DslParser {
             case "state", "statediagram" -> parseStateDiagram(lines, header, textColor);
             // A 2×2 positioning matrix — axis-end labels, per-quadrant labels, and `[x,y]` points.
             case "quadrant" -> parseQuadrant(lines, textColor);
+            // A mermaid-style UML class diagram — `class X { members }` blocks + typed relationships.
+            case "classDiagram" -> parseClassDiagram(lines, textColor);
             default -> new Empty();
         };
     }
@@ -1291,6 +1297,186 @@ public final class DslParser {
     /// value — it stays inside the plot square rather than escaping the canvas or throwing).
     private static double clampUnit(double v) {
         return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    /// The leading keyword that opens a class BLOCK: `class <Name> { … members … }`.
+    private static final String KW_CLASS = "class";
+
+    /// Parses a mermaid-style UML class diagram — `class <Name> { members }` blocks plus typed
+    /// relationships between classes.
+    /// ```
+    /// classDiagram
+    ///   class Animal {
+    ///     +String name
+    ///     +eat() void
+    ///   }
+    ///   Animal <|-- Dog : inherits
+    ///   Animal *-- Collar : composition
+    /// ```
+    /// A `class <Name> {` line OPENS a member block; every subsequent line until a lone `}` is a
+    /// MEMBER (classified as a METHOD when it carries `(`, else an ATTRIBUTE — the `+`/`-`/`#`/`~`
+    /// visibility marker stays part of the display text). A bare `class <Name>` (no brace) declares an
+    /// empty class; `class <Name> {}` / `{ }` opens-and-closes an empty one. OUTSIDE a block a line is
+    /// a RELATIONSHIP `LEFT OP RIGHT [: label]` where OP is one of the five UML operators
+    /// ({@link #scanRelationOp}); each operand references a class, auto-vivified as an empty class when
+    /// never declared (mermaid semantics — so `Animal *-- Collar` renders Collar without its own
+    /// block). Classes register in FIRST-SEEN order (declared or referenced).
+    ///
+    /// Robustness (DESIGN §6, never throw): a line that is neither a class directive, a member (inside
+    /// a block), nor a well-formed relationship is DROPPED. A relationship with an EMPTY endpoint drops.
+    /// An UNCLOSED `{` at end-of-input CLOSES gracefully at EOF (the class keeps the members gathered so
+    /// far) rather than throwing — degrade-not-throw. Caps: {@link #MAX_NODES} classes,
+    /// {@link #MAX_EDGES} relationships; names/members `cap()`'d. Empty body → a ClassDiagram with no
+    /// classes (round-trips, NOT degraded to Empty).
+    private static Diagram parseClassDiagram(String[] lines, String textColor) {
+        // Insertion-ordered name → member accumulator: preserves first-seen class order (declared or
+        // relationship-referenced). A relationship-referenced name auto-vivifies an empty accumulator.
+        LinkedHashMap<String, ClassAcc> classes = new LinkedHashMap<>();
+        List<ClassRelation> relations = new ArrayList<>();
+        ClassAcc open = null;   // the currently-open `class { … }` block, or null when outside one
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (open != null) {
+                // Inside a member block: a lone `}` closes it; anything else is a member line.
+                if (line.equals("}")) {
+                    open = null;
+                    continue;
+                }
+                // A trailing `}` glued to the last member (`+bark() void }`) also closes the block.
+                String member = line;
+                if (member.endsWith("}")) {
+                    member = member.substring(0, member.length() - 1).strip();
+                    addMember(open, member);
+                    open = null;
+                    continue;
+                }
+                addMember(open, member);
+                continue;
+            }
+            // Outside a block. A `class <Name> [{]` directive opens a block or declares a bare class.
+            String[] kwRest = splitKeyword(line);
+            if (kwRest[0].equals(KW_CLASS) && !kwRest[1].isEmpty()) {
+                String rest = kwRest[1];
+                int brace = rest.indexOf('{');
+                if (brace < 0) {
+                    // Bare `class Name` — an empty class declaration (no members).
+                    registerClass(classes, cap(rest.strip()));
+                    continue;
+                }
+                String name = cap(rest.substring(0, brace).strip());
+                if (name.isEmpty()) {
+                    continue;   // `class {` with no name → malformed, drop (never throw)
+                }
+                ClassAcc acc = registerClass(classes, name);
+                // `class Name {}` / `{ }` on one line opens-and-closes an empty block; otherwise the
+                // block stays open for the following member lines. Inline members after `{` on the
+                // SAME line are not supported (mermaid puts members on their own lines) — ignored.
+                String afterBrace = rest.substring(brace + 1).strip();
+                open = afterBrace.startsWith("}") ? null : acc;
+                continue;
+            }
+            // Otherwise a relationship line `LEFT OP RIGHT [: label]`. Peel the optional `: label` at
+            // the first colon, then scan the pre-colon head for a UML relation operator.
+            String[] peeled = peelLabel(line);
+            String head = peeled[0];
+            String label = peeled[1] == null ? null : cap(peeled[1]);
+            RelationScan op = scanRelationOp(head);
+            if (op == null) {
+                continue;   // no operator (and not a class directive) → malformed, drop (never throw)
+            }
+            String left = cap(head.substring(0, op.pos()).strip());
+            String right = cap(head.substring(op.pos() + op.len()).strip());
+            if (left.isEmpty() || right.isEmpty()) {
+                continue;   // an empty endpoint → malformed relation, drop
+            }
+            // Auto-vivify both operands as classes (first-seen order) and record the relation.
+            registerClass(classes, left);
+            registerClass(classes, right);
+            if (relations.size() < MAX_EDGES
+                && classes.containsKey(left) && classes.containsKey(right)) {
+                relations.add(new ClassRelation(left, right, op.kind(), label));
+            }
+        }
+        List<ClassBox> boxes = new ArrayList<>();
+        for (Map.Entry<String, ClassAcc> e : classes.entrySet()) {
+            boxes.add(new ClassBox(e.getKey(), e.getValue().attributes, e.getValue().methods));
+        }
+        return new ClassDiagram(boxes, relations, textColor);
+    }
+
+    /// Registers a class by name in first-seen order (up to {@link #MAX_NODES}), returning its member
+    /// accumulator. An already-seen name returns the existing accumulator (a later `class {}` block
+    /// adds to it); past the cap a brand-new class is dropped and a THROWAWAY accumulator is returned
+    /// so the caller never NPEs (its members simply never reach the IR — never throw, never unbounded).
+    private static ClassAcc registerClass(LinkedHashMap<String, ClassAcc> classes, String name) {
+        ClassAcc acc = classes.get(name);
+        if (acc != null) {
+            return acc;
+        }
+        if (classes.size() >= MAX_NODES) {
+            return new ClassAcc();   // over-cap: a detached accumulator (its members are dropped)
+        }
+        ClassAcc fresh = new ClassAcc();
+        classes.put(name, fresh);
+        return fresh;
+    }
+
+    /// Adds one member line to a class accumulator, classified as a METHOD (carries `(`) or an
+    /// ATTRIBUTE (does not). The full display text — including any `+`/`-`/`#`/`~` visibility marker —
+    /// is kept and `cap()`'d; a blank member is ignored. Member lists are bounded by
+    /// {@link #MAX_DATA_ROWS} so a pathological block can't allocate unboundedly (never throw).
+    private static void addMember(ClassAcc acc, String member) {
+        String m = member.strip();
+        if (m.isEmpty()) {
+            return;
+        }
+        List<String> target = m.indexOf('(') >= 0 ? acc.methods : acc.attributes;
+        if (target.size() < MAX_DATA_ROWS) {
+            target.add(cap(m));
+        }
+    }
+
+    /// A located class-relation operator: byte `pos` in the head, token `len`, and the resolved
+    /// {@link RelationKind}.
+    private record RelationScan(int pos, int len, RelationKind kind) {}
+
+    /// Scans a relationship head for the FIRST (leftmost) UML relation operator, trying the LONGEST
+    /// token at each offset so a longer form never mis-splits. The five operators:
+    /// `<|--` (inheritance), `..>` (dependency), `-->` (association), `*--` (composition),
+    /// `o--` (aggregation). The `o--` aggregation token only matches when its `o` is at the start or
+    /// preceded by whitespace, so a class name ending in `o` glued to `--` (`Zoo--`) does NOT spoof an
+    /// aggregation. Returns null when the head carries no operator (→ the caller drops the line).
+    private static RelationScan scanRelationOp(String head) {
+        int n = head.length();
+        for (int i = 0; i < n; i++) {
+            if (head.startsWith("<|--", i)) {
+                return new RelationScan(i, 4, RelationKind.INHERITANCE);
+            }
+            if (head.startsWith("..>", i)) {
+                return new RelationScan(i, 3, RelationKind.DEPENDENCY);
+            }
+            if (head.startsWith("-->", i)) {
+                return new RelationScan(i, 3, RelationKind.ASSOCIATION);
+            }
+            if (head.startsWith("*--", i)) {
+                return new RelationScan(i, 3, RelationKind.COMPOSITION);
+            }
+            if (head.startsWith("o--", i) && (i == 0 || Character.isWhitespace(head.charAt(i - 1)))) {
+                return new RelationScan(i, 3, RelationKind.AGGREGATION);
+            }
+        }
+        return null;
+    }
+
+    /// A mutable member accumulator on the parse map: attributes + methods grow as member lines
+    /// arrive inside a `class { … }` block; frozen into a {@link ClassBox} at end-of-parse.
+    /// Parse-internal, never surfaced in the IR.
+    private static final class ClassAcc {
+        final List<String> attributes = new ArrayList<>();
+        final List<String> methods = new ArrayList<>();
     }
 
     /// Parses the shared `"label" : value` rows (used by both pie and xychart). A malformed row

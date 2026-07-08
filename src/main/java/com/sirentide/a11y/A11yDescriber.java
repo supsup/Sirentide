@@ -1,5 +1,8 @@
 package com.sirentide.a11y;
 
+import com.sirentide.ir.ClassBox;
+import com.sirentide.ir.ClassDiagram;
+import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.Flowchart;
@@ -57,7 +60,61 @@ public final class A11yDescriber {
             case Timeline tl -> timeline(tl);
             case Gantt gantt -> gantt(gantt);
             case QuadrantChart q -> quadrant(q);
+            case ClassDiagram cd -> classDiagram(cd);
             case Empty ignored -> A11y.NONE;
+        };
+    }
+
+    /// Class diagram: "Class diagram with N classes and M relations. Classes: Animal, Dog. Relations:
+    /// Dog inherits from Animal; Animal composed of Collar; …". Classes in first-seen order; each
+    /// relation read with a kind-specific verb naming the correct direction (the marker's meaning).
+    private static A11y classDiagram(ClassDiagram cd) {
+        int classCount = cd.classes().size();
+        int relCount = cd.relations().size();
+        StringBuilder d = new StringBuilder("Class diagram with ")
+            .append(classCount).append(classCount == 1 ? " class" : " classes")
+            .append(" and ").append(relCount).append(relCount == 1 ? " relation" : " relations")
+            .append('.');
+        if (classCount > 0) {
+            d.append(" Classes: ");
+            int shown = Math.min(classCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(cd.classes().get(i).name()));
+            }
+            d.append(classCount > shown ? ", …." : ".");
+        }
+        if (relCount > 0) {
+            d.append(" Relations: ");
+            int shown = Math.min(relCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                ClassRelation r = cd.relations().get(i);
+                d.append(relationPhrase(r));
+                if (r.label() != null && !r.label().isBlank()) {
+                    d.append(" labeled \"").append(label(r.label())).append('"');
+                }
+            }
+            d.append(relCount > shown ? "; …." : ".");
+        }
+        return new A11y("Class diagram", d.toString());
+    }
+
+    /// One relation as a natural phrase, keyed to the UML meaning of its marker (the whole/parent-side
+    /// kinds read "child ← parent"; the arrow-side kinds read "source → target").
+    private static String relationPhrase(ClassRelation r) {
+        String left = label(r.left());
+        String right = label(r.right());
+        return switch (r.kind()) {
+            case INHERITANCE -> right + " inherits from " + left;
+            case COMPOSITION -> left + " is composed of " + right;
+            case AGGREGATION -> left + " aggregates " + right;
+            case ASSOCIATION -> left + " is associated with " + right;
+            case DEPENDENCY -> left + " depends on " + right;
         };
     }
 
