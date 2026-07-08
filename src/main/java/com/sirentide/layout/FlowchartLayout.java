@@ -89,6 +89,42 @@ public final class FlowchartLayout {
         return FONT.ellipsize(label, canvasW - 2 * CLAMP_MARGIN, EDGE_LABEL_SIZE);
     }
 
+    /// Emit an edge/transition label, routing any `$…$` run through the shared {@link MathLabel} seam
+    /// when a renderer is present (plan sirentide-math-in-all-label-types). `anchorX`/`gap` +
+    /// `subtractWidth` reproduce each call site's outside-of-edge origin rule (a left-going edge's
+    /// label right-aligns: its RIGHT edge sits `gap` left of the anchor; every other case left-aligns
+    /// `gap` right of it). `baselineY` is the pre-computed label baseline. A `null`/`hasMath`-false
+    /// label takes the EXACT legacy path — canvas-relative ellipsize, `runWidth`, `clampLabelX`,
+    /// `textPathD` — so a plain-text edge label is byte-identical to the inline emission it replaced.
+    /// A math label SKIPS the canvas ellipsize (a formula must not be cut mid-run) and is measured on
+    /// its composite width, then clamped in-frame the same way.
+    private static void emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
+                                      boolean subtractWidth, double gap, double canvasW, String color,
+                                      MathFragmentRenderer math) {
+        if (raw == null) {
+            return;
+        }
+        if (math != null && MathLabel.hasMath(raw)) {
+            MathLabel.Measured mm = MathLabel.measure(raw, EDGE_LABEL_SIZE, FONT, math);
+            double w = mm.width();
+            double lblX = subtractWidth ? anchorX - gap - w : anchorX + gap;
+            lblX = clampLabelX(lblX, w, canvasW);
+            MathLabel.emit(mm, lblX, baselineY, color, EDGE_LABEL_SIZE, FONT, shapes);
+            return;
+        }
+        String fl = boundLabelToCanvas(raw, canvasW);
+        if (fl.isBlank()) {
+            return;
+        }
+        double w = FONT.runWidth(fl, EDGE_LABEL_SIZE);
+        double lblX = subtractWidth ? anchorX - gap - w : anchorX + gap;
+        lblX = clampLabelX(lblX, w, canvasW);
+        String ld = FONT.textPathD(fl, lblX, baselineY, EDGE_LABEL_SIZE);
+        if (!ld.isBlank()) {
+            shapes.add(new GlyphRun(ld, color));
+        }
+    }
+
     /// The default node styler: a rect box, or a diamond `<path>` for a `{Label}` decision node —
     /// byte-for-byte the emission that used to be inline in both the TD and LR passes, so every
     /// flowchart golden is unchanged by the styler seam. State diagrams pass a different styler
@@ -255,7 +291,7 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler, measures);
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack, styler, measures, math);
         }
 
         // Canvas width = widest layer (real + virtual slots) + margins.
@@ -329,16 +365,8 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
-                String bl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-                if (bl != null && !bl.isBlank()) {
-                    double lblY = (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35;
-                    double lblX = clampLabelX(laneX + EDGE_LABEL_GAP,
-                        FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
-                    String ld = FONT.textPathD(bl, lblX, lblY, EDGE_LABEL_SIZE);
-                    if (!ld.isBlank()) {
-                        shapes.add(new GlyphRun(ld, fc.textColor()));
-                    }
-                }
+                emitEdgeLabel(shapes, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
+                    false, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
                 continue;
             }
             int[] chain = rt.chain.get(ei);
@@ -371,20 +399,9 @@ public final class FlowchartLayout {
                 // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going edge's
                 // label sits right of the line, a left-going one's left of it (right-aligned). Keeps a
                 // fan-out's labels ("yes"/"no", "approve"/"request changes") from colliding mid-canvas.
-                String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-                if (fl != null && !fl.isBlank()) {
-                    double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
-                    double midX = (scx + baseCx) / 2;
-                    double lblX = dx >= 0
-                        ? midX + EDGE_LABEL_GAP
-                        : midX - EDGE_LABEL_GAP - flW;
-                    lblX = clampLabelX(lblX, flW, canvasW);
-                    double lblY = (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35;
-                    String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
-                    if (!ld.isBlank()) {
-                        shapes.add(new GlyphRun(ld, fc.textColor()));
-                    }
-                }
+                emitEdgeLabel(shapes, e.label(), (scx + baseCx) / 2,
+                    (sBottom + baseCy) / 2 + EDGE_LABEL_SIZE * 0.35,
+                    dx < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
                 continue;
             }
             // LONG edge: route as a POLYLINE src-anchor → waypoint centres → dst-anchor. Each virtual
@@ -406,20 +423,9 @@ public final class FlowchartLayout {
             ys[k - 1] = dTop;
             emitPolyline(shapes, xs, ys);
             // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
-            String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-            if (fl != null && !fl.isBlank()) {
-                double flW = FONT.runWidth(fl, EDGE_LABEL_SIZE);
-                double midX = (xs[0] + xs[1]) / 2;
-                double lblX = (xs[1] - xs[0]) >= 0
-                    ? midX + EDGE_LABEL_GAP
-                    : midX - EDGE_LABEL_GAP - flW;
-                lblX = clampLabelX(lblX, flW, canvasW);
-                double lblY = (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35;
-                String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
-                if (!ld.isBlank()) {
-                    shapes.add(new GlyphRun(ld, fc.textColor()));
-                }
-            }
+            emitEdgeLabel(shapes, e.label(), (xs[0] + xs[1]) / 2,
+                (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
+                (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
         }
 
         // 2) node boxes via the STYLER seam (default = rect / diamond `<path>` for a decision node;
@@ -463,7 +469,8 @@ public final class FlowchartLayout {
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     Routing rt, double[] boxW, String[] labels,
                                     String[] nodeFill, List<Edge> edges, boolean[] isBack,
-                                    NodeStyler styler, MathLabel.Measured[] measures) {
+                                    NodeStyler styler, MathLabel.Measured[] measures,
+                                    MathFragmentRenderer math) {
         // -- columns: colW[L] = widest slot (real box or virtual) in layer L; colX marches left→right.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -547,16 +554,9 @@ public final class FlowchartLayout {
                     + " Z";
                 shapes.add(new Path(bd, ARROW_FILL));
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
-                String bl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-                if (bl != null && !bl.isBlank()) {
-                    double lblX = clampLabelX((sx + tx) / 2 + EDGE_LABEL_GAP,
-                        FONT.runWidth(bl, EDGE_LABEL_SIZE), canvasW);
-                    double lblY = laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7;
-                    String ld = FONT.textPathD(bl, lblX, lblY, EDGE_LABEL_SIZE);
-                    if (!ld.isBlank()) {
-                        shapes.add(new GlyphRun(ld, textColor));
-                    }
-                }
+                emitEdgeLabel(shapes, e.label(), (sx + tx) / 2,
+                    laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
+                    false, EDGE_LABEL_GAP, canvasW, textColor, math);
                 continue;
             }
             int[] chain = rt.chain.get(ei);
@@ -587,20 +587,11 @@ public final class FlowchartLayout {
                 shapes.add(new Path(d, ARROW_FILL));
                 // Edge label: on the OUTSIDE of the edge at its midpoint (transpose of the TD rule) — an
                 // edge going DOWN sits BELOW the midpoint, one going UP or flat sits ABOVE it.
-                String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-                if (fl != null && !fl.isBlank()) {
-                    double midX = (sx + baseX) / 2;
-                    double midY = (sy + baseY) / 2;
-                    double lblY = dy > 0
-                        ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
-                        : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                    double lblX = clampLabelX(midX + EDGE_LABEL_GAP,
-                        FONT.runWidth(fl, EDGE_LABEL_SIZE), canvasW);
-                    String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
-                    if (!ld.isBlank()) {
-                        shapes.add(new GlyphRun(ld, textColor));
-                    }
-                }
+                double lblY = dy > 0
+                    ? (sy + baseY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                    : (sy + baseY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+                emitEdgeLabel(shapes, e.label(), (sx + baseX) / 2, lblY,
+                    false, EDGE_LABEL_GAP, canvasW, textColor, math);
                 continue;
             }
             // LONG edge: POLYLINE right-anchor → waypoint centres → left-anchor, arrowhead on the last.
@@ -618,20 +609,11 @@ public final class FlowchartLayout {
             ys[k - 1] = ty;
             emitPolyline(shapes, xs, ys);
             // Edge label anchors on the FIRST segment's midpoint (LR outside rule + clamp).
-            String fl = e.label() == null ? null : boundLabelToCanvas(e.label(), canvasW);
-            if (fl != null && !fl.isBlank()) {
-                double midX = (xs[0] + xs[1]) / 2;
-                double midY = (ys[0] + ys[1]) / 2;
-                double lblY = (ys[1] - ys[0]) > 0
-                    ? midY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
-                    : midY - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                double lblX = clampLabelX(midX + EDGE_LABEL_GAP,
-                    FONT.runWidth(fl, EDGE_LABEL_SIZE), canvasW);
-                String ld = FONT.textPathD(fl, lblX, lblY, EDGE_LABEL_SIZE);
-                if (!ld.isBlank()) {
-                    shapes.add(new GlyphRun(ld, textColor));
-                }
-            }
+            double lblY = (ys[1] - ys[0]) > 0
+                ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
+                : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
+            emitEdgeLabel(shapes, e.label(), (xs[0] + xs[1]) / 2, lblY,
+                false, EDGE_LABEL_GAP, canvasW, textColor, math);
         }
 
         // 2) node boxes via the STYLER seam (default = rect / diamond `<path>`; identical construction

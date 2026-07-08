@@ -181,19 +181,20 @@ public final class Sirentide {
             -1, detail);
     }
 
-    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. Only the
-    /// flowchart consumes `math` in this slice (node labels); every other type ignores it until a
-    /// later slice threads a renderer through its labels.
+    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY
+    /// label-bearing type consumes `math`, routing any `$…$` run in its labels through the shared
+    /// {@link com.sirentide.layout.MathLabel} seam (plan sirentide-math-in-all-label-types). A `null`
+    /// `math` is the plain-text degrade path for every type — byte-identical to the pre-feature bake.
     private static LaidOut layout(Diagram ir, com.sirentide.api.MathFragmentRenderer math) {
         return switch (ir) {
-            case Pie pie -> PieLayout.layout(pie);
-            case XyChart chart -> XyChartLayout.layout(chart);
-            case Timeline tl -> TimelineLayout.layout(tl);
-            case Gantt gantt -> GanttLayout.layout(gantt);
+            case Pie pie -> PieLayout.layout(pie, math);
+            case XyChart chart -> XyChartLayout.layout(chart, math);
+            case Timeline tl -> TimelineLayout.layout(tl, math);
+            case Gantt gantt -> GanttLayout.layout(gantt, math);
             case Flowchart fc -> FlowchartLayout.layout(fc, math);
-            case Sequence s -> SequenceLayout.layout(s);
-            case StateDiagram sd -> StateDiagramLayout.layout(sd);
-            case QuadrantChart q -> QuadrantChartLayout.layout(q);
+            case Sequence s -> SequenceLayout.layout(s, math);
+            case StateDiagram sd -> StateDiagramLayout.layout(sd, math);
+            case QuadrantChart q -> QuadrantChartLayout.layout(q, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

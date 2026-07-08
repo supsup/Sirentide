@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Task;
@@ -25,6 +26,13 @@ public final class GanttLayout {
     private static final String AXIS_STROKE = "#cbd5e1";
 
     public static LaidOut layout(Gantt gantt) {
+        return layout(gantt, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in a TASK label bakes
+    /// through the shared {@link MathLabel} seam. A null `math` degrades every `$…$` to plain text —
+    /// byte-identical to {@link #layout(Gantt)}.
+    public static LaidOut layout(Gantt gantt, MathFragmentRenderer math) {
         List<Task> tasks = gantt.tasks();
         int n = tasks.size();
         double height = TOP + n * ROW_H + BOTTOM;
@@ -69,11 +77,18 @@ public final class GanttLayout {
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar
             // Ellipsize the task name to the label column so a long name is clipped rather than
-            // running under the bars (wrap-oracle wired in; docs/DESIGN.md §4).
-            String name = FONT.ellipsize(t.label(), LABEL_COL - 12 - 4, LABEL_SIZE);
-            String d = FONT.textPathD(name, 12, baseline, LABEL_SIZE);   // left-aligned
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+            // running under the bars (wrap-oracle wired in; docs/DESIGN.md §4). A `$…$` task label
+            // SKIPS the ellipsize (a formula must not be cut mid-run) and bakes through the MathLabel
+            // seam, left-aligned at the same x; a plain label is byte-identical to before.
+            if (math != null && MathLabel.hasMath(t.label())) {
+                MathLabel.Measured mm = MathLabel.measure(t.label(), LABEL_SIZE, FONT, math);
+                MathLabel.emit(mm, 12, baseline, textColor, LABEL_SIZE, FONT, shapes);
+            } else {
+                String name = FONT.ellipsize(t.label(), LABEL_COL - 12 - 4, LABEL_SIZE);
+                String d = FONT.textPathD(name, 12, baseline, LABEL_SIZE);   // left-aligned
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, textColor));
+                }
             }
         }
         double axisY = TOP + n * ROW_H + 6;

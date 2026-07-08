@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
@@ -91,6 +92,14 @@ public final class SequenceLayout {
     private static final String DEGRADE_MSG = "sequence: no messages parsed";
 
     public static LaidOut layout(Sequence seq) {
+        return layout(seq, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in a MESSAGE label
+    /// (`$O(n)$`, `$\Delta t$`) or an ACTOR-head label bakes through the shared {@link MathLabel}
+    /// seam. A null `math` degrades every `$…$` to plain text — byte-identical to
+    /// {@link #layout(Sequence)}.
+    public static LaidOut layout(Sequence seq, MathFragmentRenderer math) {
         List<String> actors = seq.actors();
         int n = actors.size();
         if (n == 0) {
@@ -115,12 +124,25 @@ public final class SequenceLayout {
         Map<String, Integer> index = new HashMap<>();
         String[] headLabels = new String[n];
         double[] headW = new double[n];
+        // Composite measure for a head whose name carries `$…$` AND a renderer was provided; null for
+        // every plain-text head, which keeps the existing ellipsize path (byte-identical) below.
+        MathLabel.Measured[] headMeasures = new MathLabel.Measured[n];
         double maxHeadW = MIN_HEAD_W;
         for (int i = 0; i < n; i++) {
             index.put(actors.get(i), i);
-            String label = FONT.ellipsize(actors.get(i), MAX_HEAD_LABEL_W, LABEL_SIZE);
-            headLabels[i] = label;
-            headW[i] = Math.max(MIN_HEAD_W, FONT.runWidth(label, LABEL_SIZE) + 2 * PAD_X);
+            String raw = actors.get(i);
+            if (math != null && MathLabel.hasMath(raw)) {
+                // A math head name SKIPS ellipsization (a formula must not be cut mid-run); size the
+                // head box on the composite width.
+                MathLabel.Measured m = MathLabel.measure(raw, LABEL_SIZE, FONT, math);
+                headMeasures[i] = m;
+                headLabels[i] = raw;
+                headW[i] = Math.max(MIN_HEAD_W, m.width() + 2 * PAD_X);
+            } else {
+                String label = FONT.ellipsize(raw, MAX_HEAD_LABEL_W, LABEL_SIZE);
+                headLabels[i] = label;
+                headW[i] = Math.max(MIN_HEAD_W, FONT.runWidth(label, LABEL_SIZE) + 2 * PAD_X);
+            }
             maxHeadW = Math.max(maxHeadW, headW[i]);
         }
         double colSpacing = maxHeadW + ACTOR_GAP;
@@ -212,8 +234,7 @@ public final class SequenceLayout {
             SeqMessage m = drawn.get(i);
             int a = index.get(m.from());
             if (a == index.get(m.to())) {
-                double labelW = m.label() == null ? 0
-                    : FONT.runWidth(FONT.ellipsize(m.label(), MAX_HEAD_LABEL_W, MSG_LABEL_SIZE), MSG_LABEL_SIZE);
+                double labelW = selfLabelWidth(m.label(), math);
                 double need = cx[a] + SELF_W + LABEL_GAP + labelW + MARGIN;
                 canvasW = Math.max(canvasW, need);
             }
@@ -269,9 +290,9 @@ public final class SequenceLayout {
             double y = msgY[i];
             String stroke = m.reply() ? REPLY_STROKE : CALL_STROKE;
             if (a == b) {
-                emitSelfMessage(shapes, cx[a], y, m, stroke, textColor, canvasW);
+                emitSelfMessage(shapes, cx[a], y, m, stroke, textColor, canvasW, math);
             } else {
-                emitMessage(shapes, cx[a], cx[b], y, m, stroke, textColor, canvasW);
+                emitMessage(shapes, cx[a], cx[b], y, m, stroke, textColor, canvasW, math);
             }
         }
 
@@ -283,11 +304,16 @@ public final class SequenceLayout {
         // 4) head labels (glyph paths — never <text>), centred in the box, contrast-filled against
         // the head box (not the page-theme textColor, which vanished white-on-light under dark).
         for (int i = 0; i < n; i++) {
-            double w = FONT.runWidth(headLabels[i], LABEL_SIZE);
             double baseline = MARGIN + ACTOR_H / 2 + LABEL_SIZE * 0.35;
-            String d = FONT.textPathD(headLabels[i], cx[i] - w / 2, baseline, LABEL_SIZE);
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, headLabelFill));
+            if (headMeasures[i] != null) {
+                MathLabel.emit(headMeasures[i], cx[i] - headMeasures[i].width() / 2, baseline,
+                    headLabelFill, LABEL_SIZE, FONT, shapes);
+            } else {
+                double w = FONT.runWidth(headLabels[i], LABEL_SIZE);
+                String d = FONT.textPathD(headLabels[i], cx[i] - w / 2, baseline, LABEL_SIZE);
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, headLabelFill));
+                }
             }
         }
 
@@ -298,7 +324,8 @@ public final class SequenceLayout {
     /// FILLED triangle for a call, an OPEN V — two short lines — for a reply), plus a centred label
     /// above the line, ellipsized to the span and clamped inside the canvas.
     private static void emitMessage(List<Shape> shapes, double xa, double xb, double y, SeqMessage m,
-                                    String stroke, String textColor, double canvasW) {
+                                    String stroke, String textColor, double canvasW,
+                                    MathFragmentRenderer math) {
         double dx = xb - xa;
         double span = Math.abs(dx);
         if (!Double.isFinite(span) || span < 1e-6) {
@@ -321,15 +348,23 @@ public final class SequenceLayout {
             shapes.add(new Path(d, stroke));
         }
         // Label: centred over the span, above the line, ellipsized to the span width, clamped so the
-        // run never crosses the canvas edge (the geometry-escape fix class).
+        // run never crosses the canvas edge (the geometry-escape fix class). A `$…$` message label
+        // (`$O(n)$`, `$\Delta t$`) bakes through the shared MathLabel seam; a math label SKIPS the
+        // span-ellipsize (a formula must not be cut mid-run) and is centred on its composite width.
         if (m.label() != null) {
-            String text = FONT.ellipsize(m.label(), span - 8, MSG_LABEL_SIZE);
-            double w = FONT.runWidth(text, MSG_LABEL_SIZE);
             double midX = (xa + xb) / 2;
-            double runX = clamp(midX - w / 2, w, canvasW);
-            String d = FONT.textPathD(text, runX, y - LABEL_LIFT, MSG_LABEL_SIZE);
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+            if (math != null && MathLabel.hasMath(m.label())) {
+                MathLabel.Measured mm = MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math);
+                double runX = clamp(midX - mm.width() / 2, mm.width(), canvasW);
+                MathLabel.emit(mm, runX, y - LABEL_LIFT, textColor, MSG_LABEL_SIZE, FONT, shapes);
+            } else {
+                String text = FONT.ellipsize(m.label(), span - 8, MSG_LABEL_SIZE);
+                double w = FONT.runWidth(text, MSG_LABEL_SIZE);
+                double runX = clamp(midX - w / 2, w, canvasW);
+                String d = FONT.textPathD(text, runX, y - LABEL_LIFT, MSG_LABEL_SIZE);
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, textColor));
+                }
             }
         }
     }
@@ -338,7 +373,8 @@ public final class SequenceLayout {
     /// ROW_H/2, back left into the lifeline with a LEFT-pointing arrowhead (filled triangle for a
     /// call, open V for a reply) — plus a left-aligned label just right of the hook's outer edge.
     private static void emitSelfMessage(List<Shape> shapes, double x, double y, SeqMessage m,
-                                        String stroke, String textColor, double canvasW) {
+                                        String stroke, String textColor, double canvasW,
+                                        MathFragmentRenderer math) {
         double outX = x + SELF_W;
         double yb = y + ROW_H / 2;
         shapes.add(new Line(x, y, outX, y, stroke, MSG_WIDTH));            // out right
@@ -357,16 +393,36 @@ public final class SequenceLayout {
             shapes.add(new Path(d, stroke));
         }
         // Label: left-aligned just right of the hook's outer edge, aligned on the top out-segment,
-        // clamped in-canvas (the canvas was widened above so a trailing actor's label fits).
+        // clamped in-canvas (the canvas was widened above so a trailing actor's label fits). A `$…$`
+        // self-message label bakes through the shared MathLabel seam (math skips the ellipsize).
         if (m.label() != null) {
-            String text = FONT.ellipsize(m.label(), MAX_HEAD_LABEL_W, MSG_LABEL_SIZE);
-            double w = FONT.runWidth(text, MSG_LABEL_SIZE);
-            double runX = clamp(outX + LABEL_GAP, w, canvasW);
-            String d = FONT.textPathD(text, runX, y + MSG_LABEL_SIZE * 0.35, MSG_LABEL_SIZE);
-            if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, textColor));
+            if (math != null && MathLabel.hasMath(m.label())) {
+                MathLabel.Measured mm = MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math);
+                double runX = clamp(outX + LABEL_GAP, mm.width(), canvasW);
+                MathLabel.emit(mm, runX, y + MSG_LABEL_SIZE * 0.35, textColor, MSG_LABEL_SIZE, FONT, shapes);
+            } else {
+                String text = FONT.ellipsize(m.label(), MAX_HEAD_LABEL_W, MSG_LABEL_SIZE);
+                double w = FONT.runWidth(text, MSG_LABEL_SIZE);
+                double runX = clamp(outX + LABEL_GAP, w, canvasW);
+                String d = FONT.textPathD(text, runX, y + MSG_LABEL_SIZE * 0.35, MSG_LABEL_SIZE);
+                if (!d.isBlank()) {
+                    shapes.add(new GlyphRun(d, textColor));
+                }
             }
         }
+    }
+
+    /// The width a self-message label reserves to the right of its hook — used to widen the canvas so
+    /// a trailing actor's label fits. Math-aware: a `$…$` label measures its composite width, a
+    /// plain label its ellipsized width (byte-identical to the legacy calc).
+    private static double selfLabelWidth(String raw, MathFragmentRenderer math) {
+        if (raw == null) {
+            return 0;
+        }
+        if (math != null && MathLabel.hasMath(raw)) {
+            return MathLabel.measure(raw, MSG_LABEL_SIZE, FONT, math).width();
+        }
+        return FONT.runWidth(FONT.ellipsize(raw, MAX_HEAD_LABEL_W, MSG_LABEL_SIZE), MSG_LABEL_SIZE);
     }
 
     /// Resolves each {@link SeqBlock}'s FLAT message-index range to a pixel {@link Frame}. For every

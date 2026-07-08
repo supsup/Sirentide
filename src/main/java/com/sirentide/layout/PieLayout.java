@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
@@ -56,6 +57,16 @@ public final class PieLayout {
         KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
 
     public static LaidOut layout(Pie pie) {
+        return layout(pie, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in a COMFORTABLE
+    /// (non-thin) slice's inside label bakes through the shared {@link MathLabel} seam. A null `math`
+    /// degrades every `$…$` to plain text — byte-identical to {@link #layout(Pie)}. Thin-slice OUTSIDE
+    /// leader labels and the legend rows keep the plain-text path (geometry-awkward for a formula: a
+    /// leader-spread label is ellipsized to sub-pixel room, a legend row concatenates label+value) —
+    /// a `$…$` there degrades to its raw source, never throws.
+    public static LaidOut layout(Pie pie, MathFragmentRenderer math) {
         // Legend mode is a wholly separate layout path (left key + shifted, label-suppressed pie),
         // kept apart so the bare-pie path below stays byte-for-byte identical to before.
         if (pie.legend()) {
@@ -91,12 +102,22 @@ public final class PieLayout {
             double mid = (angle + next) / 2;
             // Wrap-oracle wired in: a long slice label that would overrun the wedge is clipped with
             // an ellipsis rather than spilling across neighbours (docs/DESIGN.md §4).
-            String label = FONT.ellipsize(slices.get(i).label(), MAX_INSIDE_LABEL, LABEL_SIZE);
+            String rawLabel = slices.get(i).label();
+            String label = FONT.ellipsize(rawLabel, MAX_INSIDE_LABEL, LABEL_SIZE);
             if (sweep >= THIN_SLICE) {
                 // Comfortable slice: a centered inside label, contrast-aware fill (black or white by
-                // the slice colour's luminance — no more contrast-blind hardcoded white).
-                placeLabel(shapes, label, cx + LABEL_RADIUS * Math.cos(mid),
-                    cy + LABEL_RADIUS * Math.sin(mid), Colors.contrastFill(fill));
+                // the slice colour's luminance — no more contrast-blind hardcoded white). A `$…$`
+                // label bakes through the MathLabel seam, centred on its composite width (math skips
+                // the ellipsize); a plain label is byte-identical to before.
+                double lx = cx + LABEL_RADIUS * Math.cos(mid);
+                double ly = cy + LABEL_RADIUS * Math.sin(mid);
+                if (math != null && MathLabel.hasMath(rawLabel)) {
+                    MathLabel.Measured mm = MathLabel.measure(rawLabel, LABEL_SIZE, FONT, math);
+                    MathLabel.emit(mm, lx - mm.width() / 2, ly + LABEL_SIZE * 0.35,
+                        Colors.contrastFill(fill), LABEL_SIZE, FONT, shapes);
+                } else {
+                    placeLabel(shapes, label, lx, ly, Colors.contrastFill(fill));
+                }
             } else {
                 // Thin slice: DEFER — anchor on the rim, collect it, and spread the whole set below
                 // so two near-co-located tiny slices ("Tiny"/"Other") no longer stack their labels.

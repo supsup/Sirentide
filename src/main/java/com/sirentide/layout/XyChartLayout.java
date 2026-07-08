@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.XyChart;
@@ -57,15 +58,23 @@ public final class XyChartLayout {
     /// Dispatches on the chart shape: the legacy single-series bar path (`series == null`, unchanged
     /// output) vs the multi-series / line / scatter path.
     public static LaidOut layout(XyChart chart) {
+        return layout(chart, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in a CATEGORY (x-axis)
+    /// label bakes through the shared {@link MathLabel} seam. A null `math` degrades every `$…$` to
+    /// plain text — byte-identical to {@link #layout(XyChart)}. Numeric tick/value labels never carry
+    /// math, so they stay on the plain path.
+    public static LaidOut layout(XyChart chart, MathFragmentRenderer math) {
         if (chart.series() == null) {
-            return layoutBars(chart);
+            return layoutBars(chart, math);
         }
-        return layoutMulti(chart);
+        return layoutMulti(chart, math);
     }
 
     /// The original single-series bar layout — UNCHANGED so its bake stays byte-identical (guarded
     /// by the xychart golden). Values → bar heights over a signed `[min(0,·), max(0,·)]` domain.
-    private static LaidOut layoutBars(XyChart chart) {
+    private static LaidOut layoutBars(XyChart chart, MathFragmentRenderer math) {
         double plotLeft = ML;
         double plotRight = W - MR;
         double plotTop = MT;
@@ -126,8 +135,7 @@ public final class XyChartLayout {
             double categoryBaseline = plotBottom + 14;
             // Category label below the axis, ellipsized to its column slot so a long name doesn't
             // run into its neighbours (wrap-oracle wired in; docs/DESIGN.md §4).
-            String category = FONT.ellipsize(b.label(), slot - 2, LABEL_SIZE);
-            centeredLabel(shapes, category, cx, categoryBaseline, LABEL_SIZE, textColor);
+            emitCategory(shapes, b.label(), cx, categoryBaseline, slot, textColor, math);
             // Value label at the bar's OUTER end: above a positive bar, below a descending one. For a
             // NEGATIVE bar the outer (bottom) end can reach the axis, so CLAMP the value label up to
             // stay clear of the category label below the axis (no stacked overlap).
@@ -144,7 +152,7 @@ public final class XyChartLayout {
     /// bar path but plots per-series: grouped rects (`bars`), or a disc-per-point plus per-series
     /// connecting segments (`line`) / discs alone (`scatter`). An optional left colour KEY (when
     /// `legend` is set AND there is more than one series) widens the canvas like the pie legend.
-    private static LaidOut layoutMulti(XyChart chart) {
+    private static LaidOut layoutMulti(XyChart chart, MathFragmentRenderer math) {
         String textColor = chart.textColor();
         String mode = chart.mode();
         List<Slice> bars = chart.bars();          // category labels only
@@ -235,10 +243,10 @@ public final class XyChartLayout {
         double slot = plotW / nCat;
         if (grouped) {
             layoutGroupedBars(shapes, series, bars, seriesCount, axis,
-                plotLeft, plotBottom, plotTop, baselineY, slot, textColor);
+                plotLeft, plotBottom, plotTop, baselineY, slot, textColor, math);
         } else {
             layoutPoints(shapes, series, bars, seriesCount, axis, mode,
-                plotLeft, plotBottom, plotTop, slot, textColor);
+                plotLeft, plotBottom, plotTop, slot, textColor, math);
         }
 
         if (showLegend) {
@@ -252,7 +260,7 @@ public final class XyChartLayout {
     private static void layoutGroupedBars(List<Shape> shapes, List<double[]> series, List<Slice> bars,
                                           int seriesCount, AxisScale axis, double plotLeft,
                                           double plotBottom, double plotTop, double baselineY,
-                                          double slot, String textColor) {
+                                          double slot, String textColor, MathFragmentRenderer math) {
         double groupW = slot * 0.6;
         double barW = Math.max(0.5, (groupW - (seriesCount - 1) * GROUP_GAP) / seriesCount);
         for (int i = 0; i < bars.size(); i++) {
@@ -270,8 +278,7 @@ public final class XyChartLayout {
                 shapes.add(new Rect(x, y, barW, h, Colors.PALETTE[s % Colors.PALETTE.length]));
             }
             double cx = plotLeft + slot * i + slot / 2;
-            String cat = FONT.ellipsize(bars.get(i).label(), slot - 2, LABEL_SIZE);
-            centeredLabel(shapes, cat, cx, plotBottom + 14, LABEL_SIZE, textColor);
+            emitCategory(shapes, bars.get(i).label(), cx, plotBottom + 14, slot, textColor, math);
         }
     }
 
@@ -281,7 +288,8 @@ public final class XyChartLayout {
     /// zeroed). Segments are drawn before discs so a disc sits on top of its segment ends.
     private static void layoutPoints(List<Shape> shapes, List<double[]> series, List<Slice> bars,
                                      int seriesCount, AxisScale axis, String mode, double plotLeft,
-                                     double plotBottom, double plotTop, double slot, String textColor) {
+                                     double plotBottom, double plotTop, double slot, String textColor,
+                                     MathFragmentRenderer math) {
         boolean line = mode.equals("line");
         double dotR = line ? LINE_DOT_R : SCATTER_DOT_R;
         int nCat = bars.size();
@@ -308,8 +316,21 @@ public final class XyChartLayout {
             }
         }
         for (int i = 0; i < nCat; i++) {
-            String cat = FONT.ellipsize(bars.get(i).label(), slot - 2, LABEL_SIZE);
-            centeredLabel(shapes, cat, px[i], plotBottom + 14, LABEL_SIZE, textColor);
+            emitCategory(shapes, bars.get(i).label(), px[i], plotBottom + 14, slot, textColor, math);
+        }
+    }
+
+    /// Emit a category (x-axis) label centred at `cx`. A `$…$` label bakes through the shared
+    /// {@link MathLabel} seam (math skips the slot-ellipsize, centres on the composite width); a plain
+    /// label is ellipsized to its column slot and centred — byte-identical to the pre-feature bake.
+    private static void emitCategory(List<Shape> shapes, String raw, double cx, double baseline,
+                                     double slot, String textColor, MathFragmentRenderer math) {
+        if (math != null && MathLabel.hasMath(raw)) {
+            MathLabel.Measured mm = MathLabel.measure(raw, LABEL_SIZE, FONT, math);
+            MathLabel.emit(mm, cx - mm.width() / 2, baseline, textColor, LABEL_SIZE, FONT, shapes);
+        } else {
+            String cat = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);
+            centeredLabel(shapes, cat, cx, baseline, LABEL_SIZE, textColor);
         }
     }
 

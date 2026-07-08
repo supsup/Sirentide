@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.ir.StateDiagram;
 
 /// State-diagram layout: it does NOT re-implement graph layout — it drives {@link FlowchartLayout}'s
@@ -78,6 +79,14 @@ public final class StateDiagramLayout {
     }
 
     public static LaidOut layout(StateDiagram sd) {
-        return FlowchartLayout.layout(sd.graph(), STYLER);
+        return layout(sd, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): threads `math` into the reused
+    /// flowchart engine, so a state NAME carrying `$…$` (a node label) AND a transition label
+    /// carrying `$…$` (an edge label) both bake through the SAME {@link MathLabel} seam the flowchart
+    /// uses. A null `math` is byte-identical to {@link #layout(StateDiagram)}.
+    public static LaidOut layout(StateDiagram sd, MathFragmentRenderer math) {
+        return FlowchartLayout.layout(sd.graph(), STYLER, math);
     }
 }
