@@ -478,6 +478,18 @@ public final class FlowchartLayout {
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 
+        // Per-node box HEIGHT (plan sirentide-tall-math-labels). NODE_H for every plain-text / short-
+        // math node — so a node whose label fits one line is byte-identical to the fixed-height engine
+        // — and a GROWN height for a node whose label carries a TALL multi-row fragment (matrix / cases
+        // / stacked fraction) whose ascent+descent exceeds one line. The seam ({@link MathLabel}) owns
+        // the policy; here we just consume it. `boxH[i] != NODE_H` iff node i grew.
+        double[] boxH = new double[n];
+        for (int i = 0; i < n; i++) {
+            boxH[i] = measures[i] != null
+                ? MathLabel.boxHeight(measures[i], NODE_H, LABEL_SIZE, FONT)
+                : NODE_H;
+        }
+
         // Resolve each node's BOX fill once (direction-independent): the author's per-node colour
         // wins, else the header `nodecolor=` default, else the built-in NODE_FILL. This fill is what
         // the box is drawn with AND what its label contrasts against — an author's dark box gets a
@@ -501,8 +513,20 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, rt, boxW, labels, nodeFill, edges, isBack,
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, boxH, labels, nodeFill, edges, isBack,
                 styler, measures, math, anchored);
+        }
+
+        // Full per-VERTEX heights (real nodes + virtual waypoints); a virtual is always NODE_H. Used
+        // to grow each LAYER band to its tallest member and to center every box in its band.
+        double[] boxHFull = fullHeights(n, rt.vTotal, boxH);
+        double[] layerH = new double[layerCount];
+        for (int L = 0; L < layerCount; L++) {
+            double h = NODE_H;
+            for (int idx : rt.order.get(L)) {
+                h = Math.max(h, boxHFull[idx]);
+            }
+            layerH[L] = h;   // == NODE_H for every all-fixed-height layer → byte-identical positions
         }
 
         // Canvas width = widest layer (real + virtual slots) + margins.
@@ -527,22 +551,32 @@ public final class FlowchartLayout {
             }
         }
         double canvasW = contentW + backCount * BACK_LANE_GAP + maxBackLabelW;
-        double canvasH = layerCount * (NODE_H + LAYER_GAP) - LAYER_GAP + 2 * MARGIN;
+        // Each layer band is as tall as its tallest member (NODE_H for an all-fixed layer). The band
+        // tops march down cumulatively — for an all-NODE_H chart this reduces to the old
+        // `MARGIN + L*(NODE_H+LAYER_GAP)`, so every existing golden is byte-identical.
+        double[] layerY = new double[layerCount];
+        double cursorY = MARGIN;
+        for (int L = 0; L < layerCount; L++) {
+            layerY[L] = cursorY;
+            cursorY += layerH[L] + LAYER_GAP;
+        }
+        double canvasH = cursorY - LAYER_GAP + MARGIN;
 
         // Assign coordinates: each layer centered horizontally on the CONTENT width (the back-edge
         // lanes extend the canvas to the right without shifting the graph), laid left→right. Real and
         // virtual vertices share the vx/vy arrays; a virtual's waypoint POINT is its slot centre.
+        // Vertically, each box is CENTERED in its (possibly grown) layer band — a fixed-height box in
+        // an all-fixed band gets offset 0, so it lands exactly where the old top-aligned pass put it.
         double[] vx = new double[rt.vTotal];
         double[] vy = new double[rt.vTotal];
         for (int L = 0; L < layerCount; L++) {
             List<Integer> row = rt.order.get(L);
             double lw = rowWidth(row, rt.vWidth);
             double startX = (contentW - lw) / 2;
-            double y = MARGIN + L * (NODE_H + LAYER_GAP);
             double cursor = startX;
             for (int idx : row) {
                 vx[idx] = cursor;
-                vy[idx] = y;
+                vy[idx] = layerY[L] + (layerH[L] - boxHFull[idx]) / 2;
                 cursor += rt.vWidth[idx] + NODE_GAP;
             }
         }
@@ -551,7 +585,7 @@ public final class FlowchartLayout {
         // shift is 0 and the canvas is unchanged (byte-identical bake). A frame that would escape ABOVE
         // or LEFT of the canvas shifts EVERY vertex (real + virtual) right/down by the deficit so the
         // containment invariant holds; the canvas then GROWS to fit the shifted content + frame extent.
-        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW);
+        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW, boxH);
         double offX = 0;
         double offY = 0;
         for (ClusterFrame f : frames) {
@@ -563,7 +597,7 @@ public final class FlowchartLayout {
                 vx[i] += offX;
                 vy[i] += offY;
             }
-            frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW);
+            frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW, boxH);
         }
         double maxFrameRight = 0;
         double maxFrameBottom = 0;
@@ -602,9 +636,9 @@ public final class FlowchartLayout {
                 // The lane base tracks the (possibly cluster-shifted) content, so a back-edge lane
                 // still clears the nodes after a subgraph shift (offX is 0 for a cluster-free chart).
                 double laneX = contentW - MARGIN + offX + BACK_LANE_GAP * (++laneIdx);
-                double sy = vy[u] + NODE_H / 2;        // source right-middle
+                double sy = vy[u] + boxH[u] / 2;        // source right-middle
                 double sx = vx[u] + boxW[u];
-                double ty = vy[v] + NODE_H / 2;        // target right-middle
+                double ty = vy[v] + boxH[v] / 2;        // target right-middle
                 double tx = vx[v] + boxW[v];
                 emitEdgeLine(tgt, sx, sy, laneX, sy, e.style());      // out right
                 emitEdgeLine(tgt, laneX, sy, laneX, ty, e.style());   // up the lane
@@ -626,7 +660,7 @@ public final class FlowchartLayout {
             } else {
                 int[] chain = rt.chain.get(ei);
                 double scx = vx[u] + boxW[u] / 2;
-                double sBottom = vy[u] + NODE_H;
+                double sBottom = vy[u] + boxH[u];
                 double dcx = vx[v] + boxW[v] / 2;
                 double dTop = vy[v];
                 if (chain.length == 2) {
@@ -708,17 +742,17 @@ public final class FlowchartLayout {
         if (anchored) {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();
-                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
-                emitNodeLabel(ng, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
                     measures[i], labels[i], nodeFill[i]);
                 shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
             }
         } else {
             for (int i = 0; i < n; i++) {
-                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
             }
             for (int i = 0; i < n; i++) {
-                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
                     measures[i], labels[i], nodeFill[i]);
             }
         }
@@ -744,6 +778,43 @@ public final class FlowchartLayout {
         }
     }
 
+    /// The label baseline y for a node whose box top is `boxTop` and (possibly grown) height `boxH`.
+    /// A GROWN math box (`boxH != NODE_H`, only reachable for a tall multi-row fragment) centers the
+    /// fragment ink in the box via {@link MathLabel#baselineInBox}; every other node — plain text,
+    /// short inline math, a fixed-height box — keeps the EXACT legacy formula (`top + NODE_H/2 +
+    /// LABEL_SIZE*0.35`), so its bytes are unchanged. Shared by TD + LR, anchored + legacy paths.
+    private static double labelBaseline(MathLabel.Measured measure, double boxTop, double boxH) {
+        if (measure != null && boxH != NODE_H) {
+            return MathLabel.baselineInBox(measure, boxTop, boxH);
+        }
+        return boxTop + NODE_H / 2 + LABEL_SIZE * 0.35;
+    }
+
+    /// Full per-VERTEX heights: `boxH` for the real nodes `[0,n)`, `NODE_H` for every virtual waypoint
+    /// `[n,vTotal)` (a waypoint is always a thin fixed-height slot). Lets the TD/LR passes grow a layer
+    /// band / column slot to its tallest real member while a waypoint's centre stays a NODE_H slot.
+    private static double[] fullHeights(int n, int vTotal, double[] boxH) {
+        double[] f = new double[vTotal];
+        for (int i = 0; i < vTotal; i++) {
+            f[i] = i < n ? boxH[i] : NODE_H;
+        }
+        return f;
+    }
+
+    /// The stacked height of one LR column: the sum of its members' (possibly grown) heights plus a
+    /// NODE_GAP between each. An empty column is 0; an all-fixed column of `cnt` members reduces to
+    /// `cnt*NODE_H + (cnt-1)*NODE_GAP` (the pre-growth formula), so an all-fixed LR chart is unchanged.
+    private static double columnStackH(List<Integer> col, double[] boxHFull) {
+        if (col.isEmpty()) {
+            return 0;
+        }
+        double sum = (col.size() - 1) * NODE_GAP;
+        for (int idx : col) {
+            sum += boxHFull[idx];
+        }
+        return sum;
+    }
+
     /// The `data-sirentide-id` base for a NODE: its human label (SANITIZED downstream), so a label
     /// with spaces/symbols yields a legal id and two same-label nodes get uniquified. Falls back to the
     /// DSL id when the label is blank (never the case for a real flowchart node; defensive).
@@ -766,10 +837,13 @@ public final class FlowchartLayout {
     /// forward edges route through the SAME virtual waypoints (computed direction-independently); only
     /// the coordinates differ.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
-                                    Routing rt, double[] boxW, String[] labels,
+                                    Routing rt, double[] boxW, double[] boxH, String[] labels,
                                     String[] nodeFill, List<Edge> edges, boolean[] isBack,
                                     NodeStyler styler, MathLabel.Measured[] measures,
                                     MathFragmentRenderer math, boolean anchored) {
+        // Full per-VERTEX heights (real nodes + virtual waypoints); a tall multi-row math node grows
+        // its slot in the column stack, a waypoint stays NODE_H. All-fixed columns → byte-identical.
+        double[] boxHFull = fullHeights(n, rt.vTotal, boxH);
         // -- columns: colW[L] = widest slot (real box or virtual) in layer L; colX marches left→right.
         double[] colW = new double[layerCount];
         for (int L = 0; L < layerCount; L++) {
@@ -783,9 +857,7 @@ public final class FlowchartLayout {
         double maxColumnStackH = 0;   // tallest column's stacked height → the vertical-centering datum
         for (int L = 0; L < layerCount; L++) {
             colX[L] = L == 0 ? MARGIN : colX[L - 1] + colW[L - 1] + LAYER_GAP;
-            int cnt = rt.order.get(L).size();
-            double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
-            maxColumnStackH = Math.max(maxColumnStackH, stackH);
+            maxColumnStackH = Math.max(maxColumnStackH, columnStackH(rt.order.get(L), boxHFull));
         }
         double contentW = (layerCount == 0 ? MARGIN : colX[layerCount - 1] + colW[layerCount - 1]) + MARGIN;
         double contentH = maxColumnStackH + 2 * MARGIN;
@@ -798,14 +870,13 @@ public final class FlowchartLayout {
         double[] vy = new double[rt.vTotal];
         for (int L = 0; L < layerCount; L++) {
             List<Integer> col = rt.order.get(L);
-            int cnt = col.size();
-            double stackH = cnt == 0 ? 0 : cnt * NODE_H + (cnt - 1) * NODE_GAP;
+            double stackH = columnStackH(col, boxHFull);
             double startY = (contentH - stackH) / 2;
             double cursor = startY;
             for (int idx : col) {
                 vx[idx] = colX[L] + (colW[L] - rt.vWidth[idx]) / 2;
                 vy[idx] = cursor;
-                cursor += NODE_H + NODE_GAP;
+                cursor += boxHFull[idx] + NODE_GAP;
             }
         }
 
@@ -817,7 +888,7 @@ public final class FlowchartLayout {
         for (int i = 0; i < n; i++) {
             lrIndex.put(nodes.get(i).id(), i);
         }
-        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW);
+        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW, boxH);
         double offX = 0;
         double offY = 0;
         for (ClusterFrame f : frames) {
@@ -829,7 +900,7 @@ public final class FlowchartLayout {
                 vx[i] += offX;
                 vy[i] += offY;
             }
-            frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW);
+            frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW, boxH);
         }
         double maxFrameRight = 0;
         double maxFrameBottom = 0;
@@ -881,9 +952,9 @@ public final class FlowchartLayout {
                 // cluster-free chart, so the byte-identical bake holds).
                 double laneY = contentH - MARGIN + offY + BACK_LANE_GAP * (++laneIdx);
                 double sx = vx[u] + boxW[u] / 2;       // source bottom-middle
-                double sy = vy[u] + NODE_H;
+                double sy = vy[u] + boxH[u];
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
-                double ty = vy[v] + NODE_H;
+                double ty = vy[v] + boxH[v];
                 emitEdgeLine(tgt, sx, sy, sx, laneY, e.style());      // down out
                 emitEdgeLine(tgt, sx, laneY, tx, laneY, e.style());   // along the lane
                 if (e.arrow()) {
@@ -905,9 +976,9 @@ public final class FlowchartLayout {
             } else {
                 int[] chain = rt.chain.get(ei);
                 double sx = vx[u] + boxW[u];             // source right-middle
-                double sy = vy[u] + NODE_H / 2;
+                double sy = vy[u] + boxH[u] / 2;
                 double tx = vx[v];                        // target left-middle
-                double ty = vy[v] + NODE_H / 2;
+                double ty = vy[v] + boxH[v] / 2;
                 if (chain.length == 2) {
                     // Straight span-1 edge. SOLID+arrow is byte-for-byte the original LR emission; the
                     // STYLE routes the line through emitEdgeLine and an OPEN edge omits the arrowhead.
@@ -982,17 +1053,17 @@ public final class FlowchartLayout {
         if (anchored) {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();
-                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
-                emitNodeLabel(ng, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                styler.emitNode(ng, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
                     measures[i], labels[i], nodeFill[i]);
                 shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
             }
         } else {
             for (int i = 0; i < n; i++) {
-                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], NODE_H, nodes.get(i).shape(), nodeFill[i]);
+                styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
             }
             for (int i = 0; i < n; i++) {
-                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, vy[i] + NODE_H / 2 + LABEL_SIZE * 0.35,
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
                     measures[i], labels[i], nodeFill[i]);
             }
         }
@@ -1226,7 +1297,8 @@ public final class FlowchartLayout {
     /// EMPTY list for a cluster-free flowchart, so the emit path adds nothing (byte-identical bake).
     private static List<ClusterFrame> buildClusterFrames(List<FlowCluster> clusters,
                                                          Map<String, Integer> index,
-                                                         double[] vx, double[] vy, double[] boxW) {
+                                                         double[] vx, double[] vy, double[] boxW,
+                                                         double[] boxH) {
         if (clusters.isEmpty()) {
             return List.of();   // no subgraphs → no frames, byte-identical to the pre-cluster bake
         }
@@ -1248,7 +1320,7 @@ public final class FlowchartLayout {
                 minX = Math.min(minX, vx[i]);
                 minY = Math.min(minY, vy[i]);
                 maxX = Math.max(maxX, vx[i] + boxW[i]);
-                maxY = Math.max(maxY, vy[i] + NODE_H);
+                maxY = Math.max(maxY, vy[i] + boxH[i]);
             }
             if (!any) {
                 continue;   // empty cluster → no frame (inert)

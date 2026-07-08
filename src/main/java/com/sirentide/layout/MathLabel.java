@@ -24,9 +24,11 @@ public final class MathLabel {
 
     /// A measured composite label: the resolved run list (text + rendered fragments, math failures
     /// already degraded to text), the total advance width, and the vertical extent above/below the
-    /// baseline. `ascent`/`descent` are the max of the text metrics and every fragment's box, ready
-    /// for a future diagram that grows its box to a tall fragment (the flowchart node box is fixed
-    /// height today, so it consumes only {@link #width}).
+    /// baseline. `ascent`/`descent` are the max of the text metrics and every fragment's box. A
+    /// consumer sizes the label WIDTH from {@link #width}; a TALL fragment (multi-row math — a matrix,
+    /// cases, a stacked fraction) whose ascent+descent exceeds one line HEIGHT grows the box vertically
+    /// too, via {@link #isTall}/{@link #boxHeight}/{@link #baselineInBox} (plan sirentide-tall-math-
+    /// labels — the flowchart node box now consumes the height, not just {@link #width}).
     public record Measured(List<Resolved> runs, double width, double ascent, double descent) {}
 
     /// A run resolved to geometry: either literal `text` (rendered as glyphs) or a `fragment`
@@ -72,6 +74,43 @@ public final class MathLabel {
             }
         }
         return new Measured(resolved, width, ascent, descent);
+    }
+
+    /// True iff this measured label carries a fragment TALLER than one text line at `fontSizePx` —
+    /// its combined ascent+descent (already the max of the text metrics and every fragment box, see
+    /// {@link #measure}) exceeds the font line height, so a fixed-height label box would clip it. A
+    /// short label (plain text, an inline `$x$`, `$E=mc^2$`) returns false, so a consumer keeps its
+    /// EXACT fixed-height path — the byte-identical-for-short-labels guarantee. This is the gate every
+    /// box-growth consumer keys on (plan sirentide-tall-math-labels): grow ONLY when this is true.
+    public static boolean isTall(Measured m, double fontSizePx, FontMetrics fm) {
+        return m.ascent() + m.descent() > fm.lineHeight(fontSizePx);
+    }
+
+    /// The label-box height a consumer should use for a measured label inside a box whose fixed
+    /// height is `fixedH` (e.g. a flowchart node's 36 px): `fixedH` UNCHANGED when the fragment fits
+    /// one line (so short labels never perturb an existing bake), else the fragment's full
+    /// ascent+descent PLUS the same vertical breathing room a text line gets inside `fixedH`
+    /// (`fixedH − lineHeight`), so a grown math box stays node-shaped rather than hugging the glyphs.
+    /// A tall fragment (ascent+descent > lineHeight) therefore always yields a height STRICTLY greater
+    /// than `fixedH`, so a consumer can treat `result != fixedH` as "this box grew". Never shrinks.
+    public static double boxHeight(Measured m, double fixedH, double fontSizePx, FontMetrics fm) {
+        double lineH = fm.lineHeight(fontSizePx);
+        double ext = m.ascent() + m.descent();
+        if (ext <= lineH) {
+            return fixedH;   // fits one line → no growth → byte-identical fixed-height path
+        }
+        double slack = Math.max(0, fixedH - lineH);   // the breathing room a text line has in fixedH
+        return ext + slack;                            // > fixedH since ext > lineH
+    }
+
+    /// The absolute baseline y for a measured label CENTERED in a box of height `boxH` whose top is
+    /// `boxTop` — the vertical placement that pairs with {@link #boxHeight}. The fragment ink is
+    /// centered in the box (equal padding above the ascent and below the descent), so it is fully
+    /// CONTAINED: `boxH >= ascent+descent` (guaranteed by {@link #boxHeight}) means the ink never
+    /// crosses either box edge. Used only on the GROWN path; the fixed-height path keeps its own
+    /// text-baseline heuristic so short labels stay byte-identical.
+    public static double baselineInBox(Measured m, double boxTop, double boxH) {
+        return boxTop + (boxH - (m.ascent() + m.descent())) / 2 + m.ascent();
     }
 
     /// Emit a measured label left-to-right from pen `(originX, baselineY)`: text runs as one

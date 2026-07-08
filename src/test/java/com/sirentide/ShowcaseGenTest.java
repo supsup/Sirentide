@@ -166,7 +166,16 @@ class ShowcaseGenTest {
             "The moat: real LaTeX inside a diagram label. A <code>$…$</code> run in any node/edge/"
                 + "message label bakes to STIX glyph paths (not raw source) via an injected math "
                 + "renderer — here <code>$E=mc^2$</code> and a real fraction <code>$\\frac{v^2}{r}$</code>.",
-            "flowchart TD\nA[Energy $E=mc^2$] --> B[$\\frac{v^2}{r}$]", true));
+            "flowchart TD\nA[Energy $E=mc^2$] --> B[$\\frac{v^2}{r}$]", true),
+        new Card("Multi-row math in labels", "matrix · cases",
+            "TALL-fragment box growth: a <em>multi-row</em> construct — a "
+                + "<code>$\\begin{matrix}…$</code>, <code>$\\begin{cases}…$</code>, a stacked fraction — "
+                + "grows its node box VERTICALLY to fit, keeping the fragment centered on the baseline "
+                + "and fully contained. A single-line label (the <code>Vector</code> and "
+                + "<code>Solve</code> text, the inline <code>$x$</code>) keeps the fixed height, so only "
+                + "the genuinely tall labels grow.",
+            "flowchart TD\nA[Vector $\\begin{matrix} a \\\\ b \\\\ c \\end{matrix}$] --> B[Scale by $x$]\n"
+                + "A --> C[Solve $\\begin{cases} x & a \\\\ y & b \\\\ z & c \\end{cases}$]", true));
 
     /// The theme card is structurally different (one bake, shown in a light + a dark pane), so it is
     /// generated on its own after the grid of cards.
