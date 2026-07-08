@@ -36,13 +36,14 @@ import java.util.Map;
 /// bakes its edge line as a run of short {@link Line} segments (the contract has no
 /// `stroke-dasharray`), deterministic.
 ///
-/// PLACEMENT (v1): a simple row-major GRID (`ceil(sqrt(n))` columns), first-seen entity order, tables
-/// sized to their widest row. Edges route straight between table BORDERS (centre-to-centre, clipped
-/// to the rectangle) with each end's cardinality combo at that border. The canvas grows to fit the
-/// grid + margin so nothing escapes (containment). Deterministic; text baked to glyph paths, markers
-/// to lines. RESIDUAL: grid placement + straight edges + single-line attribute rows (type/name/key on
-/// one line, not column-aligned) are v1 — column alignment, a relationship-aware placement, and
-/// orthogonal routing are follow-ups.
+/// PLACEMENT: a row-major GRID (`ceil(sqrt(n))` columns), tables sized to their widest row. The slot
+/// ORDER is relationship-aware (via {@link GridOrder} — related entities land in adjacent slots) so
+/// edges stay short and a straight centre-to-centre edge is far less likely to cross a third table.
+/// Edges route straight between table BORDERS (clipped to the rectangle) with each end's cardinality
+/// combo at that border. The canvas grows to fit the grid + margin so nothing escapes (containment).
+/// Deterministic; text baked to glyph paths, markers to lines. RESIDUAL: crossing REDUCTION not
+/// MINIMIZATION (DESIGN §7) — a long diagonal edge can still clip a table; single-line attribute rows,
+/// column alignment, and orthogonal routing are follow-ups.
 public final class ErDiagramLayout {
 
     private ErDiagramLayout() {}
@@ -140,9 +141,25 @@ public final class ErDiagramLayout {
             boxH[i] = headerH[i] + rowsH;
         }
 
-        // -- 2) grid placement: ceil(sqrt(n)) columns, row-major, first-seen order. Each row's height is
-        // its tallest table; tables march left→right with COL_GAP, rows down with ROW_GAP. Canvas grows
-        // to fit (containment: nothing escapes the margin box).
+        // -- 2) grid placement: ceil(sqrt(n)) columns, row-major. The slot ORDER is relationship-aware
+        // (related entities land in adjacent slots via {@link GridOrder}) so edges are short and a
+        // straight edge is far less likely to cross a third table — quality over the v1 first-seen
+        // order, still fully deterministic. Each row's height is its tallest table; tables march
+        // left→right with COL_GAP, rows down with ROW_GAP. Canvas grows to fit (containment).
+        Map<String, Integer> index = new HashMap<>();
+        for (int k = 0; k < n; k++) {
+            index.put(entities.get(k).name(), k);
+        }
+        List<int[]> edgeList = new ArrayList<>();
+        for (ErRelation r : er.relations()) {
+            Integer a = index.get(r.left());
+            Integer b = index.get(r.right());
+            if (a != null && b != null) {
+                edgeList.add(new int[] {a, b});
+            }
+        }
+        int[] perm = GridOrder.order(n, edgeList.toArray(new int[0][]));
+
         int cols = (int) Math.ceil(Math.sqrt(n));
         if (cols < 1) {
             cols = 1;
@@ -151,31 +168,30 @@ public final class ErDiagramLayout {
         double[] py = new double[n];
         double rowTop = MARGIN;
         double canvasW = MIN_W;
-        int i = 0;
-        while (i < n) {
-            int rowEnd = Math.min(i + cols, n);
+        int slot = 0;
+        while (slot < n) {
+            int rowEnd = Math.min(slot + cols, n);
             double rowH = 0;
-            for (int j = i; j < rowEnd; j++) {
-                rowH = Math.max(rowH, boxH[j]);
+            for (int s = slot; s < rowEnd; s++) {
+                rowH = Math.max(rowH, boxH[perm[s]]);
             }
             double cursor = MARGIN;
-            for (int j = i; j < rowEnd; j++) {
-                px[j] = cursor;
-                py[j] = rowTop;
-                cursor += boxW[j] + COL_GAP;
+            for (int s = slot; s < rowEnd; s++) {
+                int node = perm[s];
+                px[node] = cursor;
+                py[node] = rowTop;
+                cursor += boxW[node] + COL_GAP;
             }
             canvasW = Math.max(canvasW, cursor - COL_GAP + MARGIN);
             rowTop += rowH + ROW_GAP;
-            i = rowEnd;
+            slot = rowEnd;
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
         Placed[] placed = new Placed[n];
-        Map<String, Integer> index = new HashMap<>();
         for (int k = 0; k < n; k++) {
             placed[k] = new Placed(entities.get(k), px[k], py[k], boxW[k], boxH[k],
                 headerH[k], names[k], rowLines.get(k));
-            index.put(entities.get(k).name(), k);
         }
 
         List<Shape> shapes = new ArrayList<>();
@@ -188,7 +204,7 @@ public final class ErDiagramLayout {
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced entity (defensive) — skip, never throw
             }
-            emitRelation(shapes, placed[li], placed[ri], r, er.textColor(), canvasW, canvasH, math);
+            emitRelation(shapes, placed, li, ri, r, er.textColor(), canvasW, canvasH, math);
         }
 
         // -- 4) tables: background rect, name band, border, and (when populated) the header/rows divider.
@@ -282,35 +298,55 @@ public final class ErDiagramLayout {
     /// `: label` at the edge midpoint. The edge line runs from each end's INNER-symbol attach point (the
     /// crow-foot convergence for a "many" end, the border for a "one" end) so the fork completes cleanly
     /// to the border while the bars/circles sit on the line.
-    private static void emitRelation(List<Shape> shapes, Placed left, Placed right, ErRelation r,
+    private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
                                      MathFragmentRenderer math) {
+        Placed left = placed[li];
+        Placed right = placed[ri];
         double lcx = left.centerX();
         double lcy = left.centerY();
         double rcx = right.centerX();
         double rcy = right.centerY();
         double[] lb = clipToRect(lcx, lcy, left.w(), left.h(), rcx, rcy);    // left table border point
         double[] rb = clipToRect(rcx, rcy, right.w(), right.h(), lcx, lcy);  // right table border point
-        double[] lDir = unit(rb[0] - lb[0], rb[1] - lb[1]);   // away from the left table, along edge
-        double[] rDir = unit(lb[0] - rb[0], lb[1] - rb[1]);   // away from the right table, along edge
 
-        // Edge line: from each end's inner-symbol attach point (the fork convergence for a many end).
+        // Route the border-to-border span around any third table (placement removes most crossings;
+        // this bends the residual hub-skip through a single waypoint).
+        List<double[]> others = new ArrayList<>();
+        for (int k = 0; k < placed.length; k++) {
+            if (k == li || k == ri) {
+                continue;
+            }
+            Placed p = placed[k];
+            others.add(new double[] {p.x(), p.y(), p.w(), p.h()});
+        }
+        EdgeRouter.Route route = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+
+        // Each end's dir points from its border ALONG the edge — toward the waypoint when bent, else
+        // toward the other table. The cardinality markers and inner attach follow that dir.
+        double[] lDir = route.hasBend()
+            ? unit(route.wx() - lb[0], route.wy() - lb[1]) : unit(rb[0] - lb[0], rb[1] - lb[1]);
+        double[] rDir = route.hasBend()
+            ? unit(route.wx() - rb[0], route.wy() - rb[1]) : unit(lb[0] - rb[0], lb[1] - rb[1]);
+
+        // Edge line: from each end's inner-symbol attach point (the fork convergence for a many end),
+        // through the waypoint when routed.
         double lInner = innerExtent(r.leftCard());
         double rInner = innerExtent(r.rightCard());
         double sx = lb[0] + lDir[0] * lInner;
         double sy = lb[1] + lDir[1] * lInner;
         double ex = rb[0] + rDir[0] * rInner;
         double ey = rb[1] + rDir[1] * rInner;
-        emitEdgeLine(shapes, sx, sy, ex, ey, !r.identifying());
+        emitEdgeChain(shapes, sx, sy, ex, ey, route, !r.identifying());
 
         // Cardinality markers at each end (each end draws its own combo).
         shapes.addAll(cardinalityMarker(r.leftCard(), lb[0], lb[1], lDir[0], lDir[1], MARKER));
         shapes.addAll(cardinalityMarker(r.rightCard(), rb[0], rb[1], rDir[0], rDir[1], MARKER));
 
-        // Optional `: label` at the edge midpoint, clamped in-canvas.
+        // Optional `: label` — at the bend (when routed) else the border midpoint, clamped in-canvas.
         if (r.label() != null && !r.label().isBlank()) {
-            double midX = (lb[0] + rb[0]) / 2;
-            double midY = (lb[1] + rb[1]) / 2 - 3;
+            double midX = route.hasBend() ? route.wx() : (lb[0] + rb[0]) / 2;
+            double midY = (route.hasBend() ? route.wy() : (lb[1] + rb[1]) / 2) - 3;
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w = (math != null && MathLabel.hasMath(lbl))
                 ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
@@ -326,6 +362,19 @@ public final class ErDiagramLayout {
     /// edge line runs to the border and the bar tick crosses it).
     private static double innerExtent(ErCardinality card) {
         return card.many() ? CROW_LEN : 0;
+    }
+
+    /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,
+    /// else a two-leg polyline through the detour waypoint (`x1,y1 → W → x2,y2`) so the edge bends
+    /// around a third table. Each leg honours the dashed flag independently.
+    private static void emitEdgeChain(List<Shape> shapes, double x1, double y1, double x2, double y2,
+                                      EdgeRouter.Route route, boolean dashed) {
+        if (route.hasBend()) {
+            emitEdgeLine(shapes, x1, y1, route.wx(), route.wy(), dashed);
+            emitEdgeLine(shapes, route.wx(), route.wy(), x2, y2, dashed);
+        } else {
+            emitEdgeLine(shapes, x1, y1, x2, y2, dashed);
+        }
     }
 
     /// Emits the relationship edge line — a single {@link Line} (identifying `--`) or a run of short

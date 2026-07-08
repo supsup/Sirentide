@@ -61,12 +61,14 @@ public final class FlowchartLayout {
     // new emitter surface; a filled top BAND holds the title) enclosing a cluster's member node rects
     // with padding. Drawn UNDER the edges/nodes so a frame never occludes the content it wraps. Nested
     // clusters TIGHTEN their padding by depth·CLUSTER_INSET so the inner frame insets inside its
-    // parent (whose transitive members it encloses). CLUSTER_PAD + CLUSTER_BAND_H stays ≤ MARGIN so a
-    // top-left frame never escapes above/left of the canvas without a coordinate shift.
+    // parent (whose transitive members it encloses). A frame that escapes above/left of the canvas is
+    // caught by the shift+grow-to-fit pass (a top/left-escaping frame shifts every vertex and the
+    // canvas grows), so CLUSTER_PAD is free to give the members real breathing room past the tight
+    // ≤ MARGIN bound — the widest member no longer hugs the border.
     private static final String CLUSTER_STROKE = "#94a3b8";  // frame border (in-palette slate)
     private static final String CLUSTER_BAND_FILL = "#eef2ff"; // pale-indigo title-band background
     private static final double CLUSTER_STROKE_W = 1;
-    private static final double CLUSTER_PAD = 10;      // padding beyond the member node bbox (depth 0)
+    private static final double CLUSTER_PAD = 14;      // padding beyond the member node bbox (depth 0)
     private static final double CLUSTER_INSET = 4;     // each nesting depth tightens the padding this far
     private static final double CLUSTER_MIN_PAD = 4;   // padding never drops below this, however deep
     private static final double CLUSTER_BAND_H = 14;   // title-band height above the member nodes
