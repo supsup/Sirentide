@@ -254,3 +254,21 @@ B -->|this forward label can escape left| C
 
 ![Flowchart left-going edge label (clamped)](flowchart-left-label.png)
 
+## Display math (standalone, baked LaTeX)
+
+```
+mathblock
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+```
+
+![Display math (standalone, baked LaTeX)](mathblock.png)
+
+## Math baked inside flowchart labels
+
+```
+flowchart TD
+A[Energy $E=mc^2$] --> B[$\frac{v^2}{r}$]
+```
+
+![Math baked inside flowchart labels](math-in-labels.png)
+
