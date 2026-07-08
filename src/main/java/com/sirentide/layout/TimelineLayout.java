@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.Timeline;
@@ -34,6 +35,13 @@ public final class TimelineLayout {
     private static final String AXIS_STROKE = "#cbd5e1";
 
     public static LaidOut layout(Timeline timeline) {
+        return layout(timeline, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in an EVENT label
+    /// bakes through the shared {@link MathLabel} seam. A null `math` degrades every `$…$` to plain
+    /// text — byte-identical to {@link #layout(Timeline)}.
+    public static LaidOut layout(Timeline timeline, MathFragmentRenderer math) {
         List<Shape> shapes = new ArrayList<>();
         // Both the event (top) and value/year (bottom) labels sit on the page background → the
         // page-background text colour, default `currentColor` (legible on light AND dark).
@@ -59,16 +67,33 @@ public final class TimelineLayout {
         double[] xs = new double[n];
         String[] topText = new String[n];
         String[] botText = new String[n];
+        // Composite measure for an event label carrying `$…$` AND a renderer; null for plain labels
+        // (which keep the ellipsize path, byte-identical). topW/botW carry the widths the row
+        // de-collision measures — composite for a math label, ellipsized runWidth otherwise.
+        MathLabel.Measured[] topMeasures = new MathLabel.Measured[n];
+        double[] topW = new double[n];
+        double[] botW = new double[n];
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
             // Ellipsize the event label to a bounded width (parity with Gantt/XyChart/Pie). The raw
             // label is up to MAX_LABEL_LEN (512) chars; without this cap a full MAX_DATA_ROWS sheet
             // of long labels builds ~GBs of glyph paths (H2). The value below is a bounded number.
-            topText[i] = FONT.ellipsize(e.label(), MAX_LABEL_W, TOP_SIZE);
+            // A `$…$` event label SKIPS the ellipsize (a formula must not be cut mid-run) and bakes
+            // through the MathLabel seam on its composite width.
+            if (math != null && MathLabel.hasMath(e.label())) {
+                MathLabel.Measured mm = MathLabel.measure(e.label(), TOP_SIZE, FONT, math);
+                topMeasures[i] = mm;
+                topText[i] = e.label();
+                topW[i] = mm.width();
+            } else {
+                topText[i] = FONT.ellipsize(e.label(), MAX_LABEL_W, TOP_SIZE);
+                topW[i] = FONT.runWidth(topText[i], TOP_SIZE);
+            }
             // Show the author's date token (A2) when the value came from an ISO date — its numeric
             // form is an opaque epoch-day. A bare year / plain number has a null valueLabel → num().
             botText[i] = e.valueLabel() != null ? e.valueLabel() : num(e.value());
+            botW[i] = FONT.runWidth(botText[i], VALUE_SIZE);
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = e.color() != null ? e.color() : Colors.PALETTE[i % Colors.PALETTE.length];
             shapes.add(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill));
@@ -77,11 +102,18 @@ public final class TimelineLayout {
         // overlap ("Founded"/"Series A" in the screenshot). Measure each label's width and, where an
         // adjacent label would overlap the one before it, push it to a SECOND row (2-row vertical
         // stagger) — the simplest readable fix. Top labels rise, bottom values drop.
-        int[] topRows = assignRows(xs, topText, TOP_SIZE);
-        int[] botRows = assignRows(xs, botText, VALUE_SIZE);
+        int[] topRows = assignRows(xs, topW);
+        int[] botRows = assignRows(xs, botW);
         for (int i = 0; i < n; i++) {
-            centeredLabel(shapes, topText[i], xs[i],
-                AXIS_Y - 14 - topRows[i] * ROW_STAGGER, TOP_SIZE, textColor);       // above the line
+            double topBaseline = AXIS_Y - 14 - topRows[i] * ROW_STAGGER;            // above the line
+            if (topMeasures[i] != null) {
+                // Math event label: centre on the composite width, clamped in-frame like the plain path.
+                double w = topMeasures[i].width();
+                double originX = Math.max(CLAMP_MARGIN, Math.min(xs[i] - w / 2, W - CLAMP_MARGIN - w));
+                MathLabel.emit(topMeasures[i], originX, topBaseline, textColor, TOP_SIZE, FONT, shapes);
+            } else {
+                centeredLabel(shapes, topText[i], xs[i], topBaseline, TOP_SIZE, textColor);
+            }
             centeredLabel(shapes, botText[i], xs[i],
                 AXIS_Y + 24 + botRows[i] * ROW_STAGGER, VALUE_SIZE, textColor);     // below the line
         }
@@ -92,12 +124,12 @@ public final class TimelineLayout {
     /// label on the first row whose last label clears it (left edge past that row's right edge +
     /// gap); if neither row is clear, use the row with the smaller right edge. Guarantees any two
     /// labels that overlap horizontally land on different rows, so their 2-D boxes stay disjoint.
-    private static int[] assignRows(double[] centers, String[] texts, double size) {
+    private static int[] assignRows(double[] centers, double[] widths) {
         int n = centers.length;
         int[] rows = new int[n];
         double[] rowRight = {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
         for (int i = 0; i < n; i++) {
-            double half = FONT.runWidth(texts[i], size) / 2;
+            double half = widths[i] / 2;
             double left = centers[i] - half;
             double right = centers[i] + half;
             int row = -1;

@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -57,6 +58,13 @@ public final class QuadrantChartLayout {
     /// Lays out the chart: tints → border + crossing axes → quadrant labels → point discs + labels →
     /// axis-end labels. A bare `quadrant` (no labels, no points) still yields a valid empty 2×2 grid.
     public static LaidOut layout(QuadrantChart q) {
+        return layout(q, null);
+    }
+
+    /// Inline-math entry (plan sirentide-math-in-all-label-types): a `$…$` run in a POINT label, a
+    /// QUADRANT label, or an AXIS-END label bakes through the shared {@link MathLabel} seam. A null
+    /// `math` degrades every `$…$` to plain text — byte-identical to {@link #layout(QuadrantChart)}.
+    public static LaidOut layout(QuadrantChart q, MathFragmentRenderer math) {
         double plotLeft = ML;
         double plotRight = ML + PLOT;
         double plotTop = MT;
@@ -90,10 +98,10 @@ public final class QuadrantChartLayout {
         double qyT = plotTop + half / 2;    // top-row cell centre y
         double qyB = cy + half / 2;         // bottom-row cell centre y
         String[] labels = q.quadrantLabels();
-        quadrantLabel(shapes, labels[0], qxR, qyT, TINTS[0]);   // Q1 top-right
-        quadrantLabel(shapes, labels[1], qxL, qyT, TINTS[1]);   // Q2 top-left
-        quadrantLabel(shapes, labels[2], qxL, qyB, TINTS[2]);   // Q3 bottom-left
-        quadrantLabel(shapes, labels[3], qxR, qyB, TINTS[3]);   // Q4 bottom-right
+        quadrantLabel(shapes, labels[0], qxR, qyT, TINTS[0], math);   // Q1 top-right
+        quadrantLabel(shapes, labels[1], qxL, qyT, TINTS[1], math);   // Q2 top-left
+        quadrantLabel(shapes, labels[2], qxL, qyB, TINTS[2], math);   // Q3 bottom-left
+        quadrantLabel(shapes, labels[3], qxR, qyB, TINTS[3], math);   // Q4 bottom-right
 
         // 4. Points: a palette disc at (x,y) in the unit square (y flipped UP) + its label to the
         // right, ellipsized to the room before the canvas edge. The label's contrast fill keys off
@@ -107,12 +115,21 @@ public final class QuadrantChartLayout {
             shapes.add(new Wedge(px, py, DOT_R, 0, 2 * Math.PI, fill));
             String tint = TINTS[quadrantIndex(p.x(), p.y())];
             double originX = px + DOT_R + GAP;
-            double room = canvasW - originX - CLAMP_MARGIN;
-            String label = FONT.ellipsize(p.label(), room, LABEL_SIZE);
-            if (!label.isBlank()) {
-                String d = FONT.textPathD(label, originX, py + LABEL_SIZE * 0.35, LABEL_SIZE);
-                if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, Colors.contrastFill(tint)));
+            double baseline = py + LABEL_SIZE * 0.35;
+            // A `$…$` point label (`$O(n)$`, `$E=mc^2$`) bakes through the shared MathLabel seam; a
+            // math label SKIPS the room-ellipsize (a formula must not be cut mid-run) and rides right
+            // of its disc on its composite width. A plain label is byte-identical to before.
+            if (math != null && MathLabel.hasMath(p.label())) {
+                MathLabel.Measured mm = MathLabel.measure(p.label(), LABEL_SIZE, FONT, math);
+                MathLabel.emit(mm, originX, baseline, Colors.contrastFill(tint), LABEL_SIZE, FONT, shapes);
+            } else {
+                double room = canvasW - originX - CLAMP_MARGIN;
+                String label = FONT.ellipsize(p.label(), room, LABEL_SIZE);
+                if (!label.isBlank()) {
+                    String d = FONT.textPathD(label, originX, baseline, LABEL_SIZE);
+                    if (!d.isBlank()) {
+                        shapes.add(new GlyphRun(d, Colors.contrastFill(tint)));
+                    }
                 }
             }
         }
@@ -121,11 +138,11 @@ public final class QuadrantChartLayout {
         // centred under each half; y ends sit in the left margin, right-aligned to the plot edge.
         String textColor = q.textColor();
         double xBaseline = plotBottom + MB * 0.6;
-        centeredLabel(shapes, q.xLo(), plotLeft + PLOT * 0.25, xBaseline, half - GAP, textColor);
-        centeredLabel(shapes, q.xHi(), plotLeft + PLOT * 0.75, xBaseline, half - GAP, textColor);
+        centeredLabel(shapes, q.xLo(), plotLeft + PLOT * 0.25, xBaseline, half - GAP, textColor, math);
+        centeredLabel(shapes, q.xHi(), plotLeft + PLOT * 0.75, xBaseline, half - GAP, textColor, math);
         double yRoom = plotLeft - GAP - CLAMP_MARGIN;   // room in the left margin
-        rightLabel(shapes, q.yHi(), plotLeft - GAP, plotTop + LABEL_SIZE, yRoom, textColor);
-        rightLabel(shapes, q.yLo(), plotLeft - GAP, plotBottom - GAP, yRoom, textColor);
+        rightLabel(shapes, q.yHi(), plotLeft - GAP, plotTop + LABEL_SIZE, yRoom, textColor, math);
+        rightLabel(shapes, q.yLo(), plotLeft - GAP, plotBottom - GAP, yRoom, textColor, math);
 
         return new LaidOut(canvasW, canvasH, shapes);
     }
@@ -144,19 +161,28 @@ public final class QuadrantChartLayout {
     /// A quadrant label centred in its cell, contrast-filled against the cell tint and ellipsized to
     /// the cell width so a long label can't spill across the axis into the neighbouring quadrant.
     private static void quadrantLabel(List<Shape> shapes, String text, double cx, double cy,
-                                      String tint) {
+                                      String tint, MathFragmentRenderer math) {
         if (text == null || text.isEmpty()) {
             return;
         }
-        String fit = FONT.ellipsize(text, PLOT / 2 - GAP, LABEL_SIZE);
-        centeredLabel(shapes, fit, cx, cy + LABEL_SIZE * 0.35, PLOT / 2 - GAP, Colors.contrastFill(tint));
+        // Pass the RAW text to the (math-aware) centred emitter — for plain text it ellipsizes to the
+        // same cell width, so the bake is byte-identical; a `$…$` label routes through MathLabel.
+        centeredLabel(shapes, text, cx, cy + LABEL_SIZE * 0.35, PLOT / 2 - GAP,
+            Colors.contrastFill(tint), math);
     }
 
     /// A horizontally-centred glyph-run label at `(cx, baseline)`, ellipsized to `maxWidth`. A null
-    /// or empty label draws nothing (an absent axis-end / quadrant label is simply omitted).
+    /// or empty label draws nothing (an absent axis-end / quadrant label is simply omitted). A `$…$`
+    /// label bakes through the shared MathLabel seam (math skips the ellipsize, centres on the
+    /// composite width); a plain label is byte-identical to before.
     private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,
-                                      double maxWidth, String fill) {
+                                      double maxWidth, String fill, MathFragmentRenderer math) {
         if (text == null || text.isEmpty()) {
+            return;
+        }
+        if (math != null && MathLabel.hasMath(text)) {
+            MathLabel.Measured mm = MathLabel.measure(text, LABEL_SIZE, FONT, math);
+            MathLabel.emit(mm, cx - mm.width() / 2, baseline, fill, LABEL_SIZE, FONT, shapes);
             return;
         }
         String fit = FONT.ellipsize(text, maxWidth, LABEL_SIZE);
@@ -169,10 +195,17 @@ public final class QuadrantChartLayout {
 
     /// A right-aligned glyph-run label whose text ENDS at `rightX` (the y-axis end labels sit in the
     /// left margin and read up to the plot edge), ellipsized to `maxWidth` so a long label can't run
-    /// off the left edge of the canvas.
+    /// off the left edge of the canvas. A `$…$` label routes through MathLabel (math skips the
+    /// ellipsize, right-aligns on the composite width); a plain label is byte-identical to before.
     private static void rightLabel(List<Shape> shapes, String text, double rightX, double baseline,
-                                   double maxWidth, String fill) {
+                                   double maxWidth, String fill, MathFragmentRenderer math) {
         if (text == null || text.isEmpty()) {
+            return;
+        }
+        if (math != null && MathLabel.hasMath(text)) {
+            MathLabel.Measured mm = MathLabel.measure(text, LABEL_SIZE, FONT, math);
+            double originX = Math.max(CLAMP_MARGIN, rightX - mm.width());
+            MathLabel.emit(mm, originX, baseline, fill, LABEL_SIZE, FONT, shapes);
             return;
         }
         String fit = FONT.ellipsize(text, maxWidth, LABEL_SIZE);
