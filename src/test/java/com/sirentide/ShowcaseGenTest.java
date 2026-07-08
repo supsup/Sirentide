@@ -173,6 +173,13 @@ class ShowcaseGenTest {
     private static final String THEME_DSL =
         "flowchart nodecolor=#1e293b\nA[Author] --> B{Bake}\nB -->|svg| C[Docs] #22c55e";
 
+    /// The theme-config demo: one diagram body, baked default (transparent) vs with a leading
+    /// `%% theme: dark` config block (self-contained dark background + light structural text).
+    private static final String THEME_CONFIG_BODY =
+        "pie legend\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 30\n";
+    private static final String THEME_CONFIG_DARK =
+        "%% title: Where the time goes\n%% theme: dark\n" + THEME_CONFIG_BODY;
+
     /// The three per-type demo pages that were missing (class / ER / mathblock) — same generated
     /// bake, in the hand-authored per-type page template (a single card + notes).
     private record TypePage(String file, String title, String heading, String note, String dsl,
@@ -248,6 +255,32 @@ class ShowcaseGenTest {
             .append(themeSvg).append("</div>\n")
             .append("    <div class=\"pane dark\"><div class=\"lbl\">dark page</div>")
             .append(themeSvg).append("</div>\n")
+            .append("  </div>\n")
+            .append("</section>\n");
+
+        // Theme-config card (plan sirentide-theming-config): the SAME diagram baked default (transparent,
+        // for a light page) vs with a leading `%% theme: dark` config block (a SELF-CONTAINED dark
+        // background rect + light-adjusted structural text). Both panes sit on a DARK surface to show
+        // the default needs the page to be light while `theme: dark` reads on dark standalone.
+        String defaultBake = Sirentide.render(THEME_CONFIG_BODY);
+        String darkBake = Sirentide.render(THEME_CONFIG_DARK);
+        assertTrue(darkBake.contains("fill=\"#1e1e1e\""),
+            "the theme:dark demo must carry its self-contained dark background rect");
+        body.append("<section class=\"card\">\n")
+            .append("  <h2>Config block<code>%% theme: dark</code></h2>\n")
+            .append("  <p class=\"desc\">A leading <code>%% key: value</code> config block (read before "
+                + "any diagram type) sets <code>title</code>, <code>theme</code> "
+                + "(<code>default</code>·<code>dark</code>·<code>neutral</code>) and "
+                + "<code>direction</code>. <code>theme: dark</code> bakes a <em>self-contained</em> dark "
+                + "background rect + light text, so the SVG reads on a dark page with no media query or "
+                + "second render. Both panes below sit on a dark surface — the default (transparent) "
+                + "needs a light page; <code>theme: dark</code> carries its own.</p>\n")
+            .append("  <pre>").append(escape(THEME_CONFIG_DARK)).append("</pre>\n")
+            .append("  <div class=\"split\">\n")
+            .append("    <div class=\"pane dark\"><div class=\"lbl\">default theme · on a dark page</div>")
+            .append(defaultBake).append("</div>\n")
+            .append("    <div class=\"pane dark\"><div class=\"lbl\">%% theme: dark · self-contained</div>")
+            .append(darkBake).append("</div>\n")
             .append("  </div>\n")
             .append("</section>\n");
 
