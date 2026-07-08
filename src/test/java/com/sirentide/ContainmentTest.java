@@ -171,6 +171,17 @@ class ContainmentTest {
             + "    Make tea: 5: Me\n    Commute: 3: Me, Cat\n    Arrive: 9: Me\n    Bad: nope: Me\n"
             + "    Solo: 2\n  section Do work\n    Code: 5: Me\n    Meetings: 2: Me, Boss\n",
         "journey\n",   // empty body → minimal inert canvas (round-trips, never the inert shell)
+        // mindmap (14th type): a root + 3 branches with leaf children, plus MALFORMED cases — an
+        // OVER-INDENTED first child (attaches to the root), a line at ≤ the root indent (a second
+        // top-level line → a root child), INCONSISTENT indentation (snaps to the nearest shallower
+        // ancestor), and a tab-indented line (fixed-width columns) — exercises the node boxes (rect),
+        // the elbow parent→child connectors (line), and the node-label glyph runs through the
+        // allowlist (all in svg/rect/line/g).
+        "mindmap\n  root Root idea\n        Deep first child\n    Origins\n      Long history\n"
+            + "      Popular\n    Research\n       Odd indent leaf\n\tTab branch\n    Tools\n"
+            + "      Mermaid\n  Second top level\n",
+        "mindmap\n",              // empty body → minimal inert canvas (round-trips, never the shell)
+        "mindmap\n  Solo root\n", // a single root-only mindmap (just one box, no edges)
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

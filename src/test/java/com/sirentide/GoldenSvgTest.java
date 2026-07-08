@@ -128,6 +128,14 @@ class GoldenSvgTest {
             "journey\n  title My working day\n  section Go to work\n    Make tea: 5: Me\n"
                 + "    Commute: 3: Me, Cat\n    Arrive: 9: Me\n  section Do work\n    Code: 5: Me\n"
                 + "    Meetings: 2: Me, Boss\n");
+        // A mindmap (14th type): an indentation-defined tree — a `root Root idea` node with three
+        // branches (Origins, Research, Tools), each with leaf children of its own — pins the LR
+        // layered layout (depth→x column, left-aligned boxes), the leaf-order y + parent-centering
+        // (each branch node sits between its leaves), the depth-banded box fills, and the elbow
+        // parent→child connectors byte-for-byte.
+        FIXTURES.put("mindmap",
+            "mindmap\n  root Root idea\n    Origins\n      Long history\n      Popular\n"
+                + "    Research\n      On effect\n    Tools\n      Pen and paper\n      Mermaid\n");
     }
 
     @Test

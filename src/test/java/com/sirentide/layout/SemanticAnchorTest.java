@@ -141,7 +141,8 @@ class SemanticAnchorTest {
             "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n",
             "gitGraph\n  commit\n  branch develop\n  checkout develop\n  commit\n  checkout main\n"
                 + "  merge develop\n",
-            "journey\n  title Day\n  section Go\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n");
+            "journey\n  title Day\n  section Go\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n",
+            "mindmap\n  root Root\n    Origins\n      History\n    Tools\n      Mermaid\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -413,5 +414,28 @@ class SemanticAnchorTest {
             "task id is the sanitized task name (Maketea): " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("task") && x.id().equals("Commute")),
             "the multi-actor task is anchored (Commute): " + a);
+    }
+
+    /// mindmap (receipt #2): every tree node's box + label wraps in ONE `<g role="node">` (id = the
+    /// node text, uniquified) and every parent→child connector in ONE `<g role="edge">` (id =
+    /// parent-child). A tree with 4 nodes (root + 3) → 4 node anchors + 3 edge anchors; edges emit
+    /// before nodes (lower seq range). Proves a mindmap node emits role="node". DROP the node `<g>`
+    /// wrapper in MindmapLayout and the node count falls to 0 → RED.
+    @Test
+    void mindmapEmitsANodeAnchorPerNodeAndAnEdgePerConnector() {
+        List<Anc> a = anchors(Sirentide.render(
+            "mindmap\n  root Root idea\n    Origins\n    Tools\n      Mermaid\n"));
+        // 4 nodes (Root idea, Origins, Tools, Mermaid) + 3 edges (Root-Origins, Root-Tools, Tools-Mermaid).
+        assertWellFormed(a, 7);
+        assertEquals(4, countRole(a, "node"), "four node anchors: " + a);
+        assertEquals(3, countRole(a, "edge"), "three edge anchors (one per connector): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("Rootidea")),
+            "the root node anchors under its sanitized text (Rootidea): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("Rootidea-Origins")),
+            "an edge id is parent-child (Rootidea-Origins): " + a);
+        // Edges emit before nodes → edges carry the lower seq range.
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge")).mapToInt(Anc::seq).max().orElse(-1);
+        int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minNodeSeq, "edges seq before nodes: " + a);
     }
 }

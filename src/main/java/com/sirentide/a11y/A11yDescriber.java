@@ -18,6 +18,8 @@ import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Journey;
 import com.sirentide.ir.JourneySection;
 import com.sirentide.ir.JourneyTask;
+import com.sirentide.ir.Mindmap;
+import com.sirentide.ir.MindmapNode;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -74,8 +76,61 @@ public final class A11yDescriber {
             case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
             case GitGraph gg -> gitGraph(gg);
             case Journey j -> journey(j);
+            case Mindmap m -> mindmap(m);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Mindmap: "Mindmap \"Root idea\" with 7 nodes. Root idea has children Origins, Tools. Origins has
+    /// children Long history, Popular. Tools has children Mermaid." The root is named; then a
+    /// DEPTH-FIRST walk names every node WITH children and lists them (the tree read aloud). Bounded:
+    /// the number of parents named and the children per parent are each capped ({@link #ITEM_CAP}),
+    /// labels capped, so an adversarial tree can't inflate the desc. Deterministic (pure IR walk).
+    private static A11y mindmap(Mindmap m) {
+        MindmapNode root = m.root();
+        if (root == null) {
+            return new A11y("Mindmap", "Empty mindmap.");
+        }
+        int[] count = {0};
+        countNodes(root, count);
+        StringBuilder d = new StringBuilder("Mindmap");
+        String rootText = label(root.text());
+        if (!rootText.isEmpty()) {
+            d.append(" \"").append(rootText).append('"');
+        }
+        d.append(" with ").append(count[0]).append(count[0] == 1 ? " node." : " nodes.");
+        int[] emitted = {0};
+        describeChildren(root, d, emitted);
+        return new A11y("Mindmap", d.toString());
+    }
+
+    /// Total node count of a mindmap subtree (bounded recursion — the parser depth-caps the tree).
+    private static void countNodes(MindmapNode node, int[] count) {
+        count[0]++;
+        for (MindmapNode c : node.children()) {
+            countNodes(c, count);
+        }
+    }
+
+    /// Depth-first: name each node that HAS children and list them, capping both the number of parents
+    /// named (`emitted`) and the children per parent at {@link #ITEM_CAP}. Bounded recursion.
+    private static void describeChildren(MindmapNode node, StringBuilder d, int[] emitted) {
+        if (!node.children().isEmpty() && emitted[0] < ITEM_CAP) {
+            emitted[0]++;
+            String name = label(node.text());
+            d.append(' ').append(name.isEmpty() ? "The root" : name).append(" has children ");
+            int shown = Math.min(node.children().size(), ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(node.children().get(i).text()));
+            }
+            d.append(node.children().size() > shown ? ", …." : ".");
+        }
+        for (MindmapNode c : node.children()) {
+            describeChildren(c, d, emitted);
+        }
     }
 
     /// User journey: "User journey \"My working day\" with 2 sections and 5 tasks. Go to work: Make tea
