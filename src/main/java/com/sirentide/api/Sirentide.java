@@ -1,5 +1,6 @@
 package com.sirentide.api;
 
+import com.sirentide.emit.Emphasis;
 import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
@@ -81,6 +82,80 @@ public final class Sirentide {
             // genuine heap exhaustion. The emitter's incremental MAX_OUTPUT_BYTES cap plus the label
             // ellipsization in every layout keep normal operation from ever reaching that point (H2).
             return INERT_SHELL;
+        }
+    }
+
+    /// Bake a diagram into a PLAY-THROUGH: N static SVG frames, one per distinct `data-sirentide-seq`
+    /// step, in seq order (plan sirentide-play-through-frames). This is the first CONSUMER of the
+    /// semantic anchors — the seq step-ordering already stamped on every element's `<g>` is inert data
+    /// until something reads it; this reads it into a slideshow. Frame `k` EMPHASIZES the step whose
+    /// seq == k and de-emphasizes the rest (cumulative "playing forward": steps before k are shown
+    /// done/normal, step k is accented, steps after k are dimmed), all IN-ALPHABET (fill/stroke tint,
+    /// no alpha) — so each frame is a standalone CSP-clean bake (no script/style/animation/:target),
+    /// a static SVG a doc can flip through. See {@link #renderFrames(String, MathFragmentRenderer)}.
+    public static java.util.List<String> renderFrames(String dsl) {
+        return renderFrames(dsl, null);
+    }
+
+    /// The play-through bake with inline-math support (mirrors {@link #render(String,
+    /// MathFragmentRenderer)}). LAYOUT RUNS ONCE — the geometry is identical across every frame; only
+    /// the per-group emphasis (fill/stroke) is re-emitted, so the frames are deterministic and
+    /// byte-stable (same dsl → same List). Returns one frame per distinct seq present, in ascending
+    /// seq order; a diagram with NO seq anchors (or exactly one) yields a SINGLE frame that is
+    /// BYTE-IDENTICAL to {@link #render(String, MathFragmentRenderer)} (there is nothing to play
+    /// through). Honors the same never-throw invariant as `render`: ANY failure degrades to a single
+    /// frame == the guarded `render` output, never a propagated bake.
+    public static java.util.List<String> renderFrames(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        try {
+            com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
+            Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            // Layout ONCE — every frame re-emits THIS scene with a different emphasis map, so the
+            // geometry can never drift between frames (only fills/strokes differ). Deterministic.
+            LaidOut laid = layout(ir, math);
+            com.sirentide.a11y.A11y a11y =
+                com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
+
+            // The no-emphasis bake — BYTE-IDENTICAL to render(dsl, math) (same emit, null emphasis).
+            String base = SvgEmitter.emit(laid, a11y, config.theme());
+            if (base.length() > MAX_OUTPUT_BYTES) {
+                return java.util.List.of(INERT_SHELL);
+            }
+
+            // The distinct seq values present on the anchored groups, ascending = the play order.
+            java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
+            collectSeqs(laid.shapes(), seqs);
+            // No seq (or a single step) → nothing to play through: one frame == the static render.
+            if (seqs.size() <= 1) {
+                return java.util.List.of(base);
+            }
+
+            java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
+            for (int k : seqs) {
+                String svg = SvgEmitter.emit(laid, a11y, config.theme(), Emphasis.cumulative(k));
+                // Emphasis is a pure recolour of the ONE scene, so an emphasized frame can only shrink
+                // or hold the byte length vs the (already-capped) base — the guard is defensive.
+                if (svg.length() > MAX_OUTPUT_BYTES) {
+                    return java.util.List.of(INERT_SHELL);
+                }
+                frames.add(svg);
+            }
+            return java.util.List.copyOf(frames);
+        } catch (RuntimeException | StackOverflowError e) {
+            // Never throw (DESIGN §6/§7): degrade to a single frame == the guarded static render. A
+            // malformed/no-seq source thus always yields exactly [render(dsl, math)].
+            return java.util.List.of(render(dsl, math));
+        }
+    }
+
+    /// Collect the distinct `seq` values stamped on the anchor {@link com.sirentide.layout.Group}s in a
+    /// laid-out scene (groups never nest, but recurse defensively). These are the play-through steps.
+    private static void collectSeqs(java.util.List<com.sirentide.layout.Shape> shapes,
+                                    java.util.TreeSet<Integer> into) {
+        for (com.sirentide.layout.Shape s : shapes) {
+            if (s instanceof com.sirentide.layout.Group g) {
+                into.add(g.anchor().seq());
+                collectSeqs(g.members(), into);
+            }
         }
     }
 

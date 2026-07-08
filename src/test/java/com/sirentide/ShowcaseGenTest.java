@@ -177,6 +177,13 @@ class ShowcaseGenTest {
             "flowchart TD\nA[Vector $\\begin{matrix} a \\\\ b \\\\ c \\end{matrix}$] --> B[Scale by $x$]\n"
                 + "A --> C[Solve $\\begin{cases} x & a \\\\ y & b \\\\ z & c \\end{cases}$]", true));
 
+    /// The play-through demo body (plan sirentide-play-through-frames): a small request/response
+    /// sequence whose 3 messages become 3 static frames, the active step advancing. Structurally
+    /// different from a Card (many frames, not one render), so it is generated on its own.
+    private static final String PLAY_DSL =
+        "sequence\nClient ->> Server : request\nServer ->> Server : process\n"
+            + "Server -->> Client : response";
+
     /// The theme card is structurally different (one bake, shown in a light + a dark pane), so it is
     /// generated on its own after the grid of cards.
     private static final String THEME_DSL =
@@ -293,6 +300,36 @@ class ShowcaseGenTest {
             .append("  </div>\n")
             .append("</section>\n");
 
+        // Play-through card (plan sirentide-play-through-frames): the FIRST consumer of the semantic
+        // seq anchors. `renderFrames` turns the already-assigned `data-sirentide-seq` step-ordering
+        // into N STATIC SVG frames — a slideshow a doc flips through, zero JS. Frame k accents the
+        // active step (thick orange arrow), shows earlier steps done/normal, and dims later ones
+        // (cumulative "playing forward"). Every frame is a standalone CSP-clean bake — same alphabet,
+        // no script/animation/:target — and shares the ONE layout's geometry byte-for-byte. Here: 3
+        // consecutive message frames of a request/response sequence, the active step advancing.
+        List<String> playFrames = Sirentide.renderFrames(PLAY_DSL);
+        assertTrue(playFrames.size() >= 3, "the play-through demo must have at least 3 frames");
+        assertFalse(playFrames.get(0).equals(playFrames.get(1)),
+            "play-through frames must differ (a different active step per frame)");
+        body.append("<section class=\"card\">\n")
+            .append("  <h2>Play-through frames<code>renderFrames · seq → N static SVGs</code></h2>\n")
+            .append("  <p class=\"desc\">The <em>flow you play</em>: the semantic <code>data-sirentide-seq"
+                + "</code> step-ordering baked into every diagram is now <em>consumed</em> — "
+                + "<code>Sirentide.renderFrames(dsl)</code> returns one static SVG per step, each "
+                + "accenting the active step (thick accent arrow), showing earlier steps done and "
+                + "dimming later ones. No new syntax, no runtime JS, same "
+                + "<code>svg/path/rect/line</code> alphabet — a slideshow a doc flips through. Three "
+                + "consecutive frames below, the active message advancing.</p>\n")
+            .append("  <pre>").append(escape(PLAY_DSL)).append("</pre>\n")
+            .append("  <div class=\"frames\">\n");
+        for (int i = 0; i < 3; i++) {
+            body.append("    <div class=\"frame\"><div class=\"lbl\">frame ").append(i + 1)
+                .append(" · step ").append(i + 1).append("</div>").append(playFrames.get(i))
+                .append("</div>\n");
+        }
+        body.append("  </div>\n")
+            .append("</section>\n");
+
         // The three per-type demo pages.
         for (TypePage tp : TYPE_PAGES) {
             String svg = tp.math() ? Sirentide.render(tp.dsl(), REAL) : Sirentide.render(tp.dsl());
@@ -393,6 +430,12 @@ class ShowcaseGenTest {
             .pane.light { background: #ffffff; border: 1px solid var(--line); color: #0f172a; }
             .pane.dark  { background: #0b1220; border: 1px solid #1f2a44; color: #e2e8f0; }
             .pane .lbl { font-size: .8rem; opacity: .65; margin-bottom: .6rem; }
+            .frames { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1rem; }
+            .frame { border: 1px solid var(--line); border-radius: 12px; padding: 1rem; text-align: center;
+              background: #ffffff; overflow-x: auto; }
+            .frame .lbl { font-size: .78rem; color: #6366f1; margin-bottom: .55rem; font-weight: 600; }
+            .frame svg { max-width: 100%; height: auto; }
+            @media (max-width: 720px){ .frames { grid-template-columns: 1fr; } }
             footer { text-align: center; color: #94a3b8; font-size: .85rem; padding: 2rem 0 0; }
             footer a { color: #6366f1; }
             @media (max-width: 720px){ .split { grid-template-columns: 1fr; } }

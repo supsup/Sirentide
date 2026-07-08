@@ -56,6 +56,18 @@ public final class SvgEmitter {
     /// Under {@link Theme#DEFAULT} both are no-ops (no bg rect + identity resolve), so this is
     /// BYTE-IDENTICAL to the two-arg {@code emit} — the whole point of option A (themes are additive).
     public static String emit(LaidOut laid, A11y a11y, Theme theme) {
+        return emit(laid, a11y, theme, null);
+    }
+
+    /// Emit a single PLAY-THROUGH FRAME under an {@link Emphasis} map (plan
+    /// sirentide-play-through-frames — the first consumer of the `data-sirentide-seq` anchors). The
+    /// emphasis recolours each `<g data-sirentide-seq=k>`'s leaf shapes by its step state (done/active/
+    /// future) via a pure fill/stroke/stroke-width transform: no shape is added, removed, or moved, so
+    /// a frame's geometry is byte-identical to every other frame's and to the un-emphasized bake — only
+    /// the presentation colours change. A `null` `emphasis` is EXACTLY the three-arg {@link
+    /// #emit(LaidOut, A11y, Theme)}: every transform is the identity, so the normal `render` path stays
+    /// BYTE-IDENTICAL (the correctness crux — the frame API must never perturb the static render).
+    public static String emit(LaidOut laid, A11y a11y, Theme theme, Emphasis emphasis) {
         if (theme == null) {
             theme = Theme.DEFAULT;
         }
@@ -94,7 +106,9 @@ public final class SvgEmitter {
                 .append("\" fill=\"").append(color(theme.background())).append("\"/>");
         }
         for (Shape shape : laid.shapes()) {
-            appendShape(sb, shape, theme);
+            // Top-level shapes are OUTSIDE any anchor group (decorative axes, lifelines, frames) — they
+            // carry no seq, so they keep their normal colours in every frame (null state = identity).
+            appendShape(sb, shape, theme, emphasis, null);
             // Bound the buffer as it grows: a cheap sb.length() compare after each shape stops a
             // runaway layout before it can allocate a multi-GB document. Thrown as a RuntimeException
             // so Sirentide.render catches it and degrades to the inert shell (never propagates a bake).
@@ -107,34 +121,47 @@ public final class SvgEmitter {
         return sb.toString();
     }
 
-    private static void appendShape(StringBuilder sb, Shape shape, Theme theme) {
+    /// Append one shape. `emphasis` resolves a nested {@link Group}'s seq → step state; `st` is the
+    /// ENCLOSING group's already-resolved state applied to this shape's colours (`null` = no emphasis
+    /// / a top-level shape, which is the identity transform → byte-identical to the pre-frame emit).
+    private static void appendShape(StringBuilder sb, Shape shape, Theme theme, Emphasis emphasis,
+                                    Emphasis.State st) {
         switch (shape) {
-            case Wedge w -> appendWedge(sb, w, theme);
+            case Wedge w -> appendWedge(sb, w, theme, st);
+            // A glyph/label run: an ACCENTABLE fill (active → accent, future → dim). A message/node
+            // label popping to the accent colour is the clearest "this is the active step" signal.
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
-                .append("\" fill=\"").append(color(theme.resolve(g.fill()))).append("\"/>");
+                .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(g.fill())))).append("\"/>");
             // Path mirrors GlyphRun exactly — a contract-clean `d` string + a colour-sink-validated
-            // fill (flowchart arrowheads / future rounded nodes). Same <path> emission, same fill guard.
+            // fill (flowchart arrowheads / future rounded nodes). An accentable fill: an active step's
+            // arrowhead takes the accent, a future step's dims.
             case Path p -> sb.append("<path d=\"").append(p.d())
-                .append("\" fill=\"").append(color(theme.resolve(p.fill()))).append("\"/>");
+                .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(p.fill())))).append("\"/>");
+            // A filled box (node/actor-head/activation rect): a STRUCTURAL fill — a future step dims,
+            // but an active/done box keeps its fill (the contract <rect> carries no stroke, so a box
+            // can't take an in-alphabet outline accent; its label glyph carries the accent instead).
             case Rect r -> sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
                 .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
-                .append("\" fill=\"").append(color(theme.resolve(r.fill()))).append("\"/>");
+                .append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(r.fill())))).append("\"/>");
+            // A line (message arrow, edge, lifeline segment): an accentable stroke + a thickened width
+            // on the active step (a heavier accent line reads as "the current hop", no new geometry).
             case Line l -> sb.append("<line x1=\"").append(fmt(l.x1())).append("\" y1=\"").append(fmt(l.y1()))
                 .append("\" x2=\"").append(fmt(l.x2())).append("\" y2=\"").append(fmt(l.y2()))
-                .append("\" stroke=\"").append(color(theme.resolve(l.stroke())))
-                .append("\" stroke-width=\"").append(fmt(l.strokeWidth())).append("\"/>");
+                .append("\" stroke=\"").append(color(Emphasis.accent(st, theme.resolve(l.stroke()))))
+                .append("\" stroke-width=\"").append(fmt(Emphasis.strokeWidth(st, l.strokeWidth()))).append("\"/>");
             // An inline-math fragment: place it on the label baseline with a numeric translate and
             // embed its already-contract-clean inner markup verbatim (FragmentGuard ran at layout
             // time). The transform stays inside SirentideContract.TRANSFORM's numeric grammar; the
-            // fill stamps the label's contrast colour so a currentColor fragment inherits it (F2).
-            case MathBox b -> sb.append("<g fill=\"").append(color(theme.resolve(b.fill())))
+            // fill stamps the label's contrast colour so a currentColor fragment inherits it (F2). The
+            // outer group fill is accentable so a math label participates in the play-through too.
+            case MathBox b -> sb.append("<g fill=\"").append(color(Emphasis.accent(st, theme.resolve(b.fill()))))
                 .append("\" transform=\"translate(").append(fmt(b.x())).append(' ')
                 .append(fmt(b.y())).append(")\">").append(b.innerSvg()).append("</g>");
             // A semantic anchor group (plan sirentide-semantic-anchor-g): wrap the element's shapes
             // in a `<g>` carrying ONLY the closed data-sirentide-role/id/seq set — additive, no
             // geometry. Members are re-dispatched through appendShape, so the inner emission is
             // byte-identical to their ungrouped form.
-            case Group grp -> appendGroup(sb, grp, theme);
+            case Group grp -> appendGroup(sb, grp, theme, emphasis);
         }
     }
 
@@ -145,18 +172,22 @@ public final class SvgEmitter {
     /// angle bracket, or foreign attribute, and they are appended RAW (no escaping needed). The `<g>`
     /// carries NO transform/fill/style: the members' geometry is byte-identical to their ungrouped
     /// emission, so a grouped diagram differs from its ungrouped self only by these `<g>`/`</g>` tags.
-    private static void appendGroup(StringBuilder sb, Group grp, Theme theme) {
+    private static void appendGroup(StringBuilder sb, Group grp, Theme theme, Emphasis emphasis) {
         Anchor a = grp.anchor();
         sb.append("<g data-sirentide-role=\"").append(a.role().wire())
             .append("\" data-sirentide-id=\"").append(a.id())
             .append("\" data-sirentide-seq=\"").append(a.seq()).append("\">");
+        // Resolve THIS group's step state from its already-assigned seq (the anchor emit-order the
+        // frame API consumes). `null` emphasis → `null` state → the identity recolour on every member,
+        // so the `<g>` tag AND its geometry stay byte-identical to the pre-frame bake.
+        Emphasis.State st = emphasis == null ? null : emphasis.state(a.seq());
         for (Shape m : grp.members()) {
-            appendShape(sb, m, theme);
+            appendShape(sb, m, theme, emphasis, st);
         }
         sb.append("</g>");
     }
 
-    private static void appendWedge(StringBuilder sb, Wedge w, Theme theme) {
+    private static void appendWedge(StringBuilder sb, Wedge w, Theme theme, Emphasis.State st) {
         double x0 = w.cx() + w.r() * Math.cos(w.a0());
         double y0 = w.cy() + w.r() * Math.sin(w.a0());
         double sweep = w.a1() - w.a0();
@@ -182,7 +213,9 @@ public final class SvgEmitter {
                 .append(" 0 ").append(largeArc).append(" 1 ")
                 .append(fmt(x1)).append(' ').append(fmt(y1)).append(" Z");
         }
-        sb.append("\" fill=\"").append(color(theme.resolve(w.fill()))).append("\"/>");
+        // A wedge (pie slice, commit dot, journey point) is a STRUCTURAL fill — dims when future,
+        // keeps its swatch when active/done (like a rect box).
+        sb.append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(w.fill())))).append("\"/>");
     }
 
     /// The sink's last-line-of-defense on presentation colour: fill/stroke values MUST match the

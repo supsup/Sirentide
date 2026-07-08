@@ -9,8 +9,11 @@ package com.sirentide.layout;
 ///     PieLayout so flowchart/state node labels and sequence actor-head labels contrast against
 ///     their BOX fill, not the page theme — text ON a filled shape must read against that fill).
 ///
-/// Package-private: a layout-internal utility, never emitted.
-final class Colors {
+/// Public (was package-private): the {@link #lighten} tint helper is now also the de-emphasis knob
+/// the play-through frame emitter reuses (plan sirentide-play-through-frames — a dimmed non-active
+/// group is `lighten`ed toward white, same in-alphabet `#rrggbb` tint the sankey bands use). Kept a
+/// pure colour utility, never emitted itself.
+public final class Colors {
 
     private Colors() {}
 
@@ -50,7 +53,7 @@ final class Colors {
     /// TINT of their source node's fill (the contract fill is opaque `#rrggbb`, so a tint is the way to
     /// signal "same source, softer" without alpha). Deterministic + bounded; a non-hex input (defensive,
     /// the layout only ever passes a palette hex) falls back to a legible mid-grey rather than throwing.
-    static String lighten(String hex, double t) {
+    public static String lighten(String hex, double t) {
         if (hex == null || hex.length() != 7 || hex.charAt(0) != '#') {
             return "#cccccc";
         }
