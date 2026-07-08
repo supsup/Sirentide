@@ -2,6 +2,7 @@ package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.font.FontMetrics;
+import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
@@ -54,6 +55,23 @@ public final class FlowchartLayout {
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
     private static final double CLAMP_MARGIN = 2;       // min gap kept between a glyph box and the canvas edge
+
+    // -- subgraph CLUSTER frames. A titled bounding box (a stroke-only rectangle = four Lines, so no
+    // new emitter surface; a filled top BAND holds the title) enclosing a cluster's member node rects
+    // with padding. Drawn UNDER the edges/nodes so a frame never occludes the content it wraps. Nested
+    // clusters TIGHTEN their padding by depth·CLUSTER_INSET so the inner frame insets inside its
+    // parent (whose transitive members it encloses). CLUSTER_PAD + CLUSTER_BAND_H stays ≤ MARGIN so a
+    // top-left frame never escapes above/left of the canvas without a coordinate shift.
+    private static final String CLUSTER_STROKE = "#94a3b8";  // frame border (in-palette slate)
+    private static final String CLUSTER_BAND_FILL = "#eef2ff"; // pale-indigo title-band background
+    private static final double CLUSTER_STROKE_W = 1;
+    private static final double CLUSTER_PAD = 10;      // padding beyond the member node bbox (depth 0)
+    private static final double CLUSTER_INSET = 4;     // each nesting depth tightens the padding this far
+    private static final double CLUSTER_MIN_PAD = 4;   // padding never drops below this, however deep
+    private static final double CLUSTER_BAND_H = 14;   // title-band height above the member nodes
+    private static final double CLUSTER_TITLE_SIZE = 10;   // title glyph size
+    private static final double CLUSTER_TITLE_PAD = 5;      // horizontal padding inside the band
+    private static final double CLUSTER_MAX_TITLE_W = 220;  // titles ellipsize past this (before band-fit)
 
     /// A Sugiyama VIRTUAL waypoint's slot width — a thin, invisible placeholder (no box, no label)
     /// that a long edge routes THROUGH and that occupies an ordering slot in barycenter sweeps.
@@ -300,9 +318,39 @@ public final class FlowchartLayout {
             }
         }
 
-        // -- emit order matters (readability + the containment audit): edges UNDER nodes, then boxes,
-        // then labels on top.
+        // -- subgraph cluster frames (drawn UNDER everything). Empty for a cluster-free chart, so the
+        // shift is 0 and the canvas is unchanged (byte-identical bake). A frame that would escape ABOVE
+        // or LEFT of the canvas shifts EVERY vertex (real + virtual) right/down by the deficit so the
+        // containment invariant holds; the canvas then GROWS to fit the shifted content + frame extent.
+        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW);
+        double offX = 0;
+        double offY = 0;
+        for (ClusterFrame f : frames) {
+            offX = Math.max(offX, MARGIN - f.left());
+            offY = Math.max(offY, MARGIN - f.top());
+        }
+        if (offX > 0 || offY > 0) {
+            for (int i = 0; i < rt.vTotal; i++) {
+                vx[i] += offX;
+                vy[i] += offY;
+            }
+            frames = buildClusterFrames(fc.clusters(), index, vx, vy, boxW);
+        }
+        double maxFrameRight = 0;
+        double maxFrameBottom = 0;
+        for (ClusterFrame f : frames) {
+            maxFrameRight = Math.max(maxFrameRight, f.right());
+            maxFrameBottom = Math.max(maxFrameBottom, f.bottom());
+        }
+        canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
+        canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
+
+        // -- emit order matters (readability + the containment audit): cluster frames UNDER edges,
+        // edges UNDER nodes, then boxes, then labels on top.
         List<Shape> shapes = new ArrayList<>();
+        for (ClusterFrame f : frames) {
+            emitClusterFrame(shapes, f, canvasW);
+        }
 
         // 1) edges: forward = a straight line (or, when routed through waypoints, a POLYLINE) from the
         // src bottom-center to the dst top-center + a triangle arrowhead on the FINAL segment; BACK-
@@ -314,7 +362,9 @@ public final class FlowchartLayout {
             int u = e.u();
             int v = e.v();
             if (isBack[ei]) {
-                double laneX = contentW - MARGIN + BACK_LANE_GAP * (++laneIdx);
+                // The lane base tracks the (possibly cluster-shifted) content, so a back-edge lane
+                // still clears the nodes after a subgraph shift (offX is 0 for a cluster-free chart).
+                double laneX = contentW - MARGIN + offX + BACK_LANE_GAP * (++laneIdx);
                 double sy = vy[u] + NODE_H / 2;        // source right-middle
                 double sx = vx[u] + boxW[u];
                 double ty = vy[v] + NODE_H / 2;        // target right-middle
@@ -503,6 +553,35 @@ public final class FlowchartLayout {
             }
         }
 
+        // -- subgraph cluster frames (drawn UNDER everything). Same shift/grow discipline as the TD
+        // path: empty for a cluster-free chart (offX/offY = 0 → byte-identical); a top/left-escaping
+        // frame shifts every vertex right/down and the canvas grows to fit.
+        // id → index for member lookup (LR builds no `index` map of its own — rebuild the small one).
+        Map<String, Integer> lrIndex = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            lrIndex.put(nodes.get(i).id(), i);
+        }
+        List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW);
+        double offX = 0;
+        double offY = 0;
+        for (ClusterFrame f : frames) {
+            offX = Math.max(offX, MARGIN - f.left());
+            offY = Math.max(offY, MARGIN - f.top());
+        }
+        if (offX > 0 || offY > 0) {
+            for (int i = 0; i < rt.vTotal; i++) {
+                vx[i] += offX;
+                vy[i] += offY;
+            }
+            frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW);
+        }
+        double maxFrameRight = 0;
+        double maxFrameBottom = 0;
+        for (ClusterFrame f : frames) {
+            maxFrameRight = Math.max(maxFrameRight, f.right());
+            maxFrameBottom = Math.max(maxFrameBottom, f.bottom());
+        }
+
         // Back-edges route through horizontal LANES reserved BELOW the content (mirror of TD's
         // right-side vertical lanes); a labeled back-edge's label sits just below its lane, so the
         // canvas grows DOWNWARD to fit the tallest such label.
@@ -518,9 +597,15 @@ public final class FlowchartLayout {
         }
         double canvasW = contentW;
         double canvasH = contentH + backCount * BACK_LANE_GAP + maxBackLabelH;
+        canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
+        canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
 
-        // -- emit order (readability + containment audit): edges under nodes, then boxes, then labels.
+        // -- emit order (readability + containment audit): cluster frames under edges, edges under
+        // nodes, then boxes, then labels.
         List<Shape> shapes = new ArrayList<>();
+        for (ClusterFrame f : frames) {
+            emitClusterFrame(shapes, f, canvasW);
+        }
         String textColor = fc.textColor();
 
         // 1) edges. forward = right-middle → left-middle straight line (or a POLYLINE through waypoint
@@ -532,7 +617,9 @@ public final class FlowchartLayout {
             int u = e.u();
             int v = e.v();
             if (isBack[ei]) {
-                double laneY = contentH - MARGIN + BACK_LANE_GAP * (++laneIdx);
+                // The lane base tracks the (possibly cluster-shifted) content (offY is 0 for a
+                // cluster-free chart, so the byte-identical bake holds).
+                double laneY = contentH - MARGIN + offY + BACK_LANE_GAP * (++laneIdx);
                 double sx = vx[u] + boxW[u] / 2;       // source bottom-middle
                 double sy = vy[u] + NODE_H;
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
@@ -864,6 +951,80 @@ public final class FlowchartLayout {
         }
         layer[v] = best;
         return best;
+    }
+
+    /// One resolved subgraph cluster frame: the (ellipsized) `title` plus the border rectangle
+    /// `[left,right]×[top,bottom]` (the top band occupies `[top, top+CLUSTER_BAND_H]`). Layout-internal
+    /// — {@link #emitClusterFrame} turns it into four border lines + a title band + a title glyph run.
+    private record ClusterFrame(String title, double left, double top, double right, double bottom) {}
+
+    /// Resolves each {@link FlowCluster} to a pixel {@link ClusterFrame}: the union of its member node
+    /// rects (from `vx`/`vy`/`boxW`), grown by a depth-tightened padding, with a title band reserved
+    /// ABOVE the members. A cluster with NO placed member (empty subgraph, or every member filtered)
+    /// yields no frame — degenerate → inert (DESIGN §6). Frames are emitted OUTERMOST-first (sorted by
+    /// depth) so a nested frame's border/band draws ON TOP of its parent's, never occluded. Returns an
+    /// EMPTY list for a cluster-free flowchart, so the emit path adds nothing (byte-identical bake).
+    private static List<ClusterFrame> buildClusterFrames(List<FlowCluster> clusters,
+                                                         Map<String, Integer> index,
+                                                         double[] vx, double[] vy, double[] boxW) {
+        if (clusters.isEmpty()) {
+            return List.of();   // no subgraphs → no frames, byte-identical to the pre-cluster bake
+        }
+        List<FlowCluster> ordered = new ArrayList<>(clusters);
+        ordered.sort((a, b) -> Integer.compare(a.depth(), b.depth()));   // stable: outer under inner
+        List<ClusterFrame> out = new ArrayList<>();
+        for (FlowCluster c : ordered) {
+            double minX = Double.MAX_VALUE;
+            double minY = Double.MAX_VALUE;
+            double maxX = -Double.MAX_VALUE;
+            double maxY = -Double.MAX_VALUE;
+            boolean any = false;
+            for (String id : c.memberNodeIds()) {
+                Integer i = index.get(id);
+                if (i == null) {
+                    continue;   // a member that never placed (defensive) — never throw
+                }
+                any = true;
+                minX = Math.min(minX, vx[i]);
+                minY = Math.min(minY, vy[i]);
+                maxX = Math.max(maxX, vx[i] + boxW[i]);
+                maxY = Math.max(maxY, vy[i] + NODE_H);
+            }
+            if (!any) {
+                continue;   // empty cluster → no frame (inert)
+            }
+            double pad = Math.max(CLUSTER_MIN_PAD, CLUSTER_PAD - c.depth() * CLUSTER_INSET);
+            double left = minX - pad;
+            double right = maxX + pad;
+            double bottom = maxY + pad;
+            double top = minY - pad - CLUSTER_BAND_H;
+            String title = FONT.ellipsize(c.title(),
+                Math.min(CLUSTER_MAX_TITLE_W, right - left - 2 * CLUSTER_TITLE_PAD), CLUSTER_TITLE_SIZE);
+            out.add(new ClusterFrame(title, left, top, right, bottom));
+        }
+        return out;
+    }
+
+    /// Emits one cluster {@link ClusterFrame}: a STROKE-ONLY border (four {@link Line}s — a
+    /// {@link Rect} carries fill only), a filled top BAND {@link Rect} holding the (contrast-filled)
+    /// title glyph run, all inside the svg/rect/line/path alphabet and clamped in-canvas. Emitted
+    /// BEFORE the edges/nodes so the frame sits behind the content it wraps.
+    private static void emitClusterFrame(List<Shape> shapes, ClusterFrame f, double canvasW) {
+        shapes.add(new Line(f.left(), f.top(), f.right(), f.top(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        shapes.add(new Line(f.left(), f.bottom(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        shapes.add(new Line(f.left(), f.top(), f.left(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        shapes.add(new Line(f.right(), f.top(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        // Title band — a filled rect across the frame top holding the cluster title.
+        shapes.add(new Rect(f.left(), f.top(), f.right() - f.left(), CLUSTER_BAND_H, CLUSTER_BAND_FILL));
+        if (f.title() != null && !f.title().isBlank()) {
+            double tw = FONT.runWidth(f.title(), CLUSTER_TITLE_SIZE);
+            double x = clampLabelX(f.left() + CLUSTER_TITLE_PAD, tw, canvasW);
+            double baseline = f.top() + CLUSTER_BAND_H / 2 + CLUSTER_TITLE_SIZE * 0.35;
+            String d = FONT.textPathD(f.title(), x, baseline, CLUSTER_TITLE_SIZE);
+            if (!d.isBlank()) {
+                shapes.add(new GlyphRun(d, Colors.contrastFill(CLUSTER_BAND_FILL)));
+            }
+        }
     }
 
     /// Deterministic 3-dp number formatting for arrowhead path data (byte-identical bakes, DESIGN §6).

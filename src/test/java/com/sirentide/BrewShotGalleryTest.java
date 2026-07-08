@@ -76,6 +76,10 @@ class BrewShotGalleryTest {
         new Case("flowchart", "Flowchart (layered, custom node colour)",
             "flowchart\nA[Open PR] --> B{Approve?}\nB -->|yes| C[Merge] #22c55e"
                 + "\nB -->|no| D[Revise]\nD -->|re-review| B"),
+        new Case("flowchart-subgraph", "Flowchart (nested subgraph clusters)",
+            "flowchart TD\nA[Start] --> B[Work]\nsubgraph outer [Build Pipeline]\nB --> C[Compile]"
+                + "\nsubgraph inner [Test Suite]\nC --> D[Unit]\nD --> F[Integration]\nend"
+                + "\nF --> G[Package]\nend\nG --> E[Ship]"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"

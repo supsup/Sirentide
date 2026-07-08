@@ -98,6 +98,24 @@ D -->|re-review| B
 
 ![Flowchart (layered, custom node colour)](flowchart.png)
 
+## Flowchart (nested subgraph clusters)
+
+```
+flowchart TD
+A[Start] --> B[Work]
+subgraph outer [Build Pipeline]
+B --> C[Compile]
+subgraph inner [Test Suite]
+C --> D[Unit]
+D --> F[Integration]
+end
+F --> G[Package]
+end
+G --> E[Ship]
+```
+
+![Flowchart (nested subgraph clusters)](flowchart-subgraph.png)
+
 ## Sequence (API token flow)
 
 ```

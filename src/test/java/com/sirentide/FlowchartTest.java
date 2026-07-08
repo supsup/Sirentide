@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
+import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.parse.DslParser;
@@ -191,6 +192,82 @@ class FlowchartTest {
 
 
 
+
+    // -- subgraph / end clusters ---------------------------------------------
+
+    private static FlowCluster clusterById(Flowchart fc, String id) {
+        return fc.clusters().stream().filter(c -> c.id().equals(id)).findFirst().orElse(null);
+    }
+
+    @Test
+    void subgraphOpenCloseCollectsFirstSeenMembers() {
+        // C and D are FIRST SEEN inside the subgraph → members; B was first seen OUTSIDE (A --> B) so
+        // it is NOT a member even though referenced inside (first-seen wins). E is outside.
+        Flowchart fc = parse("flowchart TD\n  A[Start] --> B[Work]\n  subgraph pipeline [Build Pipeline]\n"
+            + "    B --> C[Compile]\n    C --> D[Test]\n  end\n  D --> E[Ship]\n");
+        assertEquals(1, fc.clusters().size(), "one cluster");
+        FlowCluster c = fc.clusters().get(0);
+        assertEquals("pipeline", c.id());
+        assertEquals("Build Pipeline", c.title(), "the [bracket] title, not the id");
+        assertEquals(0, c.depth(), "outermost cluster is depth 0");
+        assertEquals(List.of("C", "D"), c.memberNodeIds(),
+            "only the nodes FIRST seen inside (B was declared outside)");
+    }
+
+    @Test
+    void subgraphTitleDefaultsToIdWhenBare() {
+        Flowchart fc = parse("flowchart\n  subgraph solo\n    A --> B\n  end\n");
+        FlowCluster c = clusterById(fc, "solo");
+        assertEquals("solo", c.title(), "a bare `subgraph id` uses the id as its title");
+        assertEquals(List.of("A", "B"), c.memberNodeIds());
+    }
+
+    @Test
+    void nestedSubgraphsStackWithIncreasingDepthAndTransitiveMembership() {
+        Flowchart fc = parse("flowchart TD\n  subgraph outer [Outer]\n    A --> B\n"
+            + "    subgraph inner [Inner]\n      B --> C\n    end\n  end\n");
+        assertEquals(2, fc.clusters().size(), "two clusters");
+        FlowCluster inner = clusterById(fc, "inner");
+        FlowCluster outer = clusterById(fc, "outer");
+        assertEquals(1, inner.depth(), "the nested cluster is depth 1");
+        assertEquals(0, outer.depth(), "the enclosing cluster is depth 0");
+        assertEquals(List.of("C"), inner.memberNodeIds(), "C is first-seen inside inner");
+        assertEquals(List.of("A", "B", "C"), outer.memberNodeIds(),
+            "outer's membership is TRANSITIVE — it also owns the inner cluster's nodes");
+    }
+
+    @Test
+    void unclosedSubgraphClosesGracefullyAtEndOfInput() {
+        // No `end` — the cluster must still close at EOF (never throws), spanning what it saw.
+        Flowchart fc = parse("flowchart\n  subgraph p [Pipeline]\n    A --> B\n    B --> C\n");
+        assertEquals(1, fc.clusters().size(), "the unclosed cluster is closed at EOF");
+        assertEquals(List.of("A", "B", "C"), clusterById(fc, "p").memberNodeIds());
+        assertEquals(2, fc.edges().size(), "the edges inside still parse");
+    }
+
+    @Test
+    void strayEndIsIgnoredNotThrown() {
+        Flowchart fc = parse("flowchart\n  A --> B\n  end\n  B --> C\n");
+        assertEquals(0, fc.clusters().size(), "a stray `end` opens no cluster and never throws");
+        assertEquals(2, fc.edges().size(), "the edges around the stray `end` still parse");
+    }
+
+    @Test
+    void emptySubgraphYieldsAClusterWithNoMembersAndDrawsNoFrame() {
+        // An empty subgraph is kept in the IR but carries no members → layout draws no frame (inert).
+        Flowchart fc = parse("flowchart\n  A --> B\n  subgraph empty [Nothing]\n  end\n  B --> C\n");
+        FlowCluster c = clusterById(fc, "empty");
+        assertEquals(List.of(), c.memberNodeIds(), "no node was first-seen inside → empty membership");
+        // Render must not throw and must produce a valid svg (the empty cluster contributes no frame).
+        String svg = Sirentide.render("flowchart\n  A --> B\n  subgraph empty [Nothing]\n  end\n  B --> C\n");
+        assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "empty subgraph renders cleanly");
+    }
+
+    @Test
+    void flowchartWithoutSubgraphsHasNoClusters() {
+        Flowchart fc = parse("flowchart\n  A --> B\n  B --> C\n");
+        assertEquals(List.of(), fc.clusters(), "no subgraph → an empty cluster list (additive)");
+    }
 
     @Test
     @Timeout(5)

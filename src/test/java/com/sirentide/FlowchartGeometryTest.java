@@ -88,6 +88,129 @@ class FlowchartGeometryTest {
                 + edgeX + " — straddling means the on-the-line regression is back");
     }
 
+    // -- subgraph cluster frames (this milestone) -----------------------------
+
+    // The cluster title-band fill + padding — mirrors FlowchartLayout's constants.
+    private static final String BAND_FILL = "#eef2ff";
+    private static final double CLUSTER_PAD = 10;      // depth-0 padding
+    private static final double CLUSTER_BAND_H = 14;
+
+    @Test
+    void clusterFrameEnclosesItsMembers() {
+        // A single subgraph around C and D. The frame (its band + border lines) must enclose both
+        // member node rects with the pad on every side. THIS is the delete-mutant killer: stop
+        // emitting the frame (or stop tracking membership) and this test goes red.
+        String svg = Sirentide.render("flowchart TD\n  A[Start] --> B[Work]\n"
+            + "  subgraph pipeline [Build Pipeline]\n    B --> C[Compile]\n    C --> D[Test]\n  end\n"
+            + "  D --> E[Ship]\n");
+        Rect band = bandRects(svg).stream().findFirst()
+            .orElseThrow(() -> new AssertionError("no cluster title band emitted — frame deleted?"));
+        double left = band.x, right = band.x + band.w, top = band.y;
+        double bottom = frameBottom(svg, left);
+        // C and D are the members (first-seen inside). Node rects are the height-36 rects.
+        List<Rect> nodes = nodeRects(svg);
+        // member rects = the two whose y sits below the band top (inside the frame vertically).
+        List<Rect> members = new ArrayList<>();
+        for (Rect r : nodes) {
+            if (r.y > top && r.y + r.h < bottom + 0.5) { members.add(r); }
+        }
+        assertEquals(2, members.size(), "the frame contains exactly its two members (C, D)");
+        for (Rect m : members) {
+            assertTrue(m.x >= left && m.x + m.w <= right, "member x-range inside the frame");
+            assertTrue(m.y >= top + CLUSTER_BAND_H && m.y + m.h <= bottom, "member y-range inside the frame");
+        }
+        double minX = members.stream().mapToDouble(r -> r.x).min().orElseThrow();
+        double maxX = members.stream().mapToDouble(r -> r.x + r.w).max().orElseThrow();
+        assertEquals(CLUSTER_PAD, minX - left, 0.5, "left pad = CLUSTER_PAD");
+        assertEquals(CLUSTER_PAD, right - maxX, 0.5, "right pad = CLUSTER_PAD");
+    }
+
+    @Test
+    void nestedClusterInsetsInsideItsParent() {
+        String svg = Sirentide.render("flowchart TD\n  subgraph outer [Outer]\n    A[a] --> B[b]\n"
+            + "    subgraph inner [Inner]\n      B --> C[c]\n      C --> F[f]\n    end\n    F --> G[g]\n  end\n");
+        List<Rect> bands = bandRects(svg);
+        assertEquals(2, bands.size(), "two title bands (outer + inner)");
+        // The wider band is the outer frame (its box encloses everything); the narrower is inner.
+        bands.sort((p, q) -> Double.compare(q.w, p.w));
+        Rect outer = bands.get(0), inner = bands.get(1);
+        double outerBottom = frameBottom(svg, outer.x), innerBottom = frameBottom(svg, inner.x);
+        assertTrue(inner.x > outer.x, "inner left insets inside outer");
+        assertTrue(inner.x + inner.w < outer.x + outer.w, "inner right insets inside outer");
+        assertTrue(inner.y > outer.y, "inner top insets below outer top");
+        assertTrue(innerBottom < outerBottom, "inner bottom insets above outer bottom");
+    }
+
+    @Test
+    void canvasGrowsToFitTheFrame() {
+        // The framed nodes are the widest layer, so the frame padding pushes past the plain node
+        // extent → the canvas must GROW to keep the frame inside (containment). Compare against the
+        // byte-twin without the subgraph wrapper, and assert the frame sits fully inside the canvas.
+        String withSub = "flowchart\n  S[start] --> W[wide compile stage]\n"
+            + "  subgraph g [Group]\n    W --> X[wide compile stage]\n  end\n";
+        String noSub = "flowchart\n  S[start] --> W[wide compile stage]\n  W --> X[wide compile stage]\n";
+        double[] a = svgSize(Sirentide.render(withSub));
+        double[] b = svgSize(Sirentide.render(noSub));
+        assertTrue(a[0] > b[0], "the subgraph frame grew the canvas width: " + a[0] + " vs " + b[0]);
+        // Containment: the frame's box sits fully inside the declared canvas.
+        String svg = Sirentide.render(withSub);
+        Rect band = bandRects(svg).get(0);
+        double bottom = frameBottom(svg, band.x);
+        assertTrue(band.x >= 0 && band.y >= 0, "frame top-left inside canvas");
+        assertTrue(band.x + band.w <= a[0] + 0.5 && bottom <= a[1] + 0.5, "frame bottom-right inside canvas");
+    }
+
+    @Test
+    void flowchartWithoutSubgraphEmitsNoClusterFrame() {
+        // Zero-behaviour-change pin: with no subgraph, the cluster path is inert — no title band, and
+        // the byte output is exactly the pre-cluster flowchart (also pinned in GoldenSvgTest.flowchart).
+        String svg = Sirentide.render("flowchart TD\n  A[Start] --> B{Ready?}\n"
+            + "  B -->|yes| C[Build] --> D[Ship]\n  B -->|no| E[Fix] --> A\n");
+        assertTrue(!svg.contains(BAND_FILL), "no title-band fill when there is no subgraph");
+        assertTrue(bandRects(svg).isEmpty(), "no cluster frame emitted for a subgraph-free chart");
+    }
+
+    /// The title-band rects (fill == BAND_FILL) — one per drawn cluster frame; its x/y/width give the
+    /// frame's left/top and width (the band spans the frame's full width).
+    private static List<Rect> bandRects(String svg) {
+        List<Rect> out = new ArrayList<>();
+        Matcher m = Pattern.compile(
+            "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\" fill=\""
+                + BAND_FILL + "\"").matcher(svg);
+        while (m.find()) {
+            out.add(new Rect(Double.parseDouble(m.group(1)), Double.parseDouble(m.group(2)),
+                Double.parseDouble(m.group(3)), Double.parseDouble(m.group(4))));
+        }
+        return out;
+    }
+
+    /// Node boxes only — the height-NODE_H (36) rects (excludes the height-14 cluster title bands).
+    private static List<Rect> nodeRects(String svg) {
+        List<Rect> out = new ArrayList<>();
+        for (Rect r : rects(svg)) {
+            if (Math.abs(r.h - 36) < 0.5) { out.add(r); }
+        }
+        return out;
+    }
+
+    /// The bottom y of the cluster frame whose LEFT border sits at x≈`left`: the frame's left vertical
+    /// border line runs from the band top down to the frame bottom, so its max endpoint y is the bottom.
+    private static double frameBottom(String svg, double left) {
+        return lines(svg).stream()
+            .filter(l -> Math.abs(l.x1 - left) < 0.5 && Math.abs(l.x2 - left) < 0.5
+                && Math.abs(l.y2 - l.y1) > CLUSTER_BAND_H)
+            .mapToDouble(l -> Math.max(l.y1, l.y2)).max()
+            .orElseThrow(() -> new AssertionError("no left border line at x=" + left));
+    }
+
+    /// Pulls the intrinsic width/height off the svg root.
+    private static double[] svgSize(String svg) {
+        Matcher w = Pattern.compile("<svg[^>]*\\swidth=\"([0-9.]+)\"").matcher(svg);
+        Matcher h = Pattern.compile("<svg[^>]*\\sheight=\"([0-9.]+)\"").matcher(svg);
+        assertTrue(w.find() && h.find(), "svg root has width+height");
+        return new double[] {Double.parseDouble(w.group(1)), Double.parseDouble(h.group(1))};
+    }
+
     // ---- geometry parsing helpers (attribute-level, no layout knowledge) ----
 
     private static List<Rect> rects(String svg) {
