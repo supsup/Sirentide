@@ -59,7 +59,11 @@ public final class Sirentide {
         try {
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             LaidOut laid = layout(ir, math);
-            String svg = SvgEmitter.emit(laid);
+            // Deterministic accessibility, baked in: a root role="img" + a <title>/<desc> built
+            // purely from the IR (roles + label text, fixed order — no timestamps/random). A blank
+            // payload (the Empty degrade target) emits nothing, so the inert shell is unchanged.
+            com.sirentide.a11y.A11y a11y = com.sirentide.a11y.A11yDescriber.describe(ir);
+            String svg = SvgEmitter.emit(laid, a11y);
             if (svg.length() > MAX_OUTPUT_BYTES) {
                 return INERT_SHELL;
             }

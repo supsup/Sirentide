@@ -25,7 +25,15 @@ public final class SirentideContract {
     /// fragment (a MathBox) on the label baseline. It carries ONLY a numeric `transform` (and, on
     /// the fragment's own inner elements, `fill`) — no `role`/`data-*` yet; those ride the later
     /// anchor-layer widening with Confluence's value-scrub + Lattice sign-off (Conf /41).
-    public static final Set<String> ALLOWED_ELEMENTS = Set.of("svg", "path", "rect", "line", "g");
+    /// `title`/`desc` joined at the a11y-baking milestone (plan sirentide-svg-accessibility): the
+    /// emitter emits a root-level `<title>` (short accessible name) and `<desc>` (deterministic
+    /// reading-order description) so every baked SVG carries `role="img"` + title + desc — the
+    /// standard SVG a11y pattern, baked and deterministic. These are the ONLY two elements permitted
+    /// to carry TEXT content (they are not rendered visually; all visible text is still baked to
+    /// glyph `<path>`s). They carry NO attributes and appear ONLY at the diagram top level — NEVER
+    /// inside a math fragment (see {@link FragmentGuard}, which is deliberately NOT widened).
+    public static final Set<String> ALLOWED_ELEMENTS =
+        Set.of("svg", "path", "rect", "line", "g", "title", "desc");
 
     /// Per-element allowed attribute set. NOTE: `xmlns` is emitted on the root `<svg>` but is
     /// missing from docs/sirentide-output-contract.md's M1 attribute table — it is added here so
@@ -35,7 +43,15 @@ public final class SirentideContract {
         // M1 (labels milestone) widening: `width`/`height` join `viewBox` on the root <svg>. A
         // viewBox-only root collapses inside the Stafficy /docs sanitizer; intrinsic width/height
         // fix that. Both are geometry scalars (finite-numeric), so the value grammar is unchanged.
-        "svg", Set.of("xmlns", "viewBox", "width", "height"),
+        // a11y milestone widening: `role` joins on the root <svg> ONLY, with the single fixed value
+        // "img" (see {@link #attributeValueValid}) — the standard SVG a11y hook. It is a fixed
+        // string, not a free value grammar; it cannot carry a url()/expression/reference.
+        "svg", Set.of("xmlns", "viewBox", "width", "height", "role"),
+        // a11y milestone: `title`/`desc` carry NO attributes (text-only children). Empty attr sets
+        // keep the allowlist total (every emitted element has an entry) and the ContainmentTest's
+        // attribute loop simply finds nothing to check on them.
+        "title", Set.of(),
+        "desc", Set.of(),
         // math-in-labels S2 widening: `path` carries a numeric-grammar `transform`. Real LatteX
         // places every glyph with its own `translate(...) scale(...)` on the <path> (glyph outlines
         // are emitted in font units, then scaled/positioned per-glyph) — so a baked-math fragment's
@@ -155,6 +171,8 @@ public final class SirentideContract {
             case "d" -> isPathData(value);
             case "viewBox" -> isViewBox(value);
             case "xmlns" -> SVG_NS.equals(value);
+            // a11y: `role` on the root <svg> is the single fixed value "img" — nothing else is legal.
+            case "role" -> "img".equals(value);
             case "transform" -> TRANSFORM.matcher(value).matches();
             // geometry scalars: x, y, width, height, x1, y1, x2, y2, stroke-width
             default -> isFiniteNumber(value);

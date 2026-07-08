@@ -130,6 +130,65 @@ class ContainmentTest {
         }
     }
 
+    /// The a11y widen (plan sirentide-svg-accessibility): the emitter now bakes a root `role="img"`
+    /// + `<title>` + `<desc>`. This pins that (a) a non-empty diagram ACTUALLY emits title/desc with
+    /// `role="img"`, and (b) `title`/`desc` are the ONLY elements the corpus adds beyond the
+    /// pre-a11y geometry alphabet — no other element crept in on the back of the widen. The
+    /// per-element allowlist walk in {@link #everyEmittedSvgStaysInsideTheAllowlist} already proves
+    /// every attribute stays bounded (role == "img", title/desc attribute-free).
+    @Test
+    void a11yTitleDescAndRoleAreEmittedAndAreTheOnlyNewElements() throws Exception {
+        String flow = Sirentide.render(
+            "flowchart TD\n  A[Start] --> B[Process]\n  B --> C[End]\n");
+        assertTrue(flow.contains("role=\"img\""), "root carries role=img: " + flow);
+        assertTrue(flow.contains("<title>") && flow.contains("</title>"), "a <title> is baked: " + flow);
+        assertTrue(flow.contains("<desc>") && flow.contains("</desc>"), "a <desc> is baked: " + flow);
+
+        // Across the whole corpus, the set of emitted element tags must be a subset of the
+        // GEOMETRY alphabet plus exactly {title, desc}. If a stray element slipped in, this catches
+        // it; if title/desc silently stopped emitting, the presence checks above catch that.
+        java.util.Set<String> geometry = java.util.Set.of("svg", "path", "rect", "line", "g");
+        java.util.Set<String> seen = new java.util.TreeSet<>();
+        for (String dsl : CORPUS) {
+            collectTags(parse(Sirentide.render(dsl)).getDocumentElement(), seen);
+        }
+        for (String tag : seen) {
+            assertTrue(geometry.contains(tag) || tag.equals("title") || tag.equals("desc"),
+                "unexpected element <" + tag + "> appeared — the a11y widen must add ONLY title/desc");
+        }
+        assertTrue(seen.contains("title") && seen.contains("desc"),
+            "title AND desc must actually appear across the corpus, saw: " + seen);
+    }
+
+    /// The allowlist guard stays NON-VACUOUS after the widen: a hand-crafted SVG carrying a FOREIGN
+    /// element (`<foreignObject>`) must still fail the containment walk. Proves the a11y widen did
+    /// not accidentally open the allowlist to arbitrary elements.
+    @Test
+    void foreignElementStillRejectedAfterTheWiden() throws Exception {
+        String hostile = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\" "
+            + "viewBox=\"0 0 1 1\" role=\"img\"><title>x</title>"
+            + "<foreignObject width=\"1\" height=\"1\"></foreignObject></svg>";
+        Document doc = parse(hostile);
+        try {
+            checkElement(doc.getDocumentElement(), "hostile-foreignObject");
+            fail("a <foreignObject> must fail the allowlist — the guard is not vacuous");
+        } catch (AssertionError expected) {
+            assertTrue(expected.getMessage().contains("foreignObject"),
+                "the failure names the foreign element: " + expected.getMessage());
+        }
+    }
+
+    private void collectTags(Element el, java.util.Set<String> into) {
+        into.add(el.getTagName());
+        NodeList kids = el.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (k.getNodeType() == Node.ELEMENT_NODE) {
+                collectTags((Element) k, into);
+            }
+        }
+    }
+
     /// The math-in-labels widening (RFC sirentide/39): a flowchart node whose `$…$` label renders
     /// through a fake fragment must bake a `<g transform>` that STILL stays inside the allowlist
     /// (g + numeric transform, path + d/fill). Proves the g/transform contract widening is
