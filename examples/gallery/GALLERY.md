@@ -223,6 +223,23 @@ date created
 
 ![ER diagram (crow-foot cardinalities)](erDiagram.png)
 
+## Git graph (branch lanes + merge)
+
+```
+gitGraph
+commit
+commit id: "init"
+branch develop
+checkout develop
+commit
+commit id: "feature"
+checkout main
+merge develop
+commit id: "release"
+```
+
+![Git graph (branch lanes + merge)](gitGraph.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

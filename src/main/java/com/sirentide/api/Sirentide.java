@@ -200,6 +200,8 @@ public final class Sirentide {
             // A standalone display-math block bakes its whole body full-size through `math`; a null
             // renderer degrades to the raw LaTeX source as plain-text glyphs (never throws).
             case com.sirentide.ir.MathBlock mb -> com.sirentide.layout.MathBlockLayout.layout(mb, math);
+            // A git commit graph: lanes per branch, dots per commit, elbow branch/merge connectors.
+            case com.sirentide.ir.GitGraph gg -> com.sirentide.layout.GitGraphLayout.layout(gg, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

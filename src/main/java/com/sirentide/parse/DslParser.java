@@ -16,6 +16,8 @@ import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
+import com.sirentide.ir.GitGraph;
+import com.sirentide.ir.GitOp;
 import com.sirentide.ir.MathBlock;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
@@ -128,6 +130,9 @@ public final class DslParser {
             // A standalone full-size display-math block: the WHOLE body is ONE LaTeX expression
             // (no `$` delimiters), baked centered through the MathFragment seam.
             case "mathblock" -> parseMathBlock(lines);
+            // A mermaid-style git commit graph — commit dots on a time axis, one lane per branch, with
+            // branch/merge connectors. `gitgraph` is an accepted lowercase alias of `gitGraph`.
+            case "gitGraph", "gitgraph" -> parseGitGraph(lines, textColor);
             default -> new Empty();
         };
     }
@@ -1950,6 +1955,119 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// The reserved leading gitGraph keywords. A body line's FIRST whitespace-delimited token selects
+    /// the op; anything else is dropped (malformed→inert, DESIGN §6).
+    private static final String KW_COMMIT = "commit";
+    private static final String KW_BRANCH = "branch";
+    private static final String KW_CHECKOUT = "checkout";
+    private static final String KW_MERGE = "merge";
+
+    /// Parses a mermaid-style `gitGraph` — a commit history as an ORDERED op list. The IR carries the
+    /// ops verbatim; the LANE/colour/connector geometry is derived at layout time by replaying them
+    /// ({@link com.sirentide.ir.GitGraph}), so the parser is a thin tokenizer.
+    /// ```
+    /// gitGraph
+    ///   commit
+    ///   commit id: "fix"
+    ///   branch develop
+    ///   checkout develop
+    ///   commit
+    ///   checkout main
+    ///   merge develop
+    ///   commit
+    /// ```
+    /// Each body line's first token selects the op: `commit [id: "x"]` (an optional quoted/bare id
+    /// label), `branch <name>`, `checkout <name>`, `merge <name>`. Names/ids are `cap()`'d.
+    ///
+    /// Robustness (DESIGN §6, never throw): a line whose first token is none of the four keywords is
+    /// DROPPED (inert). A `branch`/`checkout`/`merge` with an EMPTY name is dropped (there is nothing to
+    /// name). The SEMANTIC malformed cases — a commit before any branch (→ implicit `main`), a
+    /// checkout/merge of an UNKNOWN branch, a DUPLICATE branch, a SELF-merge — are NOT dropped here: they
+    /// stay as ops and are resolved INERTLY at replay (layout), so the parse stays a pure tokenize.
+    /// Ops past {@link #MAX_DATA_ROWS} are dropped (bounded, never allocates unboundedly). Empty body →
+    /// a GitGraph with no ops (round-trips, NOT degraded to Empty).
+    private static Diagram parseGitGraph(String[] lines, String textColor) {
+        List<GitOp> ops = new ArrayList<>();
+        for (int i = 1; i < lines.length && ops.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String[] kwRest = splitKeyword(line);
+            String kw = kwRest[0];
+            String rest = kwRest[1];   // "" when the keyword stands alone (a bare `commit`)
+            switch (kw) {
+                case KW_COMMIT -> ops.add(new GitOp.Commit(parseCommitId(rest)));
+                case KW_BRANCH -> {
+                    String name = cap(gitName(rest));
+                    if (!name.isEmpty()) {
+                        ops.add(new GitOp.Branch(name));
+                    }
+                    // an empty branch name (`branch` alone) has nothing to name → drop (inert)
+                }
+                case KW_CHECKOUT -> {
+                    String name = cap(gitName(rest));
+                    if (!name.isEmpty()) {
+                        ops.add(new GitOp.Checkout(name));
+                    }
+                }
+                case KW_MERGE -> {
+                    String name = cap(gitName(rest));
+                    if (!name.isEmpty()) {
+                        ops.add(new GitOp.Merge(name));
+                    }
+                }
+                default -> {
+                    // not a gitGraph keyword → drop the line (malformed→inert, never throws)
+                }
+            }
+        }
+        return new GitGraph(ops, textColor);
+    }
+
+    /// The optional id label off a `commit` tail: `id: "fix"`, `id:fix`, or `id "fix"` all yield
+    /// `fix`; a bare `commit` (empty tail) yields null (an unlabeled dot). A tail that does NOT start
+    /// with the `id` marker is ALSO taken as the id (mermaid tolerates `commit "fix"`), unquoted +
+    /// `cap()`'d. A blank result is null. Never throws.
+    private static String parseCommitId(String rest) {
+        String s = rest.strip();
+        if (s.isEmpty()) {
+            return null;
+        }
+        // Strip an optional leading `id` marker, then an optional `:` — so `id:`, `id :`, `id`, and a
+        // bare quoted string all reduce to the id token.
+        if (s.equals("id")) {
+            return null;
+        }
+        if (s.startsWith("id:")) {
+            s = s.substring(3).strip();
+        } else if (s.startsWith("id ") || s.startsWith("id\t")) {
+            s = s.substring(2).strip();
+            if (s.startsWith(":")) {
+                s = s.substring(1).strip();
+            }
+        }
+        String id = cap(unquote(s));
+        return id.isEmpty() ? null : id;
+    }
+
+    /// A gitGraph branch/merge/checkout name: the FIRST whitespace-delimited token of the tail,
+    /// unquoted (a quoted `"feature x"` keeps its interior as one name). Trailing tokens (a mermaid
+    /// `merge develop id: "m1"`) are IGNORED in v1 (RESIDUAL). Blank → "".
+    private static String gitName(String rest) {
+        String s = rest.strip();
+        if (s.isEmpty()) {
+            return "";
+        }
+        if (s.startsWith("\"")) {
+            return unquote(s);   // a quoted name may contain spaces; take it whole
+        }
+        int sp = s.indexOf(' ');
+        int tab = s.indexOf('\t');
+        int cut = sp < 0 ? tab : (tab < 0 ? sp : Math.min(sp, tab));
+        return cut < 0 ? s : s.substring(0, cut);
     }
 
     /// Parses a `mathblock`: the WHOLE body (every line after the header) is ONE raw LaTeX

@@ -153,6 +153,15 @@ class ContainmentTest {
         // MathBlockRealRenderTest). Includes a multi-line body (joined) with braces + a sum.
         "mathblock\n  \\sum_{i=1}^{n} i\n  = \\frac{n(n+1)}{2}\n",
         "mathblock\n",   // empty body → inert empty canvas (round-trips, never a throw)
+        // gitGraph (12th type): a main lane with an id-labeled commit, a `develop` branch + commits, a
+        // merge back into main, plus MALFORMED cases — a commit BEFORE any branch (implicit main), a
+        // checkout of an UNKNOWN branch (inert), a DUPLICATE branch (inert), and a SELF-merge (inert) —
+        // exercises the commit discs (wedge), the lane spines + elbow branch/merge connectors (line),
+        // and the commit-id/branch-name glyph labels through the allowlist (all in svg/path/line/g).
+        "gitGraph\n  commit\n  commit id: \"fix\"\n  checkout ghost\n  branch develop\n"
+            + "  branch develop\n  checkout develop\n  commit\n  commit id: \"wip\"\n  checkout main\n"
+            + "  merge develop\n  merge main\n  commit\n",
+        "gitGraph\n",   // empty body → minimal empty canvas (round-trips, never the inert shell)
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

@@ -94,6 +94,12 @@ class ShowcaseGenTest {
                 + "centered to real glyph paths and a fraction-bar <code>&lt;rect&gt;</code>. Paste an "
                 + "equation, get an SVG.",
             "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", true),
+        new Card("Git graph", "gitGraph",
+            "A commit history: dots on a shared time axis, one color-coded <em>lane</em> per branch. "
+                + "<code>branch</code> forks a new lane off the current tip, <code>merge</code> elbows "
+                + "back in with a merge commit, and <code>commit id: \"x\"</code> labels a dot.",
+            "gitGraph\ncommit\ncommit id: \"init\"\nbranch develop\ncheckout develop\ncommit\n"
+                + "commit id: \"feature\"\ncheckout main\nmerge develop\ncommit id: \"release\""),
         new Card("Flowchart — nested subgraphs", "subgraph",
             "Cluster containers group nodes inside a titled frame; nest them for pipelines "
                 + "within pipelines. The frame border, title tab, and canvas grow-to-fit are all baked.",
@@ -256,7 +262,7 @@ class ShowcaseGenTest {
             <p class="sub">Live renderer output — the SVG below was produced by Sirentide from the DSL beside it.</p>
             <div class="card"><div class="duo"><pre>%DSL%</pre><div class="render">%SVG%</div></div></div>
             <p class="note">%NOTE%</p>
-            <p class="note">All eleven types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
+            <p class="note">All twelve types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
             </body>
             </html>
             """
@@ -315,7 +321,7 @@ class ShowcaseGenTest {
             <header>
               <h1>Sirentide 🌊</h1>
               <p class="tag"><strong>Living, narratable diagrams — baked to static SVG, no runtime JS.</strong></p>
-              <p class="sub">Eleven diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
+              <p class="sub">Twelve diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
               Every image below is live renderer output, baked by Sirentide from the DSL beside it.</p>
             </header>
             <div class="wrap"><div class="grid">

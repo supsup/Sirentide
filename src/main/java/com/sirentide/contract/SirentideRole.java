@@ -15,7 +15,8 @@ import java.util.Set;
 /// AND line/scatter points → {@link #BAR}; gantt tasks → {@link #BAR}; timeline events →
 /// {@link #EVENT}; quadrant points → {@link #POINT}; class boxes → {@link #CLASS}, relations →
 /// {@link #EDGE}; ER entities → {@link #ENTITY}, relations → {@link #EDGE}. mathblock has no discrete
-/// elements, so it emits no anchor group.
+/// elements, so it emits no anchor group. gitGraph commit dots → {@link #COMMIT}, branch lanes →
+/// {@link #BRANCH} (its spine + name label); a branch/merge connector is decorative and un-anchored.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
@@ -42,6 +43,11 @@ public enum SirentideRole {
     // closed value so a narrator can say "the note over Alice, Bob" distinctly from the message/actor
     // vocabulary. A create/destroy modifies only its lifeline, so it adds no anchor.
     NOTE("note"),
+    // -- gitGraph commit dot + branch lane (added in the gitGraph slice) — their own closed values so a
+    // narrator can say "the fix commit" / "the develop branch" distinctly from the graph node/edge
+    // vocabulary. A commit dot anchors as COMMIT; a branch's lane spine + name label anchor as BRANCH.
+    COMMIT("commit"),
+    BRANCH("branch"),
     // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
     CLUSTER("cluster"),
     AXIS("axis");
