@@ -77,9 +77,18 @@ public final class ClassDiagramLayout {
 
     /// One placed class box: its grid rectangle plus the pre-measured compartment heights and the
     /// (ellipsized) display lines, so the emit pass draws bands/dividers/text without re-measuring.
+    /// `nameMeasure`/`attrMeasures`/`methodMeasures` are the composite measures for lines carrying
+    /// `$…$` math (null for plain text); `nameRowH`/`attrRowH`/`methodRowH` are the per-row heights —
+    /// {@code namePitch}/{@code memberPitch} for a plain or short-math row, GROWN (via
+    /// {@link MathLabel#boxHeight}) for a row whose fragment is TALLER than one line (a matrix / cases /
+    /// stacked fraction). A row grows iff its height differs from the fixed pitch (plan
+    /// sirentide-tall-math-labels — the compartment now consumes the fragment HEIGHT, not just the width).
     private record Placed(ClassBox box, double x, double y, double w, double h,
                           double nameH, double attrH, double methodH,
-                          String name, List<String> attrs, List<String> methods) {
+                          String name, List<String> attrs, List<String> methods,
+                          MathLabel.Measured nameMeasure, List<MathLabel.Measured> attrMeasures,
+                          List<MathLabel.Measured> methodMeasures,
+                          double nameRowH, List<Double> attrRowH, List<Double> methodRowH) {
         double centerX() {
             return x + w / 2;
         }
@@ -111,34 +120,65 @@ public final class ClassDiagramLayout {
         String[] names = new String[n];
         List<List<String>> attrLines = new ArrayList<>();
         List<List<String>> methodLines = new ArrayList<>();
+        // Composite measures (null for plain lines) + per-row heights (pitch for plain/short math, GROWN
+        // for a tall multi-row fragment). Parallel to the string lists; consumed by the emit pass.
+        MathLabel.Measured[] nameMeasures = new MathLabel.Measured[n];
+        List<List<MathLabel.Measured>> attrMeasures = new ArrayList<>();
+        List<List<MathLabel.Measured>> methodMeasures = new ArrayList<>();
+        double[] nameRowH = new double[n];
+        List<List<Double>> attrRowH = new ArrayList<>();
+        List<List<Double>> methodRowH = new ArrayList<>();
         double memberPitch = FONT.lineHeight(MEMBER_SIZE);
         double namePitch = FONT.lineHeight(NAME_SIZE);
         for (int i = 0; i < n; i++) {
             ClassBox b = classes.get(i);
-            String name = FONT.ellipsize(b.name(), MAX_LABEL_W, NAME_SIZE);
-            names[i] = name;
-            double widest = measure(name, NAME_SIZE, math);
+            Disp nd = disp(b.name(), NAME_SIZE, math);
+            names[i] = nd.display();
+            nameMeasures[i] = nd.measure();
+            nameRowH[i] = rowHeight(nd.measure(), namePitch, NAME_SIZE);
+            double widest = widthOf(nd.display(), nd.measure(), NAME_SIZE);
             List<String> attrs = new ArrayList<>();
+            List<MathLabel.Measured> am = new ArrayList<>();
+            List<Double> arh = new ArrayList<>();
+            double attrSum = 0;
             for (String a : b.attributes()) {
-                String line = FONT.ellipsize(a, MAX_LABEL_W, MEMBER_SIZE);
-                attrs.add(line);
-                widest = Math.max(widest, measure(line, MEMBER_SIZE, math));
+                Disp d = disp(a, MEMBER_SIZE, math);
+                attrs.add(d.display());
+                am.add(d.measure());
+                double rh = rowHeight(d.measure(), memberPitch, MEMBER_SIZE);
+                arh.add(rh);
+                attrSum += rh;
+                widest = Math.max(widest, widthOf(d.display(), d.measure(), MEMBER_SIZE));
             }
             List<String> methods = new ArrayList<>();
+            List<MathLabel.Measured> mm = new ArrayList<>();
+            List<Double> mrh = new ArrayList<>();
+            double methodSum = 0;
             for (String m : b.methods()) {
-                String line = FONT.ellipsize(m, MAX_LABEL_W, MEMBER_SIZE);
-                methods.add(line);
-                widest = Math.max(widest, measure(line, MEMBER_SIZE, math));
+                Disp d = disp(m, MEMBER_SIZE, math);
+                methods.add(d.display());
+                mm.add(d.measure());
+                double rh = rowHeight(d.measure(), memberPitch, MEMBER_SIZE);
+                mrh.add(rh);
+                methodSum += rh;
+                widest = Math.max(widest, widthOf(d.display(), d.measure(), MEMBER_SIZE));
             }
             attrLines.add(attrs);
             methodLines.add(methods);
+            attrMeasures.add(am);
+            methodMeasures.add(mm);
+            attrRowH.add(arh);
+            methodRowH.add(mrh);
             boxW[i] = Math.max(MIN_BOX_W, widest + 2 * PAD_X);
-            nameH[i] = namePitch + 2 * PAD_Y;
+            nameH[i] = nameRowH[i] + 2 * PAD_Y;
             // A class with ANY member shows all three compartments; an empty compartment collapses to a
             // thin band (2·PAD_Y). A memberless class collapses to a single name box (no divider bands).
+            // Each compartment's height is the SUM of its (possibly grown) row heights + padding — for an
+            // all-plain / short-math class every row is one pitch, so this reduces to the pre-growth
+            // `count · pitch + 2·PAD_Y` and the box is byte-identical.
             if (b.hasMembers()) {
-                attrH[i] = attrs.size() * memberPitch + 2 * PAD_Y;
-                methodH[i] = methods.size() * memberPitch + 2 * PAD_Y;
+                attrH[i] = attrSum + 2 * PAD_Y;
+                methodH[i] = methodSum + 2 * PAD_Y;
             } else {
                 attrH[i] = 0;
                 methodH[i] = 0;
@@ -196,7 +236,9 @@ public final class ClassDiagramLayout {
         Placed[] placed = new Placed[n];
         for (int k = 0; k < n; k++) {
             placed[k] = new Placed(classes.get(k), px[k], py[k], boxW[k], boxH[k],
-                nameH[k], attrH[k], methodH[k], names[k], attrLines.get(k), methodLines.get(k));
+                nameH[k], attrH[k], methodH[k], names[k], attrLines.get(k), methodLines.get(k),
+                nameMeasures[k], attrMeasures.get(k), methodMeasures.get(k),
+                nameRowH[k], attrRowH.get(k), methodRowH.get(k));
         }
 
         List<Shape> shapes = new ArrayList<>();
@@ -245,6 +287,36 @@ public final class ClassDiagramLayout {
         return FONT.runWidth(line, size);
     }
 
+    /// The DISPLAY form of a raw compartment line plus its composite measure. A `$…$` line (with a
+    /// renderer) SKIPS ellipsization — a formula must never be cut mid-run, which would break the `$…$`
+    /// delimiters and silently drop the math (the reason the class/ER inline-math previously only worked
+    /// for short fragments) — and is measured as a composite; a plain line is ellipsized to MAX_LABEL_W
+    /// and carries a `null` measure (the byte-identical fixed-pitch text path). Mirrors the flowchart
+    /// engine's math-skips-ellipsize rule.
+    private record Disp(String display, MathLabel.Measured measure) {}
+
+    private static Disp disp(String raw, double size, MathFragmentRenderer math) {
+        if (math != null && MathLabel.hasMath(raw)) {
+            return new Disp(raw, MathLabel.measure(raw, size, FONT, math));
+        }
+        return new Disp(FONT.ellipsize(raw, MAX_LABEL_W, size), null);
+    }
+
+    /// A line's advance width from its (possibly null) composite measure — the fragment's composite
+    /// width when it carries math, else the plain glyph advance. Keeps the box-sizing byte-identical for
+    /// plain text (same value the old {@link #measure} returned).
+    private static double widthOf(String line, MathLabel.Measured m, double size) {
+        return m != null ? m.width() : FONT.runWidth(line, size);
+    }
+
+    /// The height ONE compartment row should occupy: the fixed `pitch` for a plain / short-math row
+    /// (byte-identical), else the fragment's grown height via {@link MathLabel#boxHeight} when it is
+    /// TALLER than one line (a matrix / cases / stacked fraction). The seam owns the growth policy; a
+    /// `null` measure (plain row) always yields `pitch`. `rowH != pitch` iff the row grew.
+    private static double rowHeight(MathLabel.Measured m, double pitch, double size) {
+        return m != null ? MathLabel.boxHeight(m, pitch, size, FONT) : pitch;
+    }
+
     /// Emits one class box's geometry: the member-compartment background rect, the name-band rect, the
     /// four border lines, and (for a populated class) the two compartment dividers (name/attributes and
     /// attributes/methods). A memberless class is a single name-filled box with no dividers.
@@ -276,8 +348,13 @@ public final class ClassDiagramLayout {
     /// left-aligned in their compartments, top-to-bottom (glyph paths / MathBoxes via {@link MathLabel}).
     private static void emitBoxText(List<Shape> shapes, Placed p, MathFragmentRenderer math) {
         double cx = p.centerX();
-        // Name — centered in the name band.
-        double nameBaseline = p.y() + p.nameH() / 2 + NAME_SIZE * 0.35;
+        double namePitch = FONT.lineHeight(NAME_SIZE);
+        // Name — centered in the name band. A GROWN name row (a tall fragment) centers the fragment ink
+        // in the whole band via {@link MathLabel#baselineInBox}; a plain / short-math name keeps the
+        // EXACT legacy baseline (band midpoint), so its bytes are unchanged.
+        double nameBaseline = p.nameRowH() != namePitch
+            ? MathLabel.baselineInBox(p.nameMeasure(), p.y(), p.nameH())
+            : p.y() + p.nameH() / 2 + NAME_SIZE * 0.35;
         emitLine(shapes, p.name(), cx, nameBaseline, NAME_SIZE, true, p.w(),
             Colors.contrastFill(NAME_FILL), math);
         if (!p.box().hasMembers()) {
@@ -286,19 +363,30 @@ public final class ClassDiagramLayout {
         double memberPitch = FONT.lineHeight(MEMBER_SIZE);
         double ascent = FONT.ascent(MEMBER_SIZE);
         double leftX = p.x() + PAD_X;
-        // Attributes.
-        double attrTop = p.y() + p.nameH();
+        // Attributes — march a cursor by each row's (possibly grown) height. A plain / short-math row
+        // takes one `memberPitch` and lands at the EXACT legacy baseline (`rowTop + ascent`); a tall
+        // fragment grows its row and centers its ink via {@link MathLabel#baselineInBox}, pushing the
+        // rows below it down. All-plain classes march by memberPitch → byte-identical.
+        double y = p.y() + p.nameH() + PAD_Y;
         for (int k = 0; k < p.attrs().size(); k++) {
-            double baseline = attrTop + PAD_Y + ascent + k * memberPitch;
+            double rowH = p.attrRowH().get(k);
+            double baseline = rowH != memberPitch
+                ? MathLabel.baselineInBox(p.attrMeasures().get(k), y, rowH)
+                : y + ascent;
             emitLine(shapes, p.attrs().get(k), leftX, baseline, MEMBER_SIZE, false, p.w(),
                 Colors.contrastFill(BOX_FILL), math);
+            y += rowH;
         }
-        // Methods.
-        double methodTop = p.y() + p.nameH() + p.attrH();
+        // Methods — same row-marching in the methods compartment.
+        y = p.y() + p.nameH() + p.attrH() + PAD_Y;
         for (int k = 0; k < p.methods().size(); k++) {
-            double baseline = methodTop + PAD_Y + ascent + k * memberPitch;
+            double rowH = p.methodRowH().get(k);
+            double baseline = rowH != memberPitch
+                ? MathLabel.baselineInBox(p.methodMeasures().get(k), y, rowH)
+                : y + ascent;
             emitLine(shapes, p.methods().get(k), leftX, baseline, MEMBER_SIZE, false, p.w(),
                 Colors.contrastFill(BOX_FILL), math);
+            y += rowH;
         }
     }
 
