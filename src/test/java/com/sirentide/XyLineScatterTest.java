@@ -161,7 +161,7 @@ class XyLineScatterTest {
         LaidOut laid = XyChartLayout.layout(chart);
         double plotTop = 20;
         double plotBottom = 200;
-        java.util.List<Double> discY = laid.shapes().stream()
+        java.util.List<Double> discY = com.sirentide.layout.Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Wedge).map(s -> ((Wedge) s).cy()).toList();
         assertEquals(3, discY.size(), "one disc per point (3 categories, 1 series)");
         double topDot = discY.stream().min(Double::compare).orElseThrow();      // the MAX value (8)

@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.XyChart;
@@ -121,6 +122,10 @@ public final class XyChartLayout {
         int n = bars.size();
         double slot = plotW / n;
         double barW = slot * 0.6;
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each bar → ONE `<g role="bar">`
+        // wrapping its rect + category label + value label (all emitted contiguously per bar). seq runs
+        // 0..N-1 in bar order; id from the category label.
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Slice b = bars.get(i);
             double barEndY = axis.project(b.value(), plotBottom, plotTop);
@@ -129,13 +134,14 @@ public final class XyChartLayout {
             double x = plotLeft + slot * i + (slot - barW) / 2;
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = b.color() != null ? b.color() : Colors.PALETTE[i % Colors.PALETTE.length];
-            shapes.add(new Rect(x, y, barW, h, fill));
+            List<Shape> bg = new ArrayList<>();
+            bg.add(new Rect(x, y, barW, h, fill));
 
             double cx = x + barW / 2;
             double categoryBaseline = plotBottom + 14;
             // Category label below the axis, ellipsized to its column slot so a long name doesn't
             // run into its neighbours (wrap-oracle wired in; docs/DESIGN.md §4).
-            emitCategory(shapes, b.label(), cx, categoryBaseline, slot, textColor, math);
+            emitCategory(bg, b.label(), cx, categoryBaseline, slot, textColor, math);
             // Value label at the bar's OUTER end: above a positive bar, below a descending one. For a
             // NEGATIVE bar the outer (bottom) end can reach the axis, so CLAMP the value label up to
             // stay clear of the category label below the axis (no stacked overlap).
@@ -143,7 +149,8 @@ public final class XyChartLayout {
             double valueY = b.value() >= 0
                 ? barEndY - 4
                 : Math.min(barEndY + valueSize, categoryBaseline - valueSize - 2);
-            centeredLabel(shapes, num(b.value()), cx, valueY, valueSize, textColor);
+            centeredLabel(bg, num(b.value()), cx, valueY, valueSize, textColor);
+            shapes.add(new Group(assigner.assign(SirentideRole.BAR, b.label()), bg));
         }
         return new LaidOut(W, H, shapes);
     }
@@ -263,9 +270,16 @@ public final class XyChartLayout {
                                           double slot, String textColor, MathFragmentRenderer math) {
         double groupW = slot * 0.6;
         double barW = Math.max(0.5, (groupW - (seriesCount - 1) * GROUP_GAP) / seriesCount);
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each category COLUMN → ONE
+        // `<g role="bar">` wrapping its series rects + the category label (all emitted contiguously per
+        // column). seq runs 0..nCat-1 in column order; id from the category label. (A grouped column
+        // holds one bar per series; the group is the column, matching the single-series case where a
+        // column IS one bar.)
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < bars.size(); i++) {
             double[] row = series.get(i);
             double slotLeft = plotLeft + slot * i + (slot - groupW) / 2;
+            List<Shape> cg = new ArrayList<>();
             for (int s = 0; s < row.length; s++) {
                 double v = row[s];
                 if (!Double.isFinite(v)) {
@@ -275,10 +289,11 @@ public final class XyChartLayout {
                 double y = Math.min(baselineY, endY);
                 double h = Math.abs(baselineY - endY);
                 double x = slotLeft + s * (barW + GROUP_GAP);
-                shapes.add(new Rect(x, y, barW, h, Colors.PALETTE[s % Colors.PALETTE.length]));
+                cg.add(new Rect(x, y, barW, h, Colors.PALETTE[s % Colors.PALETTE.length]));
             }
             double cx = plotLeft + slot * i + slot / 2;
-            emitCategory(shapes, bars.get(i).label(), cx, plotBottom + 14, slot, textColor, math);
+            emitCategory(cg, bars.get(i).label(), cx, plotBottom + 14, slot, textColor, math);
+            shapes.add(new Group(assigner.assign(SirentideRole.BAR, bars.get(i).label()), cg));
         }
     }
 
@@ -297,6 +312,11 @@ public final class XyChartLayout {
         for (int i = 0; i < nCat; i++) {
             px[i] = plotLeft + slot * (i + 0.5);   // category column centre
         }
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each PRESENT point disc → ONE
+        // `<g role="bar">` (id = its category label, uniquified across series). Connecting SEGMENTS
+        // (line mode) and category labels stay bare — a segment spans two points and belongs to neither,
+        // exactly as a pie leader line stays bare. Wrapping each disc in place preserves emit order.
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int s = 0; s < seriesCount; s++) {
             String col = Colors.PALETTE[s % Colors.PALETTE.length];
             if (line) {
@@ -311,7 +331,8 @@ public final class XyChartLayout {
             for (int i = 0; i < nCat; i++) {
                 Double y = pointY(series.get(i), s, axis, plotBottom, plotTop);
                 if (y != null) {
-                    shapes.add(new Wedge(px[i], y, dotR, 0, 2 * Math.PI, col));
+                    shapes.add(new Group(assigner.assign(SirentideRole.BAR, bars.get(i).label()),
+                        List.<Shape>of(new Wedge(px[i], y, dotR, 0, 2 * Math.PI, col))));
                 }
             }
         }

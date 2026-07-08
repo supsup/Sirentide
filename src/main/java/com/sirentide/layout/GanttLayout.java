@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.Task;
@@ -59,6 +60,10 @@ public final class GanttLayout {
         // slivers crammed at the right edge — an empty-looking chart. AxisScale carries both ends.
         AxisScale axis = new AxisScale(domainMin, domainMax);
         double minVisibleW = 3;   // a zero/negative-span task still shows as a visible marker bar
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each task → ONE
+        // `<g role="bar">` wrapping its bar rect + its name label (both emitted contiguously per task,
+        // so the grouping preserves emit order exactly). seq runs 0..N-1 in task order; id from the label.
+        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Task t = tasks.get(i);
             double rowY = TOP + i * ROW_H;
@@ -73,7 +78,8 @@ public final class GanttLayout {
             }
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
             String fill = t.color() != null ? t.color() : Colors.PALETTE[i % Colors.PALETTE.length];
-            shapes.add(new Rect(x, barY, w, barH, fill));
+            List<Shape> bg = new ArrayList<>();
+            bg.add(new Rect(x, barY, w, barH, fill));
 
             double baseline = barY + barH * 0.5 + LABEL_SIZE * 0.35;   // vertically centred on the bar
             // Ellipsize the task name to the label column so a long name is clipped rather than
@@ -82,14 +88,15 @@ public final class GanttLayout {
             // seam, left-aligned at the same x; a plain label is byte-identical to before.
             if (math != null && MathLabel.hasMath(t.label())) {
                 MathLabel.Measured mm = MathLabel.measure(t.label(), LABEL_SIZE, FONT, math);
-                MathLabel.emit(mm, 12, baseline, textColor, LABEL_SIZE, FONT, shapes);
+                MathLabel.emit(mm, 12, baseline, textColor, LABEL_SIZE, FONT, bg);
             } else {
                 String name = FONT.ellipsize(t.label(), LABEL_COL - 12 - 4, LABEL_SIZE);
                 String d = FONT.textPathD(name, 12, baseline, LABEL_SIZE);   // left-aligned
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, textColor));
+                    bg.add(new GlyphRun(d, textColor));
                 }
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.BAR, t.label()), bg));
         }
         double axisY = TOP + n * ROW_H + 6;
         shapes.add(new Line(plotLeft, axisY, plotRight, axisY, AXIS_STROKE, 1));

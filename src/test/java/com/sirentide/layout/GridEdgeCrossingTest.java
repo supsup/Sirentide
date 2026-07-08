@@ -113,7 +113,7 @@ class GridEdgeCrossingTest {
     /// The box-background rects (x, y, w, h) — one per box, keyed by the box fill.
     private static List<double[]> boxes(LaidOut laid, String fill) {
         List<double[]> out = new ArrayList<>();
-        for (Shape s : laid.shapes()) {
+        for (Shape s : Group.flatten(laid.shapes())) {
             if (s instanceof Rect r && fill.equals(r.fill())) {
                 out.add(new double[] {r.x(), r.y(), r.width(), r.height()});
             }
@@ -125,7 +125,7 @@ class GridEdgeCrossingTest {
     /// dashed edge a run of them; both are checked segment-by-segment).
     private static List<Line> edges(LaidOut laid, String stroke) {
         List<Line> out = new ArrayList<>();
-        for (Shape s : laid.shapes()) {
+        for (Shape s : Group.flatten(laid.shapes())) {
             if (s instanceof Line l && stroke.equals(l.stroke())) {
                 out.add(l);
             }

@@ -36,7 +36,7 @@ class QuadrantChartTest {
     /// The centre of the i-th point disc (a full-circle Wedge) in layout order.
     private static Wedge discAt(LaidOut laid, int index) {
         int seen = 0;
-        for (Shape s : laid.shapes()) {
+        for (Shape s : com.sirentide.layout.Group.flatten(laid.shapes())) {
             if (s instanceof Wedge w) {
                 if (seen == index) {
                     return w;

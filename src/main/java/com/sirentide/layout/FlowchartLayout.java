@@ -193,12 +193,13 @@ public final class FlowchartLayout {
             return LaidOut.of(MIN_W, MIN_H);
         }
 
-        // Semantic-anchor gate (plan sirentide-semantic-anchor-g): wrap each node/edge in a
-        // `<g data-sirentide-*>` ONLY for a REAL flowchart (the DEFAULT_STYLER). The state diagram
-        // drives this same engine through its OWN styler, so `anchored` is false there and its bake
-        // stays byte-identical (state is a follow-up type). Reference equality on the singleton styler
-        // is the whole gate — no new signature, no per-type flag threading.
-        boolean anchored = styler == DEFAULT_STYLER;
+        // Semantic-anchor gate (plan sirentide-semantic-anchor-g, slice 2): EVERY caller of this engine
+        // now wraps each node/edge in a `<g data-sirentide-*>`. The real flowchart (DEFAULT_STYLER) and
+        // the STATE diagram (its own styler, states→node / transitions→edge) both anchor — the node
+        // base-id (label else DSL id) and the from-to edge id are styler-independent, so a state's
+        // `[*]` pseudostate (empty label) falls back to its `__start__`/`__end__` id. Unconditional now
+        // (slice 1 gated on the styler to keep state byte-identical; slice 2 anchors it too).
+        boolean anchored = true;
 
         // id → index (first-seen order). A duplicate id can't occur — the parser deduped on it.
         Map<String, Integer> index = new HashMap<>();
@@ -500,13 +501,12 @@ public final class FlowchartLayout {
             }
         }
 
-        // 2) node boxes (STYLER seam) + 3) centered labels. When ANCHORED, each node's box AND label
-        // are collected into ONE `<g data-sirentide-role="node">` (emit-order per node index) — the
-        // label rides inside its node's group. When NOT anchored (state diagram), the original TWO
-        // passes run verbatim (all boxes, then all labels), so the bake is byte-identical. Boxes/labels
-        // carry identical coordinates either way — the only difference is the `<g>` wrap + the
-        // interleave, and a node label never extends beyond its own box (box width = label + padding),
-        // so no cross-node z-order changes: visually identical, geometry byte-identical.
+        // 2) node boxes (STYLER seam) + 3) centered labels. Each node's box AND label are collected
+        // into ONE `<g data-sirentide-role="node">` (emit-order per node index) — the label rides inside
+        // its node's group. (The `else` two-pass path is now a never-taken legacy fallback — `anchored`
+        // is unconditionally true; kept only so the geometry is trivially auditable side by side.) A
+        // node label never extends beyond its own box (box width = label + padding), so the box/label
+        // interleave introduces no cross-node z-order change: visually identical, geometry byte-identical.
         if (anchored) {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();
@@ -761,9 +761,9 @@ public final class FlowchartLayout {
             }
         }
 
-        // 2) node boxes (STYLER seam) + 3) centered labels. Anchored → one `<g role="node">` per node
-        // (box + label together); not anchored → the original two passes (byte-identical). See the TD
-        // path for the geometry-unchanged rationale.
+        // 2) node boxes (STYLER seam) + 3) centered labels. One `<g role="node">` per node (box + label
+        // together); the `else` two-pass path is the never-taken legacy fallback (anchored is always
+        // true now). See the TD path for the geometry-unchanged rationale.
         if (anchored) {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();

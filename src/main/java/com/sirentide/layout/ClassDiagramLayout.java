@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.ClassBox;
 import com.sirentide.ir.ClassDiagram;
@@ -200,27 +201,36 @@ public final class ClassDiagramLayout {
 
         List<Shape> shapes = new ArrayList<>();
 
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each relation → ONE
+        // `<g role="edge">` (id = the left-right class-name pair), each class → ONE `<g role="class">`
+        // (id = the class name). Relations emit first, so seq runs 0..R-1 over relations then R..R+n-1
+        // over classes — the deterministic emit-order index. Grouping is additive: geometry unchanged.
+        AnchorAssigner assigner = new AnchorAssigner();
+
         // -- 3) relationship edges + markers FIRST (under the boxes, so a box border cleanly caps the
-        // line while the marker — which sits in the gap between boxes — stays visible on top).
+        // line while the marker — which sits in the gap between boxes — stays visible on top). Each
+        // relation's edge line + marker + label collect into ONE `<g role="edge">`.
         for (ClassRelation r : cd.relations()) {
             Integer li = index.get(r.left());
             Integer ri = index.get(r.right());
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced class (defensive) — skip, never throw
             }
-            emitRelation(shapes, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math);
+            List<Shape> eg = new ArrayList<>();
+            emitRelation(eg, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math);
+            shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
-        // -- 4) boxes: background rect, name band, border, and (when populated) the two compartment
-        // dividers. Emitted in first-seen order.
+        // -- 4) + 5) each class → ONE `<g role="class">` folding its box geometry (background rect, name
+        // band, border, compartment dividers) AND its text (name centered, members left-aligned). The
+        // grid places boxes in disjoint slots and a box's text never leaves its box, so folding the box
+        // and text per class (vs the old two passes) introduces no cross-class z-order change: geometry
+        // byte-identical, visually identical (the same fold the flowchart nodes use).
         for (int k = 0; k < n; k++) {
-            emitBox(shapes, placed[k]);
-        }
-
-        // -- 5) text: name centered, members left-aligned, in compartment order (glyph paths, never
-        // <text>). On top of the boxes.
-        for (int k = 0; k < n; k++) {
-            emitBoxText(shapes, placed[k], math);
+            List<Shape> cg = new ArrayList<>();
+            emitBox(cg, placed[k]);
+            emitBoxText(cg, placed[k], math);
+            shapes.add(new Group(assigner.assign(SirentideRole.CLASS, placed[k].box().name()), cg));
         }
 
         return new LaidOut(canvasW, canvasH, shapes);

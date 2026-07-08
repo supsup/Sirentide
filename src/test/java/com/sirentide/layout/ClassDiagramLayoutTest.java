@@ -104,7 +104,7 @@ class ClassDiagramLayoutTest {
             "classDiagram\n  class Animal {\n    +String name\n    +int age\n    +eat() void\n  }\n"));
         // Box border = 4 lines; the 2 dividers are interior horizontal lines strictly inside the box.
         // Collect all horizontal lines (y1 == y2), sort by y: the top border, div1, div2, bottom border.
-        List<Line> horiz = laid.shapes().stream()
+        List<Line> horiz = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && near(l.y1(), l.y2()))
             .map(s -> (Line) s)
             .sorted((a, b) -> Double.compare(a.y1(), b.y1()))
@@ -123,7 +123,7 @@ class ClassDiagramLayoutTest {
     void aMemberlessClassCollapsesToASingleNameBoxWithNoDividers() {
         LaidOut laid = ClassDiagramLayout.layout((com.sirentide.ir.ClassDiagram) DslParser.parse(
             "classDiagram\n  class Loner\n"));
-        long horiz = laid.shapes().stream()
+        long horiz = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && near(l.y1(), l.y2())).count();
         assertEquals(2, horiz, "a memberless class is a single box: only top + bottom borders, no dividers");
     }
@@ -134,7 +134,7 @@ class ClassDiagramLayoutTest {
         // the whole-end marker actually reaches the scene at the correct end.
         LaidOut laid = ClassDiagramLayout.layout((com.sirentide.ir.ClassDiagram) DslParser.parse(
             "classDiagram\n  class A\n  class B\n  A *-- B\n"));
-        List<Path> diamonds = laid.shapes().stream()
+        List<Path> diamonds = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Path p && vertices(p.d()) == 4)
             .map(s -> (Path) s)
             .toList();

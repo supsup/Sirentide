@@ -59,7 +59,7 @@ class StateDiagramTest {
     }
 
     private static long countShapes(LaidOut laid, Class<? extends Shape> type) {
-        return laid.shapes().stream().filter(type::isInstance).count();
+        return com.sirentide.layout.Group.flatten(laid.shapes()).stream().filter(type::isInstance).count();
     }
 
     // -- parse ----------------------------------------------------------------
@@ -174,7 +174,7 @@ class StateDiagramTest {
     @Test
     void normalStatesAreRoundedRectPathsNotRects() {
         LaidOut laid = StateDiagramLayout.layout(parse(LIFECYCLE));
-        long roundedBoxes = laid.shapes().stream()
+        long roundedBoxes = com.sirentide.layout.Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Path)
             .map(s -> ((Path) s).d())
             .filter(d -> d.contains(" Q "))
@@ -211,7 +211,7 @@ class StateDiagramTest {
         // Idle↔Running is a cycle; the engine's back-edge handling must terminate and still render
         // both states (the styler seam doesn't touch layering).
         LaidOut laid = StateDiagramLayout.layout(parse(LIFECYCLE));
-        long roundedBoxes = laid.shapes().stream()
+        long roundedBoxes = com.sirentide.layout.Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Path).map(s -> ((Path) s).d())
             .filter(d -> d.contains(" Q ")).count();
         assertEquals(2, roundedBoxes, "both cyclic states render as rounded-rect paths");

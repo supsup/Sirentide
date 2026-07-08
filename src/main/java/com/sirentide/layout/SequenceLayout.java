@@ -1,6 +1,7 @@
 package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
@@ -282,39 +283,50 @@ public final class SequenceLayout {
             shapes.add(new Rect(bx, act.startY, ACT_W, h, ACT_FILL));
         }
 
-        // 2) messages.
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each message → one
+        // `<g role="message">`, each actor → one `<g role="actor">`. Messages emit first, so seq runs
+        // 0..drawn-1 over messages then drawn..drawn+n-1 over actors — the deterministic emit-order
+        // index. Grouping is additive: the wrapped shapes keep their exact geometry.
+        AnchorAssigner assigner = new AnchorAssigner();
+
+        // 2) messages — each drawn message's shapes collect into ONE `<g role="message">` (id = the
+        // from-to actor pair, uniquified for parallel messages). A degenerate (coincident-lifeline)
+        // message emits an empty group, keeping seq aligned with the drawn-message set (as in flowchart).
         for (int i = 0; i < drawn.size(); i++) {
             SeqMessage m = drawn.get(i);
             int a = index.get(m.from());
             int b = index.get(m.to());
             double y = msgY[i];
             String stroke = m.reply() ? REPLY_STROKE : CALL_STROKE;
+            List<Shape> mg = new ArrayList<>();
             if (a == b) {
-                emitSelfMessage(shapes, cx[a], y, m, stroke, textColor, canvasW, math);
+                emitSelfMessage(mg, cx[a], y, m, stroke, textColor, canvasW, math);
             } else {
-                emitMessage(shapes, cx[a], cx[b], y, m, stroke, textColor, canvasW, math);
+                emitMessage(mg, cx[a], cx[b], y, m, stroke, textColor, canvasW, math);
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.MESSAGE, m.from() + "-" + m.to()), mg));
         }
 
-        // 3) head boxes (rects), each centred on its lifeline.
+        // 3) actor heads — one `<g role="actor">` per actor wrapping its head box (rect, centred on the
+        // lifeline) + its centred label (glyph paths, never <text>, contrast-filled against the head
+        // box). Heads occupy disjoint columns and a label never leaves its own box, so folding the box
+        // and label into one group per actor introduces no cross-actor z-order change (geometry
+        // byte-identical, visually identical) — the same box+label fold the flowchart nodes use.
         for (int i = 0; i < n; i++) {
-            shapes.add(new Rect(cx[i] - headW[i] / 2, MARGIN, headW[i], ACTOR_H, headFill));
-        }
-
-        // 4) head labels (glyph paths — never <text>), centred in the box, contrast-filled against
-        // the head box (not the page-theme textColor, which vanished white-on-light under dark).
-        for (int i = 0; i < n; i++) {
+            List<Shape> ag = new ArrayList<>();
+            ag.add(new Rect(cx[i] - headW[i] / 2, MARGIN, headW[i], ACTOR_H, headFill));
             double baseline = MARGIN + ACTOR_H / 2 + LABEL_SIZE * 0.35;
             if (headMeasures[i] != null) {
                 MathLabel.emit(headMeasures[i], cx[i] - headMeasures[i].width() / 2, baseline,
-                    headLabelFill, LABEL_SIZE, FONT, shapes);
+                    headLabelFill, LABEL_SIZE, FONT, ag);
             } else {
                 double w = FONT.runWidth(headLabels[i], LABEL_SIZE);
                 String d = FONT.textPathD(headLabels[i], cx[i] - w / 2, baseline, LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, headLabelFill));
+                    ag.add(new GlyphRun(d, headLabelFill));
                 }
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.ACTOR, actors.get(i)), ag));
         }
 
         return new LaidOut(canvasW, canvasH, shapes);

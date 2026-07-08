@@ -9,23 +9,34 @@ import java.util.Set;
 /// {@link SirentideContract} validator + the ContainmentTest pin producer ⊆ this set, exactly like
 /// the element/attribute allowlists.
 ///
-/// This slice EMITS only {@link #NODE}/{@link #EDGE} (flowchart) and {@link #SLICE} (pie). The
-/// remaining values are RESERVED so the later per-type slices (sequence actors/messages, bar-chart
-/// bars, subgraph clusters, class boxes, scatter points, chart axes) can widen the EMITTER without
-/// re-touching the closed contract — the allowlist already admits them. Adding a role here (not at a
-/// call site) is the single reviewed choke point that keeps the role vocabulary closed.
+/// ROLE ASSIGNMENT PER TYPE (as emitted): flowchart nodes → {@link #NODE}, edges → {@link #EDGE};
+/// pie slices → {@link #SLICE}; state states → {@link #NODE}, transitions → {@link #EDGE} (it reuses
+/// the flowchart engine); sequence actors → {@link #ACTOR}, messages → {@link #MESSAGE}; xychart bars
+/// AND line/scatter points → {@link #BAR}; gantt tasks → {@link #BAR}; timeline events →
+/// {@link #EVENT}; quadrant points → {@link #POINT}; class boxes → {@link #CLASS}, relations →
+/// {@link #EDGE}; ER entities → {@link #ENTITY}, relations → {@link #EDGE}. mathblock has no discrete
+/// elements, so it emits no anchor group.
+///
+/// {@link #CLUSTER} (subgraph frames) and {@link #AXIS} (chart axes) stay RESERVED — those decorative
+/// structures are not anchored yet; the allowlist already admits them for a future slice. Adding a
+/// role here (not at a call site) is the single reviewed choke point that keeps the role vocabulary
+/// closed.
 public enum SirentideRole {
     NODE("node"),
     EDGE("edge"),
     SLICE("slice"),
-    // -- reserved for follow-up per-type slices (NOT emitted yet; admitted by the contract so the
-    // later slices are an emitter-only change) --------------------------------------------------
     ACTOR("actor"),
     MESSAGE("message"),
     BAR("bar"),
-    CLUSTER("cluster"),
     CLASS("class"),
     POINT("point"),
+    // -- timeline event + ER entity: distinct-per-type roles added in the per-type widening slice, so a
+    // narrator can say "the CUSTOMER entity" / "the Launch event" rather than collapsing them into the
+    // graph-flavored node/class vocabulary. Kept as their own closed values (documented above).
+    EVENT("event"),
+    ENTITY("entity"),
+    // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
+    CLUSTER("cluster"),
     AXIS("axis");
 
     private final String wire;
