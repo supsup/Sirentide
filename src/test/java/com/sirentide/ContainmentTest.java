@@ -339,6 +339,26 @@ class ContainmentTest {
         }
     }
 
+    /// The theming widen (plan sirentide-theming-config): a `theme: dark`/`neutral` diagram carries a
+    /// SELF-CONTAINED background `<rect>` covering the viewBox, and its page-level `currentColor` text
+    /// resolves to an explicit foreground hex. Both must stay INSIDE the allowlist — the bg rect is a
+    /// plain in-alphabet `<rect>` (numeric geometry + contract-clean hex fill), no new element/attr. A
+    /// themed bake across the corpus is proven producer ⊆ contract exactly like the default bake.
+    @Test
+    void themedBackgroundAndForegroundStayInsideTheAllowlist() throws Exception {
+        for (String theme : new String[] {"dark", "neutral"}) {
+            for (String body : new String[] {
+                "pie\n  \"Reviews\" : 40\n  \"Builds\" : 30\n  \"Docs\" : 30\n",
+                "flowchart TD\n  A[Start] --> B{Ready?}\n  B -->|yes| C[Ship]\n",
+                "xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n"}) {
+                String svg = Sirentide.render("%% theme: " + theme + "\n" + body);
+                assertTrue(svg.contains("<rect x=\"0\" y=\"0\""),
+                    theme + ": a self-contained background rect was baked: " + svg);
+                checkElement(parse(svg).getDocumentElement(), "themed-" + theme);
+            }
+        }
+    }
+
     private void collectTags(Element el, java.util.Set<String> into) {
         into.add(el.getTagName());
         NodeList kids = el.getChildNodes();

@@ -57,13 +57,19 @@ public final class Sirentide {
     /// run to raw text) and never propagates a bake.
     public static String render(String dsl, com.sirentide.api.MathFragmentRenderer math) {
         try {
+            // The leading config block (%% title/theme/direction) — read independently of the body
+            // parse; DiagramConfig.DEFAULT (no config) threads a byte-identical bake (no title
+            // override, Theme.DEFAULT = no bg rect + no colour remap → option A).
+            com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             LaidOut laid = layout(ir, math);
             // Deterministic accessibility, baked in: a root role="img" + a <title>/<desc> built
             // purely from the IR (roles + label text, fixed order — no timestamps/random). A blank
-            // payload (the Empty degrade target) emits nothing, so the inert shell is unchanged.
-            com.sirentide.a11y.A11y a11y = com.sirentide.a11y.A11yDescriber.describe(ir);
-            String svg = SvgEmitter.emit(laid, a11y);
+            // payload (the Empty degrade target) emits nothing, so the inert shell is unchanged. The
+            // config `title` (when present) overrides the derived accessible name.
+            com.sirentide.a11y.A11y a11y =
+                com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
+            String svg = SvgEmitter.emit(laid, a11y, config.theme());
             if (svg.length() > MAX_OUTPUT_BYTES) {
                 return INERT_SHELL;
             }
@@ -113,14 +119,16 @@ public final class Sirentide {
     public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
         String stage = STAGE_PARSE;
         try {
+            com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             stage = STAGE_EMIT;
-            // Thread the a11y payload exactly as render() does, so renderWithDiagnostics().svg()
-            // stays byte-identical to render() (both emit <title>/<desc>/role).
-            com.sirentide.a11y.A11y a11y = com.sirentide.a11y.A11yDescriber.describe(ir);
-            String svg = SvgEmitter.emit(laid, a11y);
+            // Thread the a11y payload + config theme/title exactly as render() does, so
+            // renderWithDiagnostics().svg() stays byte-identical to render().
+            com.sirentide.a11y.A11y a11y =
+                com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
+            String svg = SvgEmitter.emit(laid, a11y, config.theme());
             if (svg.length() > MAX_OUTPUT_BYTES) {
                 // The post-emit cap branch — the exact degrade `render` takes. The emitter's
                 // incremental guard normally throws FIRST (classified in the catch below); this

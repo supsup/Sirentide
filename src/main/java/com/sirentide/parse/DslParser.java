@@ -4,6 +4,7 @@ import com.sirentide.ir.ClassBox;
 import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ClassRelation;
 import com.sirentide.ir.Diagram;
+import com.sirentide.ir.DiagramConfig;
 import com.sirentide.ir.EdgeStyle;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.ErAttribute;
@@ -39,6 +40,7 @@ import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.StateDiagram;
 import com.sirentide.ir.Task;
+import com.sirentide.ir.Theme;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
 import com.sirentide.contract.SirentideContract;
@@ -111,7 +113,18 @@ public final class DslParser {
             }
             i += Character.charCount(cp);
         }
-        String[] lines = src.strip().split("\\R");
+        String[] rawLines = src.strip().split("\\R");
+        // Strip the OPTIONAL leading CONFIG BLOCK (an optional `sirentide` marker + `%% key: value`
+        // directive lines) so the body parse below is unchanged. With no config block the slice is a
+        // no-op (bodyStart == 0 ⇒ lines == rawLines) so a no-config bake is BYTE-IDENTICAL (option A).
+        // The directives themselves are read by the sibling {@link #parseConfig} (title/theme/direction).
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return new Empty();   // a config block with no diagram body → inert (never throws)
+        }
+        String[] lines = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
         // The header is a TYPE token plus optional whitespace-split MODIFIER tokens (e.g.
         // `pie legend`). Bare `pie`/`xychart`/… stay exactly as before (a lone type token, no
         // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
@@ -160,6 +173,89 @@ public final class DslParser {
             case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
             default -> new Empty();
         };
+    }
+
+    /// The optional leading marker line that names the DSL (accepted + ignored, mermaid-`sirentide`
+    /// style). It never carries data — it is a human affordance at the top of a config block.
+    private static final String CONFIG_MARKER = "sirentide";
+
+    /// The leading token of a config DIRECTIVE line: `%% key: value` (mermaid's comment prefix, reused
+    /// as the config channel). A line in the preamble that starts with this + has a `key: value` body
+    /// is a directive; anything else in the preamble (a blank line, the marker) is skipped.
+    private static final String CONFIG_DIRECTIVE = "%%";
+
+    /// The index where the diagram BODY starts — i.e. the count of leading preamble lines (blank lines,
+    /// the optional `sirentide` marker, and `%% …` config directives). Scans from the top and stops at
+    /// the FIRST line that is none of those — the diagram's type header. With no preamble this returns 0
+    /// (so the body is the whole source, byte-identical to the pre-config parser). Shared by
+    /// {@link #parse} (which slices the preamble off) and {@link #parseConfig} (which reads it). A body
+    /// line spelled like a directive is NOT at risk: the scan only consumes preamble UP TO the first
+    /// non-preamble (type) line, so a `%%` inside the body (after the type line) is left to the type
+    /// parser exactly as before.
+    private static int preambleEnd(String[] lines) {
+        int i = 0;
+        while (i < lines.length) {
+            String s = lines[i].strip();
+            if (s.isEmpty() || s.equals(CONFIG_MARKER) || s.startsWith(CONFIG_DIRECTIVE)) {
+                i++;
+            } else {
+                break;
+            }
+        }
+        return i;
+    }
+
+    /// Parses the leading CONFIG BLOCK into a {@link DiagramConfig} — the type-agnostic directive
+    /// header (`%% title:` / `%% theme:` / `%% direction:`) that precedes the diagram body, for ANY
+    /// type. Read INDEPENDENTLY of {@link #parse} (which strips the same preamble) so the render entry
+    /// can thread title/theme/direction into a11y + emit while the body parse stays untouched.
+    ///
+    /// Robustness (DESIGN §6): a null/blank/oversized source, an unknown key, an unrecognized value, or
+    /// a malformed directive (no colon) ALL degrade to the relevant default — this NEVER throws + never
+    /// fails the bake. No config block at all → {@link DiagramConfig#DEFAULT}. `%%{init:{…}}%%`
+    /// (mermaid's own init syntax) parses to key `{init…` which is unknown → ignored (inert), so a
+    /// mermaid-style block is harmless rather than an error.
+    public static DiagramConfig parseConfig(String src) {
+        if (src == null || src.isBlank() || src.length() > MAX_SOURCE_BYTES) {
+            return DiagramConfig.DEFAULT;
+        }
+        String[] lines = src.strip().split("\\R");
+        int bodyStart = preambleEnd(lines);
+        String title = null;
+        Theme theme = Theme.DEFAULT;
+        String direction = null;
+        for (int i = 0; i < bodyStart; i++) {
+            String s = lines[i].strip();
+            if (!s.startsWith(CONFIG_DIRECTIVE)) {
+                continue;   // a blank line or the `sirentide` marker — not a directive
+            }
+            String rest = s.substring(CONFIG_DIRECTIVE.length()).strip();
+            int colon = rest.indexOf(':');
+            if (colon < 0) {
+                continue;   // a `%%` with no `key: value` → malformed, ignored (never throws)
+            }
+            String key = rest.substring(0, colon).strip().toLowerCase(java.util.Locale.ROOT);
+            String value = rest.substring(colon + 1).strip();
+            switch (key) {
+                case "title" -> {
+                    if (!value.isEmpty()) {
+                        title = cap(value);   // capped like every label (bounded, never blows up output)
+                    }
+                }
+                case "theme" -> theme = Theme.fromToken(value);   // unknown value → DEFAULT (inert)
+                case "direction" -> {
+                    String d = value.toUpperCase(java.util.Locale.ROOT);
+                    if (d.equals("TD") || d.equals("LR")) {
+                        direction = d;
+                    }
+                    // An unknown direction stays null (ignored) rather than failing the bake.
+                }
+                default -> {
+                    // An unknown key is IGNORED (inert) — a typo/forward key never fails the bake.
+                }
+            }
+        }
+        return new DiagramConfig(title, theme, direction);
     }
 
     /// The off-slice text fill from an optional `color=<value>` header modifier. The value must

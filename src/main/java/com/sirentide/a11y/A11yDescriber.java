@@ -61,6 +61,21 @@ public final class A11yDescriber {
     /// `…`. Keeps the `<desc>` bounded regardless of diagram size (deterministic truncation).
     private static final int ITEM_CAP = 40;
 
+    /// Build the a11y payload for a diagram, with an optional config `%% title:` OVERRIDE. When
+    /// `titleOverride` is non-blank it replaces the derived accessible name (the visible/spoken title)
+    /// while the rich reading-order `desc` is KEPT — an author who named their diagram gets that name
+    /// on the `<title>`, but screen-reader users still hear the full description. A blank/null override
+    /// is exactly {@link #describe(Diagram)} (byte-identical). For an otherwise-blank payload (the
+    /// {@link Empty} degrade target) a title-only override still promotes the title so a titled empty
+    /// diagram names itself.
+    public static A11y describe(Diagram ir, String titleOverride) {
+        A11y base = describe(ir);
+        if (titleOverride == null || titleOverride.isBlank()) {
+            return base;
+        }
+        return new A11y(titleOverride, base.isBlank() ? "" : base.desc());
+    }
+
     /// Build the a11y payload for a diagram. Exhaustive over the sealed IR; a blank/degenerate
     /// diagram yields {@link A11y#NONE}.
     public static A11y describe(Diagram ir) {
