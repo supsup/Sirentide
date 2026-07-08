@@ -115,6 +115,13 @@ class ShowcaseGenTest {
                 + "elbow connectors wiring the branches. Boxes band by depth.",
             "mindmap\n  root Mindmaps\n    Origins\n      Long history\n      Popular\n    Research\n"
                 + "      On effectiveness\n    Tools\n      Pen and paper\n      Mermaid"),
+        new Card("Sankey", "sankey",
+            "Weighted flows between nodes: each row is <code>source,target,value</code>, and a "
+                + "<em>band</em>'s width is proportional to its value. Nodes fall into "
+                + "<em>columns</em> by depth (sources left, sinks right); a node's height is the larger "
+                + "of its in- or out-flow. Bands are a lighter tint of their source's color.",
+            "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
+                + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
         new Card("Flowchart — nested subgraphs", "subgraph",
             "Cluster containers group nodes inside a titled frame; nest them for pipelines "
                 + "within pipelines. The frame border, title tab, and canvas grow-to-fit are all baked.",

@@ -257,6 +257,20 @@ Lunch: 4: Me, Team
 
 ![User journey (satisfaction map)](journey.png)
 
+## Sankey (weighted flows in depth columns)
+
+```
+sankey
+Coal,Electricity,25
+Gas,Electricity,15
+Electricity,Homes,20
+Electricity,Industry,20
+Solar,Homes,10
+Solar,Industry,5
+```
+
+![Sankey (weighted flows in depth columns)](sankey.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

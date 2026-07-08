@@ -182,6 +182,16 @@ class ContainmentTest {
             + "      Mermaid\n  Second top level\n",
         "mindmap\n",              // empty body → minimal inert canvas (round-trips, never the shell)
         "mindmap\n  Solo root\n", // a single root-only mindmap (just one box, no edges)
+        // sankey (15th type): a 3-column weighted-flow graph (Coal/Gas → Electricity → Homes/Industry —
+        // a middle node with multiple in AND out flows), plus MALFORMED cases — a row without exactly
+        // three comma-fields, a NON-NUMERIC value, a ZERO and a NEGATIVE value, a missing endpoint, and
+        // a SELF-flow (all dropped) — exercises the flow-band quadrilaterals (path), the node bars
+        // (rect), and the beside-bar node-label glyph runs through the allowlist (all in svg/path/rect/g).
+        "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
+            + "  Electricity,Industry,20\n  Bad,Row\n  Gas,Homes,notanumber\n  A,B,0\n  C,D,-5\n"
+            + "  ,Homes,10\n  Loop,Loop,5\n",
+        "sankey-beta\n  A,B,10\n  B,C,10\n",   // the `sankey-beta` alias + a 3-node chain
+        "sankey\n",                            // empty body → minimal inert canvas (round-trips, never the shell)
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

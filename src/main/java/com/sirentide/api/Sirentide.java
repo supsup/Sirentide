@@ -208,6 +208,9 @@ public final class Sirentide {
             // A mindmap: an indentation-defined hierarchy tree, laid out left→right by depth with
             // parent nodes centred on their children and elbow parent→child connectors.
             case com.sirentide.ir.Mindmap m -> com.sirentide.layout.MindmapLayout.layout(m, math);
+            // A sankey: weighted flows between nodes placed in depth columns, each flow a filled band
+            // whose width tracks its value.
+            case com.sirentide.ir.Sankey s -> com.sirentide.layout.SankeyLayout.layout(s, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

@@ -23,6 +23,8 @@ import com.sirentide.ir.MindmapNode;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
+import com.sirentide.ir.Sankey;
+import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
@@ -77,8 +79,41 @@ public final class A11yDescriber {
             case GitGraph gg -> gitGraph(gg);
             case Journey j -> journey(j);
             case Mindmap m -> mindmap(m);
+            case Sankey s -> sankey(s);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Sankey: "Sankey diagram with 5 nodes and 4 flows. Flows: Coal to Electricity 25; Gas to
+    /// Electricity 15; Electricity to Homes 20; …". The NODE count is derived (first-seen over each
+    /// flow's source + target); flows read in declaration order, each naming its endpoints + value.
+    /// Bounded (labels + the flow list capped) + deterministic (pure IR walk). An empty sankey (no
+    /// flows) reads as an empty sankey.
+    private static A11y sankey(Sankey s) {
+        java.util.LinkedHashSet<String> nodes = new java.util.LinkedHashSet<>();
+        for (SankeyFlow f : s.flows()) {
+            nodes.add(f.source());
+            nodes.add(f.target());
+        }
+        int nodeCount = nodes.size();
+        int flowCount = s.flows().size();
+        StringBuilder d = new StringBuilder("Sankey diagram with ")
+            .append(nodeCount).append(nodeCount == 1 ? " node" : " nodes")
+            .append(" and ").append(flowCount).append(flowCount == 1 ? " flow" : " flows").append('.');
+        if (flowCount > 0) {
+            d.append(" Flows: ");
+            int shown = Math.min(flowCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                SankeyFlow f = s.flows().get(i);
+                d.append(label(f.source())).append(" to ").append(label(f.target()))
+                    .append(' ').append(num(f.value()));
+            }
+            d.append(flowCount > shown ? "; …." : ".");
+        }
+        return new A11y("Sankey diagram", d.toString());
     }
 
     /// Mindmap: "Mindmap \"Root idea\" with 7 nodes. Root idea has children Origins, Tools. Origins has

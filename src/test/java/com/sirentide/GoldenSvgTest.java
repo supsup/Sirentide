@@ -136,6 +136,15 @@ class GoldenSvgTest {
         FIXTURES.put("mindmap",
             "mindmap\n  root Root idea\n    Origins\n      Long history\n      Popular\n"
                 + "    Research\n      On effect\n    Tools\n      Pen and paper\n      Mermaid\n");
+        // A sankey (15th type): a 3-column weighted-flow graph — two sources (Coal, Gas) fan INTO
+        // Electricity, which fans OUT to two sinks (Homes, Industry). Electricity is a MIDDLE node with
+        // multiple in- AND out-flows (in-sum 40 == out-sum 40), so it exercises the max(in,out) node
+        // height, the column-by-depth placement, and the cumulative inflow/outflow slot offsets. Pins
+        // the band quadrilateral geometry (width ∝ value), the node bar stacking, the depth columns,
+        // the per-source lighter-tint band fills, and the beside-bar labels byte-for-byte.
+        FIXTURES.put("sankey",
+            "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
+                + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
     }
 
     @Test
