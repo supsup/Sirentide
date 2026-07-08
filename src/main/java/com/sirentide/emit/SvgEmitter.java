@@ -28,6 +28,14 @@ public final class SvgEmitter {
     /// (H2: a legal timeline of MAX_DATA_ROWS × MAX_LABEL_LEN labels reached ~5.9 GB and OOM'd).
     static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG — mirrors Sirentide.MAX_OUTPUT_BYTES
 
+    /// The emitted `data-sirentide-seq` wire value saturates here (4 digits) so it always matches the
+    /// /docs container-contract bound `^[0-9]{1,4}$` (Lattice S3 vocab review, sirentide/105). The
+    /// Anchor's true seq stays unbounded for the in-process play-through (Emphasis keys off `a.seq()`);
+    /// only the emitted attribute is clamped. A diagram with >9999 anchored elements is beyond
+    /// MAX_DATA_ROWS-scale and unplayable-through, so saturating past-9999 elements at 9999 is a benign
+    /// degrade — and strictly better than the sanitizer stripping an out-of-bound 5-digit seq.
+    static final int MAX_SEQ_WIRE = 9_999;
+
     /// Back-compat overload: emit with NO accessibility payload (the inert/degenerate path and the
     /// direct-emit tests). Byte-identical to the pre-a11y output.
     public static String emit(LaidOut laid) {
@@ -176,7 +184,7 @@ public final class SvgEmitter {
         Anchor a = grp.anchor();
         sb.append("<g data-sirentide-role=\"").append(a.role().wire())
             .append("\" data-sirentide-id=\"").append(a.id())
-            .append("\" data-sirentide-seq=\"").append(a.seq()).append("\">");
+            .append("\" data-sirentide-seq=\"").append(Math.min(a.seq(), MAX_SEQ_WIRE)).append("\">");
         // Resolve THIS group's step state from its already-assigned seq (the anchor emit-order the
         // frame API consumes). `null` emphasis → `null` state → the identity recolour on every member,
         // so the `<g>` tag AND its geometry stay byte-identical to the pre-frame bake.

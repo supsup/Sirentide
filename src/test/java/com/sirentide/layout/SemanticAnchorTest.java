@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.contract.SirentideContract;
+import com.sirentide.emit.SvgEmitter;
 import com.sirentide.contract.SirentideRole;
 import java.util.ArrayList;
 import java.util.List;
@@ -466,5 +467,29 @@ class SemanticAnchorTest {
         int maxFlowSeq = a.stream().filter(x -> x.role().equals("flow")).mapToInt(Anc::seq).max().orElse(-1);
         int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
         assertTrue(maxFlowSeq < minNodeSeq, "flows seq before nodes: " + a);
+    }
+
+    // -- seq WIRE value saturates at 4 digits to match the /docs contract bound ^[0-9]{1,4}$ ---------
+    //    (Lattice S3 vocab review, sirentide/105: the emitter's true seq is unbounded for the in-process
+    //     play-through; only the emitted attribute is clamped so it survives constrainSirentideWrappers.)
+
+    @Test
+    void emittedSeqSaturatesAtFourDigitsToMatchTheDocsBound() {
+        // A group whose TRUE seq is 5 digits — a >9999-element diagram, past MAX_DATA_ROWS scale.
+        LaidOut laid = new LaidOut(100, 100, List.of(
+            new Group(new Anchor(SirentideRole.NODE, "big", 12345),
+                List.of(new Rect(0, 0, 10, 10, "#4a5568")))));
+        String svg = SvgEmitter.emit(laid);
+        assertTrue(svg.contains("data-sirentide-seq=\"9999\""),
+            "seq wire must saturate at 9999: " + svg);
+        assertFalse(svg.contains("12345"), "the un-clamped 5-digit seq must not reach the wire: " + svg);
+        Matcher m = Pattern.compile("data-sirentide-seq=\"([^\"]*)\"").matcher(svg);
+        assertTrue(m.find());
+        assertTrue(m.group(1).matches("[0-9]{1,4}"), "seq out of /docs bound: " + m.group(1));
+        // A normal seq passes through unchanged.
+        LaidOut small = new LaidOut(100, 100, List.of(
+            new Group(new Anchor(SirentideRole.NODE, "ok", 7),
+                List.of(new Rect(0, 0, 10, 10, "#4a5568")))));
+        assertTrue(SvgEmitter.emit(small).contains("data-sirentide-seq=\"7\""));
     }
 }
