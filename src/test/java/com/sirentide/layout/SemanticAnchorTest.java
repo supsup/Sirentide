@@ -267,6 +267,29 @@ class SemanticAnchorTest {
         assertTrue(maxMsgSeq < minActorSeq, "messages seq before actors: " + a);
     }
 
+    /// The NOTE anchor (M2 enrichment): a sequence with 2 actors + 1 message + 1 `note over A,B` emits
+    /// exactly ONE `role="note"` anchor (id = sanitized note text) in addition to the message + actor
+    /// anchors. A `create`/`destroy` adds NO anchor (it only modifies the lifeline). Proves the note box
+    /// is wrapped in `<g data-sirentide-role="note">` and its id derives from the text.
+    @Test
+    void noteEmitsRoleNoteAnchorAndCreateDestroyAddNone() {
+        List<Anc> a = anchors(Sirentide.render(
+            "sequence\n  Alice ->> Bob : hi\n  note over Alice,Bob : shared note\n"
+                + "  create participant Carol\n  Bob ->> Carol : spawn\n  destroy Carol\n"));
+        // 2 messages (Alice-Bob, Bob-Carol) + 3 actors (Alice, Bob, Carol) + 1 note = 6 anchors.
+        // create/destroy add NONE.
+        assertEquals(1, countRole(a, "note"), "exactly one note anchor: " + a);
+        assertEquals(2, countRole(a, "message"), "two message anchors: " + a);
+        assertEquals(3, countRole(a, "actor"), "three actor anchors: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("note") && x.id().equals("sharednote")),
+            "note id is the sanitized text (sharednote): " + a);
+        // every anchor id is charset-legal + role is in the closed enum.
+        for (Anc x : a) {
+            assertTrue(SirentideContract.ANCHOR_ID.matcher(x.id()).matches(), "legal id: " + x.id());
+            assertTrue(SirentideRole.isWire(x.role()), "role in closed enum: " + x.role());
+        }
+    }
+
     /// State diagram reuses the flowchart engine: states → node, transitions → edge. `[*]` start/end
     /// pseudostates carry empty labels, so their id falls back to the `__start__`/`__end__` DSL id.
     @Test

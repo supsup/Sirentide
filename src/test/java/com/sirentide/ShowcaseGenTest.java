@@ -107,6 +107,16 @@ class ShowcaseGenTest {
             "sequence\nAlice ->> Bob : hello\nalt is available\nBob -->> Alice : yes\n"
                 + "loop every retry\nAlice ->> Bob : ping\nend\nelse is busy\nBob -->> Alice : later\nend\n"
                 + "par to Bob\nAlice ->> Bob : a\nand to Carol\nAlice ->> Carol : b\nend"),
+        new Card("Sequence — notes & create / destroy", "note · create · destroy",
+            "Annotate a lifeline with a <code>note</code> box — <code>over</code> one actor, spanning "
+                + "<code>over A,B</code>, or to the <code>left of</code>/<code>right of</code> a "
+                + "lifeline — and spin a participant up <em>mid-diagram</em> with "
+                + "<code>create</code>, then end its lifeline with an <code>X</code> via "
+                + "<code>destroy</code>.",
+            "sequence\nAlice ->> Bob : hello\nnote right of Bob : Bob validates\n"
+                + "note over Alice,Bob : a shared checkpoint\ncreate participant Worker\n"
+                + "Bob ->> Worker : spawn job\nWorker -->> Bob : started\ndestroy Worker\n"
+                + "Bob -->> Alice : done"),
         new Card("Math in any label", "$…$",
             "The moat: real LaTeX inside a diagram label. A <code>$…$</code> run in any node/edge/"
                 + "message label bakes to STIX glyph paths (not raw source) via an injected math "

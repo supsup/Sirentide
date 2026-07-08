@@ -97,6 +97,15 @@ class ContainmentTest {
             + "  else is busy\n    Bob -->> Alice : later\n  end\n"
             + "  par to Bob\n    Alice ->> Bob : a\n  and to Carol\n    Alice ->> Carol : b\n  end\n"
             + "  else stray divider\n  end\n  loop unclosed at eof\n    Alice ->> Bob : trailing\n",
+        // sequence NOTES + CREATE/DESTROY (M2 enrichment): a `note right of` single actor, a `note
+        // over A,B` span, a `create participant` (mid-diagram lifeline start), a `destroy` (lifeline
+        // end + X mark), a message FROM a destroyed actor (draw-anyway degrade), plus MALFORMED cases —
+        // a note with an UNKNOWN actor, a note with NO text, and a `destroy` of an unknown actor (all
+        // inert) — exercises the note-box rect/line/glyph + the destroy-X lines through the allowlist.
+        "sequence\n  Alice ->> Bob : hi\n  note right of Bob : a note that is fairly long and must clamp\n"
+            + "  note over Alice,Bob : shared\n  note left of Alice : side\n  note over Ghost : unknown\n"
+            + "  note over Alice :\n  create participant Carol\n  Bob ->> Carol : spawn\n"
+            + "  destroy Carol\n  destroy Nobody\n  Carol -->> Bob : done\n",
         // state diagram (7th type): `[*]` start + end pseudostates (disc + bullseye Wedge paths), a
         // labeled transition, and a CYCLE (Idle↔Running) — exercises the reused flowchart engine's
         // cycle handling plus the new disc geometry, all through the allowlist.

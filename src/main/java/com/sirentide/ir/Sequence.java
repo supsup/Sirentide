@@ -26,17 +26,33 @@ import java.util.List;
 /// range (see {@link SeqBlock}). EMPTY for the legacy actor+message path, so a block-free sequence
 /// lays out and bakes BYTE-IDENTICALLY to before (the block emission is skipped when the list is
 /// empty). Parse order; nesting is expressed via each block's `depth`, not the list order.
+///
+/// `notes` are the {@link SeqNote} annotation boxes and `lifecycles` are the {@link SeqLifecycle}
+/// create/destroy events (M2 enrichment), both anchored into the flat message stream by `atMsg`.
+/// EMPTY for the legacy path, so a sequence with no notes / create / destroy lays out and bakes
+/// BYTE-IDENTICALLY to before (the note-box + lifeline-start/end + destroy-X emission is skipped when
+/// both lists are empty). Parse (declaration) order.
 public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
-                       String nodeColor, boolean bodyHadContent, List<SeqBlock> blocks)
+                       String nodeColor, boolean bodyHadContent, List<SeqBlock> blocks,
+                       List<SeqNote> notes, List<SeqLifecycle> lifecycles)
     implements Diagram {
 
     public Sequence {
         actors = List.copyOf(actors);
         messages = List.copyOf(messages);
         blocks = List.copyOf(blocks);
+        notes = List.copyOf(notes);
+        lifecycles = List.copyOf(lifecycles);
         if (textColor == null) {
             textColor = "currentColor";
         }
+    }
+
+    /// No notes / lifecycle events (empty lists) — keeps a caller supplying just up to `blocks`
+    /// unchanged, and byte-identical to the pre-note path.
+    public Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
+                    String nodeColor, boolean bodyHadContent, List<SeqBlock> blocks) {
+        this(actors, messages, textColor, nodeColor, bodyHadContent, blocks, List.of(), List.of());
     }
 
     /// No blocks (empty frame list) — keeps a caller supplying just actors+messages+textColor+
