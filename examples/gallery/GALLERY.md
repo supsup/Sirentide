@@ -240,6 +240,23 @@ commit id: "release"
 
 ![Git graph (branch lanes + merge)](gitGraph.png)
 
+## User journey (satisfaction map)
+
+```
+journey
+title My working day
+section Go to work
+Make tea: 5: Me
+Commute: 3: Me, Cat
+Arrive: 4: Me
+section Do work
+Code: 5: Me
+Meetings: 2: Me, Boss
+Lunch: 4: Me, Team
+```
+
+![User journey (satisfaction map)](journey.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

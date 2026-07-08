@@ -15,6 +15,9 @@ import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
 import com.sirentide.ir.GitOp;
+import com.sirentide.ir.Journey;
+import com.sirentide.ir.JourneySection;
+import com.sirentide.ir.JourneyTask;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -70,8 +73,50 @@ public final class A11yDescriber {
             case ErDiagram er -> erDiagram(er);
             case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
             case GitGraph gg -> gitGraph(gg);
+            case Journey j -> journey(j);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// User journey: "User journey \"My working day\" with 2 sections and 5 tasks. Go to work: Make tea
+    /// scored 5 (Me), Commute scored 3 (Me, Cat), …. Do work: Code scored 5 (Me), …." Sections in
+    /// declaration order; each task names its satisfaction score + the actors that take part.
+    /// Deterministic + bounded (labels + lists capped, same discipline as every other type).
+    private static A11y journey(Journey j) {
+        int sectionCount = j.sections().size();
+        int taskCount = 0;
+        for (JourneySection s : j.sections()) {
+            taskCount += s.tasks().size();
+        }
+        StringBuilder d = new StringBuilder("User journey");
+        if (j.title() != null && !j.title().isBlank()) {
+            d.append(" \"").append(label(j.title())).append('"');
+        }
+        d.append(" with ").append(sectionCount).append(sectionCount == 1 ? " section" : " sections")
+            .append(" and ").append(taskCount).append(taskCount == 1 ? " task" : " tasks").append('.');
+        int shownSections = Math.min(sectionCount, ITEM_CAP);
+        for (int i = 0; i < shownSections; i++) {
+            JourneySection s = j.sections().get(i);
+            d.append(' ').append(label(s.name())).append(':');
+            int tc = s.tasks().size();
+            int shownTasks = Math.min(tc, ITEM_CAP);
+            for (int k = 0; k < shownTasks; k++) {
+                JourneyTask t = s.tasks().get(k);
+                d.append(k == 0 ? " " : ", ").append(label(t.name())).append(" scored ").append(t.score());
+                if (!t.actors().isEmpty()) {
+                    d.append(" (");
+                    for (int m = 0; m < t.actors().size(); m++) {
+                        if (m > 0) {
+                            d.append(", ");
+                        }
+                        d.append(label(t.actors().get(m)));
+                    }
+                    d.append(')');
+                }
+            }
+            d.append(tc > shownTasks ? ", …." : ".");
+        }
+        return new A11y("User journey", d.toString());
     }
 
     /// Git graph: "Git graph with 4 commits across 2 branches. Branches: main, develop. Commits:

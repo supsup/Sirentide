@@ -140,7 +140,8 @@ class SemanticAnchorTest {
             "classDiagram\n  class Animal {\n    +eat() void\n  }\n  Animal <|-- Dog : inherits\n",
             "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n",
             "gitGraph\n  commit\n  branch develop\n  checkout develop\n  commit\n  checkout main\n"
-                + "  merge develop\n");
+                + "  merge develop\n",
+            "journey\n  title Day\n  section Go\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -394,5 +395,23 @@ class SemanticAnchorTest {
         int maxBranchSeq = a.stream().filter(x -> x.role().equals("branch")).mapToInt(Anc::seq).max().orElse(-1);
         int minCommitSeq = a.stream().filter(x -> x.role().equals("commit")).mapToInt(Anc::seq).min().orElse(-1);
         assertTrue(maxBranchSeq < minCommitSeq, "branches seq before commits: " + a);
+    }
+
+    /// journey (receipt #2): every task's point + name + actor labels wrap in ONE `<g role="task">`
+    /// (id = the task name, uniquified), seq 0..N-1 in declaration order across all sections. A journey
+    /// with 2 sections × (2 + 1) = 3 tasks → exactly 3 task anchors; the section brackets, satisfaction
+    /// line, and axes stay bare. Proves a task emits role="task". DROP the `<g>` wrapper in
+    /// JourneyLayout (emit the shapes bare) and the count falls to 0 → RED.
+    @Test
+    void journeyEmitsATaskAnchorPerTask() {
+        List<Anc> a = anchors(Sirentide.render(
+            "journey\n  title Day\n  section Go to work\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n"
+                + "  section Do work\n    Code: 5: Me\n"));
+        assertWellFormed(a, 3);
+        assertEquals(3, countRole(a, "task"), "one task anchor per task: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("task") && x.id().equals("Maketea")),
+            "task id is the sanitized task name (Maketea): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("task") && x.id().equals("Commute")),
+            "the multi-actor task is anchored (Commute): " + a);
     }
 }

@@ -162,6 +162,15 @@ class ContainmentTest {
             + "  branch develop\n  checkout develop\n  commit\n  commit id: \"wip\"\n  checkout main\n"
             + "  merge develop\n  merge main\n  commit\n",
         "gitGraph\n",   // empty body → minimal empty canvas (round-trips, never the inert shell)
+        // journey (13th type): a title, two sections, several scored tasks, a MULTI-ACTOR task, plus
+        // MALFORMED cases — an OUT-OF-RANGE score (clamped 1..5), a NON-NUMERIC score (dropped), a task
+        // BEFORE any section (dropped), and an actorless task — exercises the point discs (wedge), the
+        // connecting satisfaction line + axes + section brackets (line), and the title/tick/task/actor
+        // glyph labels through the allowlist (all in svg/path/line/g).
+        "journey\n  title My working day\n  Orphan: 4: Nobody\n  section Go to work\n"
+            + "    Make tea: 5: Me\n    Commute: 3: Me, Cat\n    Arrive: 9: Me\n    Bad: nope: Me\n"
+            + "    Solo: 2\n  section Do work\n    Code: 5: Me\n    Meetings: 2: Me, Boss\n",
+        "journey\n",   // empty body → minimal inert canvas (round-trips, never the inert shell)
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

@@ -202,6 +202,9 @@ public final class Sirentide {
             case com.sirentide.ir.MathBlock mb -> com.sirentide.layout.MathBlockLayout.layout(mb, math);
             // A git commit graph: lanes per branch, dots per commit, elbow branch/merge connectors.
             case com.sirentide.ir.GitGraph gg -> com.sirentide.layout.GitGraphLayout.layout(gg, math);
+            // A user-journey satisfaction map: tasks along x, score on a 1..5 y-axis, a connecting
+            // line, section-header brackets, and per-task actor labels.
+            case com.sirentide.ir.Journey j -> com.sirentide.layout.JourneyLayout.layout(j, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

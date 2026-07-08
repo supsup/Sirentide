@@ -116,6 +116,10 @@ class BrewShotGalleryTest {
         new Case("gitGraph", "Git graph (branch lanes + merge)",
             "gitGraph\ncommit\ncommit id: \"init\"\nbranch develop\ncheckout develop\ncommit\n"
                 + "commit id: \"feature\"\ncheckout main\nmerge develop\ncommit id: \"release\""),
+        new Case("journey", "User journey (satisfaction map)",
+            "journey\ntitle My working day\nsection Go to work\nMake tea: 5: Me\n"
+                + "Commute: 3: Me, Cat\nArrive: 4: Me\nsection Do work\nCode: 5: Me\n"
+                + "Meetings: 2: Me, Boss\nLunch: 4: Me, Team"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
