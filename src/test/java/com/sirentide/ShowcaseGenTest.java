@@ -108,6 +108,13 @@ class ShowcaseGenTest {
             "journey\ntitle My working day\nsection Go to work\nMake tea: 5: Me\n"
                 + "Commute: 3: Me, Cat\nArrive: 4: Me\nsection Do work\nCode: 5: Me\n"
                 + "Meetings: 2: Me, Boss\nLunch: 4: Me, Team"),
+        new Card("Mindmap", "mindmap",
+            "An <em>indentation</em>-defined hierarchy — the first line is the root, each deeper "
+                + "line a child of the nearest shallower one. Laid out as a left-to-right tree: depth "
+                + "is a column, siblings stack down the y-axis, each parent centered on its children, "
+                + "elbow connectors wiring the branches. Boxes band by depth.",
+            "mindmap\n  root Mindmaps\n    Origins\n      Long history\n      Popular\n    Research\n"
+                + "      On effectiveness\n    Tools\n      Pen and paper\n      Mermaid"),
         new Card("Flowchart — nested subgraphs", "subgraph",
             "Cluster containers group nodes inside a titled frame; nest them for pipelines "
                 + "within pipelines. The frame border, title tab, and canvas grow-to-fit are all baked.",
@@ -270,7 +277,7 @@ class ShowcaseGenTest {
             <p class="sub">Live renderer output — the SVG below was produced by Sirentide from the DSL beside it.</p>
             <div class="card"><div class="duo"><pre>%DSL%</pre><div class="render">%SVG%</div></div></div>
             <p class="note">%NOTE%</p>
-            <p class="note">All thirteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
+            <p class="note">All fourteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
             </body>
             </html>
             """
@@ -329,7 +336,7 @@ class ShowcaseGenTest {
             <header>
               <h1>Sirentide 🌊</h1>
               <p class="tag"><strong>Living, narratable diagrams — baked to static SVG, no runtime JS.</strong></p>
-              <p class="sub">Thirteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
+              <p class="sub">Fourteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
               Every image below is live renderer output, baked by Sirentide from the DSL beside it.</p>
             </header>
             <div class="wrap"><div class="grid">

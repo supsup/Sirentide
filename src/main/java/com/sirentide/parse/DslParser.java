@@ -22,6 +22,8 @@ import com.sirentide.ir.Journey;
 import com.sirentide.ir.JourneySection;
 import com.sirentide.ir.JourneyTask;
 import com.sirentide.ir.MathBlock;
+import com.sirentide.ir.Mindmap;
+import com.sirentide.ir.MindmapNode;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
@@ -76,6 +78,13 @@ public final class DslParser {
     // Sequence block-nesting cap (M2): a pathological `alt`/`loop`/`par` nesting depth would stack
     // unboundedly; opens past this are swallowed (their `end` hits an empty/other stack, inert).
     public static final int MAX_BLOCK_DEPTH = 64;
+    // Mindmap depth cap (DESIGN §6/§7): a pathological indentation chain would nest the tree — and the
+    // recursive layout/a11y traversal — unboundedly; a node deeper than this is dropped (its subtree
+    // then re-parents to the last valid ancestor). Bounds the recursion depth, never throws/OOMs.
+    public static final int MAX_MINDMAP_DEPTH = 64;
+    // Mindmap tab-indent width: a leading tab counts as this many indent columns (spaces count 1
+    // each). A fixed, documented width keeps depth deterministic when tabs + spaces mix.
+    public static final int MINDMAP_TAB_WIDTH = 4;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -139,6 +148,9 @@ public final class DslParser {
             // A mermaid-style user-journey satisfaction map — an optional `title`, `section` groups,
             // and `<task>: <score 1-5>: <actor>[, …]` rows; tasks plot along x, score on a 1..5 y-axis.
             case "journey" -> parseJourney(lines, textColor);
+            // A mermaid-style mindmap — an INDENTATION-defined hierarchy tree. The first (shallowest)
+            // body line is the root; each deeper line is a child of the nearest shallower line.
+            case "mindmap" -> parseMindmap(lines, textColor);
             default -> new Empty();
         };
     }
@@ -2009,6 +2021,125 @@ public final class DslParser {
             sections.add(new JourneySection(sectionName, current));
         }
         return new Journey(title, sections, textColor);
+    }
+
+    /// Parses a mindmap: an INDENTATION-defined hierarchy tree.
+    /// ```
+    /// mindmap
+    ///   root Root idea
+    ///     Origins
+    ///       Long history
+    ///     Tools
+    ///       Mermaid
+    /// ```
+    /// The FIRST non-blank body line is the ROOT (its indent is the baseline); each later line's
+    /// LEADING-SPACE depth ({@link #leadingIndent}, a tab = {@link #MINDMAP_TAB_WIDTH} columns) folds
+    /// it under the nearest OPEN ancestor with a STRICTLY-SMALLER indent — a deeper line is that
+    /// ancestor's child, a line at the same-or-shallower indent pops back to it. A node's text is the
+    /// stripped line; the root strips an OPTIONAL leading `root ` keyword (mermaid convention) so
+    /// `root Root idea` reads "Root idea" (a bare `root` yields an empty-text root, still a node).
+    ///
+    /// Malformed → inert, never throws (DESIGN §6): a line indented at-or-shallower than the root
+    /// attaches to the ROOT (the stack never pops below it — mermaid allows one root, so extra
+    /// top-level lines become root children); inconsistent indentation SNAPS to the nearest shallower
+    /// open ancestor (no exact-multiple requirement); a bare `mindmap` body (no non-blank line) →
+    /// a `null`-root Mindmap (an empty tree, round-trips as a mindmap). Caps (never OOM):
+    /// {@link #MAX_DATA_ROWS} total nodes, {@link #MAX_MINDMAP_DEPTH} depth (a deeper node is dropped,
+    /// its subtree re-parenting to the last valid ancestor); text `cap()`'d.
+    private static Diagram parseMindmap(String[] lines, String textColor) {
+        MindmapBuilder root = null;
+        // The stack of OPEN ancestors (innermost on top). The root stays at the bottom and is never
+        // popped, so a line at ≤ the root indent lands on it. `push`/`pop`/`peek` is a LIFO stack.
+        Deque<MindmapBuilder> stack = new ArrayDeque<>();
+        int nodeCount = 0;
+        for (int i = 1; i < lines.length; i++) {
+            String rawLine = lines[i];   // RAW — indentation is measured before stripping
+            String text = rawLine.strip();
+            if (text.isEmpty()) {
+                continue;
+            }
+            if (nodeCount >= MAX_DATA_ROWS) {
+                break;   // node cap — stop folding (never allocate unboundedly / never throw)
+            }
+            int indent = leadingIndent(rawLine);
+            if (root == null) {
+                // The first non-blank body line is the root; strip an optional leading `root` keyword.
+                root = new MindmapBuilder(cap(stripRootKeyword(text)), indent, 0);
+                stack.push(root);
+                nodeCount++;
+                continue;
+            }
+            // Pop every open ancestor whose indent is ≥ this line's — the survivor (never below the
+            // root) is the nearest STRICTLY-shallower open node, i.e. this line's parent.
+            while (stack.size() > 1 && stack.peek().indent >= indent) {
+                stack.pop();
+            }
+            MindmapBuilder parent = stack.peek();
+            if (parent.depth + 1 > MAX_MINDMAP_DEPTH) {
+                continue;   // over-deep → drop (its subtree re-parents to the last valid ancestor)
+            }
+            MindmapBuilder node = new MindmapBuilder(cap(text), indent, parent.depth + 1);
+            parent.children.add(node);
+            stack.push(node);
+            nodeCount++;
+        }
+        return new Mindmap(root == null ? null : root.freeze(), textColor);
+    }
+
+    /// The leading-INDENT column count of a raw line: a space is 1 column, a tab is
+    /// {@link #MINDMAP_TAB_WIDTH} columns; the scan stops at the first non-whitespace char. Fixed,
+    /// deterministic — mixing tabs + spaces yields a stable depth (never throws).
+    private static int leadingIndent(String line) {
+        int col = 0;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == ' ') {
+                col++;
+            } else if (c == '\t') {
+                col += MINDMAP_TAB_WIDTH;
+            } else {
+                break;
+            }
+        }
+        return col;
+    }
+
+    /// Strips an OPTIONAL leading `root` keyword from the ROOT line's text (mermaid convention): a
+    /// bare `root` → "" (an empty-text root), `root Root idea` → "Root idea"; any other first token
+    /// leaves the whole text as the root label. Only ever applied to the first node.
+    private static String stripRootKeyword(String text) {
+        if (text.equals("root")) {
+            return "";
+        }
+        if (text.startsWith("root ") || text.startsWith("root\t")) {
+            return text.substring("root".length()).strip();
+        }
+        return text;
+    }
+
+    /// A mutable mindmap-tree accumulator on the parse stack: text/indent/depth fixed at creation,
+    /// `children` grow as deeper lines fold under it; `freeze` snapshots it (recursively) to an
+    /// immutable {@link MindmapNode}. Parse-internal, never surfaced in the IR. The recursion is
+    /// bounded by {@link #MAX_MINDMAP_DEPTH} (the parser drops deeper nodes), so `freeze` is safe.
+    private static final class MindmapBuilder {
+        final String text;
+        final int indent;
+        final int depth;
+        final List<MindmapBuilder> children = new ArrayList<>();
+
+        MindmapBuilder(String text, int indent, int depth) {
+            this.text = text;
+            this.indent = indent;
+            this.depth = depth;
+        }
+
+        MindmapNode freeze() {
+            List<MindmapNode> kids = new ArrayList<>();
+            for (MindmapBuilder c : children) {
+                kids.add(c.freeze());
+            }
+            return new MindmapNode(text, kids);
+        }
     }
 
     /// Parses one journey task row `<name>: <score>: <actor>[, <actor2>…]` into a {@link JourneyTask},

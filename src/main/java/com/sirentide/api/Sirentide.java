@@ -205,6 +205,9 @@ public final class Sirentide {
             // A user-journey satisfaction map: tasks along x, score on a 1..5 y-axis, a connecting
             // line, section-header brackets, and per-task actor labels.
             case com.sirentide.ir.Journey j -> com.sirentide.layout.JourneyLayout.layout(j, math);
+            // A mindmap: an indentation-defined hierarchy tree, laid out left→right by depth with
+            // parent nodes centred on their children and elbow parent→child connectors.
+            case com.sirentide.ir.Mindmap m -> com.sirentide.layout.MindmapLayout.layout(m, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

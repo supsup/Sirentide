@@ -18,7 +18,9 @@ import java.util.Set;
 /// elements, so it emits no anchor group. gitGraph commit dots → {@link #COMMIT}, branch lanes →
 /// {@link #BRANCH} (its spine + name label); a branch/merge connector is decorative and un-anchored.
 /// journey tasks → {@link #TASK} (each task's point disc + name + actor labels); the satisfaction line,
-/// axes, and section-header brackets are decorative and un-anchored.
+/// axes, and section-header brackets are decorative and un-anchored. mindmap nodes → {@link #NODE}
+/// (each node's box + label), parent→child connectors → {@link #EDGE} (its elbow lines) — the tree
+/// reuses the existing graph node/edge vocabulary, no new role.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
