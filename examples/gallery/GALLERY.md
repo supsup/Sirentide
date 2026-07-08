@@ -113,6 +113,20 @@ G --> H{OK?}
 
 ![Flowchart node shapes (stadium · circle · hexagon · cylinder · subroutine)](flowchart-shapes.png)
 
+## Flowchart edge types (open · dotted · thick)
+
+```
+flowchart TD
+A[Solid] --> B[Open]
+B --- C[Dotted]
+C -.-> D[DotOpen]
+D -.- E[Thick]
+E ==> F[ThickOpen]
+F === G[End]
+```
+
+![Flowchart edge types (open · dotted · thick)](flowchart-edges.png)
+
 ## Flowchart (nested subgraph clusters)
 
 ```
@@ -271,6 +285,23 @@ Lunch: 4: Me, Team
 ```
 
 ![User journey (satisfaction map)](journey.png)
+
+## Mind map (indentation-defined tree)
+
+```
+mindmap
+  root Root idea
+    Origins
+      Long history
+      Popular
+    Research
+      On effect
+    Tools
+      Pen and paper
+      Mermaid
+```
+
+![Mind map (indentation-defined tree)](mindmap.png)
 
 ## Sankey (weighted flows in depth columns)
 
