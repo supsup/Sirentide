@@ -98,8 +98,8 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, and all six diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`). |
-| *planned* | Designed, not yet built: play-through / the native effect layer, the semantic-anchor layer, LatteX-math-in-labels, and fuller `sequence` (activation bars, alt/loop/par frames). |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **fifteen** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
+| *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2) and `sequence` activation bars. |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for
 the why.
