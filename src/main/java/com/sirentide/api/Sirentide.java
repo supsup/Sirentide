@@ -26,8 +26,10 @@ import com.sirentide.layout.XyChartLayout;
 /// (→ SVG string). Zero runtime dependency, deterministic, sanitizer-clean output
 /// (docs/DESIGN.md §2/§4).
 ///
-/// M1 (in progress): the first diagram type — `pie` — renders end to end. xychart + a minimal
-/// linear sequence (with the play-through) follow, all projecting into the shared IR.
+/// Live: fifteen diagram types render end to end, all projecting into the shared IR, plus
+/// LaTeX-math-in-labels (the {@link MathFragmentRenderer} seam), semantic anchors, and the
+/// baked-frame play-through ({@link #renderFrames}). The remaining thesis slice is the
+/// security-gated effect layer (`data-sirentide-fx`, contract Part 2).
 public final class Sirentide {
 
     private Sirentide() {}

@@ -15,7 +15,9 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Status
 
-Greenlit and building. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **six diagram types** are built today — each baked to inert `svg/path/rect/line` geometry. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md); the docs below say where it's going.
+Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **fifteen diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md).
+
+The six flagship types, in detail:
 
 | Type | One-liner | Sample |
 |---|---|---|
@@ -26,9 +28,11 @@ Greenlit and building. The render pipeline (DSL → IR → layout → SVG), the 
 | **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
 | **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
 
-Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws.
+Plus nine more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, and **`mathblock`** (standalone display LaTeX). The flowchart carries the full mermaid node-shape set, edge styles, and nested subgraphs; the sequence diagram carries `alt`/`loop`/`par` frames.
 
-Still ahead (the *thesis* work): the native effect/anchor layer, play-through, and LatteX-math-in-labels — see [SLOWSTART.md](SLOWSTART.md).
+Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside any label typesets as real math via the LatteX bridge.
+
+Still ahead (the remaining *thesis* work): the native **effect layer** — `data-sirentide-fx`, the security-gated Part 2 the anchors were built to carry — see [SLOWSTART.md](SLOWSTART.md).
 
 ## Docs
 
