@@ -33,7 +33,7 @@ dependencies {
     // BrewShot: real-browser screenshot + in-page audit harness (Confluence, PROJECT/brewshot).
     // TEST SCOPE ONLY — the zero-runtime-dependency bake is untouched. Pins what XML can't see
     // (labels/shapes escaping the canvas: the negative-x clip + y=226 stacking from review 14).
-    testImplementation(files("libs/brewshot-0.1.0.jar"))
+    testImplementation(files("libs/brewshot-0.6.0.jar"))
     // LatteX: the real LaTeX->SVG math backend for the math-in-labels moat proof
     // (MathInLabelsRealRenderTest + LatteXMathFragmentRenderer). TEST SCOPE ONLY — the core bake
     // stays hermetic (ZERO runtime dependencies). A downstream consumer that wants baked math

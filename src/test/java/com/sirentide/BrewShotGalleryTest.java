@@ -174,8 +174,12 @@ class BrewShotGalleryTest {
                 assertEquals(List.of(), escapes,
                     c.name() + ": drawn elements must stay inside the canvas — " + escapes);
 
+                // Crisp, tightly-cropped capture (BrewShot 0.6.0): the svg element re-rastered
+                // at 3x device pixels with a 16px breathing frame — the two-line swap the CSS-
+                // transform workaround (sirentide #119) was HELD for (#120/#121: native beats
+                // hand-rolled; brewshot #21/#22). clip.scale re-renders vectors, not upscales.
                 Path png = dir.resolve(c.name() + ".png");
-                shot.screenshot(png);
+                Files.write(png, shot.screenshotElement("svg", 3.0, 16));
                 md.append("## ").append(c.title()).append("\n\n```\n").append(c.dsl())
                     .append("\n```\n\n![").append(c.title()).append("](").append(c.name()).append(".png)\n\n");
             }
