@@ -35,18 +35,30 @@ Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constr
 
 | Attribute | Allowed value | Meaning |
 | --- | --- | --- |
-| `data-sirentide-role` | closed enum: `node`, `edge`, `arrow`, `slice`, `bar`, `axis`, `actor`, `message`, `step`, `group`, `label` | what this element *is* |
+| `data-sirentide-role` | closed enum: `node`, `edge`, `slice`, `actor`, `message`, `bar`, `class`, `point`, `event`, `entity`, `note`, `commit`, `branch`, `task`, `flow`, `cluster`, `axis` | what this element *is* |
 | `data-sirentide-id` | `^[A-Za-z0-9_-]{1,32}$` | stable id for cross-reference / linking |
-| `data-sirentide-seq` | `^[0-9]{1,4}$` | reading / **play-through** order |
-| `data-sirentide-fx` | the effect-name enum (shared, drift-guarded — see below) | the effect bound to this element |
-| `class` | a fixed `sirentide-*` set only (`sirentide-node`, `sirentide-edge`, …) | never free-form |
+| `data-sirentide-seq` | wire (`/docs`): `^[0-9]{1,4}$` · in-process: `^[0-9]{1,9}$` | reading / **play-through** order |
 
-**Effect-name enum** (the only accepted `data-sirentide-fx` values) — a **shared, drift-guarded** artifact (the Java enum does not export cross-repo, so THIS DOC is the source of truth). Start with the diagram-appropriate subset of the LatteX vocabulary:
-`glow`, `pulse`, `fade`, `draw`, `handscribe`, `spotlight`, `none`.
-(Grows as we add effects; adding one updates this enum + the sanitizer allow-list + the runtime together — the enum-drift lesson: a LatteX effect silently vanished from `/docs` this session until the shared contract + sanitizer were re-synced. Do not repeat it.)
+**Role source of truth = `SirentideRole` (the jar-exported enum).** The vendored jar carries the
+enum into every consumer, and the Stafficy sanitizer pins its allow-list to
+`SirentideRole.WIRE_VALUES` directly — so the enum, not this table, is what enforcement reads.
+This table is kept byte-aligned with the enum by a **build-failing drift test**
+(`ContractDocDriftTest`) that parses this file and compares. `cluster` and `axis` are
+**RESERVED**: admitted by the contract + sanitizer, not yet emitted by any layout.
+
+**The seq split is deliberate.** The in-process contract (`SirentideContract.ANCHOR_SEQ`,
+`{1,9}`) stays loose for the unbounded in-process play-through; the `/docs` **wire** bound is
+`{1,4}` — the emitter SATURATES the wire value to 4 digits (`SvgEmitter`) precisely so the
+sanitizer can enforce the tight documented bound (Lattice-cleared, sirentide #105/#106/#123).
+
+**`data-sirentide-fx` is Part 2 — NOT admitted today.** The emitter never emits it, the
+sanitizer strips it, and `SemanticAnchorTest` asserts `isWire("fx")` is false. When Part 2
+lands (security-gated, Lattice sign-off), the effect-name enum will ship the same way roles
+do — jar-exported and drift-guarded, not doc-as-truth. Planned starting vocabulary (design
+intent only): `glow`, `pulse`, `fade`, `draw`, `handscribe`, `spotlight`, `none`.
 
 ### Banned on inner elements (build-failing)
-Any `on*`; `<script>`; `href`/`xlink:href`; any `style` attribute; any `data-*` outside the closed list above; any `class` outside the `sirentide-*` set; any executable or navigational affordance.
+Any `on*`; `<script>`; `href`/`xlink:href`; any `style` attribute; any `data-*` outside the closed list above (including `data-sirentide-fx` until Part 2); **any `class` at all on inner elements** (class lives ONLY on the wrapper `<div>`); any executable or navigational affordance.
 
 ## `constrainSirentideWrappers` — the Stafficy sanitizer pass (Confluence)
 
