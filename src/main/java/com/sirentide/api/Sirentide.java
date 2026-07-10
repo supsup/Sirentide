@@ -149,6 +149,82 @@ public final class Sirentide {
         }
     }
 
+    /// Diagnostic twin of {@link #renderFrames(String)} — see
+    /// {@link #renderFramesWithDiagnostics(String, MathFragmentRenderer)}.
+    public static FramesResult renderFramesWithDiagnostics(String dsl) {
+        return renderFramesWithDiagnostics(dsl, null);
+    }
+
+    /// Diagnostic twin of {@link #renderFrames(String, MathFragmentRenderer)} (plan
+    /// sirentide-fence-diagnostics): the IDENTICAL guarded pipeline, a `frames` list byte-identical
+    /// to what `renderFrames` produces for the same input (including every degrade), PLUS a
+    /// {@link Diagnostics} that classifies the outcome exactly the way
+    /// {@link #renderWithDiagnostics(String, MathFragmentRenderer)} does. It exists for the same
+    /// reason: the fence path collapses every typo, cap hit, and genuine bug into an
+    /// indistinguishable degrade; this channel adds the WHY without touching the sacred
+    /// never-throw bake. NEVER throws.
+    public static FramesResult renderFramesWithDiagnostics(String dsl,
+                                                           com.sirentide.api.MathFragmentRenderer math) {
+        String stage = STAGE_PARSE;
+        try {
+            com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
+            Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            stage = STAGE_LAYOUT;
+            LaidOut laid = layout(ir, math);
+            stage = STAGE_EMIT;
+            com.sirentide.a11y.A11y a11y =
+                com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
+            String base = SvgEmitter.emit(laid, a11y, config.theme());
+            if (base.length() > MAX_OUTPUT_BYTES) {
+                return new FramesResult(java.util.List.of(INERT_SHELL), new Diagnostics(
+                    Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                    "The baked SVG exceeded the " + MAX_OUTPUT_BYTES + "-byte output cap, so it "
+                        + "degraded to the empty shell. Reduce the number of rows/nodes or the label sizes.",
+                    -1, "post-emit length " + base.length() + " > MAX_OUTPUT_BYTES"));
+            }
+            // Same nuance as renderWithDiagnostics: a NON-BLANK source resolving to the Empty
+            // degrade target means the type keyword was never understood — a parse-level signal,
+            // with the frames unchanged (== renderFrames' output for Empty: the single base frame).
+            if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                return new FramesResult(java.util.List.of(base), new Diagnostics(
+                    Outcome.PARSE_ERROR, STAGE_PARSE,
+                    "The diagram source was not recognized: line 1's diagram-type keyword is unknown "
+                        + "(or the source exceeded the input cap), so it degraded to the empty shell. "
+                        + "Check the diagram type on the first line.",
+                    -1, "parse resolved to the Empty degrade target for non-blank input"));
+            }
+
+            java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
+            collectSeqs(laid.shapes(), seqs);
+            if (seqs.size() <= 1) {
+                return new FramesResult(java.util.List.of(base), new Diagnostics(
+                    Outcome.OK, STAGE_EMIT,
+                    "Rendered successfully (single frame — the diagram has no play-through steps).",
+                    -1, ""));
+            }
+
+            java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
+            for (int k : seqs) {
+                String svg = SvgEmitter.emit(laid, a11y, config.theme(), Emphasis.cumulative(k));
+                if (svg.length() > MAX_OUTPUT_BYTES) {
+                    return new FramesResult(java.util.List.of(INERT_SHELL), new Diagnostics(
+                        Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                        "An emphasized play-through frame exceeded the " + MAX_OUTPUT_BYTES
+                            + "-byte output cap, so the bake degraded to the empty shell.",
+                        -1, "frame seq=" + k + " length " + svg.length() + " > MAX_OUTPUT_BYTES"));
+                }
+                frames.add(svg);
+            }
+            return new FramesResult(java.util.List.copyOf(frames), new Diagnostics(
+                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+        } catch (RuntimeException | StackOverflowError e) {
+            // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
+            // render — which may be a healthy SVG when only the emphasis pass failed), and classify
+            // from the caught throwable + the stage it escaped, same as renderWithDiagnostics.
+            return new FramesResult(java.util.List.of(render(dsl, math)), classifyFailure(stage, e));
+        }
+    }
+
     /// Collect the distinct `seq` values stamped on the anchor {@link com.sirentide.layout.Group}s in a
     /// laid-out scene (groups never nest, but recurse defensively). These are the play-through steps.
     private static void collectSeqs(java.util.List<com.sirentide.layout.Shape> shapes,
