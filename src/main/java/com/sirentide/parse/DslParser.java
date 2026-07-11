@@ -224,6 +224,7 @@ public final class DslParser {
         String title = null;
         Theme theme = Theme.DEFAULT;
         String direction = null;
+        String caption = null;
         for (int i = 0; i < bodyStart; i++) {
             String s = lines[i].strip();
             if (!s.startsWith(CONFIG_DIRECTIVE)) {
@@ -243,6 +244,13 @@ public final class DslParser {
                     }
                 }
                 case "theme" -> theme = Theme.fromToken(value);   // unknown value → DEFAULT (inert)
+                case "caption", "note" -> {
+                    // A visible annotation rendered below the diagram (plan
+                    // sirentide-caption-note-directive). `note` is an alias. Capped like a label.
+                    if (!value.isEmpty()) {
+                        caption = cap(value);
+                    }
+                }
                 case "direction" -> {
                     String d = value.toUpperCase(java.util.Locale.ROOT);
                     if (d.equals("TD") || d.equals("LR")) {
@@ -255,7 +263,7 @@ public final class DslParser {
                 }
             }
         }
-        return new DiagramConfig(title, theme, direction);
+        return new DiagramConfig(title, theme, direction, caption);
     }
 
     /// The off-slice text fill from an optional `color=<value>` header modifier. The value must
