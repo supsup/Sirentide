@@ -428,7 +428,7 @@ class ShowcaseGenTest {
               h1 { margin-bottom: .2rem; } .sub { color: #64748b; margin-top: 0; }
               .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0; }
               .duo { display: flex; gap: 2rem; align-items: center; flex-wrap: wrap; }
-              .duo pre { flex: 0 1 340px; margin: 0; }
+              .duo pre { flex: 0 1 380px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
               .duo .render { flex: 1 1 300px; text-align: center; overflow-x: auto; }
               .render svg { max-width: 100%; height: auto; }
               pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: .85rem; }
@@ -482,7 +482,7 @@ class ShowcaseGenTest {
             section.card h2 code { font-size: .8em; color: #6366f1; background: #eef2ff; padding: .1rem .45rem; border-radius: 6px; margin-left: .5rem; }
             .desc { color: var(--sub); font-size: .95rem; margin: .2rem 0 1rem; }
             .duo { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
-            .duo pre { flex: 0 1 340px; margin: 0; }
+            .duo pre { flex: 0 1 380px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
             .duo .render { flex: 1 1 320px; text-align: center; overflow-x: auto; }
             .render svg { max-width: 100%; height: auto; }
             pre { background: #0f172a; color: #e2e8f0; padding: .9rem 1.1rem; border-radius: 10px;
