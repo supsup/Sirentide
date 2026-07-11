@@ -362,6 +362,7 @@ public final class Sirentide {
             case Sequence s -> SequenceLayout.layout(s, math);
             case StateDiagram sd -> StateDiagramLayout.layout(sd, math);
             case QuadrantChart q -> QuadrantChartLayout.layout(q, math);
+            case com.sirentide.ir.Matrix mx -> com.sirentide.layout.MatrixLayout.layout(mx, math);
             case com.sirentide.ir.ClassDiagram cd -> com.sirentide.layout.ClassDiagramLayout.layout(cd, math);
             case com.sirentide.ir.ErDiagram er -> com.sirentide.layout.ErDiagramLayout.layout(er, math);
             // A standalone display-math block bakes its whole body full-size through `math`; a null

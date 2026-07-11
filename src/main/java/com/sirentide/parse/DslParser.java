@@ -3,6 +3,7 @@ package com.sirentide.parse;
 import com.sirentide.ir.ClassBox;
 import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ClassRelation;
+import com.sirentide.ir.Matrix;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.DiagramConfig;
 import com.sirentide.ir.EdgeStyle;
@@ -150,6 +151,10 @@ public final class DslParser {
             case "state", "statediagram" -> parseStateDiagram(lines, header, textColor);
             // A 2×2 positioning matrix — axis-end labels, per-quadrant labels, and `[x,y]` points.
             case "quadrant" -> parseQuadrant(lines, textColor);
+            // A categorical comparison / verdict matrix — `cols:` headers + `"row" : v1, v2, …`
+            // fixed-vocabulary verdict cells (plan sirentide-comparison-matrix-type). `comparison`
+            // is an accepted alias.
+            case "matrix", "comparison" -> parseMatrix(lines, textColor);
             // A mermaid-style UML class diagram — `class X { members }` blocks + typed relationships.
             case "classDiagram" -> parseClassDiagram(lines, textColor);
             // A mermaid-style entity-relationship diagram — `ENTITY { rows }` tables + crow-foot
@@ -1728,6 +1733,76 @@ public final class DslParser {
         }
         return new QuadrantChart(xEnds[0], xEnds[1], yEnds[0], yEnds[1],
             quadrantLabels, points, textColor);
+    }
+
+    /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias
+    /// `columns:`) line names the M column headers; every other `"label" : v1, v2, …` line is a row
+    /// whose comma-separated tokens become verdict cells. Every row is padded/truncated to exactly M
+    /// cells (M = the header count, or the widest row when there's no header) so the grid is always
+    /// rectangular. A line with no colon (and not the `cols:` header) is skipped — never fails the bake.
+    private static Diagram parseMatrix(String[] lines, String textColor) {
+        List<String> columns = new ArrayList<>();
+        List<Matrix.Row> rows = new ArrayList<>();
+        for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.regionMatches(true, 0, "cols:", 0, 5)
+                || line.regionMatches(true, 0, "columns:", 0, 8)) {
+                for (String tok : line.substring(line.indexOf(':') + 1).split(",")) {
+                    String header = cap(unquote(tok.strip()));
+                    if (!header.isEmpty()) {
+                        columns.add(header);
+                    }
+                }
+                continue;
+            }
+            // Split label : cells. A quoted label may itself contain a colon, so find the closing
+            // quote first, then the separator colon after it.
+            int sep;
+            if (line.startsWith("\"")) {
+                int close = line.indexOf('"', 1);
+                sep = close < 0 ? -1 : line.indexOf(':', close + 1);
+            } else {
+                sep = line.indexOf(':');
+            }
+            if (sep < 0) {
+                continue;   // not a row (no verdicts) → skip, never throw
+            }
+            String label = cap(unquote(line.substring(0, sep).strip()));
+            List<Matrix.Cell> cells = new ArrayList<>();
+            for (String tok : line.substring(sep + 1).split(",", -1)) {
+                String text = tok.strip();
+                cells.add(new Matrix.Cell(cap(text), verdictOf(text)));
+            }
+            rows.add(new Matrix.Row(label, cells));
+        }
+        int m = columns.isEmpty()
+            ? rows.stream().mapToInt(r -> r.cells().size()).max().orElse(0)
+            : columns.size();
+        List<Matrix.Row> normalized = new ArrayList<>();
+        for (Matrix.Row r : rows) {
+            List<Matrix.Cell> cs = new ArrayList<>(r.cells());
+            while (cs.size() < m) {
+                cs.add(new Matrix.Cell("", Matrix.Verdict.NA));
+            }
+            normalized.add(new Matrix.Row(r.label(), cs.size() > m ? new ArrayList<>(cs.subList(0, m)) : cs));
+        }
+        return new Matrix(columns, normalized, textColor);
+    }
+
+    /// Map a cell token to the closed verdict vocabulary (the only values that reach the palette).
+    /// Blank / `-` / `na` / anything unrecognized → NA (neutral), so an unknown token never introduces
+    /// a colour and never throws.
+    private static Matrix.Verdict verdictOf(String token) {
+        String t = token.strip().toLowerCase(java.util.Locale.ROOT);
+        return switch (t) {
+            case "pass", "match", "yes", "ok", "y", "true", "✓", "✔" -> Matrix.Verdict.PASS;
+            case "fail", "diverge", "no", "n", "false", "✗", "✘", "x" -> Matrix.Verdict.FAIL;
+            case "partial", "part", "mixed", "~", "◑" -> Matrix.Verdict.PARTIAL;
+            default -> Matrix.Verdict.NA;
+        };
     }
 
     /// Fills `{lo, hi}` from an axis-end directive's tail (`"Low" --> "High"`). The `-->` splits the

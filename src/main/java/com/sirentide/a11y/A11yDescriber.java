@@ -88,6 +88,7 @@ public final class A11yDescriber {
             case Timeline tl -> timeline(tl);
             case Gantt gantt -> gantt(gantt);
             case QuadrantChart q -> quadrant(q);
+            case com.sirentide.ir.Matrix mx -> matrix(mx);
             case ClassDiagram cd -> classDiagram(cd);
             case ErDiagram er -> erDiagram(er);
             case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
@@ -129,6 +130,43 @@ public final class A11yDescriber {
             d.append(flowCount > shown ? "; …." : ".");
         }
         return new A11y("Sankey diagram", d.toString());
+    }
+
+    /// Comparison matrix: "Comparison matrix with 4 rows and 2 columns. Columns: snapshot, bare. Rows:
+    /// ID1 claim-on-no-signal: pass, pass; PC1 soft-intent: partial, fail; …". Columns (when named) and
+    /// then each row's label + its per-column verdicts are read aloud in declaration order. Bounded
+    /// (rows capped at {@link #ITEM_CAP}, labels capped) + deterministic (pure IR walk).
+    private static A11y matrix(com.sirentide.ir.Matrix m) {
+        int rowCount = m.rows().size();
+        int colCount = m.columns().isEmpty() && !m.rows().isEmpty()
+            ? m.rows().get(0).cells().size() : m.columns().size();
+        StringBuilder d = new StringBuilder("Comparison matrix with ")
+            .append(rowCount).append(rowCount == 1 ? " row" : " rows")
+            .append(" and ").append(colCount).append(colCount == 1 ? " column" : " columns").append('.');
+        if (!m.columns().isEmpty()) {
+            d.append(" Columns: ");
+            for (int j = 0; j < m.columns().size(); j++) {
+                d.append(j > 0 ? ", " : "").append(label(m.columns().get(j)));
+            }
+            d.append('.');
+        }
+        if (rowCount > 0) {
+            d.append(" Rows: ");
+            int shown = Math.min(rowCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                com.sirentide.ir.Matrix.Row row = m.rows().get(i);
+                d.append(label(row.label())).append(": ");
+                for (int j = 0; j < row.cells().size(); j++) {
+                    d.append(j > 0 ? ", " : "")
+                        .append(row.cells().get(j).verdict().name().toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+            d.append(rowCount > shown ? "; …." : ".");
+        }
+        return new A11y("Comparison matrix", d.toString());
     }
 
     /// Mindmap: "Mindmap \"Root idea\" with 7 nodes. Root idea has children Origins, Tools. Origins has

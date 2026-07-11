@@ -67,7 +67,7 @@ class FuzzInvariantTest {
     /// The 15 diagram-type header keywords.
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
-        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey"
+        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -91,7 +91,9 @@ class FuzzInvariantTest {
         "gitGraph\n  commit\n  commit id: \"fix\"\n  branch develop\n  checkout develop\n  commit\n  checkout main\n  merge develop\n",
         "journey\n  title My day\n  section Go to work\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n",
         "mindmap\n  root Root idea\n    Origins\n      Long history\n    Research\n    Tools\n",
-        "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
+        "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n",
+        "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : match, match\n"
+            + "  \"PC1 soft-intent\" : partial, diverge\n"
     };
 
     /// Per-type templates with a single `%LBL%` slot into which a hostile label is spliced. Exercises
