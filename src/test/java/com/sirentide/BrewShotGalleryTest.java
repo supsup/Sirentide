@@ -94,6 +94,13 @@ class BrewShotGalleryTest {
             "flowchart TD\nA[Start] --> B[Work]\nsubgraph outer [Build Pipeline]\nB --> C[Compile]"
                 + "\nsubgraph inner [Test Suite]\nC --> D[Unit]\nD --> F[Integration]\nend"
                 + "\nF --> G[Package]\nend\nG --> E[Ship]"),
+        new Case("flowchart-classdef", "Flowchart semantic colour classes (classDef · class)",
+            "flowchart LR\nclassDef deny fill:#fecaca\nclassDef ok fill:#bbf7d0\n"
+                + "A[Request] --> B{Authorized?}\nB -->|yes| C[Serve]\nB -->|no| D[Deny]\n"
+                + "class C ok\nclass D deny"),
+        new Case("flowchart-caption", "Caption / note directive (annotation band below any diagram)",
+            "%% caption: A merge lands only after both peers approve and no conflicts remain.\n"
+                + "flowchart LR\nA[Author] --> B[Review]\nB --> C[Merge]"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"

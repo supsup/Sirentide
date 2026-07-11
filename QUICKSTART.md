@@ -4,10 +4,13 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 > **Status note.** Sirentide is early but real. What's **built**: the render pipeline
 > (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
-> glyphs, and **six diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`, and
-> `sequence`. What's **planned** (each flagged inline): the play-through / native effect layer,
-> the semantic-anchor layer, and the LatteX-math-in-labels composition. Accuracy over hype: if it
-> isn't built, this doc says so.
+> glyphs, and **fifteen diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
+> `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
+> `sankey`, and `mathblock`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
+> anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
+> `classDef`/`class` **semantic colour classes**, the `%% caption:` **annotation band**, and the
+> live **`/docs`** ```` ```sirentide ```` fence. Accuracy over hype: if it isn't built, this doc
+> says so.
 
 ---
 
