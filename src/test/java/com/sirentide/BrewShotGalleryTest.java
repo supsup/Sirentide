@@ -136,6 +136,10 @@ class BrewShotGalleryTest {
         new Case("mindmap", "Mind map (indentation-defined tree)",
             "mindmap\n  root Root idea\n    Origins\n      Long history\n      Popular\n"
                 + "    Research\n      On effect\n    Tools\n      Pen and paper\n      Mermaid"),
+        new Case("matrix", "Comparison / verdict matrix (rows × columns × verdict palette)",
+            "matrix\ncols: snapshot, bare\n\"ID1 claim-on-no-signal\" : match, match\n"
+                + "\"PC2 peer-over-flagship\" : match, match\n\"PC1 soft-intent threshold\" : partial, diverge\n"
+                + "\"PC5 boundary-holds-vs-Charles\" : match, diverge"),
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
