@@ -95,7 +95,14 @@ gallery capture; the container-contract drift is closed with an enum-backed guar
 `renderFramesWithDiagnostics` — a why-did-it-degrade channel for the frame bake, without touching
 the never-throw contract of `renderFrames`.
 
-## 2026-07-11 — annotations & semantic colour
+## 2026-07-11 — annotations, semantic colour & label wrapping
+
+### Node-label word-wrap
+A `flowchart` node label wider than `MAX_LABEL_W` (180px) now word-wraps to up to three lines and
+its box grows to fit, instead of ellipsizing to one line. Every wrapped line is ellipsized to the
+same bound (a no-op when it fits) so a spaceless label — a URL, or a single word wider than the
+bound — clips cleanly instead of overflowing the box. A single-line label is byte-identical to the
+pre-wrap engine.
 
 ### Caption / note band
 `%% caption: <text>` (alias `%% note:`) renders a centered, word-wrapped annotation band **below any
