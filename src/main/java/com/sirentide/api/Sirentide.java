@@ -66,6 +66,9 @@ public final class Sirentide {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             LaidOut laid = layout(ir, math);
+            // A `%% caption:`/`note:` directive adds a centered, wrapped annotation band below the
+            // diagram (plan sirentide-caption-note-directive). No-caption returns `laid` unchanged.
+            laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
             // Deterministic accessibility, baked in: a root role="img" + a <title>/<desc> built
             // purely from the IR (roles + label text, fixed order — no timestamps/random). A blank
             // payload (the Empty degrade target) emits nothing, so the inert shell is unchanged. The
@@ -114,6 +117,7 @@ public final class Sirentide {
             // Layout ONCE — every frame re-emits THIS scene with a different emphasis map, so the
             // geometry can never drift between frames (only fills/strokes differ). Deterministic.
             LaidOut laid = layout(ir, math);
+            laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
             com.sirentide.a11y.A11y a11y =
                 com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
 
@@ -171,6 +175,7 @@ public final class Sirentide {
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
+            laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
             stage = STAGE_EMIT;
             com.sirentide.a11y.A11y a11y =
                 com.sirentide.a11y.A11yDescriber.describe(ir, config.title());
@@ -276,6 +281,7 @@ public final class Sirentide {
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
+            laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
             stage = STAGE_EMIT;
             // Thread the a11y payload + config theme/title exactly as render() does, so
             // renderWithDiagnostics().svg() stays byte-identical to render().

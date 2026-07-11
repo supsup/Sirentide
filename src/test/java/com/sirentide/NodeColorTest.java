@@ -147,4 +147,35 @@ class NodeColorTest {
         assertTrue(count(svg, "fill=\"#22c55e\"") >= 1, "the per-state #hex colours Idle's box");
         assertTrue(count(svg, "fill=\"#dbe4ff\"") >= 1, "Running keeps the default state box fill");
     }
+
+    // -- (C) semantic color classes: classDef + class (plan sirentide-semantic-color-classes) ------
+
+    @Test
+    void classDefFillColorsAnAssignedNodeBox() {
+        // `classDef <name> fill:#hex` defines a named box fill; `class <id> <name>` assigns it. The
+        // assigned node's box uses that fill; an unassigned node keeps the default. Removing the class
+        // resolution (mutant) drops the #fdecea box and fails this test.
+        String svg = Sirentide.render(
+            "flowchart TD\n  classDef deny fill:#fdecea\n  A[req] --> D[denied]\n  class D deny\n");
+        assertTrue(count(svg, "fill=\"#fdecea\"") >= 1, "the classDef fill colors the assigned node box");
+        String control = Sirentide.render("flowchart TD\n  A[req] --> D[denied]\n");
+        assertEquals(0, count(control, "fill=\"#fdecea\""), "no class assignment → no class fill");
+    }
+
+    @Test
+    void classFillExpandsThreeDigitHexAndColorsMultipleIds() {
+        // `fill:#fe8` expands to #ffee88 (the shared normalizeColor); `class A,C warn` colors BOTH.
+        String svg = Sirentide.render(
+            "flowchart LR\n  classDef warn fill:#fe8\n  A[a] --> B[b] --> C[c]\n  class A,C warn\n");
+        assertTrue(count(svg, "fill=\"#ffee88\"") >= 2, "3-digit fill expands and colors both assigned ids");
+    }
+
+    @Test
+    void perNodeHexBeatsItsClassFill() {
+        // Resolution order: an explicit per-node #hex wins over the node's class fill.
+        String svg = Sirentide.render(
+            "flowchart TD\n  classDef warn fill:#fe8\n  A[a] #123456\n  class A warn\n");
+        assertTrue(count(svg, "fill=\"#123456\"") >= 1, "the per-node #hex overrides the class fill");
+        assertEquals(0, count(svg, "fill=\"#ffee88\""), "the class fill does not apply when a per-node hex is set");
+    }
 }
