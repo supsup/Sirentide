@@ -795,11 +795,23 @@ public final class FlowchartLayout {
     private static String[] wrapLabel(String raw) {
         java.util.List<String> lines = FONT.measureWrapped(raw, MAX_LABEL_W, LABEL_SIZE).lines();
         if (lines.size() <= WRAP_MAX_LINES) {
-            return lines.toArray(new String[0]);
+            // Ellipsize EACH line to MAX_LABEL_W. `ellipsize` returns the line UNCHANGED when it
+            // already fits (FontMetrics:113 — runWidth <= maxWidth ⇒ no-op), so a normal label stays
+            // byte-identical; but a single line that measureWrapped could NOT break — a spaceless
+            // label (a URL) or a word wider than MAX_LABEL_W has no break point — would otherwise
+            // overflow the box unclipped (Confluence review sirentide/159). Clipping every line closes
+            // that: word-wrap handles the breakable case, per-line ellipsize backstops the unbreakable.
+            String[] out = new String[lines.size()];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = FONT.ellipsize(lines.get(i), MAX_LABEL_W, LABEL_SIZE);
+            }
+            return out;
         }
         String[] capped = new String[WRAP_MAX_LINES];
         for (int i = 0; i < WRAP_MAX_LINES - 1; i++) {
-            capped[i] = lines.get(i);
+            // Same per-line ellipsize backstop for the kept lines (a giant unbreakable word could
+            // land on any of them, not just the tail).
+            capped[i] = FONT.ellipsize(lines.get(i), MAX_LABEL_W, LABEL_SIZE);
         }
         // Join the overflow tail and ellipsize it so the last line carries as much as fits.
         StringBuilder tail = new StringBuilder(lines.get(WRAP_MAX_LINES - 1));

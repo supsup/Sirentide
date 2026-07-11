@@ -130,6 +130,37 @@ class LabelLayoutTest {
         return max;
     }
 
+    /// The widest node-box `<rect>` width in a rendered flowchart. A rect box is `labelW + 2·PAD_X`,
+    /// bounded by `MAX_LABEL_W(180) + 2·PAD_X(14) = 208` once every label line is ellipsized to
+    /// MAX_LABEL_W.
+    private static double maxNodeRectWidth(String svg) {
+        Matcher m = Pattern.compile("<rect[^>]*\\bwidth=\"([0-9.]+)\"").matcher(svg);
+        double max = 0;
+        while (m.find()) {
+            max = Math.max(max, Double.parseDouble(m.group(1)));
+        }
+        return max;
+    }
+
+    @Test
+    void spacelessOverlongLabelIsEllipsizedNotLeakedPastTheBox() {
+        // Confluence review sirentide/159: word-wrap has NO break point for a spaceless label (a URL)
+        // or a single word wider than MAX_LABEL_W, so measureWrapped returns it as one over-wide line.
+        // Before the per-line ellipsize backstop that line leaked the box out to ~430px (canvas ~570).
+        // The fix ellipsizes EVERY wrapped line, so the box is bounded by MAX_LABEL_W(180)+2·PAD_X(14).
+        String url = Sirentide.render(
+            "flowchart LR\n  A[https://example.com/a/very/long/spaceless/path/that/exceeds/the/limit] --> B[x]");
+        assertTrue(maxNodeRectWidth(url) <= 208.0 + 0.5,
+            "a spaceless over-long label must clip to the box bound (got max rect width "
+                + maxNodeRectWidth(url) + ", expected <= 208)");
+
+        // A giant unbreakable WORD embedded in an otherwise-spaced label leaks the same way — same guard.
+        String giantWord = Sirentide.render(
+            "flowchart LR\n  A[see thisiswaytoolongawordtofitinsidethenodeboxatallreally now] --> B[x]");
+        assertTrue(maxNodeRectWidth(giantWord) <= 208.0 + 0.5,
+            "a giant embedded word must clip to the box bound (got " + maxNodeRectWidth(giantWord) + ")");
+    }
+
     @Test
     void longNodeLabelWrapsToATallerBoxInsteadOfEllipsizingToOneLine() {
         // plan sirentide-label-legibility: a node label wider than MAX_LABEL_W (180px) word-wraps to
