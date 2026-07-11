@@ -166,4 +166,46 @@ class ThemeConfigTest {
         assertNotNull(svg);
         assertTrue(svg.contains("width=\"0\" height=\"0\""), "config-only source → inert shell: " + svg);
     }
+
+    // ---- Receipt: the caption / note directive (plan sirentide-caption-note-directive) ----------
+
+    @Test
+    void captionAndNoteAliasBothParseIntoTheCaption() {
+        assertEquals("hello there",
+            DslParser.parseConfig("%% caption: hello there\n" + PIE_BODY).caption());
+        // `note` is an accepted alias for `caption`.
+        assertEquals("an aside",
+            DslParser.parseConfig("%% note: an aside\n" + PIE_BODY).caption());
+        // No directive → null caption (the byte-identical no-caption path).
+        assertNull(DslParser.parseConfig(PIE_BODY).caption());
+    }
+
+    /// The svg root height (the caption grows it below the diagram).
+    private static double svgHeight(String svg) {
+        var m = java.util.regex.Pattern.compile("<svg[^>]*height=\"([0-9.]+)\"").matcher(svg);
+        return m.find() ? Double.parseDouble(m.group(1)) : -1;
+    }
+
+    @Test
+    void captionRendersBelowTheDiagramGrowingTheCanvas() {
+        // The caption is a post-layout band: the SAME diagram WITH a caption is TALLER than without,
+        // and both are still well-formed svg. Removing the withCaption wiring makes the two heights
+        // equal and fails this test (delete-mutant guard) — the caption is genuinely on the canvas.
+        String body = "flowchart TD\n  A[request] --> B[served]";
+        double withCap = svgHeight(Sirentide.render("%% caption: first denial wins\n" + body));
+        double noCap = svgHeight(Sirentide.render(body));
+        assertTrue(withCap > noCap,
+            "a caption must grow the canvas (with=" + withCap + " vs no-caption=" + noCap + ")");
+        assertTrue(Sirentide.render("%% caption: x\n" + body).endsWith("</svg>"), "still well-formed");
+    }
+
+    @Test
+    void noCaptionBakeIsByteIdenticalToTheNoDirectiveBake() {
+        // OPTION-A guarantee extended to the caption feature: a diagram with no caption directive is
+        // byte-for-byte the pre-feature bake (the caption band is purely additive).
+        String body = "flowchart TD\n  A[request] --> B[served]";
+        assertEquals(Sirentide.render(body), Sirentide.render(body));   // determinism sanity
+        // A blank caption value is treated as absent → byte-identical to no directive at all.
+        assertEquals(Sirentide.render(body), Sirentide.render("%% caption:\n" + body));
+    }
 }
