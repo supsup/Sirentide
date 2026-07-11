@@ -92,6 +92,14 @@ class ShowcaseGenTest {
                 + "quadrant-1 \"Major project\"\nquadrant-2 \"Quick win\"\nquadrant-3 \"Deprioritize\"\n"
                 + "quadrant-4 \"Fill-in\"\n\"Feature A\" : [0.3, 0.6]\n\"Feature B\" : [0.75, 0.8]\n"
                 + "\"Feature C\" : [0.5, 0.2]\n\"Feature D\" : [0.85, 0.35]"),
+        new Card("Comparison matrix", "matrix",
+            "A categorical verdict matrix: <code>cols:</code> headers over <code>\"row\" : v1, v2</code> "
+                + "cells, each filled from a CLOSED palette — pass/fail/partial/na (aliases "
+                + "match→pass, diverge→fail). Rows rectangularize to the header width; an unknown token "
+                + "falls to the neutral fill, so no free-form colour is ever introduced.",
+            "matrix\ncols: snapshot, bare\n\"ID1 claim-on-no-signal\" : match, match\n"
+                + "\"PC2 peer-over-flagship\" : match, match\n\"PC1 soft-intent threshold\" : partial, diverge\n"
+                + "\"PC5 boundary-holds-vs-Charles\" : match, diverge"),
         new Card("Class diagram", "classDiagram",
             "UML classes with stacked attribute + method compartments, grid-placed, wired by all "
                 + "five relationship markers — inheritance (hollow triangle), composition (filled "
@@ -434,7 +442,7 @@ class ShowcaseGenTest {
             <p class="sub">Live renderer output — the SVG below was produced by Sirentide from the DSL beside it.</p>
             <div class="card"><div class="duo"><pre>%DSL%</pre><div class="render">%SVG%</div></div></div>
             <p class="note">%NOTE%</p>
-            <p class="note">All fifteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
+            <p class="note">All sixteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
             </body>
             </html>
             """
@@ -499,7 +507,7 @@ class ShowcaseGenTest {
             <header>
               <h1>Sirentide 🌊</h1>
               <p class="tag"><strong>Living, narratable diagrams — baked to static SVG, no runtime JS.</strong></p>
-              <p class="sub">Fifteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
+              <p class="sub">Sixteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
               Every image below is live renderer output, baked by Sirentide from the DSL beside it.</p>
             </header>
             <div class="wrap"><div class="grid">

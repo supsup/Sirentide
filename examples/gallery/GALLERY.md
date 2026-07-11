@@ -329,6 +329,19 @@ mindmap
 
 ![Mind map (indentation-defined tree)](mindmap.png)
 
+## Comparison / verdict matrix (rows × columns × verdict palette)
+
+```
+matrix
+cols: snapshot, bare
+"ID1 claim-on-no-signal" : match, match
+"PC2 peer-over-flagship" : match, match
+"PC1 soft-intent threshold" : partial, diverge
+"PC5 boundary-holds-vs-Charles" : match, diverge
+```
+
+![Comparison / verdict matrix (rows × columns × verdict palette)](matrix.png)
+
 ## Sankey (weighted flows in depth columns)
 
 ```

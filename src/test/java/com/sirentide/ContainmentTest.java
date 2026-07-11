@@ -48,6 +48,11 @@ class ContainmentTest {
         // gantt
         "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n  \"Test\" : 7-10\n",
         "gantt\n  \"ok\" : 0-2\n  \"bad\" : notarange\n",          // malformed range
+        // comparison matrix: headers + all four verdicts + a long row label (ellipsize) + a short
+        // row (rectangularized) — exercises the grid cell rects, glyph labels, and the canvas-fit.
+        "matrix\n  cols: snapshot, bare, notes\n"
+            + "  \"PC5 boundary-holds-vs-Charles when he says cross it\" : match, diverge, na\n"
+            + "  \"short\" : pass\n",
         // flowchart (5th type): a chain + a diamond + a CYCLE + a lone node — exercises the new
         // <path> arrowhead shape, the layered layout, and cycle-termination through the allowlist.
         "flowchart TD\n  A[Start] --> B[Process]\n  B --> C[End]\n"
