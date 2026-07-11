@@ -49,6 +49,23 @@ tasks.test {
     // Same for the showcase-page regen switch, so
     // `./gradlew test -Dsirentide.updateShowcase=true` reaches ShowcaseGenTest.
     systemProperty("sirentide.updateShowcase", System.getProperty("sirentide.updateShowcase", "false"))
+    testLogging { events("skipped", "failed") }
+
+    // CI-honesty guard: the BrewShot browser-eyes pins assume-skip when Chrome is
+    // absent (the only skips in this suite). CI installs Chrome and sets
+    // SIRENTIDE_REQUIRE_CHROME, so ANY skip there means the browser pins silently
+    // didn't run — a green that tested nothing. Fail instead.
+    val requireChrome = System.getenv("SIRENTIDE_REQUIRE_CHROME")
+        ?.let { it == "1" || it.equals("true", true) || it.equals("yes", true) } ?: false
+    afterSuite(KotlinClosure2<TestDescriptor, TestResult, Unit>({ desc, result ->
+        if (desc.parent == null && requireChrome && result.skippedTestCount > 0) {
+            throw GradleException(
+                "SIRENTIDE_REQUIRE_CHROME is set but ${result.skippedTestCount} test(s) were " +
+                "SKIPPED — the BrewShot browser pins must run (Chrome present) or fail, never " +
+                "skip green (green-that-tested-nothing guard)."
+            )
+        }
+    }))
 }
 
 application {
