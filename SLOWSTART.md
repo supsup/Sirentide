@@ -43,9 +43,10 @@ than shell out to a browser.
 Dana writes internal docs on a static site whose sanitizer strips `<script>` and `<style>`. She
 wants a diagram, not a hand-placed SVG.
 
-Today she can already reach for six diagram types — a `pie` of where the team's time goes, an
+Today she can already reach for fifteen diagram types — a `pie` of where the team's time goes, an
 `xychart` of throughput, a `timeline` or `gantt` of the roadmap, a `flowchart` of the review
-gate, or a `sequence` of the request path:
+gate, a `sequence` of the request path, plus `state`, `quadrant`, `classDiagram`, `erDiagram`,
+`gitGraph`, `journey`, `mindmap`, `sankey`, and `mathblock`:
 
 ```
 flowchart TD

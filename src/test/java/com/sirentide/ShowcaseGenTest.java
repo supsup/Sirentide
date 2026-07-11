@@ -153,6 +153,21 @@ class ShowcaseGenTest {
             "flowchart TD\nA[Start] --> B[Work]\nsubgraph outer [Build Pipeline]\nB --> C[Compile]\n"
                 + "subgraph inner [Test Suite]\nC --> D[Unit]\nD --> F[Integration]\nend\n"
                 + "F --> G[Package]\nend\nG --> E[Ship]"),
+        new Card("Flowchart — semantic colour classes", "classDef · class",
+            "Define a reusable fill with <code>classDef &lt;name&gt; fill:#rrggbb</code>, then assign it "
+                + "with <code>class &lt;id&gt; &lt;name&gt;</code> — the green=allow / red=deny palette the "
+                + "security diagrams need. Same <code>#rrggbb</code>-only hex gate as a per-node colour; "
+                + "a per-node <code>#hex</code> still wins over its class.",
+            "flowchart LR\nclassDef deny fill:#fecaca\nclassDef ok fill:#bbf7d0\n"
+                + "A[Request] --> B{Authorized?}\nB -->|yes| C[Serve]\nB -->|no| D[Deny]\n"
+                + "class C ok\nclass D deny"),
+        new Card("Caption / note directive", "%% caption · %% note",
+            "A <code>%% caption: &lt;text&gt;</code> directive (alias <code>%% note:</code>) in the "
+                + "preamble renders a centered, word-wrapped annotation band below <em>any</em> diagram "
+                + "type. It bakes to <code>currentColor</code> glyph paths like every label — inert by "
+                + "construction, no sanitizer change.",
+            "%% caption: A merge lands only after both peers approve and no conflicts remain.\n"
+                + "flowchart LR\nA[Author] --> B[Review]\nB --> C[Merge]"),
         new Card("Sequence — alt / loop / par frames", "alt · loop · par",
             "Combined-fragment frames: an <code>alt</code>/<code>else</code> branch, a "
                 + "<code>loop</code> nested inside it, and a <code>par</code>/<code>and</code> across a "
@@ -419,7 +434,7 @@ class ShowcaseGenTest {
             <p class="sub">Live renderer output — the SVG below was produced by Sirentide from the DSL beside it.</p>
             <div class="card"><div class="duo"><pre>%DSL%</pre><div class="render">%SVG%</div></div></div>
             <p class="note">%NOTE%</p>
-            <p class="note">All fourteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
+            <p class="note">All fifteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
             </body>
             </html>
             """
@@ -484,7 +499,7 @@ class ShowcaseGenTest {
             <header>
               <h1>Sirentide 🌊</h1>
               <p class="tag"><strong>Living, narratable diagrams — baked to static SVG, no runtime JS.</strong></p>
-              <p class="sub">Fourteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
+              <p class="sub">Fifteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
               Every image below is live renderer output, baked by Sirentide from the DSL beside it.</p>
             </header>
             <div class="wrap"><div class="grid">

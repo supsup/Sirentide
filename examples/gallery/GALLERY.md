@@ -145,6 +145,32 @@ G --> E[Ship]
 
 ![Flowchart (nested subgraph clusters)](flowchart-subgraph.png)
 
+## Flowchart semantic colour classes (classDef · class)
+
+```
+flowchart LR
+classDef deny fill:#fecaca
+classDef ok fill:#bbf7d0
+A[Request] --> B{Authorized?}
+B -->|yes| C[Serve]
+B -->|no| D[Deny]
+class C ok
+class D deny
+```
+
+![Flowchart semantic colour classes (classDef · class)](flowchart-classdef.png)
+
+## Caption / note directive (annotation band below any diagram)
+
+```
+%% caption: A merge lands only after both peers approve and no conflicts remain.
+flowchart LR
+A[Author] --> B[Review]
+B --> C[Merge]
+```
+
+![Caption / note directive (annotation band below any diagram)](flowchart-caption.png)
+
 ## Sequence (API token flow)
 
 ```
