@@ -118,4 +118,34 @@ class LabelLayoutTest {
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
         assertTrue(svg.contains("<path"), "the (clipped) task label still renders as a glyph path");
     }
+
+    /// The tallest node-box `<rect>` height in a rendered flowchart. Flowchart node boxes emit as
+    /// `<rect ... width="W" height="H" .../>`; NODE_H is 36. A wrapped multi-line label GROWS its box.
+    private static double maxNodeRectHeight(String svg) {
+        Matcher m = Pattern.compile("<rect[^>]*height=\"([0-9.]+)\"").matcher(svg);
+        double max = 0;
+        while (m.find()) {
+            max = Math.max(max, Double.parseDouble(m.group(1)));
+        }
+        return max;
+    }
+
+    @Test
+    void longNodeLabelWrapsToATallerBoxInsteadOfEllipsizingToOneLine() {
+        // plan sirentide-label-legibility: a node label wider than MAX_LABEL_W (180px) word-wraps to
+        // multiple lines and its box GROWS to fit, rather than truncating to one ellipsized line. The
+        // grown box (height > NODE_H=36) is the load-bearing signal — reverting to the ellipsize path
+        // keeps every box at 36 and fails this test (delete-mutant guard).
+        String longLabel = Sirentide.render(
+            "flowchart LR\n  A[this is a long label that should wrap onto several lines] --> B[x]");
+        assertTrue(maxNodeRectHeight(longLabel) > 36.0,
+            "a long label must wrap to a taller box (got max rect height "
+                + maxNodeRectHeight(longLabel) + ", expected > 36)");
+
+        // A short label stays exactly one NODE_H line — proves the single-line path is unchanged
+        // (byte-identical height), so wrapping only kicks in for labels that actually overflow.
+        String shortLabel = Sirentide.render("flowchart LR\n  A[short] --> B[x]");
+        assertTrue(maxNodeRectHeight(shortLabel) == 36.0,
+            "a short label must keep the fixed NODE_H box (got " + maxNodeRectHeight(shortLabel) + ")");
+    }
 }
