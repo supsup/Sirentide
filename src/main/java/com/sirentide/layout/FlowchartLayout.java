@@ -433,8 +433,14 @@ public final class FlowchartLayout {
         }
         int layerCount = maxLayer + 1;
 
-        // Node box sizes (ellipsized label → width). Group node indices by layer, in first-seen order.
+        // Node box sizes (wrapped label → width + line count). Group node indices by layer, in
+        // first-seen order.
         String[] labels = new String[n];
+        // Per-node wrapped lines for a PLAIN-TEXT label (null for a math node). A label that fits one
+        // line yields a single-element array whose sole line == the old ellipsized text, so the box
+        // stays NODE_H and the emit path is byte-identical; a longer label wraps to <=WRAP_MAX_LINES
+        // lines instead of ellipsizing to one (plan sirentide-label-legibility).
+        String[][] wrapped = new String[n][];
         double[] boxW = new double[n];
         // Composite measures for nodes whose label carries `$…$` math AND a renderer was provided;
         // null for every plain-text node, which keeps the existing text path (byte-identical) below.
@@ -454,9 +460,16 @@ public final class FlowchartLayout {
                 labels[i] = raw;
                 lw = m.width();
             } else {
-                String label = FONT.ellipsize(raw, MAX_LABEL_W, LABEL_SIZE);
-                labels[i] = label;
-                lw = FONT.runWidth(label, LABEL_SIZE);
+                // Word-wrap to MAX_LABEL_W instead of ellipsizing to one line. measureWrapped
+                // returns ONE line (== the whole text) when the label already fits or has no space,
+                // so a short label keeps its exact old width + a single-line box (byte-identical).
+                String[] lines = wrapLabel(raw);
+                wrapped[i] = lines;
+                labels[i] = lines.length == 1 ? lines[0] : raw;
+                lw = 0;
+                for (String ln : lines) {
+                    lw = Math.max(lw, FONT.runWidth(ln, LABEL_SIZE));
+                }
             }
             // Per-shape box width. RECT + DIAMOND stay EXACTLY as before (byte-identical): rect is
             // label+padding; a DIAMOND (M1.3) is 1.5× the text so the rhombus CONTAINS its centered
@@ -478,16 +491,24 @@ public final class FlowchartLayout {
             byLayer.get(layer[i]).add(i);   // first-seen order preserved (i ascends)
         }
 
-        // Per-node box HEIGHT (plan sirentide-tall-math-labels). NODE_H for every plain-text / short-
-        // math node — so a node whose label fits one line is byte-identical to the fixed-height engine
-        // — and a GROWN height for a node whose label carries a TALL multi-row fragment (matrix / cases
-        // / stacked fraction) whose ascent+descent exceeds one line. The seam ({@link MathLabel}) owns
-        // the policy; here we just consume it. `boxH[i] != NODE_H` iff node i grew.
+        // Per-node box HEIGHT. NODE_H for every SINGLE-LINE plain-text / short-math node — so a node
+        // whose label fits one line is byte-identical to the fixed-height engine. A GROWN height for:
+        // a TALL multi-row MATH fragment (matrix / cases / stacked fraction — the MathLabel seam owns
+        // that policy), OR a plain-text label that WRAPPED to >1 line (plan sirentide-label-legibility)
+        // — one NODE_H-worth of chrome around `lines * lineHeight` of stacked text. `boxH[i] != NODE_H`
+        // iff node i grew.
+        double lineH = FONT.lineHeight(LABEL_SIZE);
         double[] boxH = new double[n];
         for (int i = 0; i < n; i++) {
-            boxH[i] = measures[i] != null
-                ? MathLabel.boxHeight(measures[i], NODE_H, LABEL_SIZE, FONT)
-                : NODE_H;
+            if (measures[i] != null) {
+                boxH[i] = MathLabel.boxHeight(measures[i], NODE_H, LABEL_SIZE, FONT);
+            } else if (wrapped[i] != null && wrapped[i].length > 1) {
+                // Stacked text height + the same vertical breathing room a 1-line box has
+                // (NODE_H - lineH, split top/bottom), floored at NODE_H so a 2-line box never shrinks.
+                boxH[i] = Math.max(NODE_H, wrapped[i].length * lineH + (NODE_H - lineH));
+            } else {
+                boxH[i] = NODE_H;
+            }
         }
 
         // Resolve each node's BOX fill once (direction-independent): the author's per-node colour
@@ -513,7 +534,7 @@ public final class FlowchartLayout {
         // emission pass (glyph paths can't be transposed after the fact), so it forks here. The TD
         // path stays byte-identical (all existing goldens unchanged).
         if ("LR".equals(fc.direction())) {
-            return layoutLr(fc, nodes, n, layerCount, rt, boxW, boxH, labels, nodeFill, edges, isBack,
+            return layoutLr(fc, nodes, n, layerCount, rt, boxW, boxH, labels, wrapped, nodeFill, edges, isBack,
                 styler, measures, math, anchored);
         }
 
@@ -743,8 +764,9 @@ public final class FlowchartLayout {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();
                 styler.emitNode(ng, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
-                emitNodeLabel(ng, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
-                    measures[i], labels[i], nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2,
+                    labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
+                    measures[i], wrapped[i], nodeFill[i]);
                 shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
             }
         } else {
@@ -752,28 +774,83 @@ public final class FlowchartLayout {
                 styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
             }
             for (int i = 0; i < n; i++) {
-                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
-                    measures[i], labels[i], nodeFill[i]);
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2,
+                    labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
+                    measures[i], wrapped[i], nodeFill[i]);
             }
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
     }
 
+    /// Max wrapped lines for a node label before the last line ellipsizes — bounds the box height so a
+    /// pathologically long label can't grow an enormous box (plan sirentide-label-legibility).
+    private static final int WRAP_MAX_LINES = 3;
+
+    /// Word-wrap a plain-text node label to at most {@link #WRAP_MAX_LINES} lines at {@link #MAX_LABEL_W}.
+    /// A label that fits one line (or has no spaces) returns a single-element array whose sole element is
+    /// the text unchanged — so a short label is byte-identical to the pre-wrap engine. When wrapping
+    /// would exceed the line cap, the final line is ellipsized to {@link #MAX_LABEL_W} so overflow still
+    /// clips legibly (the old behaviour, now only for the genuinely-too-long tail).
+    private static String[] wrapLabel(String raw) {
+        java.util.List<String> lines = FONT.measureWrapped(raw, MAX_LABEL_W, LABEL_SIZE).lines();
+        if (lines.size() <= WRAP_MAX_LINES) {
+            // Ellipsize EACH line to MAX_LABEL_W. `ellipsize` returns the line UNCHANGED when it
+            // already fits (FontMetrics:113 — runWidth <= maxWidth ⇒ no-op), so a normal label stays
+            // byte-identical; but a single line that measureWrapped could NOT break — a spaceless
+            // label (a URL) or a word wider than MAX_LABEL_W has no break point — would otherwise
+            // overflow the box unclipped (Confluence review sirentide/159). Clipping every line closes
+            // that: word-wrap handles the breakable case, per-line ellipsize backstops the unbreakable.
+            String[] out = new String[lines.size()];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = FONT.ellipsize(lines.get(i), MAX_LABEL_W, LABEL_SIZE);
+            }
+            return out;
+        }
+        String[] capped = new String[WRAP_MAX_LINES];
+        for (int i = 0; i < WRAP_MAX_LINES - 1; i++) {
+            // Same per-line ellipsize backstop for the kept lines (a giant unbreakable word could
+            // land on any of them, not just the tail).
+            capped[i] = FONT.ellipsize(lines.get(i), MAX_LABEL_W, LABEL_SIZE);
+        }
+        // Join the overflow tail and ellipsize it so the last line carries as much as fits.
+        StringBuilder tail = new StringBuilder(lines.get(WRAP_MAX_LINES - 1));
+        for (int i = WRAP_MAX_LINES; i < lines.size(); i++) {
+            tail.append(' ').append(lines.get(i));
+        }
+        capped[WRAP_MAX_LINES - 1] = FONT.ellipsize(tail.toString(), MAX_LABEL_W, LABEL_SIZE);
+        return capped;
+    }
+
     /// Emit one node's centered label (glyph paths — never `<text>`) into `tgt`. A node label sits ON
     /// its box, so it fills with the CONTRAST of the box colour (dark on a light box, white on a dark
     /// one). Extracted from the label pass so the anchored (per-node group) and unanchored (flat two-
-    /// pass) paths share EXACTLY the same label bytes.
+    /// pass) paths share EXACTLY the same label bytes. `lines` carries the wrapped plain-text lines
+    /// (single-element for a fits-one-line label ⇒ byte-identical single GlyphRun); it is null for a
+    /// math node, which routes through the {@link MathLabel} seam instead.
     private static void emitNodeLabel(List<Shape> tgt, double cx, double baseline,
-                                      MathLabel.Measured measure, String label, String nodeFill) {
+                                      MathLabel.Measured measure, String[] lines, String nodeFill) {
         if (measure != null) {
             MathLabel.emit(measure, cx - measure.width() / 2, baseline,
                 Colors.contrastFill(nodeFill), LABEL_SIZE, FONT, tgt);
-        } else {
-            double w = FONT.runWidth(label, LABEL_SIZE);
-            String d = FONT.textPathD(label, cx - w / 2, baseline, LABEL_SIZE);
+        } else if (lines.length == 1) {
+            // Single line: the EXACT legacy path — one GlyphRun at the shared baseline (byte-identical).
+            double w = FONT.runWidth(lines[0], LABEL_SIZE);
+            String d = FONT.textPathD(lines[0], cx - w / 2, baseline, LABEL_SIZE);
             if (!d.isBlank()) {
                 tgt.add(new GlyphRun(d, Colors.contrastFill(nodeFill)));
+            }
+        } else {
+            // Multi-line: `baseline` is the FIRST line's baseline (top-anchored by labelBaseline for a
+            // grown box); each subsequent line drops one lineHeight. Each line centered on cx.
+            double lineH = FONT.lineHeight(LABEL_SIZE);
+            String fill = Colors.contrastFill(nodeFill);
+            for (int k = 0; k < lines.length; k++) {
+                double w = FONT.runWidth(lines[k], LABEL_SIZE);
+                String d = FONT.textPathD(lines[k], cx - w / 2, baseline + k * lineH, LABEL_SIZE);
+                if (!d.isBlank()) {
+                    tgt.add(new GlyphRun(d, fill));
+                }
             }
         }
     }
@@ -783,11 +860,15 @@ public final class FlowchartLayout {
     /// fragment ink in the box via {@link MathLabel#baselineInBox}; every other node — plain text,
     /// short inline math, a fixed-height box — keeps the EXACT legacy formula (`top + NODE_H/2 +
     /// LABEL_SIZE*0.35`), so its bytes are unchanged. Shared by TD + LR, anchored + legacy paths.
-    private static double labelBaseline(MathLabel.Measured measure, double boxTop, double boxH) {
+    private static double labelBaseline(MathLabel.Measured measure, double boxTop, double boxH, int lines) {
         if (measure != null && boxH != NODE_H) {
             return MathLabel.baselineInBox(measure, boxTop, boxH);
         }
-        return boxTop + NODE_H / 2 + LABEL_SIZE * 0.35;
+        // Center a stack of `lines` text rows in the box: the first row's baseline. For lines==1 and
+        // boxH==NODE_H this reduces to `boxTop + NODE_H/2 + LABEL_SIZE*0.35` — the exact legacy formula,
+        // so a single-line node is byte-identical. For a grown multi-line box the whole block centers.
+        double lineH = FONT.lineHeight(LABEL_SIZE);
+        return boxTop + boxH / 2 - (lines - 1) * lineH / 2 + LABEL_SIZE * 0.35;
     }
 
     /// Full per-VERTEX heights: `boxH` for the real nodes `[0,n)`, `NODE_H` for every virtual waypoint
@@ -838,7 +919,7 @@ public final class FlowchartLayout {
     /// the coordinates differ.
     private static LaidOut layoutLr(Flowchart fc, List<FlowNode> nodes, int n, int layerCount,
                                     Routing rt, double[] boxW, double[] boxH, String[] labels,
-                                    String[] nodeFill, List<Edge> edges, boolean[] isBack,
+                                    String[][] wrapped, String[] nodeFill, List<Edge> edges, boolean[] isBack,
                                     NodeStyler styler, MathLabel.Measured[] measures,
                                     MathFragmentRenderer math, boolean anchored) {
         // Full per-VERTEX heights (real nodes + virtual waypoints); a tall multi-row math node grows
@@ -1054,8 +1135,9 @@ public final class FlowchartLayout {
             for (int i = 0; i < n; i++) {
                 List<Shape> ng = new ArrayList<>();
                 styler.emitNode(ng, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
-                emitNodeLabel(ng, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
-                    measures[i], labels[i], nodeFill[i]);
+                emitNodeLabel(ng, vx[i] + boxW[i] / 2,
+                    labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
+                    measures[i], wrapped[i], nodeFill[i]);
                 shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
             }
         } else {
@@ -1063,8 +1145,9 @@ public final class FlowchartLayout {
                 styler.emitNode(shapes, i, vx[i], vy[i], boxW[i], boxH[i], nodes.get(i).shape(), nodeFill[i]);
             }
             for (int i = 0; i < n; i++) {
-                emitNodeLabel(shapes, vx[i] + boxW[i] / 2, labelBaseline(measures[i], vy[i], boxH[i]),
-                    measures[i], labels[i], nodeFill[i]);
+                emitNodeLabel(shapes, vx[i] + boxW[i] / 2,
+                    labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
+                    measures[i], wrapped[i], nodeFill[i]);
             }
         }
 
