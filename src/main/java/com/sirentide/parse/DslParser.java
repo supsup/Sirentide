@@ -1773,8 +1773,7 @@ public final class DslParser {
             String label = cap(unquote(line.substring(0, sep).strip()));
             List<Matrix.Cell> cells = new ArrayList<>();
             for (String tok : line.substring(sep + 1).split(",", -1)) {
-                String text = tok.strip();
-                cells.add(new Matrix.Cell(cap(text), verdictOf(text)));
+                cells.add(parseCell(tok));
             }
             rows.add(new Matrix.Row(label, cells));
         }
@@ -1790,6 +1789,21 @@ public final class DslParser {
             normalized.add(new Matrix.Row(r.label(), cs.size() > m ? new ArrayList<>(cs.subList(0, m)) : cs));
         }
         return new Matrix(columns, normalized, textColor);
+    }
+
+    /// Parse one matrix cell. Two shapes: a bare verdict token (`pass`, `match`) where the token is
+    /// BOTH the shown text and the colour; or `display text:verdict` where the part before the last
+    /// colon is shown verbatim and the part after picks the fill (e.g. `HELD:pass` → the word "HELD"
+    /// on a green cell). The `text:verdict` shape lets a descriptive matrix (11-operate-clone-replay's
+    /// "HELD (principle)" / "hold + offer" cells) still carry the match/diverge colour. A blank cell is NA.
+    private static Matrix.Cell parseCell(String token) {
+        String tok = token.strip();
+        int c = tok.lastIndexOf(':');
+        if (c >= 0) {
+            String text = tok.substring(0, c).strip();
+            return new Matrix.Cell(cap(text), verdictOf(tok.substring(c + 1)));
+        }
+        return new Matrix.Cell(cap(tok), verdictOf(tok));
     }
 
     /// Map a cell token to the closed verdict vocabulary (the only values that reach the palette).

@@ -74,6 +74,20 @@ class MatrixTest {
     }
 
     @Test
+    void textColonVerdictShowsTheTextButColoursByTheVerdict() {
+        // The `display text:verdict` cell shape (11-operate-clone-replay's descriptive cells): the word
+        // before the last colon is shown, the token after picks the fill. So "HELD:pass" is a green
+        // cell reading "HELD"; "would proceed:fail" is a red cell reading "would proceed".
+        String svg = Sirentide.render(
+            "matrix\ncols: clone, decoy\n\"O1\" : HELD:pass, would proceed:fail");
+        assertTrue(count(svg, "fill=\"" + PASS + "\"") >= 1, "HELD:pass fills the cell green");
+        assertTrue(count(svg, "fill=\"" + FAIL + "\"") >= 1, "would proceed:fail fills the cell red");
+        // The a11y desc carries the normalized verdicts, proving the colour came from the token, not
+        // the (unrecognized-as-a-verdict) display text.
+        assertTrue(svg.contains("O1: pass, fail"), "the verdict, not the display text, drives the fill");
+    }
+
+    @Test
     void blankMatrixStillRendersAValidSvg() {
         // A bare `matrix` (no cols, no rows) must bake a well-formed (small) SVG, never a crash or a
         // degenerate 0x0 (the never-throw bake contract).
