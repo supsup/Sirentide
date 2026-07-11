@@ -118,4 +118,65 @@ class LabelLayoutTest {
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "well-formed");
         assertTrue(svg.contains("<path"), "the (clipped) task label still renders as a glyph path");
     }
+
+    /// The tallest node-box `<rect>` height in a rendered flowchart. Flowchart node boxes emit as
+    /// `<rect ... width="W" height="H" .../>`; NODE_H is 36. A wrapped multi-line label GROWS its box.
+    private static double maxNodeRectHeight(String svg) {
+        Matcher m = Pattern.compile("<rect[^>]*height=\"([0-9.]+)\"").matcher(svg);
+        double max = 0;
+        while (m.find()) {
+            max = Math.max(max, Double.parseDouble(m.group(1)));
+        }
+        return max;
+    }
+
+    /// The widest node-box `<rect>` width in a rendered flowchart. A rect box is `labelW + 2·PAD_X`,
+    /// bounded by `MAX_LABEL_W(180) + 2·PAD_X(14) = 208` once every label line is ellipsized to
+    /// MAX_LABEL_W.
+    private static double maxNodeRectWidth(String svg) {
+        Matcher m = Pattern.compile("<rect[^>]*\\bwidth=\"([0-9.]+)\"").matcher(svg);
+        double max = 0;
+        while (m.find()) {
+            max = Math.max(max, Double.parseDouble(m.group(1)));
+        }
+        return max;
+    }
+
+    @Test
+    void spacelessOverlongLabelIsEllipsizedNotLeakedPastTheBox() {
+        // Confluence review sirentide/159: word-wrap has NO break point for a spaceless label (a URL)
+        // or a single word wider than MAX_LABEL_W, so measureWrapped returns it as one over-wide line.
+        // Before the per-line ellipsize backstop that line leaked the box out to ~430px (canvas ~570).
+        // The fix ellipsizes EVERY wrapped line, so the box is bounded by MAX_LABEL_W(180)+2·PAD_X(14).
+        String url = Sirentide.render(
+            "flowchart LR\n  A[https://example.com/a/very/long/spaceless/path/that/exceeds/the/limit] --> B[x]");
+        assertTrue(maxNodeRectWidth(url) <= 208.0 + 0.5,
+            "a spaceless over-long label must clip to the box bound (got max rect width "
+                + maxNodeRectWidth(url) + ", expected <= 208)");
+
+        // A giant unbreakable WORD embedded in an otherwise-spaced label leaks the same way — same guard.
+        String giantWord = Sirentide.render(
+            "flowchart LR\n  A[see thisiswaytoolongawordtofitinsidethenodeboxatallreally now] --> B[x]");
+        assertTrue(maxNodeRectWidth(giantWord) <= 208.0 + 0.5,
+            "a giant embedded word must clip to the box bound (got " + maxNodeRectWidth(giantWord) + ")");
+    }
+
+    @Test
+    void longNodeLabelWrapsToATallerBoxInsteadOfEllipsizingToOneLine() {
+        // plan sirentide-label-legibility: a node label wider than MAX_LABEL_W (180px) word-wraps to
+        // multiple lines and its box GROWS to fit, rather than truncating to one ellipsized line. The
+        // grown box (height > NODE_H=36) is the load-bearing signal — reverting to the ellipsize path
+        // keeps every box at 36 and fails this test (delete-mutant guard).
+        String longLabel = Sirentide.render(
+            "flowchart LR\n  A[this is a long label that should wrap onto several lines] --> B[x]");
+        assertTrue(maxNodeRectHeight(longLabel) > 36.0,
+            "a long label must wrap to a taller box (got max rect height "
+                + maxNodeRectHeight(longLabel) + ", expected > 36)");
+
+        // A short label stays exactly one NODE_H line — proves the single-line path is unchanged
+        // (byte-identical height), so wrapping only kicks in for labels that actually overflow.
+        String shortLabel = Sirentide.render("flowchart LR\n  A[short] --> B[x]");
+        assertTrue(maxNodeRectHeight(shortLabel) == 36.0,
+            "a short label must keep the fixed NODE_H box (got " + maxNodeRectHeight(shortLabel) + ")");
+    }
 }
