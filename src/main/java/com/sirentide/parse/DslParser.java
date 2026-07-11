@@ -531,6 +531,13 @@ public final class DslParser {
         LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
         Map<String, String> nodeShapes = new java.util.HashMap<>();
         Map<String, String> nodeColors = new java.util.HashMap<>();
+        // Semantic color classes (plan sirentide-semantic-color-classes): `classDef <name> fill:#hex`
+        // defines a named box fill; `class <id>[,<id>…] <name>` assigns nodes to it. A node's fill
+        // resolves per-node #hex FIRST, else its class fill, else the header nodecolor=, else the
+        // built-in default. Fills go through the SAME isHexColor gate as a per-node colour, so no new
+        // value ever reaches the emitter (the security-first #rrggbb-only invariant holds).
+        Map<String, String> classFill = new java.util.HashMap<>();
+        Map<String, String> nodeClass = new java.util.HashMap<>();
         List<FlowEdge> edges = new ArrayList<>();
         // subgraph/end CLUSTER tracking (mirrors the sequence alt/loop/par block stack): a stack of
         // OPEN clusters (innermost on top) whose member lists grow as nodes are FIRST SEEN inside
@@ -565,6 +572,14 @@ public final class DslParser {
                         clusters.add(clusterStack.pop().freeze());
                     }
                     // A stray `end` (nothing open) is inert (malformed→inert, DESIGN §6).
+                    continue;
+                }
+                if (kwRest[0].equals(KW_CLASSDEF)) {
+                    parseClassDef(kwRest[1], classFill);   // `classDef <name> fill:#hex[,…]`
+                    continue;
+                }
+                if (kwRest[0].equals(KW_CLASS)) {
+                    parseClassAssign(kwRest[1], nodeClass);   // `class <id>[,<id>…] <name>`
                     continue;
                 }
                 // No edge operator at top level → the whole line is a lone node declaration. A
@@ -641,10 +656,71 @@ public final class DslParser {
         }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
+            // Fill resolution: per-node #hex wins, else the node's class fill, else null (the layout
+            // then falls back to the header nodecolor= / built-in default).
+            String explicit = nodeColors.get(e.getKey());
+            String cls = nodeClass.get(e.getKey());
+            String color = explicit != null ? explicit
+                : (cls != null ? classFill.get(cls) : null);
             nodes.add(new FlowNode(e.getKey(), e.getValue(),
-                nodeShapes.getOrDefault(e.getKey(), "rect"), nodeColors.get(e.getKey())));
+                nodeShapes.getOrDefault(e.getKey(), "rect"), color));
         }
         return new Flowchart(nodes, edges, direction, textColor, nodeColor, clusters);
+    }
+
+    /// The reserved leading COLOR-CLASS keywords (plan sirentide-semantic-color-classes): `classDef`
+    /// defines a named box fill, `class` assigns nodes to one. Like `subgraph`/`end`, an arrowless line
+    /// whose first token is one of these is a directive, not a node (a node literally named `class` is
+    /// vanishingly rare and consistent with the existing subgraph/end treatment).
+    private static final String KW_CLASSDEF = "classDef";
+    // KW_CLASS ("class") is defined once for the whole parser (reused here + by the class diagram).
+
+    /// Parse a `classDef <name> <prop>[,<prop>…]` body into `classFill[name] = #rrggbb`. v1 reads the
+    /// `fill:#hex` property (the box colour — the risk-palette the docs use); other props (stroke, etc.)
+    /// are IGNORED for now (inert, forward-compatible). An invalid/absent fill leaves the class unset
+    /// (a node assigned to it falls through to the default) — malformed never throws (DESIGN §6).
+    private static void parseClassDef(String body, Map<String, String> classFill) {
+        String[] kv = splitKeyword(body);   // <name> | <props>
+        String name = kv[0].strip();
+        if (name.isEmpty() || kv[1].isEmpty()) {
+            return;
+        }
+        // Props are comma- or space-separated `key:value`; find `fill:`.
+        for (String prop : kv[1].split("[,\\s]+")) {
+            int colon = prop.indexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            if (prop.substring(0, colon).strip().equalsIgnoreCase("fill")) {
+                String hex = prop.substring(colon + 1).strip();
+                if (SirentideContract.isHexColor(hex)) {
+                    classFill.put(name, SirentideContract.normalizeColor(hex));
+                }
+                return;   // first fill wins
+            }
+        }
+    }
+
+    /// Parse a `class <id>[,<id>…] <name>` assignment into `nodeClass[id] = name` for each id. The LAST
+    /// whitespace-separated token is the class name; everything before it is the comma-separated id
+    /// list. An empty id list or missing name is inert. A later assignment for an id overrides an
+    /// earlier one (last-wins), mirroring mermaid.
+    private static void parseClassAssign(String body, Map<String, String> nodeClass) {
+        int lastSp = Math.max(body.lastIndexOf(' '), body.lastIndexOf('\t'));
+        if (lastSp < 0) {
+            return;   // no `<ids> <name>` split → inert
+        }
+        String name = body.substring(lastSp + 1).strip();
+        String ids = body.substring(0, lastSp).strip();
+        if (name.isEmpty() || ids.isEmpty()) {
+            return;
+        }
+        for (String id : ids.split("[,\\s]+")) {
+            String trimmed = id.strip();
+            if (!trimmed.isEmpty()) {
+                nodeClass.put(cap(trimmed), name);
+            }
+        }
     }
 
     /// The reserved leading CLUSTER keywords: `subgraph <id> [title]` opens a cluster box, `end`
