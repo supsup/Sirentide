@@ -147,7 +147,7 @@ public final class SvgEmitter {
             case Path p -> {
                 sb.append("<path d=\"").append(p.d())
                     .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(p.fill())))).append('"');
-                appendStroke(sb, p.stroke(), p.strokeWidth(), theme);
+                appendStroke(sb, st, p.stroke(), p.strokeWidth(), theme);
                 sb.append("/>");
             }
             // A filled box (node/actor-head/activation rect): a STRUCTURAL fill — a future step dims,
@@ -158,7 +158,7 @@ public final class SvgEmitter {
                     .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
                     .append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(r.fill())))).append('"');
                 // An OPTIONAL node border (classDef stroke): absent (null) → byte-identical (no attrs).
-                appendStroke(sb, r.stroke(), r.strokeWidth(), theme);
+                appendStroke(sb, st, r.stroke(), r.strokeWidth(), theme);
                 sb.append("/>");
             }
             // A line (message arrow, edge, lifeline segment): an accentable stroke + a thickened width
@@ -241,12 +241,18 @@ public final class SvgEmitter {
     /// classDef border is byte-identical to its pre-feature emission. A present stroke runs the SAME
     /// {@link #color} sink (theme-resolved, contract-validated — a non-`#hex|currentColor|none` value
     /// throws rather than reaching the attribute) and a deterministically-formatted finite width.
-    private static void appendStroke(StringBuilder sb, String stroke, double strokeWidth, Theme theme) {
+    private static void appendStroke(StringBuilder sb, Emphasis.State st, String stroke,
+                                     double strokeWidth, Theme theme) {
         if (stroke == null) {
             return;
         }
-        sb.append(" stroke=\"").append(color(theme.resolve(stroke)))
-            .append("\" stroke-width=\"").append(fmt(strokeWidth)).append('"');
+        // A styled node border IS the in-alphabet accent the structural box()-fill contract defers
+        // to (Emphasis#box: "a filled box has no in-alphabet accent … its label/border carries the
+        // accent"). So it participates in play-through exactly like a <line> edge stroke: a FUTURE
+        // frame dims it, an ACTIVE frame promotes it to the play-through accent and thickens it.
+        // Absent (null) still writes NOTHING — byte-identical to the pre-feature bake.
+        sb.append(" stroke=\"").append(color(Emphasis.accent(st, theme.resolve(stroke))))
+            .append("\" stroke-width=\"").append(fmt(Emphasis.strokeWidth(st, strokeWidth))).append('"');
     }
 
     /// The sink's last-line-of-defense on presentation colour: fill/stroke values MUST match the

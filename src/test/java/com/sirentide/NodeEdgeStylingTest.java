@@ -171,4 +171,45 @@ class NodeEdgeStylingTest {
         assertTrue(svg.contains("stroke=\"#94a3b8\" stroke-width=\"1.5\""),
             "edge 0 keeps the built-in colour/width after its hostile linkStyle is dropped");
     }
+
+    @Test
+    void nonFiniteStrokeWidthsAreDroppedToTheDefaultBorder() {
+        // The parse contract promises FINITE-only widths. NaN / Infinity / -Infinity / 1e400 (which
+        // overflows a double to +Inf) must each be dropped at the parse boundary — the value never
+        // reaches an attribute — while the valid stroke falls back to the DEFAULT border width (1).
+        // Pins the finite-only guard so it cannot silently regress (Lattice #6-review finding 3).
+        for (String w : new String[] {"NaN", "Infinity", "-Infinity", "1e400"}) {
+            String svg = Sirentide.render(
+                "flowchart TD\n"
+                    + "  classDef c stroke:#00aa00,stroke-width:" + w + "px\n"
+                    + "  A[a] --> B[b]\n  class A c\n");
+            assertTrue(svg.startsWith("<svg"), "non-finite width never fails the bake: " + w);
+            String lower = svg.toLowerCase(java.util.Locale.ROOT);
+            assertTrue(!lower.contains("nan") && !lower.contains("infinity") && !lower.contains("1e400"),
+                "the non-finite width '" + w + "' never reaches an attribute: " + svg);
+            assertTrue(svg.contains("stroke=\"#00aa00\" stroke-width=\"1\""),
+                "a valid stroke with a dropped non-finite width falls back to the default border width: " + svg);
+        }
+    }
+
+    @Test
+    void styledBorderParticipatesInPlayThroughEmphasis() {
+        // A styled node border must DIM in future frames and ACCENT + thicken in its active frame,
+        // exactly like a <line> edge stroke — not stay a constant bright border while the fill/label
+        // change (the bug: appendStroke ignoring the frame state, Lattice #6-review finding 1).
+        // Emphasis.ACCENT = #e8590c, ACTIVE_WIDTH_MULT = 2 → a 2px border thickens to 4 when active.
+        String dsl = "flowchart TD\n"
+            + "  classDef hot stroke:#ff0000,stroke-width:2px\n"
+            + "  A[a] --> B[b]\n  class A hot\n";
+        // Static render carries the exact authored border, UN-emphasized (byte-identical baseline).
+        assertTrue(Sirentide.render(dsl).contains("stroke=\"#ff0000\" stroke-width=\"2\""),
+            "the static render carries the exact authored border");
+        java.util.List<String> frames = Sirentide.renderFrames(dsl);
+        // Active frame for node A: border promoted to the play-through accent AND thickened 2x.
+        assertTrue(frames.stream().anyMatch(f -> f.contains("stroke=\"#e8590c\" stroke-width=\"4\"")),
+            "some frame accents + thickens node A's border in its active step: " + frames);
+        // The bright authored border is NOT constant across frames — future frames dim it.
+        assertTrue(!frames.stream().allMatch(f -> f.contains("stroke=\"#ff0000\" stroke-width=\"2\"")),
+            "the styled border is not a constant bright #ff0000 across frames (future frames dim it)");
+    }
 }

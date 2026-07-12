@@ -87,8 +87,9 @@ public final class Emphasis {
     }
 
     /// Recolour a STRUCTURAL fill (a box/actor-head rect, a pie/commit wedge): a future step dims, but
-    /// an active or done step KEEPS its fill (a filled box has no in-alphabet accent — the contract's
-    /// `<rect>` carries no stroke — so its label/border carries the accent instead, not the fill).
+    /// an active or done step KEEPS its fill (a filled box's FILL has no in-alphabet accent — so its
+    /// label, and its OPTIONAL `classDef` border stroke where present ({@link SvgEmitter#appendStroke},
+    /// which runs {@link #accent}/{@link #strokeWidth} on it), carry the accent instead, not the fill).
     static String box(State st, String resolved) {
         if (st == null || st != State.FUTURE) {
             return resolved;
