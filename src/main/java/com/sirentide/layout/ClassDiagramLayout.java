@@ -419,6 +419,14 @@ public final class ClassDiagramLayout {
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri,
                                      ClassRelation r, String textColor, double canvasW, double canvasH,
                                      MathFragmentRenderer math) {
+        // Self-relation (`A --|> A`): both endpoints are the same box, so the edge is zero-length —
+        // clipToRect returns the box center for BOTH ends and unit(0,0) degenerates to (1,0), which
+        // would draw the UML marker INSIDE the box pointing sideways. A self-loop needs arc routing
+        // the straight-edge/single-waypoint EdgeRouter and marker primitives don't provide, so we
+        // skip the relation (draw nothing) rather than emit a wrong marker.
+        if (li == ri) {
+            return;
+        }
         Placed left = placed[li];
         Placed right = placed[ri];
         double lcx = left.centerX();

@@ -40,7 +40,12 @@ public final class CaptionLayout {
         List<Shape> shapes = new ArrayList<>(laid.shapes());
         List<String> lines = tb.lines();
         for (int k = 0; k < lines.size(); k++) {
-            String line = lines.get(k);
+            // measureWrapped only breaks on spaces, so a single word wider than wrapWidth (or any
+            // over-long line) survives intact and would center with a NEGATIVE originX, clipping off
+            // BOTH canvas edges. Ellipsize each line to wrapWidth (bounded output, matching how edge
+            // labels truncate) so the centered line always fits: w <= wrapWidth ⇒ originX >= PAD_SIDE.
+            // Lines already within wrapWidth are returned unchanged, so normal captions bake identically.
+            String line = FONT.ellipsize(lines.get(k), wrapWidth, SIZE);
             double w = FONT.runWidth(line, SIZE);
             // Baseline of line k: its slot top + one ascent (~0.8·size), centered on cx.
             double baseline = bandTop + k * lineH + SIZE * 0.8;

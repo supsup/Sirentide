@@ -3,6 +3,7 @@ package com.sirentide.layout;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.ir.ErCardinality;
 import com.sirentide.ir.ErDiagram;
 import com.sirentide.parse.DslParser;
@@ -174,6 +175,43 @@ class ErDiagramLayoutTest {
         long horiz = Group.flatten(laid.shapes()).stream()
             .filter(s -> s instanceof Line l && near(l.y1(), l.y2()) && BORDER_STROKE(l)).count();
         assertEquals(2, horiz, "an attribute-less entity is a single box: top + bottom borders, no divider");
+    }
+
+    /// Bug-1 regression: an ER self-relation (`A ||--o{ A`) has both endpoints on the SAME table, so
+    /// the edge is zero-length — clipToRect returns the table CENTER for both ends and the crow-foot
+    /// cardinality combos used to be drawn INSIDE the table (their attach point at the center) pointing
+    /// sideways. The self-relation must now be skipped: its edge group is empty and NO shape sits at the
+    /// table center. Drop the `li == ri` guard and the degenerate markers reappear — this fails by name.
+    @Test
+    void aSelfRelationDrawsNoCrowFootInsideTheTable() {
+        ErDiagram er = (ErDiagram) DslParser.parse("erDiagram\n  A ||--o{ A : loops\n");
+        LaidOut laid = ErDiagramLayout.layout(er);
+        List<Group> edges = laid.shapes().stream()
+            .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.EDGE)
+            .map(s -> (Group) s)
+            .toList();
+        assertEquals(1, edges.size(), "the self-relation still produces exactly one edge group");
+        assertTrue(edges.get(0).members().isEmpty(),
+            "a self-relation routes NO cardinality marker/edge shape — the group is empty");
+        // Geometrically: no line endpoint coincides with the table center (where the degenerate crow-foot
+        // attach point used to land). Center = midpoint of the table's border rectangle.
+        List<Line> allLines = Group.flatten(laid.shapes()).stream()
+            .filter(s -> s instanceof Line).map(s -> (Line) s).toList();
+        double minX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
+            .mapToDouble(Double::doubleValue).min().orElseThrow();
+        double maxX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
+            .mapToDouble(Double::doubleValue).max().orElseThrow();
+        double minY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
+            .mapToDouble(Double::doubleValue).min().orElseThrow();
+        double maxY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
+            .mapToDouble(Double::doubleValue).max().orElseThrow();
+        double centerX = (minX + maxX) / 2;
+        double centerY = (minY + maxY) / 2;
+        long atCenter = allLines.stream()
+            .filter(l -> (near(l.x1(), centerX) && near(l.y1(), centerY))
+                || (near(l.x2(), centerX) && near(l.y2(), centerY)))
+            .count();
+        assertEquals(0, atCenter, "no marker line touches the table center — nothing drawn inside the table");
     }
 
     private static boolean BORDER_STROKE(Line l) {

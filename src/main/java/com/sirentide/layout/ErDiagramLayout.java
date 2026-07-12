@@ -385,6 +385,14 @@ public final class ErDiagramLayout {
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
                                      MathFragmentRenderer math) {
+        // Self-relation (`A ||--o{ A`): both endpoints are the same table, so the edge is zero-length —
+        // clipToRect returns the table center for BOTH ends and unit(0,0) degenerates to (1,0), which
+        // would draw the crow-foot cardinality combos INSIDE the table pointing sideways. A self-loop
+        // needs arc routing the straight-edge/single-waypoint EdgeRouter and marker primitives don't
+        // provide, so we skip the relation (draw nothing) rather than emit wrong markers.
+        if (li == ri) {
+            return;
+        }
         Placed left = placed[li];
         Placed right = placed[ri];
         double lcx = left.centerX();

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.ir.RelationKind;
 import com.sirentide.parse.DslParser;
 import java.util.List;
@@ -139,6 +140,45 @@ class ClassDiagramLayoutTest {
             .map(s -> (Path) s)
             .toList();
         assertEquals(1, diamonds.size(), "one composition edge → one filled diamond marker in the scene");
+    }
+
+    /// Bug-1 regression: a self-relation (`A <|-- A`, the inheritance operator) has both endpoints on
+    /// the SAME box, so the edge is zero-length — clipToRect returns the box CENTER for both ends and
+    /// the UML marker used to be drawn INSIDE the box (its tip landing exactly at the center) pointing
+    /// sideways. The self-relation must now be skipped: its edge group is empty and NO shape sits at the
+    /// box center. Drop the `li == ri` guard and the degenerate triangle reappears at the center — this
+    /// fails by name.
+    @Test
+    void aSelfRelationDrawsNoMarkerInsideTheBox() {
+        LaidOut laid = ClassDiagramLayout.layout((com.sirentide.ir.ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A <|-- A\n"));
+        // The self-relation still gets its EDGE group, but the group is EMPTY (nothing routed).
+        List<Group> edges = laid.shapes().stream()
+            .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.EDGE)
+            .map(s -> (Group) s)
+            .toList();
+        assertEquals(1, edges.size(), "the self-relation still produces exactly one edge group");
+        assertTrue(edges.get(0).members().isEmpty(),
+            "a self-relation routes NO marker/edge shape — the group is empty");
+        // And geometrically: no line endpoint coincides with the box center (where the degenerate UML
+        // triangle tip used to be drawn). Center = midpoint of the box's border rectangle.
+        List<Line> allLines = Group.flatten(laid.shapes()).stream()
+            .filter(s -> s instanceof Line).map(s -> (Line) s).toList();
+        double minX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
+            .mapToDouble(Double::doubleValue).min().orElseThrow();
+        double maxX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
+            .mapToDouble(Double::doubleValue).max().orElseThrow();
+        double minY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
+            .mapToDouble(Double::doubleValue).min().orElseThrow();
+        double maxY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
+            .mapToDouble(Double::doubleValue).max().orElseThrow();
+        double centerX = (minX + maxX) / 2;
+        double centerY = (minY + maxY) / 2;
+        long atCenter = allLines.stream()
+            .filter(l -> (near(l.x1(), centerX) && near(l.y1(), centerY))
+                || (near(l.x2(), centerX) && near(l.y2(), centerY)))
+            .count();
+        assertEquals(0, atCenter, "no marker line touches the box center — nothing is drawn inside the box");
     }
 
     private static boolean near(double a, double b) {
