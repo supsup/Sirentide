@@ -536,13 +536,21 @@ public final class DslParser {
         LinkedHashMap<String, String> nodeLabels = new LinkedHashMap<>();
         Map<String, String> nodeShapes = new java.util.HashMap<>();
         Map<String, String> nodeColors = new java.util.HashMap<>();
-        // Semantic color classes (plan sirentide-semantic-color-classes): `classDef <name> fill:#hex`
-        // defines a named box fill; `class <id>[,<id>…] <name>` assigns nodes to it. A node's fill
-        // resolves per-node #hex FIRST, else its class fill, else the header nodecolor=, else the
-        // built-in default. Fills go through the SAME isHexColor gate as a per-node colour, so no new
-        // value ever reaches the emitter (the security-first #rrggbb-only invariant holds).
-        Map<String, String> classFill = new java.util.HashMap<>();
+        // Semantic color classes (plan sirentide-semantic-color-classes + sirentide-node-edge-styling):
+        // `classDef <name> fill:#hex,stroke:#hex,stroke-width:Npx,color:#hex` defines a named box style;
+        // `class <id>[,<id>…] <name>` assigns nodes to it. A node's fill resolves per-node #hex FIRST,
+        // else its class fill, else the header nodecolor=, else the built-in default; its stroke/
+        // stroke-width/text-colour come from the class. EVERY colour goes through the SAME isHexColor
+        // gate as a per-node colour and each stroke-width through a bounded-numeric gate, so no
+        // unvalidated value ever reaches the emitter (the security-first #rrggbb-only invariant holds).
+        Map<String, ClassStyle> classStyles = new java.util.HashMap<>();
         Map<String, String> nodeClass = new java.util.HashMap<>();
+        // Per-edge styling (plan sirentide-node-edge-styling): a `linkStyle <index[,index…]> …` maps a
+        // drawn-edge index to a stroke override; `linkStyle default …` applies to every edge without an
+        // index-specific override. Both are resolved AFTER the whole body is parsed (indices reference
+        // authoring order, which linkStyle may precede or follow), then stamped onto the FlowEdges.
+        Map<Integer, StrokeStyle> linkStyleByIndex = new java.util.HashMap<>();
+        StrokeStyle[] linkStyleDefault = new StrokeStyle[1];   // holder so the parse helper can set it
         List<FlowEdge> edges = new ArrayList<>();
         // subgraph/end CLUSTER tracking (mirrors the sequence alt/loop/par block stack): a stack of
         // OPEN clusters (innermost on top) whose member lists grow as nodes are FIRST SEEN inside
@@ -580,11 +588,16 @@ public final class DslParser {
                     continue;
                 }
                 if (kwRest[0].equals(KW_CLASSDEF)) {
-                    parseClassDef(kwRest[1], classFill);   // `classDef <name> fill:#hex[,…]`
+                    parseClassDef(kwRest[1], classStyles);   // `classDef <name> fill:#hex,stroke:…,…`
                     continue;
                 }
                 if (kwRest[0].equals(KW_CLASS)) {
                     parseClassAssign(kwRest[1], nodeClass);   // `class <id>[,<id>…] <name>`
+                    continue;
+                }
+                if (kwRest[0].equals(KW_LINKSTYLE)) {
+                    // `linkStyle <index[,index…]|default> stroke:#hex,stroke-width:Npx`
+                    parseLinkStyle(kwRest[1], linkStyleByIndex, linkStyleDefault);
                     continue;
                 }
                 // No edge operator at top level → the whole line is a lone node declaration. A
@@ -659,16 +672,33 @@ public final class DslParser {
         while (!clusterStack.isEmpty()) {
             clusters.add(clusterStack.pop().freeze());
         }
+        // Apply per-edge linkStyle overrides by DRAWN-edge index (authoring order of the edges that
+        // actually registered). An index-specific override wins over `default`; an edge matched by
+        // neither keeps its built-in colour/width. All values were validated at parse time.
+        if (!linkStyleByIndex.isEmpty() || linkStyleDefault[0] != null) {
+            for (int ei = 0; ei < edges.size(); ei++) {
+                StrokeStyle st = linkStyleByIndex.getOrDefault(ei, linkStyleDefault[0]);
+                if (st != null) {
+                    edges.set(ei, edges.get(ei).withStroke(st.stroke(), st.width()));
+                }
+            }
+        }
         List<FlowNode> nodes = new ArrayList<>();
         for (Map.Entry<String, String> e : nodeLabels.entrySet()) {
             // Fill resolution: per-node #hex wins, else the node's class fill, else null (the layout
-            // then falls back to the header nodecolor= / built-in default).
+            // then falls back to the header nodecolor= / built-in default). Stroke / stroke-width /
+            // text colour come ONLY from the assigned class (all null when unclassed → the borderless,
+            // contrast-labelled box drawn before). Every value was validated when the classDef parsed.
             String explicit = nodeColors.get(e.getKey());
             String cls = nodeClass.get(e.getKey());
+            ClassStyle style = cls != null ? classStyles.get(cls) : null;
             String color = explicit != null ? explicit
-                : (cls != null ? classFill.get(cls) : null);
+                : (style != null ? style.fill() : null);
+            String stroke = style != null ? style.stroke() : null;
+            Double strokeWidth = style != null ? style.strokeWidth() : null;
+            String nodeText = style != null ? style.textColor() : null;
             nodes.add(new FlowNode(e.getKey(), e.getValue(),
-                nodeShapes.getOrDefault(e.getKey(), "rect"), color));
+                nodeShapes.getOrDefault(e.getKey(), "rect"), color, stroke, strokeWidth, nodeText));
         }
         return new Flowchart(nodes, edges, direction, textColor, nodeColor, clusters);
     }
@@ -679,31 +709,158 @@ public final class DslParser {
     /// vanishingly rare and consistent with the existing subgraph/end treatment).
     private static final String KW_CLASSDEF = "classDef";
     // KW_CLASS ("class") is defined once for the whole parser (reused here + by the class diagram).
+    /// The per-edge styling directive (plan sirentide-node-edge-styling): `linkStyle <index|default> …`.
+    private static final String KW_LINKSTYLE = "linkStyle";
 
-    /// Parse a `classDef <name> <prop>[,<prop>…]` body into `classFill[name] = #rrggbb`. v1 reads the
-    /// `fill:#hex` property (the box colour — the risk-palette the docs use); other props (stroke, etc.)
-    /// are IGNORED for now (inert, forward-compatible). An invalid/absent fill leaves the class unset
-    /// (a node assigned to it falls through to the default) — malformed never throws (DESIGN §6).
-    private static void parseClassDef(String body, Map<String, String> classFill) {
+    /// A resolved `classDef` box style (plan sirentide-node-edge-styling). Every field is already
+    /// PARSE-VALIDATED and canonicalized (colours are `#rrggbb`/`currentColor`/`none` from the shared
+    /// {@link SirentideContract} colour guard; `strokeWidth` a bounded finite non-negative number) or
+    /// `null` when the classDef omitted / malformed that property — so the IR/emitter never sees an
+    /// unvalidated value. `textColor` is the label (`color:`) override.
+    private record ClassStyle(String fill, String stroke, Double strokeWidth, String textColor) {}
+
+    /// A resolved stroke override for a `linkStyle` edge (plan sirentide-node-edge-styling): a
+    /// parse-validated `stroke` colour and/or a bounded `width`; either may be `null` (that facet keeps
+    /// its default). Never both-null (the parser drops an all-empty directive).
+    private record StrokeStyle(String stroke, Double width) {}
+
+    /// The upper bound on a parsed `stroke-width` (px). A width beyond this is REJECTED (drops to the
+    /// default) rather than clamped — a fail-closed guard so no absurd/hostile magnitude reaches an
+    /// attribute. 40px is far past any legible diagram border/edge weight.
+    private static final double MAX_STROKE_WIDTH = 40.0;
+
+    /// Parse a `classDef <name> <prop>[,<prop>…]` body into `classStyles[name]`. Reads `fill:`,
+    /// `stroke:`, `stroke-width:`, and `color:` (mermaid's node-styling props). Colours route through
+    /// the SHARED {@link SirentideContract#isHexColor} guard (hex-only) + {@link
+    /// SirentideContract#normalizeColor} (the exact path a per-node fill uses) — a non-conforming value
+    /// is DROPPED (that property stays null → the default), never forwarded. `stroke-width` routes
+    /// through {@link #parseStrokeWidth} (bounded finite non-negative). A classDef with no valid prop
+    /// still registers (all-null style) so an assigned node simply falls through to the defaults.
+    /// Malformed never throws (DESIGN §6). LAST occurrence of a prop wins (mermaid).
+    private static void parseClassDef(String body, Map<String, ClassStyle> classStyles) {
         String[] kv = splitKeyword(body);   // <name> | <props>
         String name = kv[0].strip();
         if (name.isEmpty() || kv[1].isEmpty()) {
             return;
         }
-        // Props are comma- or space-separated `key:value`; find `fill:`.
+        String fill = null;
+        String stroke = null;
+        Double strokeWidth = null;
+        String textColor = null;
+        // Props are comma- or space-separated `key:value`.
         for (String prop : kv[1].split("[,\\s]+")) {
             int colon = prop.indexOf(':');
             if (colon < 0) {
                 continue;
             }
-            if (prop.substring(0, colon).strip().equalsIgnoreCase("fill")) {
-                String hex = prop.substring(colon + 1).strip();
-                if (SirentideContract.isHexColor(hex)) {
-                    classFill.put(name, SirentideContract.normalizeColor(hex));
+            String key = prop.substring(0, colon).strip();
+            String val = prop.substring(colon + 1).strip();
+            if (key.equalsIgnoreCase("fill")) {
+                if (SirentideContract.isHexColor(val)) {
+                    fill = SirentideContract.normalizeColor(val);
                 }
-                return;   // first fill wins
+            } else if (key.equalsIgnoreCase("stroke")) {
+                if (SirentideContract.isHexColor(val)) {
+                    stroke = SirentideContract.normalizeColor(val);
+                }
+            } else if (key.equalsIgnoreCase("stroke-width")) {
+                Double w = parseStrokeWidth(val);
+                if (w != null) {
+                    strokeWidth = w;
+                }
+            } else if (key.equalsIgnoreCase("color")) {
+                if (SirentideContract.isHexColor(val)) {
+                    textColor = SirentideContract.normalizeColor(val);
+                }
             }
         }
+        classStyles.put(name, new ClassStyle(fill, stroke, strokeWidth, textColor));
+    }
+
+    /// Parse a `linkStyle <index[,index…]|default> <prop>[,<prop>…]` directive. The first
+    /// whitespace-separated token is the target (`default` or a comma-separated list of non-negative
+    /// drawn-edge indices); the rest is the stroke props ({@link #parseStrokeProps}). A directive with
+    /// no valid prop is inert. Unparseable indices are skipped; `default` sets the fallback. Malformed
+    /// never throws (DESIGN §6).
+    private static void parseLinkStyle(String body, Map<Integer, StrokeStyle> byIndex,
+                                       StrokeStyle[] defaultHolder) {
+        String[] kv = splitKeyword(body);   // <target> | <props>
+        String target = kv[0].strip();
+        if (target.isEmpty() || kv[1].isEmpty()) {
+            return;
+        }
+        StrokeStyle st = parseStrokeProps(kv[1]);
+        if (st == null) {
+            return;   // no valid stroke/stroke-width → inert
+        }
+        if (target.equalsIgnoreCase("default")) {
+            defaultHolder[0] = st;
+            return;
+        }
+        for (String tok : target.split(",")) {
+            String t = tok.strip();
+            if (t.isEmpty()) {
+                continue;
+            }
+            try {
+                int idx = Integer.parseInt(t);
+                if (idx >= 0) {
+                    byIndex.put(idx, st);
+                }
+            } catch (NumberFormatException ignored) {
+                // a non-numeric, non-`default` target is inert
+            }
+        }
+    }
+
+    /// Parse the `stroke:`/`stroke-width:` props shared by `linkStyle` (and reused nowhere else) into a
+    /// {@link StrokeStyle}, or `null` when neither validated. `stroke` uses the SHARED hex-only colour
+    /// guard + normalize (the exact per-node-fill path); `stroke-width` the bounded numeric guard. A
+    /// non-conforming value is DROPPED — it never reaches an attribute. LAST occurrence wins.
+    private static StrokeStyle parseStrokeProps(String props) {
+        String stroke = null;
+        Double width = null;
+        for (String prop : props.split("[,\\s]+")) {
+            int colon = prop.indexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            String key = prop.substring(0, colon).strip();
+            String val = prop.substring(colon + 1).strip();
+            if (key.equalsIgnoreCase("stroke")) {
+                if (SirentideContract.isHexColor(val)) {
+                    stroke = SirentideContract.normalizeColor(val);
+                }
+            } else if (key.equalsIgnoreCase("stroke-width")) {
+                Double w = parseStrokeWidth(val);
+                if (w != null) {
+                    width = w;
+                }
+            }
+        }
+        return (stroke == null && width == null) ? null : new StrokeStyle(stroke, width);
+    }
+
+    /// Parse a `stroke-width` value into a bounded, finite, NON-NEGATIVE number of pixels, or `null`
+    /// when it does not conform (the caller then drops the override → the default width). A trailing
+    /// `px` unit is tolerated and stripped. The finiteness check REUSES {@link
+    /// SirentideContract#isFiniteNumber} (so `NaN`/`Infinity`/`1e400`/junk all fail); a negative or
+    /// out-of-range magnitude ({@link #MAX_STROKE_WIDTH}) is rejected. This is the parse-boundary guard
+    /// that keeps a raw author string from ever being appended as a `stroke-width` attribute.
+    private static Double parseStrokeWidth(String raw) {
+        String v = raw.strip();
+        if (v.length() >= 2 && (v.endsWith("px") || v.endsWith("PX")
+                || v.endsWith("Px") || v.endsWith("pX"))) {
+            v = v.substring(0, v.length() - 2).strip();
+        }
+        if (!SirentideContract.isFiniteNumber(v)) {
+            return null;
+        }
+        double w = Double.parseDouble(v.trim());
+        if (w < 0 || w > MAX_STROKE_WIDTH) {
+            return null;
+        }
+        return w;
     }
 
     /// Parse a `class <id>[,<id>…] <name>` assignment into `nodeClass[id] = name` for each id. The LAST

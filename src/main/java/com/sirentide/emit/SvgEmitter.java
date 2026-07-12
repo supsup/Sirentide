@@ -142,15 +142,25 @@ public final class SvgEmitter {
                 .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(g.fill())))).append("\"/>");
             // Path mirrors GlyphRun exactly — a contract-clean `d` string + a colour-sink-validated
             // fill (flowchart arrowheads / future rounded nodes). An accentable fill: an active step's
-            // arrowhead takes the accent, a future step's dims.
-            case Path p -> sb.append("<path d=\"").append(p.d())
-                .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(p.fill())))).append("\"/>");
+            // arrowhead takes the accent, a future step's dims. An OPTIONAL node border (classDef
+            // stroke) rides the same colour sink; absent (null) → byte-identical (no stroke attrs).
+            case Path p -> {
+                sb.append("<path d=\"").append(p.d())
+                    .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(p.fill())))).append('"');
+                appendStroke(sb, p.stroke(), p.strokeWidth(), theme);
+                sb.append("/>");
+            }
             // A filled box (node/actor-head/activation rect): a STRUCTURAL fill — a future step dims,
             // but an active/done box keeps its fill (the contract <rect> carries no stroke, so a box
             // can't take an in-alphabet outline accent; its label glyph carries the accent instead).
-            case Rect r -> sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
-                .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
-                .append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(r.fill())))).append("\"/>");
+            case Rect r -> {
+                sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
+                    .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))
+                    .append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(r.fill())))).append('"');
+                // An OPTIONAL node border (classDef stroke): absent (null) → byte-identical (no attrs).
+                appendStroke(sb, r.stroke(), r.strokeWidth(), theme);
+                sb.append("/>");
+            }
             // A line (message arrow, edge, lifeline segment): an accentable stroke + a thickened width
             // on the active step (a heavier accent line reads as "the current hop", no new geometry).
             case Line l -> sb.append("<line x1=\"").append(fmt(l.x1())).append("\" y1=\"").append(fmt(l.y1()))
@@ -224,6 +234,19 @@ public final class SvgEmitter {
         // A wedge (pie slice, commit dot, journey point) is a STRUCTURAL fill — dims when future,
         // keeps its swatch when active/done (like a rect box).
         sb.append("\" fill=\"").append(color(Emphasis.box(st, theme.resolve(w.fill())))).append("\"/>");
+    }
+
+    /// Append an OPTIONAL `stroke`/`stroke-width` border to the shape tag currently being built
+    /// (plan sirentide-node-edge-styling). A `null` stroke writes NOTHING — so a shape without a
+    /// classDef border is byte-identical to its pre-feature emission. A present stroke runs the SAME
+    /// {@link #color} sink (theme-resolved, contract-validated — a non-`#hex|currentColor|none` value
+    /// throws rather than reaching the attribute) and a deterministically-formatted finite width.
+    private static void appendStroke(StringBuilder sb, String stroke, double strokeWidth, Theme theme) {
+        if (stroke == null) {
+            return;
+        }
+        sb.append(" stroke=\"").append(color(theme.resolve(stroke)))
+            .append("\" stroke-width=\"").append(fmt(strokeWidth)).append('"');
     }
 
     /// The sink's last-line-of-defense on presentation colour: fill/stroke values MUST match the

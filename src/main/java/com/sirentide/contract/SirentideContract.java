@@ -58,8 +58,16 @@ public final class SirentideContract {
         // paths carry transforms. FragmentGuard already permits path/transform and the output-contract
         // doc's geometry row already lists it; this reconciles the containment allowlist to match
         // (same drift-class as F1's `g fill`). TRANSFORM stays the numeric-only grammar (no url/rotate).
-        "path", Set.of("d", "fill", "transform"),
-        "rect", Set.of("x", "y", "width", "height", "fill"),
+        // node-styling widening (plan sirentide-node-edge-styling): a non-rect node box (diamond,
+        // stadium, circle, hexagon, rounded, cylinder) is a `<path>`; it carries the SAME optional
+        // classDef `stroke`/`stroke-width` border as a rect node (parse-boundary-validated, additive).
+        "path", Set.of("d", "fill", "transform", "stroke", "stroke-width"),
+        // node-styling widening (plan sirentide-node-edge-styling): a flowchart `classDef`
+        // stroke/stroke-width plumbs an OPTIONAL border onto a node box. `stroke` is the same
+        // colour grammar as `fill` (validated hex-only at the parse boundary via {@link #isHexColor}),
+        // `stroke-width` a finite non-negative scalar (bounded at parse). Both are additive: a node
+        // WITHOUT a classDef stroke emits neither (byte-identical to the pre-feature bake).
+        "rect", Set.of("x", "y", "width", "height", "fill", "stroke", "stroke-width"),
         "line", Set.of("x1", "y1", "x2", "y2", "stroke", "stroke-width"),
         // math-in-labels widening: `g` carries a numeric-grammar `transform` (see TRANSFORM) and
         // an optional `fill` (F1, Conf pins sirentide/51): the MathBox wrapper stamps the label's

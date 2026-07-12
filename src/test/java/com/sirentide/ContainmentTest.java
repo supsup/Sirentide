@@ -227,6 +227,16 @@ class ContainmentTest {
         // NODE COLOUR flows: a per-node trailing #hex + a header nodecolor= default + contrast-derived
         // node labels (author-string→fill/label paths) across flowchart, sequence heads, and state.
         "flowchart nodecolor=#334155\n  A[Start] #22c55e --> B{Q?}\n  B -->|yes| C[End]\n",
+        // NODE + EDGE STYLING (plan sirentide-node-edge-styling): a classDef with stroke/stroke-width/
+        // color on a rect AND a non-rect (diamond) node, plus a linkStyle index + default recolouring
+        // the edge lines/arrowheads — exercises the NEW rect/path `stroke`+`stroke-width` widening and
+        // the per-edge line stroke through the allowlist. Includes MALFORMED values (a hostile
+        // `stroke:red;onload=…`, a `url()` linkStyle, an oversized/negative width) that MUST be dropped
+        // at parse and never reach an attribute — so the whole thing still bakes producer ⊆ contract.
+        "flowchart TD\n  classDef hot fill:#fdecea,stroke:#ff0000,stroke-width:2px,color:#0000ff\n"
+            + "  classDef bad stroke:red;onload=alert(1),stroke-width:9e9px\n"
+            + "  A{Q?} --> B[ok]\n  B --> C[end]\n  class A hot\n  class B bad\n"
+            + "  linkStyle 0 stroke:#00aa00,stroke-width:3px\n  linkStyle default stroke:url(#x)\n",
         "sequence nodecolor=#1a2233\n  Alice ->> Bob : hi\n  Bob -->> Alice : ok\n",
         "state nodecolor=#334155\n  [*] --> Idle #22c55e\n  Idle --> Running : go\n  Running --> [*]\n",
         "pie\n  \"" + "x".repeat(4000) + "\" : 10\n");            // oversized label (capped)
