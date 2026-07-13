@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Matrix;
 import java.util.ArrayList;
@@ -111,7 +112,18 @@ public final class MatrixLayout {
             y += HEADER_H;
         }
 
+        // Per-diagram anchor factory (plan sirentide-matrix-semantic-anchors): each DATA (verdict) cell
+        // is wrapped in ONE `<g data-sirentide-role="cell">` so the play-through/FX layer can reveal the
+        // grid. Seq runs in ROW-MAJOR reading order (top-to-bottom rows, left-to-right columns) — no
+        // edges-before-nodes quirk here, the matrix simply reveals as you'd read it. The header band and
+        // the row-label column are structural (like flowchart cluster frames), so they stay un-anchored;
+        // an N-row × M-col matrix emits exactly N·M cell groups. The base id is COORDINATE-derived
+        // (`r<row>c<col>`, always charset-legal), NEVER the cell/row/col text — so a hostile label can't
+        // place an illegal char into an anchor id (mirrors FlowchartLayout's stable base ids).
+        AnchorAssigner assigner = new AnchorAssigner();
+
         // Data rows: a left-aligned label cell, then the M verdict cells.
+        int rowIdx = 0;
         for (Matrix.Row r : rows) {
             cell(shapes, MARGIN, y, labelW, ROW_H, LABEL_FILL);
             leftAligned(shapes, r.label(), MARGIN + PAD_X, y + ROW_H / 2, labelW - PAD_X - BORDER_W,
@@ -120,15 +132,27 @@ public final class MatrixLayout {
             for (int j = 0; j < cols; j++) {
                 Matrix.Cell c = j < r.cells().size() ? r.cells().get(j) : new Matrix.Cell("", Matrix.Verdict.NA);
                 String fill = VERDICT_FILL[c.verdict().ordinal()];
-                cell(shapes, cx, y, colW[j], ROW_H, fill);
-                centered(shapes, c.text(), cx + colW[j] / 2, y + ROW_H / 2, colW[j] - 2 * BORDER_W,
+                // Collect this cell's fill rect + centered token into ONE anchor group (row-major seq).
+                List<Shape> cellShapes = new ArrayList<>();
+                cell(cellShapes, cx, y, colW[j], ROW_H, fill);
+                centered(cellShapes, c.text(), cx + colW[j] / 2, y + ROW_H / 2, colW[j] - 2 * BORDER_W,
                     Colors.contrastFill(fill));
+                shapes.add(new Group(assigner.assign(SirentideRole.CELL, cellBaseId(rowIdx, j)), cellShapes));
                 cx += colW[j];
             }
             y += ROW_H;
+            rowIdx++;
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// The `data-sirentide-id` base for a data cell: its ROW/COLUMN coordinates (`r<row>c<col>`), NOT
+    /// its text. Coordinates are ints, so the base is always charset-legal — a hostile cell/row/col
+    /// label can therefore never inject an illegal char into the anchor id (the sanitizer would strip
+    /// it anyway, but the coordinate base never presents one). Stable + narratable ("row 0, column 1").
+    private static String cellBaseId(int row, int col) {
+        return "r" + row + "c" + col;
     }
 
     /// One cell background: the fill rect inset by BORDER_W into the backing rect so the border colour

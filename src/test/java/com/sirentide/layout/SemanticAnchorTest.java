@@ -145,7 +145,9 @@ class SemanticAnchorTest {
             "journey\n  title Day\n  section Go\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n",
             "mindmap\n  root Root\n    Origins\n      History\n    Tools\n      Mermaid\n",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
-                + "  Electricity,Industry,20\n");
+                + "  Electricity,Industry,20\n",
+            "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : pass, fail\n"
+                + "  \"PC1 soft-intent\" : partial, na\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -467,6 +469,61 @@ class SemanticAnchorTest {
         int maxFlowSeq = a.stream().filter(x -> x.role().equals("flow")).mapToInt(Anc::seq).max().orElse(-1);
         int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
         assertTrue(maxFlowSeq < minNodeSeq, "flows seq before nodes: " + a);
+    }
+
+    /// matrix (plan sirentide-matrix-semantic-anchors): every DATA (verdict) cell wraps in ONE
+    /// `<g role="cell">` (id = its `r<row>c<col>` coordinate) in ROW-MAJOR reading order; the header
+    /// band + row-label column are structural and stay bare. A 2-row × 3-col matrix → exactly 2·3 = 6
+    /// cell anchors, seq 0..5 contiguous top-to-bottom, left-to-right. Proves a matrix cell emits the
+    /// NEW role="cell". DROP the `<g>` wrapper in MatrixLayout (emit the cell shapes bare) and the
+    /// count falls to 0 → RED.
+    @Test
+    void matrixEmitsACellAnchorPerDataCellInRowMajorOrder() {
+        List<Anc> a = anchors(Sirentide.render(
+            "matrix\n  cols: snapshot, bare, notes\n  \"row one\" : pass, fail, partial\n"
+                + "  \"row two\" : na, pass, fail\n"));
+        // 2 rows × 3 columns → 6 data-cell anchors (header + row-label column are NOT anchored).
+        assertWellFormed(a, 6);
+        assertEquals(6, countRole(a, "cell"), "one cell anchor per data cell (N·M): " + a);
+        assertTrue(SirentideRole.isWire("cell"), "cell is a closed-enum role");
+        // Ids are coordinate-derived (r<row>c<col>), NOT the cell/row/col text.
+        for (Anc x : a) {
+            assertTrue(x.id().matches("r\\d+c\\d+"), "cell id is its coordinate (r<row>c<col>): " + x.id());
+        }
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("r0c0")), "top-left cell is r0c0: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.id().equals("r1c2")), "bottom-right cell is r1c2: " + a);
+        // ROW-MAJOR seq: the first row's three cells (r0c0..r0c2) carry seq 0..2, the second row 3..5.
+        assertEquals(0, seqOf(a, "r0c0"));
+        assertEquals(1, seqOf(a, "r0c1"));
+        assertEquals(2, seqOf(a, "r0c2"));
+        assertEquals(3, seqOf(a, "r1c0"));
+        assertEquals(4, seqOf(a, "r1c1"));
+        assertEquals(5, seqOf(a, "r1c2"));
+    }
+
+    private static int seqOf(List<Anc> a, String id) {
+        return a.stream().filter(x -> x.id().equals(id)).mapToInt(Anc::seq).findFirst().orElseThrow();
+    }
+
+    /// A hostile row/column/cell label can NEVER place an illegal char into an emitted matrix cell
+    /// `<g>` id — the ids are coordinate-derived, so they are structurally immune, and the render path
+    /// also never leaks the raw markup into the output. The security property mirrored for matrix.
+    @Test
+    void aHostileMatrixLabelCannotBreakOutOfTheAnchorAttribute() {
+        String svg = Sirentide.render(
+            "matrix\n  cols: <script>a\"b, ok\n  \"<img src=x onerror=alert(1)>\" : pass, fail\n");
+        List<Anc> a = anchors(svg);
+        assertFalse(a.isEmpty(), "the matrix still emits cell anchors: " + a);
+        for (Anc x : anchors(svg)) {
+            assertTrue(SirentideContract.ANCHOR_ID.matcher(x.id()).matches(),
+                "emitted id stays charset-legal for a hostile label: " + x.id());
+            assertTrue(x.id().matches("r\\d+c\\d+"),
+                "the id is coordinate-derived, never the hostile text: " + x.id());
+        }
+        // The hostile label never reaches the output as live MARKUP — it only survives XML-escaped
+        // inside the a11y `<desc>` text (`&lt;img … onerror …&gt;`), which is inert. No `<` opens a tag.
+        assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
+        assertFalse(svg.contains("<img"), "no element injection from the label: " + svg);
     }
 
     // -- seq WIRE value saturates at 4 digits to match the /docs contract bound ^[0-9]{1,4}$ ---------
