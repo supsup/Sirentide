@@ -75,6 +75,12 @@ public final class ClassDiagramLayout {
     private static final double DASH_ON = 6;   // dependency dash segment length
     private static final double DASH_OFF = 4;  // dependency dash gap length
 
+    // A self-relation (`A <|-- A`) routes a rectilinear loop off the box's RIGHT edge: out this far
+    // past the border, down, and back — entirely to the right of the box, so it never re-enters the
+    // interior. SELF_LOOP_OUT > every marker length (max DIA_LEN = 16) so the outer leg clears the
+    // marker. The canvas grows to include the loop (containment; see the self-relation grow pass).
+    private static final double SELF_LOOP_OUT = 30;
+
     /// One placed class box: its grid rectangle plus the pre-measured compartment heights and the
     /// (ellipsized) display lines, so the emit pass draws bands/dividers/text without re-measuring.
     /// `nameMeasure`/`attrMeasures`/`methodMeasures` are the composite measures for lines carrying
@@ -232,6 +238,17 @@ public final class ClassDiagramLayout {
             slot = rowEnd;
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
+
+        // A self-relation (both endpoints the same class) routes an on-canvas loop off the box's RIGHT
+        // edge (emitRelation → emitSelfLoop). Grow the canvas WIDTH so the loop's outermost leg + margin
+        // stays inside the viewBox — the loop stays within the box's own y-span, so height is unaffected.
+        // This is the containment bound the whole-diagram grid already applies to its boxes.
+        for (ClassRelation r : cd.relations()) {
+            Integer li = index.get(r.left());
+            if (li != null && li.equals(index.get(r.right()))) {
+                canvasW = Math.max(canvasW, px[li] + boxW[li] + SELF_LOOP_OUT + MARGIN);
+            }
+        }
 
         Placed[] placed = new Placed[n];
         for (int k = 0; k < n; k++) {
@@ -419,12 +436,12 @@ public final class ClassDiagramLayout {
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri,
                                      ClassRelation r, String textColor, double canvasW, double canvasH,
                                      MathFragmentRenderer math) {
-        // Self-relation (`A --|> A`): both endpoints are the same box, so the edge is zero-length —
-        // clipToRect returns the box center for BOTH ends and unit(0,0) degenerates to (1,0), which
-        // would draw the UML marker INSIDE the box pointing sideways. A self-loop needs arc routing
-        // the straight-edge/single-waypoint EdgeRouter and marker primitives don't provide, so we
-        // skip the relation (draw nothing) rather than emit a wrong marker.
+        // Self-relation (`A <|-- A`): both endpoints are the same box. A zero-length straight edge would
+        // put clipToRect at the box center for BOTH ends and draw the marker INSIDE the box — and merely
+        // SKIPPING it erases a semantically-valid recursive relationship AND leaves a phantom empty edge
+        // group owning an anchor. Instead route a deterministic on-canvas self-LOOP off the right edge.
         if (li == ri) {
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math);
             return;
         }
         Placed left = placed[li];
@@ -492,6 +509,43 @@ public final class ClassDiagramLayout {
                 : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
             double originX = Math.max(2, Math.min(midX - w / 2, canvasW - 2 - w));
             emitLine(shapes, lbl, originX, midY, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
+        }
+    }
+
+    /// Routes a SELF-relation (`A <|-- A`) as a deterministic rectilinear LOOP off the box's RIGHT edge,
+    /// so a recursive relationship renders on-canvas instead of being erased. Geometry, all derived from
+    /// the box rectangle: two attach points on the right border (at 0.3·h and 0.7·h down), a leg out to
+    /// {@code x+w+SELF_LOOP_OUT}, a leg down, and a leg back to the marked border point. Every point has
+    /// x ≥ the right border, so the loop NEVER crosses the box interior; it stays within the box's y-span,
+    /// so it never escapes vertically; and the layout grew the canvas width to keep the outer leg inside
+    /// the viewBox. The UML {@link #marker} sits at the RETURN endpoint (tip on the border, pointing
+    /// outward — exactly like a normal edge to a box on the right), and the loop reuses the SAME
+    /// {@link #emitEdgeLine} primitive (honouring the kind's dashed flag) as the straight edge router.
+    private static void emitSelfLoop(List<Shape> shapes, Placed box, ClassRelation r, String textColor,
+                                     double canvasW, double canvasH, MathFragmentRenderer math) {
+        double x1 = box.x() + box.w();          // right border
+        double ay = box.y() + box.h() * 0.3;    // exit attach (plain line end)
+        double by = box.y() + box.h() * 0.7;    // return attach (the marked end)
+        double out = x1 + SELF_LOOP_OUT;        // outermost leg, to the RIGHT of the box
+        boolean dashed = r.kind().dashed();
+        // The UML marker at the return endpoint, tip on the border, pointing OUTWARD (+x, away from box).
+        List<Shape> mk = marker(r.kind(), x1, by, 1, 0, MARKER);
+        double markLen = markerLength(r.kind());
+        // Three rectilinear legs: exit → out, down, back to just past the marker (leaving its length free).
+        emitEdgeLine(shapes, x1, ay, out, ay, dashed);
+        emitEdgeLine(shapes, out, ay, out, by, dashed);
+        emitEdgeLine(shapes, out, by, x1 + markLen, by, dashed);
+        shapes.addAll(mk);
+        // Optional `: label` — beside the loop's outer leg, clamped in-canvas (same clamp as a normal edge).
+        if (r.label() != null && !r.label().isBlank()) {
+            double midY = (ay + by) / 2 - 3;
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w = (math != null && MathLabel.hasMath(lbl))
+                ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
+                : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+            double originX = Math.max(2, Math.min(out + 4, canvasW - 2 - w));
+            double clampedY = Math.max(EDGE_LABEL_SIZE, Math.min(midY, canvasH - 2));
+            emitLine(shapes, lbl, originX, clampedY, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
     }
 

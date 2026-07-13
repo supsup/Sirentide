@@ -87,6 +87,13 @@ public final class ErDiagramLayout {
     private static final double DASH_ON = 6;   // non-identifying (dashed) edge dash segment length
     private static final double DASH_OFF = 4;  // dashed edge gap length
 
+    // A self-relation (`A ||--o{ A`) routes a rectilinear loop off the table's RIGHT edge: out this far
+    // past the border, down, and back — entirely to the right of the table, so it never re-enters the
+    // interior. SELF_LOOP_OUT clears the deepest cardinality combo (zero-or-many's ring reaches
+    // CROW_LEN + GAP + 2·CIRCLE_R = 34 out) so the outer leg sits beyond every marker. The canvas grows
+    // to include the loop (containment; see the self-relation grow pass).
+    private static final double SELF_LOOP_OUT = 44;
+
     /// One placed entity table: its grid rectangle plus the pre-measured header height and the
     /// (ellipsized) display lines, so the emit pass draws band/rows/text without re-measuring.
     /// `nameMeasure`/`rowMeasures` are the composite measures for lines carrying `$…$` math (null for
@@ -215,6 +222,17 @@ public final class ErDiagramLayout {
             slot = rowEnd;
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
+
+        // A self-relation (both endpoints the same entity) routes an on-canvas loop off the table's RIGHT
+        // edge (emitRelation → emitSelfLoop). Grow the canvas WIDTH so the loop's outermost leg + margin
+        // stays inside the viewBox — the loop stays within the table's own y-span, so height is
+        // unaffected. This is the containment bound the whole-diagram grid already applies to its tables.
+        for (ErRelation r : er.relations()) {
+            Integer li = index.get(r.left());
+            if (li != null && li.equals(index.get(r.right()))) {
+                canvasW = Math.max(canvasW, px[li] + boxW[li] + SELF_LOOP_OUT + MARGIN);
+            }
+        }
 
         Placed[] placed = new Placed[n];
         for (int k = 0; k < n; k++) {
@@ -385,12 +403,13 @@ public final class ErDiagramLayout {
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
                                      MathFragmentRenderer math) {
-        // Self-relation (`A ||--o{ A`): both endpoints are the same table, so the edge is zero-length —
-        // clipToRect returns the table center for BOTH ends and unit(0,0) degenerates to (1,0), which
-        // would draw the crow-foot cardinality combos INSIDE the table pointing sideways. A self-loop
-        // needs arc routing the straight-edge/single-waypoint EdgeRouter and marker primitives don't
-        // provide, so we skip the relation (draw nothing) rather than emit wrong markers.
+        // Self-relation (`A ||--o{ A`): both endpoints are the same table. A zero-length straight edge
+        // would put clipToRect at the table center for BOTH ends and draw the cardinality combos INSIDE
+        // the table — and merely SKIPPING it erases a semantically-valid recursive relationship AND
+        // leaves a phantom empty edge group owning an anchor. Instead route a deterministic on-canvas
+        // self-LOOP off the right edge, with each end's cardinality combo on the loop.
         if (li == ri) {
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math);
             return;
         }
         Placed left = placed[li];
@@ -454,6 +473,46 @@ public final class ErDiagramLayout {
     /// edge line runs to the border and the bar tick crosses it).
     private static double innerExtent(ErCardinality card) {
         return card.many() ? CROW_LEN : 0;
+    }
+
+    /// Routes a SELF-relation (`A ||--o{ A`) as a deterministic rectilinear LOOP off the table's RIGHT
+    /// edge, so a recursive relationship renders on-canvas instead of being erased. Geometry, all derived
+    /// from the table rectangle: two attach points on the right border (at 0.3·h and 0.7·h down), a leg
+    /// out to {@code x+w+SELF_LOOP_OUT}, a leg down, and a leg back. Every point has x ≥ the right border,
+    /// so the loop NEVER crosses the table interior; it stays within the table's y-span, so it never
+    /// escapes vertically; and the layout grew the canvas width to keep the outer leg inside the viewBox.
+    /// BOTH cardinality combos render — {@code leftCard} at the top attach, {@code rightCard} at the
+    /// bottom — each on the border pointing outward (exactly like a normal edge to a table on the right),
+    /// and the edge line runs from each end's inner-symbol attach (the fork convergence for a "many" end),
+    /// reusing the SAME {@link #emitEdgeLine} primitive (honouring the identifying/dashed flag).
+    private static void emitSelfLoop(List<Shape> shapes, Placed table, ErRelation r, String textColor,
+                                     double canvasW, double canvasH, MathFragmentRenderer math) {
+        double x1 = table.x() + table.w();        // right border
+        double ay = table.y() + table.h() * 0.3;  // left-operand end attach (top)
+        double by = table.y() + table.h() * 0.7;  // right-operand end attach (bottom)
+        double out = x1 + SELF_LOOP_OUT;          // outermost leg, to the RIGHT of the table
+        boolean dashed = !r.identifying();
+        // Edge line from each end's inner-symbol attach (fork convergence for a many end, border for a
+        // one end), out and around — the SAME inner-attach rule the straight edge uses.
+        double lInner = innerExtent(r.leftCard());
+        double rInner = innerExtent(r.rightCard());
+        emitEdgeLine(shapes, x1 + lInner, ay, out, ay, dashed);
+        emitEdgeLine(shapes, out, ay, out, by, dashed);
+        emitEdgeLine(shapes, out, by, x1 + rInner, by, dashed);
+        // Both cardinality combos, each at its own border attach, pointing OUTWARD (+x, away from table).
+        shapes.addAll(cardinalityMarker(r.leftCard(), x1, ay, 1, 0, MARKER));
+        shapes.addAll(cardinalityMarker(r.rightCard(), x1, by, 1, 0, MARKER));
+        // Optional `: label` — beside the loop's outer leg, clamped in-canvas (same clamp as a normal edge).
+        if (r.label() != null && !r.label().isBlank()) {
+            double midY = (ay + by) / 2 - 3;
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w = (math != null && MathLabel.hasMath(lbl))
+                ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
+                : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+            double originX = Math.max(2, Math.min(out + 4, canvasW - 2 - w));
+            double clampedY = Math.max(EDGE_LABEL_SIZE, Math.min(midY, canvasH - 2));
+            emitLine(shapes, lbl, originX, clampedY, EDGE_LABEL_SIZE, false, textColor, math);
+        }
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,

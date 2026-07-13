@@ -150,6 +150,12 @@ class ContainmentTest {
             + "    +bark() void\n  }\n  Animal <|-- Dog : inherits\n  Animal *-- Collar : composition\n"
             + "  Animal o-- Owner : aggregation\n  Dog --> Bone : association\n  Dog ..> Vet : dependency\n"
             + "  Animal *-- \n  garbage line here\n",
+        // class SELF-relation (recursive) loops: every marker family on a self-loop off the box's right
+        // edge — inheritance triangle, composition diamond, aggregation diamond, association/dependency
+        // arrows (the last dashed + labeled) — plus a normal edge in the same diagram. The loop is real
+        // leaf geometry (line legs + the marker), so it must stay inside svg/path/rect/line/glyph.
+        "classDiagram\n  class A\n  class B\n  A <|-- A\n  A *-- A\n  A o-- A\n  A --> A : self\n"
+            + "  A ..> A : dep\n  A --> B\n",
         // bare class diagram: no classes → a valid empty canvas (round-trips, never the inert shell).
         "classDiagram\n",
         // class diagram unclosed brace: degrade-not-throw (closes at EOF) — must stay in-set.
@@ -165,6 +171,12 @@ class ContainmentTest {
             + "  A |o--o| B\n  X |bad--o{ Y\n  Z ||-- \n  garbage row here\n"
             + "  CUSTOMER {\n    string name PK\n    string email\n    int customer_id FK\n  }\n"
             + "  ORDER {\n    int id PK\n    date created\n    string sku UK\n",   // unclosed block (EOF)
+        // ER SELF-relation (recursive) loops: both cardinality combos on a self-loop off the table's
+        // right edge — an identifying `--` self-loop with a crow-foot + a non-identifying `..` (dashed)
+        // self-loop — plus a normal edge in the same diagram (e.g. EMPLOYEE manages EMPLOYEE). The loop's
+        // line legs + crow-foot/bar/ring markers must stay inside svg/path/rect/line/glyph.
+        "erDiagram\n  EMPLOYEE ||--o{ EMPLOYEE : manages\n  NODE }o..o{ NODE : links\n"
+            + "  EMPLOYEE ||--|{ DEPT : in\n",
         // bare ER diagram: no entities → a valid empty canvas (round-trips, never the inert shell).
         "erDiagram\n",
         // mathblock (11th type): a full-size display-math block. The CORPUS renders with the null

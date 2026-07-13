@@ -1,14 +1,23 @@
 package com.sirentide.layout;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.contract.SirentideContract;
 import com.sirentide.contract.SirentideRole;
+import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.ErCardinality;
 import com.sirentide.ir.ErDiagram;
 import com.sirentide.parse.DslParser;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.junit.jupiter.api.Test;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 /// The ER-diagram CROW-FOOT marker + table geometry pins (plan sirentide-er-diagram). The four
 /// cardinality combos are the fidelity crux — a wrong combo (a bar where a fork belongs, a fork at the
@@ -177,41 +186,109 @@ class ErDiagramLayoutTest {
         assertEquals(2, horiz, "an attribute-less entity is a single box: top + bottom borders, no divider");
     }
 
-    /// Bug-1 regression: an ER self-relation (`A ||--o{ A`) has both endpoints on the SAME table, so
-    /// the edge is zero-length — clipToRect returns the table CENTER for both ends and the crow-foot
-    /// cardinality combos used to be drawn INSIDE the table (their attach point at the center) pointing
-    /// sideways. The self-relation must now be skipped: its edge group is empty and NO shape sits at the
-    /// table center. Drop the `li == ri` guard and the degenerate markers reappear — this fails by name.
+    /// Bug-1 fix: an ER self-relation (`A ||--o{ A`) has both endpoints on the SAME table. The
+    /// zero-length straight edge used to draw the crow-foot combos INSIDE the table at its center; the
+    /// prior "fix" instead SKIPPED it, erasing a semantically-valid recursive relationship (e.g. EMPLOYEE
+    /// manages EMPLOYEE) AND leaving a phantom empty edge group owning an anchor. It must now render a
+    /// deterministic on-canvas self-LOOP routed off the table's right edge, with BOTH cardinality combos.
+    /// This pins: (a) the edge group owns REAL leaf geometry (non-empty — no phantom group), (b) a
+    /// crow-foot cardinality marker renders on the loop, (c) NO loop endpoint/line sits inside the table
+    /// (the loop stays on/outside the right border, never at the center — the original bug), (d) the label
+    /// renders, (e) the scene stays in the contract alphabet, (f) the loop stays inside the (grown)
+    /// viewBox. Restore the center-drawing markers and (c) fails by name.
     @Test
-    void aSelfRelationDrawsNoCrowFootInsideTheTable() {
+    void aSelfRelationRoutesAnOnCanvasLoopWithItsMarkersOutsideTheTable() throws Exception {
         ErDiagram er = (ErDiagram) DslParser.parse("erDiagram\n  A ||--o{ A : loops\n");
         LaidOut laid = ErDiagramLayout.layout(er);
+
+        // (f-anchor) exactly one edge group — now NON-EMPTY (owns the loop geometry, no phantom group).
         List<Group> edges = laid.shapes().stream()
             .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.EDGE)
             .map(s -> (Group) s)
             .toList();
-        assertEquals(1, edges.size(), "the self-relation still produces exactly one edge group");
-        assertTrue(edges.get(0).members().isEmpty(),
-            "a self-relation routes NO cardinality marker/edge shape — the group is empty");
-        // Geometrically: no line endpoint coincides with the table center (where the degenerate crow-foot
-        // attach point used to land). Center = midpoint of the table's border rectangle.
-        List<Line> allLines = Group.flatten(laid.shapes()).stream()
+        assertEquals(1, edges.size(), "the self-relation produces exactly one edge group");
+        Group edge = edges.get(0);
+        assertFalse(edge.members().isEmpty(),
+            "the self-loop group owns REAL leaf geometry — not a phantom empty group");
+
+        // (a) real leaf geometry: the loop is built from the SAME Line edge primitive — ≥ 3 legs.
+        List<Line> loopLegs = edge.members().stream()
+            .filter(s -> s instanceof Line l && "#5eead4".equals(l.stroke())).map(s -> (Line) s).toList();
+        assertTrue(loopLegs.size() >= 3, "a rectilinear self-loop routes ≥ 3 edge legs: " + loopLegs.size());
+
+        // (b) a crow-foot cardinality marker (the ZERO_OR_MANY end's three-prong fork) renders on the
+        // loop — the whole point vs erasure: the recursive relationship keeps its cardinality semantics.
+        List<Line> markerLines = edge.members().stream()
+            .filter(s -> s instanceof Line l && MK.equals(l.stroke())).map(s -> (Line) s).toList();
+        assertEquals(3, maxSharedEndpoint(markerLines),
+            "the ZERO_OR_MANY end's three-prong crow-foot renders on the loop");
+
+        // (c) NO loop line sits INSIDE the table — every endpoint on/outside the border, none at center.
+        Rect box = entityBoxRect(laid);
+        double cx = box.x() + box.width() / 2;
+        double cy = box.y() + box.height() / 2;
+        List<Line> groupLines = edge.members().stream()
             .filter(s -> s instanceof Line).map(s -> (Line) s).toList();
-        double minX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
-            .mapToDouble(Double::doubleValue).min().orElseThrow();
-        double maxX = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.x1(), l.x2()))
-            .mapToDouble(Double::doubleValue).max().orElseThrow();
-        double minY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
-            .mapToDouble(Double::doubleValue).min().orElseThrow();
-        double maxY = allLines.stream().flatMap(l -> java.util.stream.Stream.of(l.y1(), l.y2()))
-            .mapToDouble(Double::doubleValue).max().orElseThrow();
-        double centerX = (minX + maxX) / 2;
-        double centerY = (minY + maxY) / 2;
-        long atCenter = allLines.stream()
-            .filter(l -> (near(l.x1(), centerX) && near(l.y1(), centerY))
-                || (near(l.x2(), centerX) && near(l.y2(), centerY)))
-            .count();
-        assertEquals(0, atCenter, "no marker line touches the table center — nothing drawn inside the table");
+        for (Line l : groupLines) {
+            assertFalse(strictlyInside(box, l.x1(), l.y1()),
+                "a loop endpoint is inside the table interior: " + l.x1() + "," + l.y1());
+            assertFalse(strictlyInside(box, l.x2(), l.y2()),
+                "a loop endpoint is inside the table interior: " + l.x2() + "," + l.y2());
+            assertFalse(near(l.x1(), cx) && near(l.y1(), cy), "a loop line touches the table center");
+            assertFalse(near(l.x2(), cx) && near(l.y2(), cy), "a loop line touches the table center");
+        }
+
+        // (f) the loop stays inside the (grown) viewBox — every endpoint within [0,w] × [0,h].
+        for (Line l : groupLines) {
+            assertTrue(l.x1() >= 0 && l.x1() <= laid.width() && l.x2() >= 0 && l.x2() <= laid.width(),
+                "loop x escapes the viewBox width " + laid.width() + ": " + l.x1() + "," + l.x2());
+            assertTrue(l.y1() >= 0 && l.y1() <= laid.height() && l.y2() >= 0 && l.y2() <= laid.height(),
+                "loop y escapes the viewBox height " + laid.height() + ": " + l.y1() + "," + l.y2());
+        }
+
+        // (d) the relation LABEL renders as a glyph run in the edge group.
+        long labels = edge.members().stream().filter(s -> s instanceof GlyphRun).count();
+        assertTrue(labels >= 1, "the relation label ': loops' renders near the loop");
+
+        // (e) containment: the whole emitted scene parses and stays in the allowed element alphabet.
+        assertSceneInAllowlist(laid);
+    }
+
+    /// The background {@link Rect} of the (sole) entity table — its geometry rectangle (x, y, w, h).
+    private static Rect entityBoxRect(LaidOut laid) {
+        return laid.shapes().stream()
+            .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.ENTITY)
+            .flatMap(g -> ((Group) g).members().stream())
+            .filter(s -> s instanceof Rect).map(s -> (Rect) s)
+            .findFirst().orElseThrow();
+    }
+
+    private static boolean strictlyInside(Rect b, double x, double y) {
+        return x > b.x() + 1e-6 && x < b.x() + b.width() - 1e-6
+            && y > b.y() + 1e-6 && y < b.y() + b.height() - 1e-6;
+    }
+
+    /// Emit the scene and assert every element tag is inside {@link SirentideContract#ALLOWED_ELEMENTS}
+    /// — the SVG parses (well-formed) and stays in the allowed alphabet (containment stays clean).
+    private static void assertSceneInAllowlist(LaidOut laid) throws Exception {
+        String svg = SvgEmitter.emit(laid);
+        var f = DocumentBuilderFactory.newInstance();
+        f.setNamespaceAware(false);
+        Element root = f.newDocumentBuilder()
+            .parse(new ByteArrayInputStream(svg.getBytes(StandardCharsets.UTF_8))).getDocumentElement();
+        walkAllowlist(root);
+    }
+
+    private static void walkAllowlist(Element el) {
+        assertTrue(SirentideContract.ALLOWED_ELEMENTS.contains(el.getTagName()),
+            "element <" + el.getTagName() + "> is outside the contract alphabet");
+        NodeList kids = el.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (k.getNodeType() == Node.ELEMENT_NODE) {
+                walkAllowlist((Element) k);
+            }
+        }
     }
 
     private static boolean BORDER_STROKE(Line l) {
