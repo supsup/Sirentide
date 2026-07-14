@@ -10,8 +10,10 @@ package com.sirentide.ir;
 /// `stroke`/`strokeWidth`/`textColor` are the OPTIONAL classDef-driven styling (plan
 /// sirentide-node-edge-styling). All THREE are `null` for a node without a styled `class` — the box
 /// then draws borderless with a contrast-derived label, exactly as before (byte-identical). A
-/// non-null `stroke` is a canonical `#rrggbb` (or `currentColor`/`none`) border colour parse-validated
-/// through the SAME {@link com.sirentide.contract.SirentideContract} colour guard as `color`;
+/// non-null `stroke` is a canonical `#rrggbb` border colour parse-validated through the SAME
+/// {@link com.sirentide.contract.SirentideContract} colour guard as `color` (the DSL boundary is
+/// deliberately hex-only; `currentColor`/`none` are not accepted there, and a direct-IR caller
+/// passing them gets the fallback lightener in FUTURE frames — hex is the supported surface);
 /// `strokeWidth` is a finite non-negative border width (`null` → the layout's default when a stroke is
 /// set); `textColor` overrides the auto-contrast label colour with an author `#hex`. Every value is
 /// validated at the parse boundary and fails closed (a bad value drops to `null` → the default).

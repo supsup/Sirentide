@@ -151,8 +151,9 @@ public final class SvgEmitter {
                 sb.append("/>");
             }
             // A filled box (node/actor-head/activation rect): a STRUCTURAL fill — a future step dims,
-            // but an active/done box keeps its fill (the contract <rect> carries no stroke, so a box
-            // can't take an in-alphabet outline accent; its label glyph carries the accent instead).
+            // but an active/done box keeps its fill. A rect MAY carry an optional authored stroke
+            // (classDef border, plan sirentide-node-edge-styling): appendStroke below applies the
+            // same frame-state accent/dim/width transforms a <line> stroke gets.
             case Rect r -> {
                 sb.append("<rect x=\"").append(fmt(r.x())).append("\" y=\"").append(fmt(r.y()))
                     .append("\" width=\"").append(fmt(r.width())).append("\" height=\"").append(fmt(r.height()))

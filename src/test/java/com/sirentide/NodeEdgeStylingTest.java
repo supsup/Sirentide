@@ -208,8 +208,51 @@ class NodeEdgeStylingTest {
         // Active frame for node A: border promoted to the play-through accent AND thickened 2x.
         assertTrue(frames.stream().anyMatch(f -> f.contains("stroke=\"#e8590c\" stroke-width=\"4\"")),
             "some frame accents + thickens node A's border in its active step: " + frames);
-        // The bright authored border is NOT constant across frames — future frames dim it.
-        assertTrue(!frames.stream().allMatch(f -> f.contains("stroke=\"#ff0000\" stroke-width=\"2\"")),
-            "the styled border is not a constant bright #ff0000 across frames (future frames dim it)");
+        // FUTURE dimming pinned to the EXACT tint (Lattice re-review, seq 216): #ff0000
+        // lightened by the frame de-emphasis is #ff9e9e at the authored 2px. Scoped to
+        // NODE A's OWN anchor group (the frame legitimately carries the accent on the
+        // active EDGE) — some frame's A-group must carry the future tint and NEITHER the
+        // bright authored border NOR the active accent. A mutant that accents ACTIVE but
+        // leaves FUTURE bright red now fails here (the old not-all-frames-bright
+        // assertion was implied by the active assertion and pinned nothing).
+        assertTrue(frames.stream().map(f -> nodeGroup(f, "a")).anyMatch(g ->
+                g.contains("stroke=\"#ff9e9e\" stroke-width=\"2\"")
+                && !g.contains("stroke=\"#ff0000\"")
+                && !g.contains("stroke=\"#e8590c\"")),
+            "some frame dims node A's OWN border to the exact FUTURE tint #ff9e9e/2px with"
+                + " no authored-bright or active stroke in A's group: " + frames);
+    }
+
+    /// A node's own anchor group within one frame — the semantic-anchor contract
+    /// (data-sirentide-role/id, where id is the LABEL-derived anchor id) makes
+    /// per-node frame assertions scope-able.
+    private static String nodeGroup(String svg, String nodeId) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            "<g data-sirentide-role=\"node\" data-sirentide-id=\"" + nodeId + "\"[^>]*>.*?</g>",
+            java.util.regex.Pattern.DOTALL).matcher(svg);
+        return m.find() ? m.group() : "";
+    }
+
+    @Test
+    void pathShapedNodeBorderParticipatesInPlayThroughEmphasis() {
+        // Same contract for a PATH-outlined shape (diamond): the classDef border on a
+        // decision node must dim to the exact FUTURE tint and accent+thicken when active
+        // — the original review asked for frame regressions on BOTH rect and path frames
+        // (Lattice re-review, seq 216: the branch had only a static diamond assertion).
+        String dsl = "flowchart TD\n"
+            + "  classDef hot stroke:#ff0000,stroke-width:2px\n"
+            + "  A[a] --> D{d}\n  class D hot\n";
+        assertTrue(Sirentide.render(dsl).contains("stroke=\"#ff0000\" stroke-width=\"2\""),
+            "the static render carries the exact authored diamond border");
+        java.util.List<String> frames = Sirentide.renderFrames(dsl);
+        assertTrue(frames.stream().map(f -> nodeGroup(f, "d")).anyMatch(g ->
+                g.contains("stroke=\"#e8590c\" stroke-width=\"4\"")),
+            "some frame accents + thickens the diamond's border in its active step: " + frames);
+        assertTrue(frames.stream().map(f -> nodeGroup(f, "d")).anyMatch(g ->
+                g.contains("stroke=\"#ff9e9e\" stroke-width=\"2\"")
+                && !g.contains("stroke=\"#ff0000\"")
+                && !g.contains("stroke=\"#e8590c\"")),
+            "some frame dims the diamond's OWN border to the exact FUTURE tint #ff9e9e/2px"
+                + " with no authored-bright or active stroke in D's group: " + frames);
     }
 }
