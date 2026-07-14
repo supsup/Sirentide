@@ -13,7 +13,8 @@ package com.sirentide.ir;
 /// non-null `stroke` is a canonical `#rrggbb` border colour parse-validated through the SAME
 /// {@link com.sirentide.contract.SirentideContract} colour guard as `color` (the DSL boundary is
 /// deliberately hex-only; `currentColor`/`none` are not accepted there, and a direct-IR caller
-/// passing them gets the fallback lightener in FUTURE frames — hex is the supported surface);
+/// passing them is off the supported surface: `currentColor` theme-resolves first, so only under
+/// the DEFAULT theme does it reach the FUTURE-frame fallback lightener — hex is the contract);
 /// `strokeWidth` is a finite non-negative border width (`null` → the layout's default when a stroke is
 /// set); `textColor` overrides the auto-contrast label colour with an author `#hex`. Every value is
 /// validated at the parse boundary and fails closed (a bad value drops to `null` → the default).

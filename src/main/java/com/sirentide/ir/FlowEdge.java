@@ -16,8 +16,9 @@ package com.sirentide.ir;
 /// it in the built-in edge colour/width (byte-identical). A non-null `stroke` is a canonical
 /// `#rrggbb` validated through the SAME {@link com.sirentide.contract.SirentideContract} colour
 /// guard the node fills use (hex-only at the DSL boundary — `currentColor`/`none` are not
-/// accepted there; a direct-IR caller passing them gets the fallback lightener in FUTURE
-/// frames, so hex is the supported surface); `strokeWidth`
+/// accepted there; a direct-IR caller passing them is off the supported surface: `currentColor`
+/// theme-resolves first, so only under the DEFAULT theme does it reach the FUTURE-frame
+/// fallback lightener — hex is the contract); `strokeWidth`
 /// is a finite non-negative width (`null` → the style-derived default). Both are parse-boundary
 /// validated and fail closed (a bad value drops to `null` → the default line colour/width).
 public record FlowEdge(String from, String to, String label, EdgeStyle style, boolean arrow,

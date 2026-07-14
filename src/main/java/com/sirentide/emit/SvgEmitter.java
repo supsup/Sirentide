@@ -140,13 +140,20 @@ public final class SvgEmitter {
             // label popping to the accent colour is the clearest "this is the active step" signal.
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
                 .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(g.fill())))).append("\"/>");
-            // Path mirrors GlyphRun exactly — a contract-clean `d` string + a colour-sink-validated
-            // fill (flowchart arrowheads / future rounded nodes). An accentable fill: an active step's
-            // arrowhead takes the accent, a future step's dims. An OPTIONAL node border (classDef
-            // stroke) rides the same colour sink; absent (null) → byte-identical (no stroke attrs).
+            // Path mirrors GlyphRun's contract-clean `d` string + colour-sink-validated fill, but the
+            // FILL TREATMENT splits on the shape's role (Lattice needs-fix, sirentide seq 220): a NODE
+            // SILHOUETTE (Path.structural — diamond/stadium/… body) is a STRUCTURAL fill like a node
+            // Rect (future dims, active KEEPS its fill) so the accented label stays readable on it —
+            // accenting silhouette + label together is 1:1 contrast, an invisible label. An arrowhead
+            // (non-structural) keeps the ACCENTABLE fill: an active step's arrowhead takes the accent,
+            // a future step's dims. An OPTIONAL node border (classDef stroke) rides the same colour
+            // sink; absent (null) → byte-identical (no stroke attrs).
             case Path p -> {
+                String fill = theme.resolve(p.fill());
                 sb.append("<path d=\"").append(p.d())
-                    .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(p.fill())))).append('"');
+                    .append("\" fill=\"")
+                    .append(color(p.structural() ? Emphasis.box(st, fill) : Emphasis.accent(st, fill)))
+                    .append('"');
                 appendStroke(sb, st, p.stroke(), p.strokeWidth(), theme);
                 sb.append("/>");
             }

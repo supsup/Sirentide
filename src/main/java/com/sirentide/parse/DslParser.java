@@ -713,8 +713,9 @@ public final class DslParser {
     private static final String KW_LINKSTYLE = "linkStyle";
 
     /// A resolved `classDef` box style (plan sirentide-node-edge-styling). Every field is already
-    /// PARSE-VALIDATED and canonicalized (colours are `#rrggbb`/`currentColor`/`none` from the shared
-    /// {@link SirentideContract} colour guard; `strokeWidth` a bounded finite non-negative number) or
+    /// PARSE-VALIDATED and canonicalized (colours are HEX-ONLY `#rrggbb` — the shared {@link
+    /// SirentideContract#isHexColor} guard; `currentColor`/`none` are NOT admitted by classDef;
+    /// `strokeWidth` a bounded finite non-negative number) or
     /// `null` when the classDef omitted / malformed that property — so the IR/emitter never sees an
     /// unvalidated value. `textColor` is the label (`color:`) override.
     private record ClassStyle(String fill, String stroke, Double strokeWidth, String textColor) {}

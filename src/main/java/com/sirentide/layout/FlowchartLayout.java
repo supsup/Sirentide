@@ -235,16 +235,16 @@ public final class FlowchartLayout {
                     + " L " + fmt(cx) + " " + fmt(y + h)
                     + " L " + fmt(x) + " " + fmt(cy)
                     + " Z";
-                shapes.add(new Path(d, fill, stroke, strokeWidth));
+                shapes.add(Path.silhouette(d, fill, stroke, strokeWidth));
             }
             // Fully-rounded-ends pill: straight top/bottom + a semicircle cap (r = h/2) on each side.
-            case "stadium" -> shapes.add(new Path(stadiumPath(x, y, w, h), fill, stroke, strokeWidth));
+            case "stadium" -> shapes.add(Path.silhouette(stadiumPath(x, y, w, h), fill, stroke, strokeWidth));
             // A ring — a full ellipse traced as two arcs (a true circle when the box is square).
-            case "circle" -> shapes.add(new Path(ellipsePath(x, y, w, h), fill, stroke, strokeWidth));
+            case "circle" -> shapes.add(Path.silhouette(ellipsePath(x, y, w, h), fill, stroke, strokeWidth));
             // A 6-point hexagon: flat top/bottom, a point on each side (all straight L segments).
-            case "hexagon" -> shapes.add(new Path(hexagonPath(x, y, w, h), fill, stroke, strokeWidth));
+            case "hexagon" -> shapes.add(Path.silhouette(hexagonPath(x, y, w, h), fill, stroke, strokeWidth));
             // A soft-cornered box (Q-quadratic corners, no arcs) — distinct from the sharp default rect.
-            case "rounded" -> shapes.add(new Path(roundedRectPath(x, y, w, h), fill, stroke, strokeWidth));
+            case "rounded" -> shapes.add(Path.silhouette(roundedRectPath(x, y, w, h), fill, stroke, strokeWidth));
             // Subroutine: the plain box PLUS an inner vertical bar just in from each short side.
             case "subroutine" -> {
                 shapes.add(new Rect(x, y, w, h, fill, stroke, strokeWidth));
@@ -336,7 +336,7 @@ public final class FlowchartLayout {
             + " L " + fmt(x + w) + " " + fmt(y + h - ry)
             + " A " + fmt(rx) + " " + fmt(ry) + " 0 0 0 " + fmt(x) + " " + fmt(y + h - ry)
             + " Z";
-        shapes.add(new Path(d, fill, stroke, strokeWidth));
+        shapes.add(Path.silhouette(d, fill, stroke, strokeWidth));
         // The lid rim: the front half of the top ellipse (dips to y+2·ry), as CYL_LID_SEGS line segments.
         String rim = Colors.contrastFill(fill);
         double px = x;
