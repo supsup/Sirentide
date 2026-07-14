@@ -229,6 +229,20 @@ public final class ErDiagramLayout {
                 selfLabelW[li] = Math.max(selfLabelW[li], w);
             }
         }
+        // A table with MULTIPLE self-loop lanes must be TALL enough that the per-lane attach nudges
+        // never clamp two lanes onto the same y — clamp-collapsed lanes run COLLINEAR horizontal
+        // legs that partially overpaint, so a later FUTURE group paints over an earlier ACTIVE one
+        // in play-through, and the stacked labels collapse at the ascent floor (Lattice r3,
+        // seq 227, JShell-probed at 3 class / 3 ER lanes). Growing the table keeps every authored
+        // relation rendered (rejecting the "unsupported" count would erase valid relations — the
+        // original bug class): 0.3·h must clear the border inset plus one ATTACH_STEP per extra
+        // lane, which by the 0.3/0.7 symmetry bounds the bottom nudges too.
+        for (int i = 0; i < n; i++) {
+            if (selfLoops[i] > 1) {
+                boxH[i] = Math.max(boxH[i],
+                    (4 + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+            }
+        }
 
         int cols = (int) Math.ceil(Math.sqrt(n));
         if (cols < 1) {
@@ -599,8 +613,8 @@ public final class ErDiagramLayout {
     }
 
     /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
-    /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span (a
-    /// tiny table with many lanes degrades to touching legs, still deterministic, never outside).
+    /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span — a BELT: the sizing pass grows a multi-lane table so the nudges
+    /// never actually clamp two lanes together (collinear legs overpaint; Lattice r3 seq 227).
     private static double loopExitY(double boxY, double boxH, int lane) {
         return Math.max(boxY + 4, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
     }

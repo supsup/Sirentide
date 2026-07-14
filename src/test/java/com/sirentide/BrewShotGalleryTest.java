@@ -161,6 +161,8 @@ class BrewShotGalleryTest {
             "classDiagram\nclass A\nclass B\nA <|-- A : refines itself\nA --> A : delegates\nA --> B"),
         new Case("er-self-loop", "ER self-relation (crow-foot both ends + neighbor)",
             "erDiagram\nEMPLOYEE ||--o{ EMPLOYEE : manages\nEMPLOYEE ||--|| DESK : uses"),
+        new Case("class-self-loops-three", "Three self-relation lanes (box grows; no collinear legs)",
+            "classDiagram\nclass A\nA --> A : first\nA --> A : second\nA --> A : third"),
         // THE MOAT — real baked LaTeX (via the injected LatteX renderer), audited to stay in-canvas.
         new Case("mathblock", "Display math (standalone, baked LaTeX)",
             "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", REAL),

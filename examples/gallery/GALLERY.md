@@ -420,6 +420,18 @@ EMPLOYEE ||--|| DESK : uses
 
 ![ER self-relation (crow-foot both ends + neighbor)](er-self-loop.png)
 
+## Three self-relation lanes (box grows; no collinear legs)
+
+```
+classDiagram
+class A
+A --> A : first
+A --> A : second
+A --> A : third
+```
+
+![Three self-relation lanes (box grows; no collinear legs)](class-self-loops-three.png)
+
 ## Display math (standalone, baked LaTeX)
 
 ```

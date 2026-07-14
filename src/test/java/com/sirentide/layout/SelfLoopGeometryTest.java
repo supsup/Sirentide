@@ -164,6 +164,114 @@ class SelfLoopGeometryTest {
         assertAllGeometryInside(laid);
     }
 
+    // -- 3b) THREE+ lanes: no positive-length collinear overlap, labels pairwise separated --------
+    // Lattice r3 (seq 227): legSignatures compares WHOLE-line strings, so two legs sharing an
+    // origin and y but differing in outer endpoint have different signatures while still
+    // overpainting most of their length. This oracle rejects ANY positive-length collinear
+    // intersection between different edge groups — the actual playback-overpaint condition
+    // (frames re-emit the one layout recolour-only, so static disjointness is playback
+    // disjointness). The sizing pass now grows a multi-lane box so attach nudges never clamp
+    // two lanes together; these fixtures fail on the clamp-collapsed geometry.
+
+    @Test
+    void threeClassSelfLoopLanesNeverRunCollinearLegs() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A --> A\n  A --> A\n  A --> A\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        assertNoCollinearOverlapAcrossGroups(loops, EDGE);
+        assertAllGeometryInside(laid);
+    }
+
+    @Test
+    void threeErSelfLoopLanesNeverRunCollinearLegs() {
+        LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  A ||--o{ A : first\n  A ||--|| A : second\n  A ||--o| A : third\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        assertNoCollinearOverlapAcrossGroups(loops, ER_EDGE);
+        assertAllGeometryInside(laid);
+    }
+
+    @Test
+    void fourClassSelfLoopLabelsStayPairwiseSeparated() {
+        // Lattice r3's four-lane probe: labels collapsed at the ascent floor (lane 2 and lane 3
+        // glyph boxes overpainting almost completely). With the multi-lane box growth the label
+        // stack never reaches the floor — every pair of loop-label glyph boxes must be DISJOINT.
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A --> A : first\n  A --> A : second\n"
+                + "  A --> A : third\n  A --> A : fourth\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(4, loops.size(), "four self-relations → four edge groups");
+        List<double[]> boxes = new ArrayList<>();   // {minX, minY, maxX, maxY} per label
+        for (Group g : loops) {
+            List<double[]> pts = new ArrayList<>();
+            g.members().stream().filter(s -> s instanceof GlyphRun)
+                .forEach(s -> pathPoints(((GlyphRun) s).pathD(), pts));
+            assertFalse(pts.isEmpty(), "every loop label renders glyphs");
+            double minX = pts.stream().mapToDouble(p -> p[0]).min().orElseThrow();
+            double minY = pts.stream().mapToDouble(p -> p[1]).min().orElseThrow();
+            double maxX = pts.stream().mapToDouble(p -> p[0]).max().orElseThrow();
+            double maxY = pts.stream().mapToDouble(p -> p[1]).max().orElseThrow();
+            boxes.add(new double[] {minX, minY, maxX, maxY});
+        }
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] a = boxes.get(i);
+                double[] b = boxes.get(j);
+                boolean disjoint = a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1];
+                assertTrue(disjoint, "loop labels " + i + " and " + j + " overlap: "
+                    + java.util.Arrays.toString(a) + " vs " + java.util.Arrays.toString(b));
+            }
+        }
+        assertNoCollinearOverlapAcrossGroups(loops, EDGE);
+        assertAllGeometryInside(laid);
+    }
+
+    /// Rejects any POSITIVE-LENGTH collinear intersection between edge-coloured legs of DIFFERENT
+    /// groups (axis-aligned segments — the only leg shapes a rectilinear loop emits). Two legs on
+    /// the same horizontal/vertical line (within 1px — legs are 1.5px-wide strokes) must not share
+    /// more than a point of their spans.
+    private static void assertNoCollinearOverlapAcrossGroups(List<Group> groups, String edgeStroke) {
+        for (int i = 0; i < groups.size(); i++) {
+            for (int j = i + 1; j < groups.size(); j++) {
+                for (Shape sa : groups.get(i).members()) {
+                    if (!(sa instanceof Line a) || !edgeStroke.equals(a.stroke())) {
+                        continue;
+                    }
+                    for (Shape sb : groups.get(j).members()) {
+                        if (!(sb instanceof Line b) || !edgeStroke.equals(b.stroke())) {
+                            continue;
+                        }
+                        double overlap = collinearOverlapLen(a, b);
+                        assertTrue(overlap <= 0.01, "groups " + i + " and " + j
+                            + " share a collinear leg run of length " + overlap + ": " + a + " vs " + b);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Length of the collinear overlap between two axis-aligned segments (0 when not collinear or
+    /// merely touching at a point).
+    private static double collinearOverlapLen(Line a, Line b) {
+        boolean aH = near(a.y1(), a.y2(), 1e-9);
+        boolean bH = near(b.y1(), b.y2(), 1e-9);
+        boolean aV = near(a.x1(), a.x2(), 1e-9);
+        boolean bV = near(b.x1(), b.x2(), 1e-9);
+        if (aH && bH && near(a.y1(), b.y1(), 1.0)) {
+            double lo = Math.max(Math.min(a.x1(), a.x2()), Math.min(b.x1(), b.x2()));
+            double hi = Math.min(Math.max(a.x1(), a.x2()), Math.max(b.x1(), b.x2()));
+            return Math.max(0, hi - lo);
+        }
+        if (aV && bV && near(a.x1(), b.x1(), 1.0)) {
+            double lo = Math.max(Math.min(a.y1(), a.y2()), Math.min(b.y1(), b.y2()));
+            double hi = Math.min(Math.max(a.y1(), a.y2()), Math.max(b.y1(), b.y2()));
+            return Math.max(0, hi - lo);
+        }
+        return 0;
+    }
+
     // -- 4) class marker ownership follows the authored operand ----------------------------------
 
     @Test
