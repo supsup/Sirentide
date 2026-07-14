@@ -33,7 +33,9 @@ public final class StateDiagramLayout {
     /// semicircle arcs, alphabet-clean: only `<path>`). The bullseye is three concentric discs
     /// (dark r8, white r6, dark r4) stacked in paint order. Every disc is centred on the node box
     /// the engine sized/placed, so edge anchors (box top/bottom/side centres) are untouched.
-    static final NodeStyler STYLER = (shapes, i, x, y, w, h, shape, fill) -> {
+    // A state node takes no classDef stroke/textColor styling (out of scope), so the border params are
+    // accepted-and-ignored — a state box stays the fill-only rounded rect / disc it always was.
+    static final NodeStyler STYLER = (shapes, i, x, y, w, h, shape, fill, stroke, strokeWidth) -> {
         double cx = x + w / 2;
         double cy = y + h / 2;
         switch (shape) {

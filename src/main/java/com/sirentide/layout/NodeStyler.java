@@ -14,8 +14,11 @@ import java.util.List;
 ///
 /// `i` is the node index (unused by the current stylers but carried for a future per-node style map);
 /// `shape` is the {@link com.sirentide.ir.FlowNode} shape string; `fill` is the engine's default node
-/// fill (a styler may honour or ignore it).
+/// fill (a styler may honour or ignore it). `stroke`/`strokeWidth` are an OPTIONAL classDef-driven
+/// border (plan sirentide-node-edge-styling): a `null` stroke means NO border (the borderless box the
+/// engine always drew — byte-identical), a present one draws that colour at that width on the box's
+/// primary shape. The state styler ignores the border (state nodes take no classDef styling).
 interface NodeStyler {
     void emitNode(List<Shape> shapes, int i, double x, double y, double w, double h,
-                  String shape, String fill);
+                  String shape, String fill, String stroke, double strokeWidth);
 }

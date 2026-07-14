@@ -42,9 +42,9 @@ All **six shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowc
 | Element | Attributes emitted today |
 | --- | --- |
 | `svg` (root) | `xmlns` (= `http://www.w3.org/2000/svg`), `width`, `height`, `viewBox` |
-| `path` | `d`, `fill` — labels (as glyph paths), pie wedges, flowchart arrowhead triangles |
-| `rect` | `x`, `y`, `width`, `height`, `fill` — bars, boxes, node rectangles |
-| `line` | `x1`, `y1`, `x2`, `y2`, `stroke`, `stroke-width` — axes, lifelines, edges |
+| `path` | `d`, `fill`, `stroke`, `stroke-width` — labels (as glyph paths), pie wedges, flowchart arrowhead triangles; `stroke`/`stroke-width` are the OPTIONAL non-rect node border (`classDef` styling, node-styling milestone) |
+| `rect` | `x`, `y`, `width`, `height`, `fill`, `stroke`, `stroke-width` — bars, boxes, node rectangles; `stroke`/`stroke-width` are the OPTIONAL node border set by a flowchart `classDef` (absent → no border, byte-identical to a pre-styling bake) |
+| `line` | `x1`, `y1`, `x2`, `y2`, `stroke`, `stroke-width` — axes, lifelines, edges (per-edge colour/width via `linkStyle`) |
 
 **No `<g>`, no `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, no `<marker>`/`<defs>`, no `stroke-dasharray`, no `transform`, no `class`, and no `data-*` anchors are emitted yet.** The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
 

@@ -6,6 +6,29 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-12 — Node & edge styling (`classDef` stroke/colour + `linkStyle`)
+
+Flowchart nodes and edges can now carry colour, not just a fill.
+
+### `classDef` gains `stroke`, `stroke-width`, and `color`
+A class definition already set a node's `fill`; it now also sets its border and its label
+colour. Assign it with `class` exactly as before:
+> `classDef critical fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d`
+> `class PayGate,Refund critical`
+
+A node without a class keeps **no border** — every pre-existing bake is byte-identical.
+
+### `linkStyle` — per-edge colour and width
+Colour or thicken specific edges by their authoring index (0-based), or every edge with
+`default`; an explicit index wins over `default`:
+> `linkStyle 0,2 stroke:#dc2626,stroke-width:3px` &nbsp;·&nbsp; `linkStyle default stroke:#94a3b8`
+
+### Safe by construction
+Every colour is validated hex-only at the parse boundary (the same guard `fill` uses) and
+every width is a bounded finite number (0–40); anything else is **dropped to the default**,
+never forwarded. Borders emit into the existing `rect`/`path` alphabet — no new sanitizer
+surface, so a styled diagram is as inert on `/docs` as an unstyled one.
+
 ## 2026-07-04 — M0 foundation & the first diagram
 
 The project is born and building. This is the M0 foundation plus the first rendering diagram type.
