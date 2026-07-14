@@ -90,9 +90,19 @@ public final class ErDiagramLayout {
     // A self-relation (`A ||--o{ A`) routes a rectilinear loop off the table's RIGHT edge: out this far
     // past the border, down, and back — entirely to the right of the table, so it never re-enters the
     // interior. SELF_LOOP_OUT clears the deepest cardinality combo (zero-or-many's ring reaches
-    // CROW_LEN + GAP + 2·CIRCLE_R = 34 out) so the outer leg sits beyond every marker. The canvas grows
-    // to include the loop (containment; see the self-relation grow pass).
+    // CROW_LEN + GAP + 2·CIRCLE_R = 34 out) so the outer leg sits beyond every marker. The row cursor
+    // reserves the whole loop LANE (legs + widest label), so neither the next table in the row nor
+    // the viewBox edge can collide with it (Lattice re-review, seq 217).
     private static final double SELF_LOOP_OUT = 44;
+    // Each ADDITIONAL self-relation on the same table nests one lane further out (distinct vertical
+    // legs) …
+    private static final double SELF_LOOP_LANE = 14;
+    // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
+    // border span) so the horizontal legs never overpaint either. Labels stack separately (see
+    // loopLabelBaseline), so an attach-clamp collapse can never merge them.
+    private static final double SELF_LOOP_ATTACH_STEP = 12;
+    // Gap between the outermost loop leg and its label's left edge.
+    private static final double SELF_LOOP_LABEL_GAP = 4;
 
     /// One placed entity table: its grid rectangle plus the pre-measured header height and the
     /// (ellipsized) display lines, so the emit pass draws band/rows/text without re-measuring.
@@ -195,6 +205,31 @@ public final class ErDiagramLayout {
         }
         int[] perm = GridOrder.order(n, edgeList.toArray(new int[0][]));
 
+        // Self-loop lane bookkeeping (Lattice re-review, seq 217): every self-relation on a table
+        // occupies a LANE off its right edge — lane k's vertical leg sits k·SELF_LOOP_LANE further
+        // out — and each loop's (already-ellipsized) label rides beside the table's OUTERMOST leg.
+        // The row cursor below reserves the table's full lane extent, which is what keeps a loop
+        // label from escaping the viewBox (the old grow-pass reserved only the legs) and from
+        // running through the next table in the row.
+        int[] selfLoops = new int[n];                       // lanes per table
+        int[] selfLane = new int[er.relations().size()];    // this relation's lane on its table
+        double[] selfLabelW = new double[n];                // widest label in the table's lane
+        for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
+            Integer li = index.get(r.left());
+            if (li == null || !li.equals(index.get(r.right()))) {
+                continue;
+            }
+            selfLane[e] = selfLoops[li]++;
+            if (r.label() != null && !r.label().isBlank()) {
+                String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+                double w = (math != null && MathLabel.hasMath(lbl))
+                    ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
+                    : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                selfLabelW[li] = Math.max(selfLabelW[li], w);
+            }
+        }
+
         int cols = (int) Math.ceil(Math.sqrt(n));
         if (cols < 1) {
             cols = 1;
@@ -215,7 +250,9 @@ public final class ErDiagramLayout {
                 int node = perm[s];
                 px[node] = cursor;
                 py[node] = rowTop;
-                cursor += boxW[node] + COL_GAP;
+                // Reserve the table's self-loop LANE (legs + widest label) inside the row, so the
+                // next table starts past it AND canvasW (derived from the cursor) contains it.
+                cursor += boxW[node] + selfLaneExtent(selfLoops[node], selfLabelW[node]) + COL_GAP;
             }
             canvasW = Math.max(canvasW, cursor - COL_GAP + MARGIN);
             rowTop += rowH + ROW_GAP;
@@ -223,15 +260,31 @@ public final class ErDiagramLayout {
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
-        // A self-relation (both endpoints the same entity) routes an on-canvas loop off the table's RIGHT
-        // edge (emitRelation → emitSelfLoop). Grow the canvas WIDTH so the loop's outermost leg + margin
-        // stays inside the viewBox — the loop stays within the table's own y-span, so height is
-        // unaffected. This is the containment bound the whole-diagram grid already applies to its tables.
-        for (ErRelation r : er.relations()) {
+        // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
+        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE): the label
+        // baseline is stacked above the lane-0 exit leg (the same {@link #loopLabelBaseline} +
+        // ascent-floor formula emitSelfLoop uses), so grow the BOTTOM when a bottom-row label's
+        // descent reaches past the margin.
+        for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
             Integer li = index.get(r.left());
-            if (li != null && li.equals(index.get(r.right()))) {
-                canvasW = Math.max(canvasW, px[li] + boxW[li] + SELF_LOOP_OUT + MARGIN);
+            if (li == null || !li.equals(index.get(r.right()))
+                || r.label() == null || r.label().isBlank()) {
+                continue;
             }
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double asc;
+            double desc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                asc = m.ascent();
+                desc = m.descent();
+            } else {
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+                desc = FONT.descent(EDGE_LABEL_SIZE);
+            }
+            double baseline = Math.max(asc + 2, loopLabelBaseline(py[li], boxH[li], selfLane[e]));
+            canvasH = Math.max(canvasH, baseline + desc + 2);
         }
 
         Placed[] placed = new Placed[n];
@@ -252,14 +305,16 @@ public final class ErDiagramLayout {
         // -- 3) relationship edges + cardinality markers FIRST (under the tables, so a table border
         // cleanly caps the line while the markers — in the gap between tables — stay visible on top).
         // Each relation's edge line + both cardinality combos + label collect into ONE `<g role="edge">`.
-        for (ErRelation r : er.relations()) {
+        for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
             Integer li = index.get(r.left());
             Integer ri = index.get(r.right());
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced entity (defensive) — skip, never throw
             }
             List<Shape> eg = new ArrayList<>();
-            emitRelation(eg, placed, li, ri, r, er.textColor(), canvasW, canvasH, math);
+            emitRelation(eg, placed, li, ri, r, er.textColor(), canvasW, canvasH, math,
+                selfLane[e], selfLoops[li]);
             shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
@@ -402,14 +457,15 @@ public final class ErDiagramLayout {
     /// to the border while the bars/circles sit on the line.
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
-                                     MathFragmentRenderer math) {
+                                     MathFragmentRenderer math, int lane, int laneCount) {
         // Self-relation (`A ||--o{ A`): both endpoints are the same table. A zero-length straight edge
         // would put clipToRect at the table center for BOTH ends and draw the cardinality combos INSIDE
         // the table — and merely SKIPPING it erases a semantically-valid recursive relationship AND
         // leaves a phantom empty edge group owning an anchor. Instead route a deterministic on-canvas
-        // self-LOOP off the right edge, with each end's cardinality combo on the loop.
+        // self-LOOP off the right edge, with each end's cardinality combo on the loop, in this
+        // relation's own lane (`lane` of the table's `laneCount`; layout reserved the extent).
         if (li == ri) {
-            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math);
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount);
             return;
         }
         Placed left = placed[li];
@@ -477,20 +533,24 @@ public final class ErDiagramLayout {
 
     /// Routes a SELF-relation (`A ||--o{ A`) as a deterministic rectilinear LOOP off the table's RIGHT
     /// edge, so a recursive relationship renders on-canvas instead of being erased. Geometry, all derived
-    /// from the table rectangle: two attach points on the right border (at 0.3·h and 0.7·h down), a leg
-    /// out to {@code x+w+SELF_LOOP_OUT}, a leg down, and a leg back. Every point has x ≥ the right border,
-    /// so the loop NEVER crosses the table interior; it stays within the table's y-span, so it never
-    /// escapes vertically; and the layout grew the canvas width to keep the outer leg inside the viewBox.
+    /// from the table rectangle and the relation's LANE (Lattice re-review, seq 217 — multiple
+    /// self-relations each take their own lane instead of overpainting): two attach points on the right
+    /// border (0.3·h and 0.7·h, nudged apart per lane via {@link #loopExitY}/{@link #loopReturnY}), a
+    /// leg out to {@code x+w+SELF_LOOP_OUT+lane·SELF_LOOP_LANE}, a leg down, and a leg back. Every point
+    /// has x ≥ the right border, so the loop NEVER crosses the table interior, and the layout reserved
+    /// the whole lane extent (legs + widest label) in the row cursor, so nothing here can escape the
+    /// viewBox or run through a neighbor.
     /// BOTH cardinality combos render — {@code leftCard} at the top attach, {@code rightCard} at the
     /// bottom — each on the border pointing outward (exactly like a normal edge to a table on the right),
     /// and the edge line runs from each end's inner-symbol attach (the fork convergence for a "many" end),
     /// reusing the SAME {@link #emitEdgeLine} primitive (honouring the identifying/dashed flag).
     private static void emitSelfLoop(List<Shape> shapes, Placed table, ErRelation r, String textColor,
-                                     double canvasW, double canvasH, MathFragmentRenderer math) {
-        double x1 = table.x() + table.w();        // right border
-        double ay = table.y() + table.h() * 0.3;  // left-operand end attach (top)
-        double by = table.y() + table.h() * 0.7;  // right-operand end attach (bottom)
-        double out = x1 + SELF_LOOP_OUT;          // outermost leg, to the RIGHT of the table
+                                     double canvasW, double canvasH, MathFragmentRenderer math,
+                                     int lane, int laneCount) {
+        double x1 = table.x() + table.w();                  // right border
+        double ay = loopExitY(table.y(), table.h(), lane);  // left-operand end attach (top)
+        double by = loopReturnY(table.y(), table.h(), lane); // right-operand end attach (bottom)
+        double out = x1 + SELF_LOOP_OUT + lane * SELF_LOOP_LANE;   // this lane's vertical leg
         boolean dashed = !r.identifying();
         // Edge line from each end's inner-symbol attach (fork convergence for a many end, border for a
         // one end), out and around — the SAME inner-attach rule the straight edge uses.
@@ -502,17 +562,63 @@ public final class ErDiagramLayout {
         // Both cardinality combos, each at its own border attach, pointing OUTWARD (+x, away from table).
         shapes.addAll(cardinalityMarker(r.leftCard(), x1, ay, 1, 0, MARKER));
         shapes.addAll(cardinalityMarker(r.rightCard(), x1, by, 1, 0, MARKER));
-        // Optional `: label` — beside the loop's outer leg, clamped in-canvas (same clamp as a normal edge).
+        // Optional `: label` — beside the table's OUTERMOST lane leg (never crossing an outer lane's
+        // vertical leg: every leg ends at x ≤ that leg, and the label starts past it), lane-STACKED
+        // upward from just above the lane-0 exit leg via {@link #loopLabelBaseline}. Above-the-legs
+        // keeps the label out of the TABLE-CENTER band, where a straight edge to a right neighbor
+        // (and that edge's own midpoint label) lives — at center height a loop label runs into the
+        // neighbor edge's label (caught by eye on the BrewShot capture). Attach-independent, so a
+        // short table clamping the attach nudges together can never collapse stacked labels. The
+        // canvas clamps are belts: layout already reserved the width and grew the height with the
+        // same baseline formula.
         if (r.label() != null && !r.label().isBlank()) {
-            double midY = (ay + by) / 2 - 3;
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
-            double w = (math != null && MathLabel.hasMath(lbl))
-                ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
-                : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
-            double originX = Math.max(2, Math.min(out + 4, canvasW - 2 - w));
-            double clampedY = Math.max(EDGE_LABEL_SIZE, Math.min(midY, canvasH - 2));
-            emitLine(shapes, lbl, originX, clampedY, EDGE_LABEL_SIZE, false, textColor, math);
+            double w;
+            double asc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                w = m.width();
+                asc = m.ascent();
+            } else {
+                w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+            }
+            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE + SELF_LOOP_LABEL_GAP;
+            double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
+            double baseline = Math.max(asc + 2, loopLabelBaseline(table.y(), table.h(), lane));
+            emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, textColor, math);
         }
+    }
+
+    /// Lane k's label BASELINE: just above the lane-0 EXIT leg (0.3·h), one line-slot further up per
+    /// lane. Above-the-legs keeps every label clear of the table-center band (a crossing edge to a
+    /// right neighbor + its midpoint label live there), and the formula is deliberately independent
+    /// of the attach-point CLAMPS so stacked labels stay ≥ one line apart on ANY table height.
+    private static double loopLabelBaseline(double boxY, double boxH, int lane) {
+        return boxY + boxH * 0.3 - 3 - lane * (EDGE_LABEL_SIZE + 2);
+    }
+
+    /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
+    /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span (a
+    /// tiny table with many lanes degrades to touching legs, still deterministic, never outside).
+    private static double loopExitY(double boxY, double boxH, int lane) {
+        return Math.max(boxY + 4, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
+    }
+
+    /// Lane k's RETURN attach y (the bottom attach): 0.7·h nudged DOWN per lane, clamped in-span.
+    private static double loopReturnY(double boxY, double boxH, int lane) {
+        return Math.min(boxY + boxH - 4, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
+    }
+
+    /// Horizontal extent a table's self-loop lane adds past its right border: the outermost vertical
+    /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
+    /// self-loops. The row cursor reserves exactly this, and emitSelfLoop stays within it.
+    private static double selfLaneExtent(int loops, double labelW) {
+        if (loops == 0) {
+            return 0;
+        }
+        return SELF_LOOP_OUT + (loops - 1) * SELF_LOOP_LANE
+            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + labelW : 0);
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,

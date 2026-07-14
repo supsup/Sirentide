@@ -151,6 +151,16 @@ class BrewShotGalleryTest {
             "timeline\n\"very long left endpoint label\" : 0\n\"very long right endpoint label\" : 10"),
         new Case("flowchart-left-label", "Flowchart left-going edge label (clamped)",
             "flowchart\nA --> C\nB -->|this forward label can escape left| C"),
+        // SELF-LOOP geometry repros (Lattice re-review, sirentide seq 217): a long loop label once
+        // escaped the viewBox and ran through the neighbor box, stacked self-relations overpainted
+        // one geometry, and the class marker ignored its authored operand. Now the row cursor
+        // reserves the whole loop lane, lanes nest, and the marker follows markerAtLeft().
+        new Case("class-self-loop", "Class self-relation (long label, reserved lane)",
+            "classDiagram\nclass Node\nNode --> Node : recursive relationship with retry and backoff"),
+        new Case("class-self-loops-stacked", "Stacked class self-relations (lanes + marker sides + neighbor)",
+            "classDiagram\nclass A\nclass B\nA <|-- A : refines itself\nA --> A : delegates\nA --> B"),
+        new Case("er-self-loop", "ER self-relation (crow-foot both ends + neighbor)",
+            "erDiagram\nEMPLOYEE ||--o{ EMPLOYEE : manages\nEMPLOYEE ||--|| DESK : uses"),
         // THE MOAT — real baked LaTeX (via the injected LatteX renderer), audited to stay in-canvas.
         new Case("mathblock", "Display math (standalone, baked LaTeX)",
             "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", REAL),
