@@ -116,3 +116,33 @@ and needs no sanitizer change. A diagram with no caption is byte-identical to th
 fills go through the same `#rrggbb`-only hex gate as a per-node colour, so no new value shape
 reaches the emitter; resolution order is per-node `#hex` > class fill > header `nodecolor=` >
 default. A per-node colour still wins over its class.
+
+---
+
+## 2026-07-14 — self-relations rendered right (class + ER)
+
+A relation from a thing to itself (`A <|-- A`, `EMPLOYEE ||--o{ EMPLOYEE`) now renders as a
+deterministic rectilinear **loop** off the box's right edge — previously the degenerate zero-length
+edge drew its marker inside the box, and the interim fix erased the relation entirely. Four review
+rounds of geometry hardening (plan `sirentide-correctness-selfrel-caption`, Lattice-reviewed):
+
+### Self-loop lanes that cannot collide
+The row cursor reserves each box's full loop **lane** — legs plus the widest measured label — so a
+loop label can never escape the viewBox or run through the neighboring box. Multiple self-relations
+nest in distinct lanes (each vertical leg one step further out), and the box **grows** so lanes
+never clamp together into overpainting collinear legs: every authored relation keeps rendering.
+Labels stack one line-slot apart above the loop, clear of the box-center band where a crossing edge
+lives. Math-label ascent/descent participate in canvas growth.
+
+### Marker ownership follows the authored operand
+A whole/parent kind (`<|--`, markerAtLeft) caps the loop's TOP attach; an arrow kind the BOTTOM —
+mirroring both the straight-edge rule and ER's left-cardinality-at-top mapping.
+
+### Oracle receipts
+`SelfLoopGeometryTest` bounds the FULL leaf geometry (every glyph/marker path coordinate, not just
+line endpoints), rejects any positive-length collinear overlap between edge groups, and pins
+pairwise-disjoint label boxes at four lanes. Real-browser gallery captures: `class-self-loop`,
+`class-self-loops-stacked`, `class-self-loops-three`, `er-self-loop`.
+
+### Caption single-word overflow
+A single word longer than the caption wrap width hard-ellipsizes instead of escaping the canvas.
