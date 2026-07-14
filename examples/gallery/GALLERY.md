@@ -387,6 +387,51 @@ B -->|this forward label can escape left| C
 
 ![Flowchart left-going edge label (clamped)](flowchart-left-label.png)
 
+## Class self-relation (long label, reserved lane)
+
+```
+classDiagram
+class Node
+Node --> Node : recursive relationship with retry and backoff
+```
+
+![Class self-relation (long label, reserved lane)](class-self-loop.png)
+
+## Stacked class self-relations (lanes + marker sides + neighbor)
+
+```
+classDiagram
+class A
+class B
+A <|-- A : refines itself
+A --> A : delegates
+A --> B
+```
+
+![Stacked class self-relations (lanes + marker sides + neighbor)](class-self-loops-stacked.png)
+
+## ER self-relation (crow-foot both ends + neighbor)
+
+```
+erDiagram
+EMPLOYEE ||--o{ EMPLOYEE : manages
+EMPLOYEE ||--|| DESK : uses
+```
+
+![ER self-relation (crow-foot both ends + neighbor)](er-self-loop.png)
+
+## Three self-relation lanes (box grows; no collinear legs)
+
+```
+classDiagram
+class A
+A --> A : first
+A --> A : second
+A --> A : third
+```
+
+![Three self-relation lanes (box grows; no collinear legs)](class-self-loops-three.png)
+
 ## Display math (standalone, baked LaTeX)
 
 ```

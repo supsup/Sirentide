@@ -75,6 +75,22 @@ public final class ClassDiagramLayout {
     private static final double DASH_ON = 6;   // dependency dash segment length
     private static final double DASH_OFF = 4;  // dependency dash gap length
 
+    // A self-relation (`A <|-- A`) routes a rectilinear loop off the box's RIGHT edge: out this far
+    // past the border, down, and back — entirely to the right of the box, so it never re-enters the
+    // interior. SELF_LOOP_OUT > every marker length (max DIA_LEN = 16) so the outer leg clears the
+    // marker. The row cursor reserves the whole loop LANE (legs + widest label), so neither the
+    // next box in the row nor the viewBox edge can collide with it (Lattice re-review, seq 217).
+    private static final double SELF_LOOP_OUT = 30;
+    // Each ADDITIONAL self-relation on the same box nests one lane further out (distinct vertical
+    // legs) …
+    private static final double SELF_LOOP_LANE = 14;
+    // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
+    // border span) so the horizontal legs never overpaint either. Labels stack separately (see
+    // loopLabelBaseline), so an attach-clamp collapse can never merge them.
+    private static final double SELF_LOOP_ATTACH_STEP = 12;
+    // Gap between the outermost loop leg and its label's left edge.
+    private static final double SELF_LOOP_LABEL_GAP = 4;
+
     /// One placed class box: its grid rectangle plus the pre-measured compartment heights and the
     /// (ellipsized) display lines, so the emit pass draws bands/dividers/text without re-measuring.
     /// `nameMeasure`/`attrMeasures`/`methodMeasures` are the composite measures for lines carrying
@@ -205,6 +221,45 @@ public final class ClassDiagramLayout {
         }
         int[] perm = GridOrder.order(n, edgeList.toArray(new int[0][]));
 
+        // Self-loop lane bookkeeping (Lattice re-review, seq 217): every self-relation on a box
+        // occupies a LANE off its right edge — lane k's vertical leg sits k·SELF_LOOP_LANE further
+        // out — and each loop's (already-ellipsized) label rides beside the node's OUTERMOST leg.
+        // The row cursor below reserves the node's full lane extent, which is what keeps a loop
+        // label from escaping the viewBox (the old grow-pass reserved only the legs) and from
+        // running through the next box in the row.
+        int[] selfLoops = new int[n];                       // lanes per node
+        int[] selfLane = new int[cd.relations().size()];    // this relation's lane on its node
+        double[] selfLabelW = new double[n];                // widest label in the node's lane
+        for (int e = 0; e < cd.relations().size(); e++) {
+            ClassRelation r = cd.relations().get(e);
+            Integer li = index.get(r.left());
+            if (li == null || !li.equals(index.get(r.right()))) {
+                continue;
+            }
+            selfLane[e] = selfLoops[li]++;
+            if (r.label() != null && !r.label().isBlank()) {
+                String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+                double w = (math != null && MathLabel.hasMath(lbl))
+                    ? MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math).width()
+                    : FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                selfLabelW[li] = Math.max(selfLabelW[li], w);
+            }
+        }
+        // A box with MULTIPLE self-loop lanes must be TALL enough that the per-lane attach nudges
+        // never clamp two lanes onto the same y — clamp-collapsed lanes run COLLINEAR horizontal
+        // legs that partially overpaint, so a later FUTURE group paints over an earlier ACTIVE one
+        // in play-through, and the stacked labels collapse at the ascent floor (Lattice r3,
+        // seq 227, JShell-probed at 3 class / 3 ER lanes). Growing the box keeps every authored
+        // relation rendered (rejecting the "unsupported" count would erase valid relations — the
+        // original bug class): 0.3·h must clear the border inset plus one ATTACH_STEP per extra
+        // lane, which by the 0.3/0.7 symmetry bounds the bottom nudges too.
+        for (int i = 0; i < n; i++) {
+            if (selfLoops[i] > 1) {
+                boxH[i] = Math.max(boxH[i],
+                    (4 + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+            }
+        }
+
         int cols = (int) Math.ceil(Math.sqrt(n));
         if (cols < 1) {
             cols = 1;
@@ -225,13 +280,42 @@ public final class ClassDiagramLayout {
                 int node = perm[s];
                 px[node] = cursor;
                 py[node] = rowTop;
-                cursor += boxW[node] + COL_GAP;
+                // Reserve the node's self-loop LANE (legs + widest label) inside the row, so the
+                // next box starts past it AND canvasW (derived from the cursor) contains it.
+                cursor += boxW[node] + selfLaneExtent(selfLoops[node], selfLabelW[node]) + COL_GAP;
             }
             canvasW = Math.max(canvasW, cursor - COL_GAP + MARGIN);
             rowTop += rowH + ROW_GAP;
             slot = rowEnd;
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
+
+        // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
+        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE): the label
+        // baseline is stacked above the lane-0 exit leg (the same {@link #loopLabelBaseline} +
+        // ascent-floor formula emitSelfLoop uses), so grow the BOTTOM when a bottom-row label's
+        // descent reaches past the margin.
+        for (int e = 0; e < cd.relations().size(); e++) {
+            ClassRelation r = cd.relations().get(e);
+            Integer li = index.get(r.left());
+            if (li == null || !li.equals(index.get(r.right()))
+                || r.label() == null || r.label().isBlank()) {
+                continue;
+            }
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double asc;
+            double desc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                asc = m.ascent();
+                desc = m.descent();
+            } else {
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+                desc = FONT.descent(EDGE_LABEL_SIZE);
+            }
+            double baseline = Math.max(asc + 2, loopLabelBaseline(py[li], boxH[li], selfLane[e]));
+            canvasH = Math.max(canvasH, baseline + desc + 2);
+        }
 
         Placed[] placed = new Placed[n];
         for (int k = 0; k < n; k++) {
@@ -252,14 +336,16 @@ public final class ClassDiagramLayout {
         // -- 3) relationship edges + markers FIRST (under the boxes, so a box border cleanly caps the
         // line while the marker — which sits in the gap between boxes — stays visible on top). Each
         // relation's edge line + marker + label collect into ONE `<g role="edge">`.
-        for (ClassRelation r : cd.relations()) {
+        for (int e = 0; e < cd.relations().size(); e++) {
+            ClassRelation r = cd.relations().get(e);
             Integer li = index.get(r.left());
             Integer ri = index.get(r.right());
             if (li == null || ri == null) {
                 continue;   // a relation to an unplaced class (defensive) — skip, never throw
             }
             List<Shape> eg = new ArrayList<>();
-            emitRelation(eg, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math);
+            emitRelation(eg, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math,
+                selfLane[e], selfLoops[li]);
             shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
@@ -418,7 +504,16 @@ public final class ClassDiagramLayout {
     /// (the marker then points along the first/last leg), so an edge never runs over a non-endpoint box.
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri,
                                      ClassRelation r, String textColor, double canvasW, double canvasH,
-                                     MathFragmentRenderer math) {
+                                     MathFragmentRenderer math, int lane, int laneCount) {
+        // Self-relation (`A <|-- A`): both endpoints are the same box. A zero-length straight edge would
+        // put clipToRect at the box center for BOTH ends and draw the marker INSIDE the box — and merely
+        // SKIPPING it erases a semantically-valid recursive relationship AND leaves a phantom empty edge
+        // group owning an anchor. Instead route a deterministic on-canvas self-LOOP off the right edge,
+        // in this relation's own lane (`lane` of the node's `laneCount`; layout reserved the extent).
+        if (li == ri) {
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount);
+            return;
+        }
         Placed left = placed[li];
         Placed right = placed[ri];
         double lcx = left.centerX();
@@ -485,6 +580,99 @@ public final class ClassDiagramLayout {
             double originX = Math.max(2, Math.min(midX - w / 2, canvasW - 2 - w));
             emitLine(shapes, lbl, originX, midY, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
+    }
+
+    /// Routes a SELF-relation (`A <|-- A`) as a deterministic rectilinear LOOP off the box's RIGHT edge,
+    /// so a recursive relationship renders on-canvas instead of being erased. Geometry, all derived from
+    /// the box rectangle and the relation's LANE (Lattice re-review, seq 217 — multiple self-relations
+    /// each take their own lane instead of overpainting): two attach points on the right border (0.3·h
+    /// and 0.7·h, nudged apart per lane via {@link #loopExitY}/{@link #loopReturnY}), a leg out to
+    /// {@code x+w+SELF_LOOP_OUT+lane·SELF_LOOP_LANE}, a leg down, and a leg back to the marked border
+    /// point. Every point has x ≥ the right border, so the loop NEVER crosses the box interior, and the
+    /// layout reserved the whole lane extent (legs + widest label) in the row cursor, so nothing here
+    /// can escape the viewBox or run through a neighbor. The UML {@link #marker} honours the kind's
+    /// {@link RelationKind#markerAtLeft()} operand exactly like a straight edge: the LEFT operand maps
+    /// to the TOP attach (mirroring the ER twin's left-cardinality-at-top), the RIGHT to the BOTTOM —
+    /// tip on the border, pointing outward. The label rides beside the node's OUTERMOST lane leg,
+    /// stacked upward above the lane-0 exit leg ({@link #loopLabelBaseline}), baseline floored below
+    /// the top edge (tall math: layout grew the bottom with the same formula).
+    private static void emitSelfLoop(List<Shape> shapes, Placed box, ClassRelation r, String textColor,
+                                     double canvasW, double canvasH, MathFragmentRenderer math,
+                                     int lane, int laneCount) {
+        double x1 = box.x() + box.w();                    // right border
+        double ay = loopExitY(box.y(), box.h(), lane);    // top attach (LEFT operand's end)
+        double by = loopReturnY(box.y(), box.h(), lane);  // bottom attach (RIGHT operand's end)
+        double out = x1 + SELF_LOOP_OUT + lane * SELF_LOOP_LANE;   // this lane's vertical leg
+        boolean dashed = r.kind().dashed();
+        // Marker ownership follows the authored operand (seq 217 finding 4): a whole/parent kind
+        // (markerAtLeft) caps the TOP attach; an arrow/plain kind caps the BOTTOM. Tip on the border,
+        // pointing OUTWARD (+x, away from the box) either way; the capped leg starts past the marker.
+        boolean markTop = r.kind().markerAtLeft();
+        double markY = markTop ? ay : by;
+        List<Shape> mk = marker(r.kind(), x1, markY, 1, 0, MARKER);
+        double markLen = markerLength(r.kind());
+        // Three rectilinear legs: exit → out, down, back — the marked end's leg leaves markLen free.
+        emitEdgeLine(shapes, markTop ? x1 + markLen : x1, ay, out, ay, dashed);
+        emitEdgeLine(shapes, out, ay, out, by, dashed);
+        emitEdgeLine(shapes, out, by, markTop ? x1 : x1 + markLen, by, dashed);
+        shapes.addAll(mk);
+        // Optional `: label` — beside the node's OUTERMOST lane leg (never crossing an outer lane's
+        // vertical leg: every leg ends at x ≤ that leg, and the label starts past it), lane-STACKED
+        // upward from just above the lane-0 exit leg via {@link #loopLabelBaseline}. Above-the-legs
+        // keeps the label out of the BOX-CENTER band, where a straight edge to a right neighbor (and
+        // that edge's own midpoint label) lives — at center height a loop label reads struck-through
+        // by the crossing edge and runs into the neighbor edge's label (caught by eye on the BrewShot
+        // capture). Attach-independent, so a short box clamping the attach nudges together can never
+        // collapse stacked labels. The canvas clamps are belts: layout already reserved the width and
+        // grew the height with the same baseline formula.
+        if (r.label() != null && !r.label().isBlank()) {
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w;
+            double asc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                w = m.width();
+                asc = m.ascent();
+            } else {
+                w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+            }
+            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE + SELF_LOOP_LABEL_GAP;
+            double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
+            double baseline = Math.max(asc + 2, loopLabelBaseline(box.y(), box.h(), lane));
+            emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
+        }
+    }
+
+    /// Lane k's label BASELINE: just above the lane-0 EXIT leg (0.3·h), one line-slot further up per
+    /// lane. Above-the-legs keeps every label clear of the box-center band (a crossing edge to a
+    /// right neighbor + its midpoint label live there), and the formula is deliberately independent
+    /// of the attach-point CLAMPS so stacked labels stay ≥ one line apart on ANY box height.
+    private static double loopLabelBaseline(double boxY, double boxH, int lane) {
+        return boxY + boxH * 0.3 - 3 - lane * (EDGE_LABEL_SIZE + 2);
+    }
+
+    /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
+    /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span — a BELT: the sizing pass grows a multi-lane box so the nudges
+    /// never actually clamp two lanes together (collinear legs overpaint; Lattice r3 seq 227).
+    private static double loopExitY(double boxY, double boxH, int lane) {
+        return Math.max(boxY + 4, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
+    }
+
+    /// Lane k's RETURN attach y (the bottom attach): 0.7·h nudged DOWN per lane, clamped in-span.
+    private static double loopReturnY(double boxY, double boxH, int lane) {
+        return Math.min(boxY + boxH - 4, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
+    }
+
+    /// Horizontal extent a node's self-loop lane adds past its right border: the outermost vertical
+    /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
+    /// self-loops. The row cursor reserves exactly this, and emitSelfLoop stays within it.
+    private static double selfLaneExtent(int loops, double labelW) {
+        if (loops == 0) {
+            return 0;
+        }
+        return SELF_LOOP_OUT + (loops - 1) * SELF_LOOP_LANE
+            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + labelW : 0);
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,

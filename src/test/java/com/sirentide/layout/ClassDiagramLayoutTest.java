@@ -1,13 +1,23 @@
 package com.sirentide.layout;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.contract.SirentideContract;
+import com.sirentide.contract.SirentideRole;
+import com.sirentide.emit.SvgEmitter;
 import com.sirentide.ir.RelationKind;
 import com.sirentide.parse.DslParser;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.junit.jupiter.api.Test;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 /// The class-diagram MARKER-GLYPH + compartment geometry pins (plan sirentide-class-diagram). The
 /// five UML markers are the fidelity crux — a wrong shape at a wrong end reads as "broken" — so each
@@ -139,6 +149,116 @@ class ClassDiagramLayoutTest {
             .map(s -> (Path) s)
             .toList();
         assertEquals(1, diamonds.size(), "one composition edge → one filled diamond marker in the scene");
+    }
+
+    /// Bug-1 fix: a self-relation (`A <|-- A`, the inheritance operator) has both endpoints on the SAME
+    /// box. The zero-length straight edge used to draw the UML marker INSIDE the box at its center; the
+    /// prior "fix" instead SKIPPED it, erasing a semantically-valid recursive relationship AND leaving a
+    /// phantom empty edge group owning an anchor. It must now render a deterministic on-canvas self-LOOP
+    /// routed off the box's right edge. This pins: (a) the edge group owns REAL leaf geometry (non-empty
+    /// — no phantom group), (b) the UML marker renders on the loop, (c) NO loop endpoint/line sits inside
+    /// the box (the loop stays on/outside the right border, never at the center — the original bug), (d)
+    /// the label renders, (e) the whole scene stays in the contract alphabet, (f) the loop stays inside
+    /// the (grown) viewBox. Restore the center-drawing marker and (c) fails by name.
+    @Test
+    void aSelfRelationRoutesAnOnCanvasLoopWithItsMarkerOutsideTheBox() throws Exception {
+        LaidOut laid = ClassDiagramLayout.layout((com.sirentide.ir.ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A <|-- A : recurses\n"));
+
+        // (f-anchor) the self-relation STILL gets exactly one edge group — but now it is NON-EMPTY (it
+        // owns the loop's real leaf geometry, so the phantom-empty-group + orphan-anchor problem is gone).
+        List<Group> edges = laid.shapes().stream()
+            .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.EDGE)
+            .map(s -> (Group) s)
+            .toList();
+        assertEquals(1, edges.size(), "the self-relation produces exactly one edge group");
+        Group edge = edges.get(0);
+        assertFalse(edge.members().isEmpty(),
+            "the self-loop group owns REAL leaf geometry — not a phantom empty group");
+
+        // (a) real leaf geometry: the loop is built from the SAME Line edge primitive — a rectilinear
+        // loop is at least three legs (out, down, back).
+        List<Line> loopLegs = edge.members().stream()
+            .filter(s -> s instanceof Line l && EDGE_STROKE(l)).map(s -> (Line) s).toList();
+        assertTrue(loopLegs.size() >= 3, "a rectilinear self-loop routes ≥ 3 edge legs: " + loopLegs.size());
+
+        // (b) the UML marker (inheritance → hollow triangle = 3 marker-coloured lines) renders on the loop.
+        List<Line> markerLines = edge.members().stream()
+            .filter(s -> s instanceof Line l && MK.equals(l.stroke())).map(s -> (Line) s).toList();
+        assertEquals(3, markerLines.size(),
+            "the inheritance hollow-triangle marker (3 lines) renders at the loop's return endpoint");
+
+        // (c) NO loop line sits INSIDE the box — every endpoint is on/outside the box boundary, and in
+        // particular NONE is at the box center (where the degenerate marker used to be drawn).
+        Rect box = classBoxRect(laid);
+        double cx = box.x() + box.width() / 2;
+        double cy = box.y() + box.height() / 2;
+        List<Line> groupLines = edge.members().stream()
+            .filter(s -> s instanceof Line).map(s -> (Line) s).toList();
+        for (Line l : groupLines) {
+            assertFalse(strictlyInside(box, l.x1(), l.y1()),
+                "a loop endpoint is inside the box interior: " + l.x1() + "," + l.y1());
+            assertFalse(strictlyInside(box, l.x2(), l.y2()),
+                "a loop endpoint is inside the box interior: " + l.x2() + "," + l.y2());
+            assertFalse(near(l.x1(), cx) && near(l.y1(), cy), "a loop line touches the box center");
+            assertFalse(near(l.x2(), cx) && near(l.y2(), cy), "a loop line touches the box center");
+        }
+
+        // (f) the loop stays inside the (grown) viewBox — every endpoint within [0,w] × [0,h].
+        for (Line l : groupLines) {
+            assertTrue(l.x1() >= 0 && l.x1() <= laid.width() && l.x2() >= 0 && l.x2() <= laid.width(),
+                "loop x escapes the viewBox width " + laid.width() + ": " + l.x1() + "," + l.x2());
+            assertTrue(l.y1() >= 0 && l.y1() <= laid.height() && l.y2() >= 0 && l.y2() <= laid.height(),
+                "loop y escapes the viewBox height " + laid.height() + ": " + l.y1() + "," + l.y2());
+        }
+
+        // (d) the relation LABEL renders as a glyph run in the edge group.
+        long labels = edge.members().stream().filter(s -> s instanceof GlyphRun).count();
+        assertTrue(labels >= 1, "the relation label ': recurses' renders near the loop");
+
+        // (e) containment: the whole emitted scene parses and stays in the allowed element alphabet.
+        assertSceneInAllowlist(laid);
+    }
+
+    /// The background {@link Rect} of the (sole) class box — its geometry rectangle (x, y, w, h).
+    private static Rect classBoxRect(LaidOut laid) {
+        return laid.shapes().stream()
+            .filter(s -> s instanceof Group g && g.anchor().role() == SirentideRole.CLASS)
+            .flatMap(g -> ((Group) g).members().stream())
+            .filter(s -> s instanceof Rect).map(s -> (Rect) s)
+            .findFirst().orElseThrow();
+    }
+
+    private static boolean strictlyInside(Rect b, double x, double y) {
+        return x > b.x() + 1e-6 && x < b.x() + b.width() - 1e-6
+            && y > b.y() + 1e-6 && y < b.y() + b.height() - 1e-6;
+    }
+
+    private static boolean EDGE_STROKE(Line l) {
+        return "#94a3b8".equals(l.stroke());
+    }
+
+    /// Emit the scene and assert every element tag is inside {@link SirentideContract#ALLOWED_ELEMENTS}
+    /// — the SVG parses (well-formed) and stays in the allowed alphabet (containment stays clean).
+    private static void assertSceneInAllowlist(LaidOut laid) throws Exception {
+        String svg = SvgEmitter.emit(laid);
+        var f = DocumentBuilderFactory.newInstance();
+        f.setNamespaceAware(false);
+        Element root = f.newDocumentBuilder()
+            .parse(new ByteArrayInputStream(svg.getBytes(StandardCharsets.UTF_8))).getDocumentElement();
+        walkAllowlist(root);
+    }
+
+    private static void walkAllowlist(Element el) {
+        assertTrue(SirentideContract.ALLOWED_ELEMENTS.contains(el.getTagName()),
+            "element <" + el.getTagName() + "> is outside the contract alphabet");
+        NodeList kids = el.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (k.getNodeType() == Node.ELEMENT_NODE) {
+                walkAllowlist((Element) k);
+            }
+        }
     }
 
     private static boolean near(double a, double b) {
