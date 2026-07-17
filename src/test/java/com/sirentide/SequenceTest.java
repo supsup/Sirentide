@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.Sequence;
+import com.sirentide.math.LatteXMathFragmentRenderer;
 import com.sirentide.parse.DslParser;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -435,5 +437,61 @@ class SequenceTest {
         assertEquals(1, s.messages().size(), "only D ->> G survives");
         assertEquals("D", s.messages().get(0).from());
         assertEquals("G", s.messages().get(0).to());
+    }
+
+    // -- math message-label width cap (fe8c5bbc #3, Fix sirentide/256) ---------
+    // A $…$ label skips mid-run ellipsize (a formula can't be cut), so the plain cap left the MATH
+    // path uncapped — a wide composite rendered span-independent thousands of px. Now an over-wide
+    // math label degrades WHOLE to its raw source ellipsized to the cap. The mutation-surviving tell:
+    // DOUBLING the formula length changes NOTHING (the cap makes the render length-independent); an
+    // uncapped composite would scale with the term count. These are headless (no BrewShot needed).
+
+    private static final MathFragmentRenderer MATH = new LatteXMathFragmentRenderer();
+
+    /// The drawn GEOMETRY only — the a11y {@code <title>}/{@code <desc>} faithfully echo the full
+    /// message text (that is screen-reader content, not a visual run), so strip them; the width cap
+    /// is about the drawn label, which this isolates.
+    private static String visualOnly(String svg) {
+        return svg.replaceAll("(?s)<title>.*?</title>", "").replaceAll("(?s)<desc>.*?</desc>", "");
+    }
+
+    @Test
+    void aWideMathMessageLabelIsCappedIndependentOfFormulaLength() {
+        String svg400 = Sirentide.render("sequence\nAlice ->> Bob : $" + "a+".repeat(200) + "b$", MATH);
+        String svg800 = Sirentide.render("sequence\nAlice ->> Bob : $" + "a+".repeat(400) + "b$", MATH);
+        assertEquals(visualOnly(svg800), visualOnly(svg400),
+            "an over-wide math message label is capped — doubling the formula doesn't grow the DRAWN render");
+        // And the capped render is bounded near a capped PLAIN label, not a full composite run.
+        String plain = Sirentide.render("sequence\nAlice ->> Bob : " + "x".repeat(400), MATH);
+        assertTrue(visualOnly(svg400).length() < visualOnly(plain).length() * 2,
+            "capped math label ~ a capped plain label, not formula-proportional; got "
+                + visualOnly(svg400).length() + " vs plain " + visualOnly(plain).length());
+    }
+
+    @Test
+    void aWideMathSelfMessageLabelIsAlsoCapped() {
+        // The second hole Fix flagged: emitSelfMessage's math path AND selfLabelWidth (which drives
+        // the canvas) were both uncapped, so a wide self-message math label blew the canvas at layout.
+        String svg400 = Sirentide.render("sequence\nAlice ->> Alice : $" + "a+".repeat(200) + "b$", MATH);
+        String svg800 = Sirentide.render("sequence\nAlice ->> Alice : $" + "a+".repeat(400) + "b$", MATH);
+        assertEquals(visualOnly(svg800), visualOnly(svg400),
+            "the self-message math path (emit + canvas-sizing) is capped too — length-independent");
+        // The canvas width itself is bounded (the selfLabelWidth hole would have blown it).
+        assertEquals(svgWidthAttr(svg400), svgWidthAttr(svg800), 0.001,
+            "the canvas width does not grow with the formula length");
+    }
+
+    private static double svgWidthAttr(String svg) {
+        int i = svg.indexOf("width=\"") + 7;
+        return Double.parseDouble(svg.substring(i, svg.indexOf('"', i)));
+    }
+
+    @Test
+    void aNormalMathMessageLabelStillRendersInCap() {
+        // Guard the common case: an in-cap formula ($O(n)$) renders as math (not degraded) and bakes
+        // a valid, bounded SVG — the cap only bites the pathological wide composite.
+        String svg = Sirentide.render("sequence\nAlice ->> Bob : $O(n)$", MATH);
+        assertTrue(svg.startsWith("<svg"), "well-formed");
+        assertFalse(svg.contains("width=\"0\""), "not the inert shell");
     }
 }
