@@ -62,6 +62,13 @@ public final class FlowchartLayout {
     private static final double EDGE_WIDTH_THICK = 3.0;   // thick-edge stroke width (vs EDGE_WIDTH 1.5)
     private static final double EDGE_DASH = 4;            // dotted-edge dash (drawn-segment) length
     private static final double EDGE_DASH_GAP = 3;        // dotted-edge gap length between segments
+    // Dotted-edge piece cap (robustness plan fe8c5bbc #1): a dotted segment emits one Line per
+    // EDGE_DASH+GAP stride, so a canvas-spanning dotted edge (× up to MAX_EDGES of them) forces
+    // millions of Lines with no backstop (the 5 MB emit cap fires only AFTER layout). Past this many
+    // pieces a segment draws ONE solid line instead — a legit dotted edge on a normal canvas is well
+    // under it. Public + mutable so a test can force the cap without a giant canvas. (A cross-diagram
+    // global dash/shape budget is the layout-time-budget slice, not this per-segment cap.)
+    public static int MAX_DASH_PIECES = 1000;
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
     private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
@@ -202,6 +209,12 @@ public final class FlowchartLayout {
         double ux = dx / len;
         double uy = dy / len;
         double stride = EDGE_DASH + EDGE_DASH_GAP;
+        if (len / stride > MAX_DASH_PIECES) {
+            // robustness fe8c5bbc #1: an over-long segment collapses to ONE solid line instead of
+            // emitting thousands of dash pieces (still visible as an edge, just not dotted).
+            shapes.add(new Line(x1, y1, x2, y2, stroke, width));
+            return;
+        }
         for (double d = 0; d < len; d += stride) {
             double end = Math.min(d + EDGE_DASH, len);
             shapes.add(new Line(x1 + ux * d, y1 + uy * d, x1 + ux * end, y1 + uy * end,

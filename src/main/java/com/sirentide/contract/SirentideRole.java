@@ -21,7 +21,9 @@ import java.util.Set;
 /// axes, and section-header brackets are decorative and un-anchored. mindmap nodes → {@link #NODE}
 /// (each node's box + label), parent→child connectors → {@link #EDGE} (its elbow lines) — the tree
 /// reuses the existing graph node/edge vocabulary, no new role. sankey nodes → {@link #NODE} (each
-/// node's box + label), flow bands → {@link #FLOW} (each source→target band quadrilateral).
+/// node's box + label), flow bands → {@link #FLOW} (each source→target band quadrilateral). matrix
+/// data cells → {@link #CELL} (each verdict cell's fill rect + centered token, in row-major reading
+/// order); the header band + row-label column are structural and stay un-anchored.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
@@ -61,6 +63,11 @@ public enum SirentideRole {
     // Coal to Electricity flow" distinctly from the graph edge vocabulary. Each flow's filled band
     // quadrilateral anchors as one FLOW group; the sankey NODE boxes reuse the shared NODE role.
     FLOW("flow"),
+    // -- matrix data cell (added in the matrix semantic-anchor slice) — its own closed value so a
+    // narrator can say "the ID1 × snapshot cell, PASS" distinctly from the chart/graph vocabulary.
+    // Each verdict cell's fill rect + centered token glyph anchors as one CELL group, in row-major
+    // reading order. The header band + row-label column are structural and stay un-anchored.
+    CELL("cell"),
     // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
     CLUSTER("cluster"),
     AXIS("axis");

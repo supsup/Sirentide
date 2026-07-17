@@ -3,6 +3,7 @@ package com.sirentide;
 import com.brewshot.BrewShot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
@@ -66,7 +67,20 @@ class BrewShotGalleryTest {
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
 
+    /// A class with more members than the display cap, so the box shows MAX_DISPLAYED_ROWS-1 rows
+    /// plus a synthesized "… (N more)" row instead of an unreadable, canvas-blowing tower
+    /// (robustness plan fe8c5bbc #2). The BrewShot containment audit proves the capped box + the
+    /// "… more" row all stay inside the declared canvas.
+    private static String cappedMemberClass() {
+        StringBuilder s = new StringBuilder("classDiagram\nclass BigConfig {\n");
+        for (int i = 0; i < 45; i++) {
+            s.append("+flag").append(i).append(" bool\n");
+        }
+        return s.append("}\n").toString();
+    }
+
     private static final List<Case> GALLERY = List.of(
+        new Case("class-member-cap", "Class member-row cap (… N more)", cappedMemberClass()),
         new Case("pie", "Pie", "pie\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
         new Case("pie-legend", "Pie with a legend",
             "pie legend\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
@@ -104,6 +118,8 @@ class BrewShotGalleryTest {
         new Case("flowchart-edge-to-subgraph", "Edge to a subgraph id (routes into the cluster, no phantom node)",
             "flowchart TD\nEPR[Scaffold] --> PROJ\nsubgraph PROJ [Project]\n"
                 + "PP[Package] --> QQ[Queue]\nend"),
+        new Case("flowchart-config-direction", "Config direction directive (%% direction: LR drives a bare header)",
+            "%% direction: LR\nflowchart\nA[Parse] --> B[Layout] --> C[Emit]"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"
@@ -211,5 +227,30 @@ class BrewShotGalleryTest {
             }
         }
         Files.writeString(dir.resolve("GALLERY.md"), md.toString());
+    }
+
+    @Test
+    void aWideSpanSequenceMessageLabelIsWidthCapped() throws Exception {
+        // Robustness plan fe8c5bbc #3: a message label ellipsized to the SPAN between its two actors,
+        // so a message across DISTANT actors (a wide span) admitted a full-length, enormously wide
+        // label run. The hard cap min(span-8, MAX_MSG_LABEL_W) truncates it. Measured in a real
+        // browser: the label is ONE glyph <path>, so its bbox width is the label width — with the cap
+        // the widest glyph path stays bounded; without it, the A→E label would be many times wider.
+        assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
+        String longLabel = "this is a deliberately very long message label that without the hard "
+            + "width cap would render as an enormous run spanning the whole distance between the "
+            + "far-apart actors A and E and blow well past any readable width";
+        String dsl = "sequence\nA ->> B : x\nB ->> C : x\nC ->> D : x\nD ->> E : x\nA ->> E : " + longLabel;
+        try (BrewShot shot = BrewShot.launch(1600, 400)) {
+            shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
+                + Sirentide.render(dsl) + "</body></html>");
+            shot.settle(120);
+            Object maxW = shot.eval("(function(){var m=0;document.querySelectorAll('svg path')"
+                + ".forEach(function(p){var w=p.getBoundingClientRect().width;if(isFinite(w)&&w>m)m=w;});"
+                + "return m;})()");
+            double widest = ((Number) maxW).doubleValue();
+            assertTrue(widest < 300,
+                "the wide-span message label is width-capped; widest glyph path=" + widest);
+        }
     }
 }

@@ -62,6 +62,10 @@ public final class ErDiagramLayout {
     private static final double MIN_W = 120;         // blank-canvas width (0 entities)
     private static final double MIN_H = 60;
     private static final double MAX_LABEL_W = 260;   // rows ellipsize past this
+    // Displayed-attribute cap per entity (robustness plan fe8c5bbc #2, ER twin of the class cap): the
+    // row WIDTH ellipsizes but the row COUNT was unbounded. Show at most this many attribute rows; a
+    // longer entity ends with one synthesized "… (N more)" row (legibility + a layout bound).
+    static final int MAX_DISPLAYED_ROWS = 30;
 
     private static final String BOX_FILL = "#ecfdf5";    // attribute-rows background (pale emerald)
     private static final String NAME_FILL = "#a7f3d0";   // name header band (a shade darker)
@@ -163,8 +167,8 @@ public final class ErDiagramLayout {
             List<MathLabel.Measured> rm = new ArrayList<>();
             List<Double> rrh = new ArrayList<>();
             double rowsSum = 0;
-            for (ErAttribute a : e.attributes()) {
-                Disp d = disp(a.display(), ROW_SIZE, math);
+            for (String src : capAttributeDisplays(e.attributes())) {
+                Disp d = disp(src, ROW_SIZE, math);
                 rows.add(d.display());
                 rm.add(d.measure());
                 double rh = rowHeight(d.measure(), rowPitch, ROW_SIZE);
@@ -360,6 +364,25 @@ public final class ErDiagramLayout {
     /// SKIPS ellipsization — a formula must never be cut mid-run, which would break the `$…$` delimiters
     /// and silently drop the math (the reason the class/ER inline-math previously only worked for short
     /// fragments) — and is measured as a composite; a plain line is ellipsized to MAX_LABEL_W and carries
+    /// Attribute display sources for one entity, bounded to {@link #MAX_DISPLAYED_ROWS} rows
+    /// (robustness fe8c5bbc #2). Within the cap, every attribute's display string is returned; past
+    /// it, the first {@code cap-1} plus one synthesized "… (N more)" row — an ordinary display string
+    /// that flows through {@link #disp} + measurement like any attribute.
+    private static List<String> capAttributeDisplays(List<ErAttribute> attrs) {
+        List<String> out = new ArrayList<>();
+        if (attrs.size() <= MAX_DISPLAYED_ROWS) {
+            for (ErAttribute a : attrs) {
+                out.add(a.display());
+            }
+            return out;
+        }
+        for (int i = 0; i < MAX_DISPLAYED_ROWS - 1; i++) {
+            out.add(attrs.get(i).display());
+        }
+        out.add("… (" + (attrs.size() - (MAX_DISPLAYED_ROWS - 1)) + " more)");
+        return out;
+    }
+
     /// a `null` measure (the byte-identical fixed-pitch text path). Mirrors the flowchart engine's
     /// math-skips-ellipsize rule.
     private record Disp(String display, MathLabel.Measured measure) {}

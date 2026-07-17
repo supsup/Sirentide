@@ -2,6 +2,62 @@
 
 Captured by [BrewShot](https://github.com/supsup/BrewShot) in the test suite. Each diagram is audited so no drawn element escapes its canvas (the visual class the byte-pinned SVG goldens can't see).
 
+## Class member-row cap (… N more)
+
+```
+classDiagram
+class BigConfig {
++flag0 bool
++flag1 bool
++flag2 bool
++flag3 bool
++flag4 bool
++flag5 bool
++flag6 bool
++flag7 bool
++flag8 bool
++flag9 bool
++flag10 bool
++flag11 bool
++flag12 bool
++flag13 bool
++flag14 bool
++flag15 bool
++flag16 bool
++flag17 bool
++flag18 bool
++flag19 bool
++flag20 bool
++flag21 bool
++flag22 bool
++flag23 bool
++flag24 bool
++flag25 bool
++flag26 bool
++flag27 bool
++flag28 bool
++flag29 bool
++flag30 bool
++flag31 bool
++flag32 bool
++flag33 bool
++flag34 bool
++flag35 bool
++flag36 bool
++flag37 bool
++flag38 bool
++flag39 bool
++flag40 bool
++flag41 bool
++flag42 bool
++flag43 bool
++flag44 bool
+}
+
+```
+
+![Class member-row cap (… N more)](class-member-cap.png)
+
 ## Pie
 
 ```
@@ -171,17 +227,15 @@ B --> C[Merge]
 
 ![Caption / note directive (annotation band below any diagram)](flowchart-caption.png)
 
-## Edge to a subgraph id (routes into the cluster, no phantom node)
+## Config direction directive (%% direction: LR drives a bare header)
 
 ```
-flowchart TD
-EPR[Scaffold] --> PROJ
-subgraph PROJ [Project]
-PP[Package] --> QQ[Queue]
-end
+%% direction: LR
+flowchart
+A[Parse] --> B[Layout] --> C[Emit]
 ```
 
-![Edge to a subgraph id (routes into the cluster, no phantom node)](flowchart-edge-to-subgraph.png)
+![Config direction directive (%% direction: LR drives a bare header)](flowchart-config-direction.png)
 
 ## Sequence (API token flow)
 

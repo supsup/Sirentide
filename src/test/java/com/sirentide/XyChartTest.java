@@ -67,4 +67,21 @@ class XyChartTest {
         assertEquals(2, count(svg, "<rect"), "both bars drawn (the negative one descends, not blank)");
         assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "still well-formed");
     }
+
+    @Test
+    void aPathologicallyManySeriesChartIsSeriesCapped() {
+        // Robustness plan fe8c5bbc #5: each numeric value token in a row is a SERIES, and both the
+        // per-row token count and the `series:` name row were uncapped — `"r" : 1 1 …×N` grew
+        // maxSeries to N → N legend rows + N bars. N=500 sits above MAX_SERIES (100) and below the
+        // 5 MB emit cap; in bars mode each bar is exactly one <rect> (no structural rects), so the
+        // bar count IS the series count. Without the cap there'd be 500 bars; with it, MAX_SERIES.
+        int n = 500;
+        StringBuilder src = new StringBuilder("xychart\n\"r\" :");
+        for (int i = 0; i < n; i++) {
+            src.append(" 1");
+        }
+        String svg = Sirentide.render(src.toString());
+        assertEquals(com.sirentide.parse.DslParser.MAX_SERIES, count(svg, "<rect"),
+            "the many-series chart is capped to exactly MAX_SERIES bars, not " + n);
+    }
 }

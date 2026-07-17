@@ -183,4 +183,19 @@ class ErDiagramTest {
         assertTrue(a.desc().contains("labeled \"places\""), a.desc());
         assertTrue(a.desc().contains("identifying"), a.desc());
     }
+
+    @Test
+    void anEntityWithManyAttributesIsDisplayRowCapped() {
+        // Robustness plan fe8c5bbc #2 (ER twin of the class cap): an entity's attribute-row COUNT was
+        // unbounded, growing a canvas-blowing table. The DISPLAY cap shows at most MAX_DISPLAYED_ROWS
+        // rows (+ a synthesized "… N more" row), bounding the table height. N=300 with the cap yields
+        // ~30 rows; uncapped it would be ~300, so the bounded root-SVG height is the mutation proof.
+        StringBuilder src = new StringBuilder("erDiagram\n  BIG {\n");
+        for (int i = 0; i < 300; i++) {
+            src.append("    int a").append(i).append("\n");
+        }
+        String svg = Sirentide.render(src.append("  }\n").toString());
+        double h = Double.parseDouble(svg.replaceFirst("(?s).*?<svg[^>]*height=\"([0-9.]+)\".*", "$1"));
+        assertTrue(h < 1200, "the many-attribute entity table is display-row-capped, height=" + h);
+    }
 }

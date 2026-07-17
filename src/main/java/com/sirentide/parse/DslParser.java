@@ -75,6 +75,17 @@ public final class DslParser {
     public static final int MAX_SOURCE_BYTES = 1_000_000;   // 1 MB of DSL source
     public static final int MAX_DATA_ROWS = 10_000;         // rows past this are dropped
     public static final int MAX_LABEL_LEN = 512;            // labels are truncated to this
+    // Matrix column cap (robustness plan fe8c5bbc #4): rows are bounded by MAX_DATA_ROWS but the
+    // `cols:` header token count — and each row's cell count — were uncapped, so `cols: a,a,…×500k`
+    // (or a 500k-cell row) forced a cols×rows grid that OOMs in layout before the emit cap can fire.
+    // A matrix wider than this is unreadable anyway; extra columns/cells past it are dropped.
+    public static final int MAX_COLUMNS = 200;
+    // XyChart series cap (robustness plan fe8c5bbc #5): rows are bounded by MAX_DATA_ROWS but the
+    // per-row numeric value-token count (each token = one SERIES) and the `series:` name row were
+    // uncapped, so `x: 1 1 …×500k` grew maxSeries to 500k → a seriesCount×KEY_ROW_HEIGHT legend +
+    // that many bars/points per row. A chart with more series than this is unreadable; extra series
+    // per row and extra names are dropped, never laid out.
+    public static final int MAX_SERIES = 100;
     // Flowchart graph caps (DESIGN §6/§7): past these, extra nodes/edges are dropped rather than
     // laid out — bounds the layering work + the shape count on a pathological graph, never throws.
     public static final int MAX_NODES = 500;
@@ -145,7 +156,7 @@ public final class DslParser {
             // map to epoch-day) so events place proportionally in time, not evenly by index.
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
             case "gantt" -> parseGantt(lines, textColor);
-            case "flowchart" -> parseFlowchart(lines, header, textColor);
+            case "flowchart" -> parseFlowchart(lines, header, textColor, parseConfig(src).direction());
             case "sequence" -> parseSequence(lines, header, textColor);
             // A mermaid-style state diagram — reuses the flowchart graph engine (§5); `statediagram`
             // is an accepted alias of `state`.
@@ -375,6 +386,9 @@ public final class DslParser {
             if (seriesNames == null && rows.isEmpty() && key.equals("series")) {
                 seriesNames = new ArrayList<>();
                 for (String name : rest.split(",")) {
+                    if (seriesNames.size() >= MAX_SERIES) {
+                        break;   // robustness fe8c5bbc #5: bound the series-name row
+                    }
                     String s = cap(name.strip());
                     if (!s.isEmpty()) {
                         seriesNames.add(s);
@@ -389,7 +403,7 @@ public final class DslParser {
             String[] toks = rest.split("\\s+");
             List<Double> vals = new ArrayList<>();
             String color = null;
-            for (int t = 0; t < toks.length; t++) {
+            for (int t = 0; t < toks.length && vals.size() < MAX_SERIES; t++) {
                 if (toks[t].isEmpty()) {
                     continue;
                 }
@@ -502,7 +516,11 @@ public final class DslParser {
     ///   A[Start] --> B[Process]
     ///   B --> C[End]
     /// ```
-    /// Header: `flowchart` optionally followed by a `TD` (default) or `LR` direction token. Each
+    /// Header: `flowchart` optionally followed by a `TD` or `LR` direction token. Precedence:
+    /// an EXPLICIT header token wins; with no header token the `%% direction:` config directive
+    /// (`configDirection`, {@code null} when absent/unknown) is the fallback; with neither it is `TD`.
+    /// So `flowchart LR` is always LR, a bare `flowchart` under `%% direction: LR` is LR, and a bare
+    /// `flowchart` with no config stays TD (byte-identical to before this fallback existed). Each
     /// body line is a `-->`-separated CHAIN of endpoints where an endpoint is a bare `id`,
     /// `id[Label]`, or `id{Label}`; a line with no top-level `-->` is a lone node declaration. A
     /// chained `A --> B --> C` expands to edges A→B and B→C (any length); an edge label rides its
@@ -519,14 +537,22 @@ public final class DslParser {
     /// missing closing edge-label pipe all drop the line. Caps: {@link #MAX_NODES}/{@link #MAX_EDGES}
     /// bound the graph. Empty body → a Flowchart with no nodes (still a flowchart, so `flowchart`
     /// round-trips — NOT degraded to Empty).
-    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor) {
-        String direction = "TD";
+    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
+            String configDirection) {
+        // An explicit header token (`flowchart LR`) always wins; leave direction null until one is
+        // seen so a defaulted header is distinguishable from an explicit `TD`.
+        String direction = null;
         for (int i = 1; i < header.length; i++) {
             if (header[i].equals("LR")) {
                 direction = "LR";
             } else if (header[i].equals("TD")) {
                 direction = "TD";
             }
+        }
+        if (direction == null) {
+            // No explicit header direction — honor the `%% direction:` config directive as the
+            // fallback (it is already validated to TD|LR|null by parseConfig), else the TD default.
+            direction = (configDirection != null) ? configDirection : "TD";
         }
         // Insertion-ordered id → label map: preserves first-seen node order and lets the first
         // decorated occurrence win the label (a later bare mention never overwrites it). Shapes
@@ -2034,6 +2060,9 @@ public final class DslParser {
             if (line.regionMatches(true, 0, "cols:", 0, 5)
                 || line.regionMatches(true, 0, "columns:", 0, 8)) {
                 for (String tok : line.substring(line.indexOf(':') + 1).split(",")) {
+                    if (columns.size() >= MAX_COLUMNS) {
+                        break;   // robustness fe8c5bbc #4: drop columns past the cap, never OOM
+                    }
                     String header = cap(unquote(tok.strip()));
                     if (!header.isEmpty()) {
                         columns.add(header);
@@ -2056,6 +2085,9 @@ public final class DslParser {
             String label = cap(unquote(line.substring(0, sep).strip()));
             List<Matrix.Cell> cells = new ArrayList<>();
             for (String tok : line.substring(sep + 1).split(",", -1)) {
+                if (cells.size() >= MAX_COLUMNS) {
+                    break;   // robustness fe8c5bbc #4: a 500k-cell row is bounded too, not just the header
+                }
                 cells.add(parseCell(tok));
             }
             rows.add(new Matrix.Row(label, cells));

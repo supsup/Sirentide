@@ -20,8 +20,61 @@ group's name — a phantom. Now it routes into the cluster:
 the `EPR --> PROJ` arrow points at the cluster's representative member (its first-seen member,
 `Package`) instead of drawing a stray "PROJ" box. Routing is symmetric — a subgraph id on the
 source side retargets too. An edge to an **empty** subgraph (no members, no representative) drops
-whole — loud-or-dropped, never a phantom. An edge to a genuine member is unchanged, and a
+whole — loud-or-dropped, never a phantom. A cluster id that is *also* a real, explicitly-declared
+node (a `PROJ[Real]` box sharing a subgraph's id) keeps its node and its edges — only a bare
+phantom routes. A genuine member edge, and a literal `A --> A` self-loop, are unchanged; a
 flowchart with no edge-to-subgraph-id bakes byte-identically.
+
+## 2026-07-17 — Robustness: six per-path resource caps (no diagram can OOM the renderer)
+
+A hostile or accidental mega-input can no longer drive the layout into an out-of-memory blowup
+before the 5 MB emit cap fires. Each element-multiplying path is now bounded at parse/layout time,
+loud-and-visible (the excess drops; a diagram past these bounds is unreadable anyway):
+
+- **Dotted/dashed edges** — `MAX_DASH_PIECES` (1000): a canvas-spanning dotted edge (× up to
+  `MAX_EDGES`) no longer strides millions of `<line>`s before the emit cap.
+- **Class / ER member rows** — `MAX_DISPLAYED_ROWS` (30) + a synthesized `… (N more)` row: a box
+  near the parser's member ceiling stops growing a canvas-blowing tower.
+- **Sequence message labels** — `MAX_MSG_LABEL_W` (220): a message across distant actors (a wide
+  span) no longer admits a 512-char run; the **math (`$…$`) path** is bounded too — an over-wide
+  formula degrades whole to its ellipsized source (it can't be cut mid-run), so a wide composite
+  can't render span-independent thousands of px.
+- **Matrix columns/cells** — `MAX_COLUMNS` (200): `cols: a,a,…×500k` (or a 500k-cell row) no longer
+  forces a cols×rows grid that OOMs before layout.
+- **XyChart series** — `MAX_SERIES` (100): each per-row value token is a series; a 500k-token row
+  no longer explodes the legend + per-row bars.
+- **Embedded math fragments** — `MAX_FRAGMENT_LEN` (64 KiB): a giant composite fragment is bounded
+  before it reaches the sanitizer.
+
+Every drop is at the parse/layout boundary, so nothing new reaches the emitter — the sanitizer
+surface is unchanged. Each cap carries a mutation-surviving DoS regression; the visual ones are
+BrewShot-verified.
+
+## 2026-07-17 — Matrix semantic anchors (the queryable skeleton reaches the last element type)
+
+`matrix` was the only element-bearing diagram with zero semantic anchors. Each data cell now emits
+a closed `data-sirentide-role="cell"` + a coordinate-derived id + a row-major `data-sirentide-seq`,
+completing the "semantic skeleton, nothing executable" invariant across every type. A hostile cell
+label (`<script>…`, an `onerror` img) is pinned to appear **XML-escaped** in the output — the
+non-vacuity guard proves the label→escaping-sink path, not merely "no live tag" (which a dropped
+label would also satisfy).
+
+## 2026-07-17 — `%% direction:` now steers a flowchart
+
+The config-block directive `%% direction: TD|LR` was parsed but inert — a bare `flowchart`
+header ignored it and always laid out top-down. It now drives the layout:
+
+> `%% direction: LR`
+> `flowchart`
+> `A[Parse] --> B[Layout] --> C[Emit]`
+
+lays out left-to-right, exactly as `flowchart LR` would.
+
+**Precedence — an explicit header token always wins.** `flowchart LR` stays LR and
+`flowchart TD` stays TD regardless of any `%% direction:`; the directive is only a *fallback*
+for a bare `flowchart`. An unknown value (`%% direction: sideways`) leaves the `TD` default.
+The axis-less types (sequence, pie, …) ignore direction and bake **byte-identically** — a
+flowchart with no `%% direction:` block is unchanged too.
 
 ---
 

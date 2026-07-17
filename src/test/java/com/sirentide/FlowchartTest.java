@@ -155,6 +155,42 @@ class FlowchartTest {
     }
 
     @Test
+    void configDirectionIsTheFallbackWhenTheHeaderHasNoToken() {
+        // A `%% direction:` config directive drives a bare `flowchart` header — previously inert
+        // (plan sirentide-apply-direction-config-directive). It applies only in the header's absence.
+        assertEquals("LR", parse("%% direction: LR\nflowchart\nA --> B\n").direction(),
+            "bare header falls back to the config directive");
+        assertEquals("TD", parse("%% direction: TD\nflowchart\nA --> B\n").direction(),
+            "config TD fallback is honored too");
+    }
+
+    @Test
+    void anExplicitHeaderDirectionBeatsTheConfigDirective() {
+        // Precedence: an explicit `flowchart LR`/`flowchart TD` token always wins over the config,
+        // in BOTH directions (so this is a real precedence, not a same-value coincidence).
+        assertEquals("LR", parse("%% direction: TD\nflowchart LR\nA --> B\n").direction(),
+            "explicit LR header overrides a config TD");
+        assertEquals("TD", parse("%% direction: LR\nflowchart TD\nA --> B\n").direction(),
+            "explicit TD header overrides a config LR");
+    }
+
+    @Test
+    void anUnknownConfigDirectionLeavesTheTdDefault() {
+        // An unknown `%% direction:` value validates to null in the config → no fallback → TD default.
+        assertEquals("TD", parse("%% direction: sideways\nflowchart\nA --> B\n").direction(),
+            "an unknown config direction does not disturb the TD default");
+    }
+
+    @Test
+    void configDirectionDoesNotDisturbAxislessTypes() {
+        // The fallback is flowchart-only: an axis-less type under `%% direction: LR` bakes
+        // byte-identically to the same source with no config directive.
+        String withDir = Sirentide.render("%% direction: LR\npie\n\"A\" : 1\n\"B\" : 2\n");
+        String noDir = Sirentide.render("pie\n\"A\" : 1\n\"B\" : 2\n");
+        assertEquals(noDir, withDir, "a direction directive is inert for pie (axis-less, byte-identical)");
+    }
+
+    @Test
     void loneNodeDeclarationRegisters() {
         Flowchart fc = parse("flowchart\nA[Solo]\n");
         assertEquals(1, fc.nodes().size());
