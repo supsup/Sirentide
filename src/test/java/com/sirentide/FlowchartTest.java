@@ -437,6 +437,27 @@ class FlowchartTest {
     }
 
     @Test
+    void colonFormAccessibilityDirectivesDropInert() {
+        // REGRESSION (Lattice 7141 finding 1): Mermaid's canonical accessibility directives are
+        // COLON-form (`accTitle: text`), so splitKeyword left the colon glued to the keyword
+        // (`accTitle:`) and the colonless reserved set missed them — they minted phantom nodes.
+        // Both the spaced and tight colon forms now drop inert.
+        Flowchart spaced = parse("flowchart\naccTitle: Accessible title\naccDescr: Accessible description\nA --> B\n");
+        assertEquals(List.of("A", "B"),
+            spaced.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "no 'accTitle: …' / 'accDescr: …' phantom nodes (spaced colon form)");
+        Flowchart tight = parse("flowchart\naccTitle:Accessible title\naccDescr:desc\nA --> B\n");
+        assertEquals(List.of("A", "B"),
+            tight.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "tight colon form drops too");
+        // A colon after a NON-reserved first token is not a directive — it still parses as a node.
+        Flowchart node = parse("flowchart\nfoo: bar\n");
+        assertEquals(List.of("foo: bar"),
+            node.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "a non-reserved keyword before a colon is a node, not a directive");
+    }
+
+    @Test
     void bidirectionalArrowDropsTheLineNeverMintsLtNode() {
         // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): `A <--> B` scanned
         // the `-->` mid-token and minted a phantom head node named "A <". Until bidirectional
@@ -447,6 +468,14 @@ class FlowchartTest {
             fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
             "only the valid line's nodes exist — no 'A <' phantom");
         assertEquals(1, fc.edges().size(), "only G --> H drew");
+        // REGRESSION (Lattice 7141 finding 2): whitespace between `<` and the operator (a TAB, or
+        // several spaces) must still trip the guard — the old ' '-only skip let a tab restore the
+        // 'A <' phantom. Cover a tab and a multi-space gap across the operator families.
+        Flowchart ws = parse("flowchart\nA <\t--> B\nC <  -.-> D\nG --> H\n");
+        assertEquals(List.of("G", "H"),
+            ws.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "tab/space between '<' and the operator still drops — no 'A <' / 'C <' phantom");
+        assertEquals(1, ws.edges().size(), "only G --> H drew");
         // A '<' inside a bracketed label span is untouched by the guard.
         Flowchart lbl = parse("flowchart\nA[x < y] --> B\n");
         assertEquals(2, lbl.nodes().size(), "label '<' does not trip the guard");

@@ -601,14 +601,14 @@ public final class DslParser {
                     parseLinkStyle(kwRest[1], linkStyleByIndex, linkStyleDefault);
                     continue;
                 }
-                if (RESERVED_FLOW_DIRECTIVES.contains(kwRest[0]) && !kwRest[1].isEmpty()) {
+                if (isReservedDirectiveLine(kwRest)) {
                     // A directive-SHAPED line whose keyword is recognized mermaid vocabulary this
-                    // parser does not implement (`style`, `click`, `direction`, …) is DROPPED
-                    // inert — never minted as a lone node wearing its own directive text as a
-                    // name (the playground silent-mint finding: `classDef …` on a pre-classDef
-                    // parser rendered a phantom node named `classDef critical fill:#fee2e2…`).
-                    // The `!rest.isEmpty()` guard keeps a deliberate bare node named `style`
-                    // parsing as a node — only the two-token directive SHAPE is reserved.
+                    // parser does not implement (`style`, `click`, `direction`, and the colon-form
+                    // `accTitle:`/`accDescr:`) is DROPPED inert — never minted as a lone node
+                    // wearing its own directive text as a name (the playground silent-mint finding:
+                    // `classDef …` on a pre-classDef parser rendered a phantom node named
+                    // `classDef critical fill:#fee2e2…`). A deliberate bare node named `style` (no
+                    // rest, no colon) still parses as a node — only the directive SHAPE is reserved.
                     continue;
                 }
                 // No edge operator at top level → the whole line is a lone node declaration. A
@@ -732,6 +732,25 @@ public final class DslParser {
     private static final Set<String> RESERVED_FLOW_DIRECTIVES = Set.of(
         "style", "click", "direction", "accTitle", "accDescr");
 
+    /// True when an arrowless flowchart line is a recognized-but-unimplemented directive that must
+    /// drop inert. Two shapes, because {@code splitKeyword} cuts only on whitespace:
+    ///   - SPACE form (`style A fill:…`, `direction LR`): first token is the bare keyword and a
+    ///     non-empty rest follows — the two-token directive shape. A bare keyword alone stays a node.
+    ///   - COLON form (`accTitle: text`, `accTitle:text`): the keyword is glued to `:` (with or
+    ///     without a following space), so the first token carries the colon (`accTitle:` /
+    ///     `accTitle:text`). Cut at the colon and match the prefix — this covers Mermaid's canonical
+    ///     accessibility directives, which the whitespace-only space-form check missed
+    ///     (Lattice 7141 finding 1). A colon inside a NON-reserved first token (`A[label:` , `foo:`)
+    ///     is not a directive and falls through to the node parse.
+    private static boolean isReservedDirectiveLine(String[] kwRest) {
+        String kw0 = kwRest[0];
+        int colon = kw0.indexOf(':');
+        if (colon >= 0) {
+            return RESERVED_FLOW_DIRECTIVES.contains(kw0.substring(0, colon));
+        }
+        return RESERVED_FLOW_DIRECTIVES.contains(kw0) && !kwRest[1].isEmpty();
+    }
+
     /// True when any matched edge operator is immediately preceded (spaces skipped) by a `<` —
     /// the unsupported mermaid bidirectional form (`<-->`/`<-.->`/`<==>`). The caller drops the
     /// whole line. A `<` inside a bracket/brace/pipe span never reaches here (the ops themselves
@@ -740,7 +759,9 @@ public final class DslParser {
     private static boolean anyArrowPrecededByLt(String line, List<EdgeOp> arrows) {
         for (EdgeOp op : arrows) {
             int j = op.pos() - 1;
-            while (j >= 0 && line.charAt(j) == ' ') {
+            // Skip ANY parser-recognized whitespace (space, tab, …) — not just ASCII space, or a
+            // `A <\t--> B` tab restores the `A <` phantom (Lattice 7141 finding 2).
+            while (j >= 0 && Character.isWhitespace(line.charAt(j))) {
                 j--;
             }
             if (j >= 0 && line.charAt(j) == '<') {
@@ -1465,8 +1486,15 @@ public final class DslParser {
             // unsupported (dropped decoration, like an `opt` frame) — but the sigil must be
             // consumed, or it silently mints a WRONG actor literally named `+ B` (the playground
             // silent-mint finding). Actor names may not begin with `+`/`-` as a result — reserved.
+            // A well-formed activation carries EXACTLY ONE sigil: after consuming it the target
+            // must be a real actor name, so a STILL-sigil-prefixed or empty remainder (`->>++C`,
+            // `-->>--C`, `->>+ ` with no target) is malformed activation grammar and DROPS the whole
+            // line rather than minting a `+C` phantom (Lattice 7141 finding 3).
             if (!toRaw.isEmpty() && (toRaw.charAt(0) == '+' || toRaw.charAt(0) == '-')) {
                 toRaw = toRaw.substring(1).strip();
+                if (toRaw.isEmpty() || toRaw.charAt(0) == '+' || toRaw.charAt(0) == '-') {
+                    continue;   // malformed activation (empty or repeated sigil) → drop the line
+                }
             }
             String to = cap(toRaw);
             if (from.isEmpty() || to.isEmpty()) {

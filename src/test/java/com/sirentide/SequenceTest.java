@@ -421,4 +421,19 @@ class SequenceTest {
         assertEquals("B", tight.messages().get(0).to());
         assertEquals("A", tight.messages().get(1).to());
     }
+
+    @Test
+    void malformedRepeatedActivationSigilDropsNeverMintsPhantom() {
+        // REGRESSION (Lattice 7141 finding 3): a well-formed activation carries exactly ONE sigil.
+        // Stripping only the first left `->>++C` minting an actor named "+C". A repeated (`++`/`--`)
+        // or no-target sigil is malformed activation grammar → the whole message drops, and only
+        // the good line survives.
+        Sequence s = parse("sequence\nA ->>+ : no target\nB ->>++C : malformed\n"
+            + "E -->>--F : also malformed\nD ->> G : good\n");
+        assertEquals(List.of("D", "G"), s.actors(),
+            "no '+C' / '-F' phantom actors, no empty-target actor — only the good line's actors");
+        assertEquals(1, s.messages().size(), "only D ->> G survives");
+        assertEquals("D", s.messages().get(0).from());
+        assertEquals("G", s.messages().get(0).to());
+    }
 }
