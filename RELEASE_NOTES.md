@@ -6,6 +6,25 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-17 — An edge to a subgraph id routes into the cluster
+
+An edge whose endpoint names a **subgraph** used to mint a separate empty node wearing the
+group's name — a phantom. Now it routes into the cluster:
+
+> `flowchart TD`
+> `EPR[Scaffold] --> PROJ`
+> `subgraph PROJ [Project]`
+> `PP[Package] --> QQ[Queue]`
+> `end`
+
+the `EPR --> PROJ` arrow points at the cluster's representative member (its first-seen member,
+`Package`) instead of drawing a stray "PROJ" box. Routing is symmetric — a subgraph id on the
+source side retargets too. An edge to an **empty** subgraph (no members, no representative) drops
+whole — loud-or-dropped, never a phantom. An edge to a genuine member is unchanged, and a
+flowchart with no edge-to-subgraph-id bakes byte-identically.
+
+---
+
 ## 2026-07-12 — Node & edge styling (`classDef` stroke/colour + `linkStyle`)
 
 Flowchart nodes and edges can now carry colour, not just a fill.

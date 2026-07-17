@@ -1,12 +1,14 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.FlowCluster;
+import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.parse.DslParser;
@@ -333,6 +335,59 @@ class FlowchartTest {
         assertNotNull(svg);
         assertTrue(svg.startsWith("<svg"), "cycle still renders a valid svg");
         assertEquals(3, count(svg, "<rect"), "one box per node");
+    }
+
+    // -- subgraph-id edge routing (plan ea20153b part 3) ----------------------
+
+    private static FlowEdge edgeAt(Flowchart fc, int i) {
+        return fc.edges().get(i);
+    }
+
+    @Test
+    void anEdgeToASubgraphIdRoutesToItsFirstMemberNotAPhantom() {
+        // `EPR --> PROJ` where PROJ is a subgraph id used to mint a SEPARATE empty "PROJ" node
+        // (a phantom wearing the group's name). Now it routes INTO the cluster: the edge retargets
+        // to PROJ's first member (PP), and no phantom "PROJ" node exists.
+        Flowchart fc = parse("flowchart TD\n  EPR[Scaffold] --> PROJ\n  subgraph PROJ [Project]\n"
+            + "    PP[Package] --> QQ[Queue]\n  end\n");
+        assertFalse(labelsById(fc).containsKey("PROJ"), "no phantom node wearing the subgraph id");
+        assertEquals(List.of("EPR", "PP", "QQ"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "only the real nodes remain");
+        FlowCluster proj = clusterById(fc, "PROJ");
+        assertEquals(List.of("PP", "QQ"), proj.memberNodeIds());
+        // The EPR --> PROJ edge now points at PROJ's representative member PP.
+        assertEquals("EPR", edgeAt(fc, 0).from());
+        assertEquals("PP", edgeAt(fc, 0).to(), "routed to the cluster's first-seen member");
+    }
+
+    @Test
+    void anEdgeFromASubgraphIdAlsoRoutes() {
+        // Routing is symmetric — a subgraph id on the SOURCE side retargets too.
+        Flowchart fc = parse("flowchart\n  subgraph GRP\n    X --> Y\n  end\n  GRP --> Z[After]\n");
+        assertFalse(labelsById(fc).containsKey("GRP"), "no phantom source node");
+        // Edges: X-->Y, then the routed GRP-->Z which becomes X-->Z (X is GRP's first member).
+        FlowEdge routed = fc.edges().stream().filter(e -> e.to().equals("Z")).findFirst().orElseThrow();
+        assertEquals("X", routed.from(), "the GRP source routed to its first member");
+    }
+
+    @Test
+    void anEdgeToAnEmptySubgraphIsDropped() {
+        // An empty subgraph has no representative member, so an edge to it DROPS whole
+        // (loud-or-dropped, never a phantom) — the same convention as a malformed endpoint.
+        Flowchart fc = parse("flowchart\n  A[Solo] --> EMPTY\n  subgraph EMPTY\n  end\n");
+        assertFalse(labelsById(fc).containsKey("EMPTY"), "no phantom for the empty cluster");
+        assertEquals(0, fc.edges().size(), "the edge to an empty cluster is dropped");
+        assertTrue(labelsById(fc).containsKey("A"), "the real endpoint survives");
+    }
+
+    @Test
+    void anEdgeToASubgraphMEMBERIsNotRemapped() {
+        // Only a subgraph ID endpoint routes; an edge to a genuine MEMBER node keeps that exact
+        // endpoint (X stays X). This scopes part 3 to id-routing and leaves member endpoints alone.
+        Flowchart fc = parse("flowchart\n  subgraph G\n    X --> Y\n  end\n  Z[Ext] --> X\n");
+        FlowEdge external = fc.edges().stream().filter(e -> e.from().equals("Z")).findFirst().orElseThrow();
+        assertEquals("X", external.to(), "an edge to a real member is not rerouted");
     }
 
     // -- render ---------------------------------------------------------------

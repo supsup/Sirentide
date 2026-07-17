@@ -101,6 +101,9 @@ class BrewShotGalleryTest {
         new Case("flowchart-caption", "Caption / note directive (annotation band below any diagram)",
             "%% caption: A merge lands only after both peers approve and no conflicts remain.\n"
                 + "flowchart LR\nA[Author] --> B[Review]\nB --> C[Merge]"),
+        new Case("flowchart-edge-to-subgraph", "Edge to a subgraph id (routes into the cluster, no phantom node)",
+            "flowchart TD\nEPR[Scaffold] --> PROJ\nsubgraph PROJ [Project]\n"
+                + "PP[Package] --> QQ[Queue]\nend"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"

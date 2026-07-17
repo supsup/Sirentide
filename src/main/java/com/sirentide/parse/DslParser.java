@@ -692,6 +692,47 @@ public final class DslParser {
         while (!clusterStack.isEmpty()) {
             clusters.add(clusterStack.pop().freeze());
         }
+        // Subgraph-id edge routing (plan ea20153b part 3). In v1 a cluster id was never an edge
+        // endpoint — an edge to a subgraph id (`EPR --> PROJ` where PROJ is a subgraph) minted a
+        // SEPARATE empty "PROJ" node (a phantom wearing the group's name). Now such an endpoint
+        // routes INTO the cluster: it retargets to the cluster's representative member (its first-
+        // seen member) so the edge visibly connects to the group's content, and the phantom node is
+        // dropped. An endpoint naming an EMPTY cluster (no members → no representative) drops the
+        // whole edge — loud-or-dropped, the same convention as a malformed endpoint, never a phantom.
+        // Runs BEFORE the linkStyle pass below so drawn-edge indices reflect the final edge set.
+        if (!clusters.isEmpty()) {
+            Map<String, String> clusterRep = new java.util.HashMap<>();
+            for (FlowCluster c : clusters) {
+                if (!c.memberNodeIds().isEmpty()) {
+                    // Ids are unique per open, but a defensive putIfAbsent keeps the first member.
+                    clusterRep.putIfAbsent(c.id(), c.memberNodeIds().get(0));
+                }
+            }
+            Set<String> clusterIds = new java.util.HashSet<>();
+            for (FlowCluster c : clusters) {
+                clusterIds.add(c.id());
+            }
+            // A subgraph open never registers its id as a node, so any cluster id sitting in the node
+            // maps is a phantom minted solely by an edge/decl that named it — drop every facet of it.
+            for (String cid : clusterIds) {
+                nodeLabels.remove(cid);
+                nodeShapes.remove(cid);
+                nodeColors.remove(cid);
+                nodeClass.remove(cid);
+            }
+            List<FlowEdge> routed = new ArrayList<>(edges.size());
+            for (FlowEdge e : edges) {
+                String from = clusterIds.contains(e.from()) ? clusterRep.get(e.from()) : e.from();
+                String to = clusterIds.contains(e.to()) ? clusterRep.get(e.to()) : e.to();
+                // A cluster endpoint with no representative (empty cluster) → null → drop the edge.
+                // A remap that collapses both ends onto the same member is an inert self-loop → drop.
+                if (from != null && to != null && !from.equals(to)) {
+                    routed.add(e.withEndpoints(from, to));
+                }
+            }
+            edges.clear();
+            edges.addAll(routed);
+        }
         // Apply per-edge linkStyle overrides by DRAWN-edge index (authoring order of the edges that
         // actually registered). An index-specific override wins over `default`; an edge matched by
         // neither keeps its built-in colour/width. All values were validated at parse time.

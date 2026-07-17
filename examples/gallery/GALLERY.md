@@ -171,6 +171,18 @@ B --> C[Merge]
 
 ![Caption / note directive (annotation band below any diagram)](flowchart-caption.png)
 
+## Edge to a subgraph id (routes into the cluster, no phantom node)
+
+```
+flowchart TD
+EPR[Scaffold] --> PROJ
+subgraph PROJ [Project]
+PP[Package] --> QQ[Queue]
+end
+```
+
+![Edge to a subgraph id (routes into the cluster, no phantom node)](flowchart-edge-to-subgraph.png)
+
 ## Sequence (API token flow)
 
 ```

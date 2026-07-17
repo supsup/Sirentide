@@ -53,4 +53,11 @@ public record FlowEdge(String from, String to, String label, EdgeStyle style, bo
     public FlowEdge withStroke(String strokeOverride, Double widthOverride) {
         return new FlowEdge(from, to, label, style, arrow, strokeOverride, widthOverride);
     }
+
+    /// This edge rerouted to new endpoints, every other facet (label/style/arrow/stroke) preserved.
+    /// Used by the flowchart parser's subgraph-id routing pass: an edge naming a cluster id retargets
+    /// to that cluster's representative member instead of leaving a phantom node.
+    public FlowEdge withEndpoints(String newFrom, String newTo) {
+        return new FlowEdge(newFrom, newTo, label, style, arrow, stroke, strokeWidth);
+    }
 }
