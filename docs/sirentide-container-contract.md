@@ -35,7 +35,7 @@ Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constr
 
 | Attribute | Allowed value | Meaning |
 | --- | --- | --- |
-| `data-sirentide-role` | closed enum: `node`, `edge`, `slice`, `actor`, `message`, `bar`, `class`, `point`, `event`, `entity`, `note`, `commit`, `branch`, `task`, `flow`, `cluster`, `axis` | what this element *is* |
+| `data-sirentide-role` | closed enum: `node`, `edge`, `slice`, `actor`, `message`, `bar`, `class`, `point`, `event`, `entity`, `note`, `commit`, `branch`, `task`, `flow`, `cell`, `cluster`, `axis` | what this element *is* |
 | `data-sirentide-id` | `^[A-Za-z0-9_-]{1,32}$` | stable id for cross-reference / linking |
 | `data-sirentide-seq` | wire (`/docs`): `^[0-9]{1,4}$` · in-process: `^[0-9]{1,9}$` | reading / **play-through** order |
 
