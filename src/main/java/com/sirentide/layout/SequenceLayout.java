@@ -504,12 +504,19 @@ public final class SequenceLayout {
         // span-ellipsize (a formula must not be cut mid-run) and is centred on its composite width.
         if (m.label() != null) {
             double midX = (xa + xb) / 2;
-            if (math != null && MathLabel.hasMath(m.label())) {
-                MathLabel.Measured mm = MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math);
+            double cap = Math.min(span - 8, MAX_MSG_LABEL_W);
+            MathLabel.Measured mm = (math != null && MathLabel.hasMath(m.label()))
+                ? MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math) : null;
+            if (mm != null && mm.width() <= cap) {
+                // In-cap math: render the composite centred (byte-identical to the pre-cap math path).
                 double runX = clamp(midX - mm.width() / 2, mm.width(), canvasW);
                 MathLabel.emit(mm, runX, y - LABEL_LIFT, textColor, MSG_LABEL_SIZE, FONT, shapes);
             } else {
-                String text = FONT.ellipsize(m.label(), Math.min(span - 8, MAX_MSG_LABEL_W), MSG_LABEL_SIZE);
+                // Plain label, OR an OVER-WIDE math composite (fe8c5bbc #3, Fix sirentide/256): a
+                // formula can't be ellipsized mid-run, so an over-wide one degrades WHOLE to its raw
+                // source ellipsized to the cap — a visible truncation that bounds the run width,
+                // never a span-independent thousands-of-px composite.
+                String text = FONT.ellipsize(m.label(), cap, MSG_LABEL_SIZE);
                 double w = FONT.runWidth(text, MSG_LABEL_SIZE);
                 double runX = clamp(midX - w / 2, w, canvasW);
                 String d = FONT.textPathD(text, runX, y - LABEL_LIFT, MSG_LABEL_SIZE);
@@ -547,11 +554,14 @@ public final class SequenceLayout {
         // clamped in-canvas (the canvas was widened above so a trailing actor's label fits). A `$…$`
         // self-message label bakes through the shared MathLabel seam (math skips the ellipsize).
         if (m.label() != null) {
-            if (math != null && MathLabel.hasMath(m.label())) {
-                MathLabel.Measured mm = MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math);
+            MathLabel.Measured mm = (math != null && MathLabel.hasMath(m.label()))
+                ? MathLabel.measure(m.label(), MSG_LABEL_SIZE, FONT, math) : null;
+            if (mm != null && mm.width() <= MAX_HEAD_LABEL_W) {
                 double runX = clamp(outX + LABEL_GAP, mm.width(), canvasW);
                 MathLabel.emit(mm, runX, y + MSG_LABEL_SIZE * 0.35, textColor, MSG_LABEL_SIZE, FONT, shapes);
             } else {
+                // Over-wide math degrades WHOLE to the raw source ellipsized to the cap (fe8c5bbc #3,
+                // Fix sirentide/256) — same bound the plain self-message label already uses.
                 String text = FONT.ellipsize(m.label(), MAX_HEAD_LABEL_W, MSG_LABEL_SIZE);
                 double w = FONT.runWidth(text, MSG_LABEL_SIZE);
                 double runX = clamp(outX + LABEL_GAP, w, canvasW);
@@ -571,7 +581,13 @@ public final class SequenceLayout {
             return 0;
         }
         if (math != null && MathLabel.hasMath(raw)) {
-            return MathLabel.measure(raw, MSG_LABEL_SIZE, FONT, math).width();
+            double w = MathLabel.measure(raw, MSG_LABEL_SIZE, FONT, math).width();
+            if (w <= MAX_HEAD_LABEL_W) {
+                return w;   // in-cap math reserves its true composite width
+            }
+            // Over-wide math degrades to the ellipsized raw source at EMIT (fe8c5bbc #3, Fix
+            // sirentide/256); reserve the SAME bounded width here so the canvas isn't blown by the
+            // uncapped composite it will never draw.
         }
         return FONT.runWidth(FONT.ellipsize(raw, MAX_HEAD_LABEL_W, MSG_LABEL_SIZE), MSG_LABEL_SIZE);
     }
