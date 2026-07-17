@@ -75,6 +75,11 @@ public final class DslParser {
     public static final int MAX_SOURCE_BYTES = 1_000_000;   // 1 MB of DSL source
     public static final int MAX_DATA_ROWS = 10_000;         // rows past this are dropped
     public static final int MAX_LABEL_LEN = 512;            // labels are truncated to this
+    // Matrix column cap (robustness plan fe8c5bbc #4): rows are bounded by MAX_DATA_ROWS but the
+    // `cols:` header token count — and each row's cell count — were uncapped, so `cols: a,a,…×500k`
+    // (or a 500k-cell row) forced a cols×rows grid that OOMs in layout before the emit cap can fire.
+    // A matrix wider than this is unreadable anyway; extra columns/cells past it are dropped.
+    public static final int MAX_COLUMNS = 200;
     // Flowchart graph caps (DESIGN §6/§7): past these, extra nodes/edges are dropped rather than
     // laid out — bounds the layering work + the shape count on a pathological graph, never throws.
     public static final int MAX_NODES = 500;
@@ -1993,6 +1998,9 @@ public final class DslParser {
             if (line.regionMatches(true, 0, "cols:", 0, 5)
                 || line.regionMatches(true, 0, "columns:", 0, 8)) {
                 for (String tok : line.substring(line.indexOf(':') + 1).split(",")) {
+                    if (columns.size() >= MAX_COLUMNS) {
+                        break;   // robustness fe8c5bbc #4: drop columns past the cap, never OOM
+                    }
                     String header = cap(unquote(tok.strip()));
                     if (!header.isEmpty()) {
                         columns.add(header);
@@ -2015,6 +2023,9 @@ public final class DslParser {
             String label = cap(unquote(line.substring(0, sep).strip()));
             List<Matrix.Cell> cells = new ArrayList<>();
             for (String tok : line.substring(sep + 1).split(",", -1)) {
+                if (cells.size() >= MAX_COLUMNS) {
+                    break;   // robustness fe8c5bbc #4: a 500k-cell row is bounded too, not just the header
+                }
                 cells.add(parseCell(tok));
             }
             rows.add(new Matrix.Row(label, cells));
