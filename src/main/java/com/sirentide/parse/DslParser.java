@@ -75,6 +75,12 @@ public final class DslParser {
     public static final int MAX_SOURCE_BYTES = 1_000_000;   // 1 MB of DSL source
     public static final int MAX_DATA_ROWS = 10_000;         // rows past this are dropped
     public static final int MAX_LABEL_LEN = 512;            // labels are truncated to this
+    // XyChart series cap (robustness plan fe8c5bbc #5): rows are bounded by MAX_DATA_ROWS but the
+    // per-row numeric value-token count (each token = one SERIES) and the `series:` name row were
+    // uncapped, so `x: 1 1 …×500k` grew maxSeries to 500k → a seriesCount×KEY_ROW_HEIGHT legend +
+    // that many bars/points per row. A chart with more series than this is unreadable; extra series
+    // per row and extra names are dropped, never laid out.
+    public static final int MAX_SERIES = 100;
     // Flowchart graph caps (DESIGN §6/§7): past these, extra nodes/edges are dropped rather than
     // laid out — bounds the layering work + the shape count on a pathological graph, never throws.
     public static final int MAX_NODES = 500;
@@ -375,6 +381,9 @@ public final class DslParser {
             if (seriesNames == null && rows.isEmpty() && key.equals("series")) {
                 seriesNames = new ArrayList<>();
                 for (String name : rest.split(",")) {
+                    if (seriesNames.size() >= MAX_SERIES) {
+                        break;   // robustness fe8c5bbc #5: bound the series-name row
+                    }
                     String s = cap(name.strip());
                     if (!s.isEmpty()) {
                         seriesNames.add(s);
@@ -389,7 +398,7 @@ public final class DslParser {
             String[] toks = rest.split("\\s+");
             List<Double> vals = new ArrayList<>();
             String color = null;
-            for (int t = 0; t < toks.length; t++) {
+            for (int t = 0; t < toks.length && vals.size() < MAX_SERIES; t++) {
                 if (toks[t].isEmpty()) {
                     continue;
                 }

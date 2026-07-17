@@ -92,6 +92,24 @@ class MathInLabelsTest {
     }
 
     @Test
+    void guard_rejectsOversizeButOtherwiseCleanFragment() {
+        // Robustness plan fe8c5bbc #6: isClean validates SHAPE but not LENGTH, so a legitimately
+        // clean-but-enormous fragment would be held (trusted + inlined) whole. Past MAX_FRAGMENT_LEN
+        // it is treated as NOT clean, degrading to the raw $…$ source. Mixed fixture: the SAME shape
+        // just under the ceiling stays clean, so the rejection is the LENGTH — not a shape error.
+        String cleanPathUnit = "<path d=\"M0 0L1 1\" fill=\"#4e79a7\"/>";
+        StringBuilder oversize = new StringBuilder();
+        while (oversize.length() <= FragmentGuard.MAX_FRAGMENT_LEN) {
+            oversize.append(cleanPathUnit);
+        }
+        assertFalse(FragmentGuard.isClean(oversize.toString()),
+            "an oversize (but shape-clean) fragment is rejected on LENGTH: " + oversize.length());
+        // Positive twin: a comfortably-under-ceiling fragment of the SAME shape IS clean.
+        assertTrue(FragmentGuard.isClean(cleanPathUnit.repeat(10)),
+            "the same clean shape well under the ceiling stays clean (the reject is length, not shape)");
+    }
+
+    @Test
     void guard_rejectsUrlInFill() {
         assertFalse(FragmentGuard.isClean("<path d=\"M0 0\" fill=\"url(#x)\"/>"));
     }
