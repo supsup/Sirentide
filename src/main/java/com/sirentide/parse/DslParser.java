@@ -156,7 +156,7 @@ public final class DslParser {
             // map to epoch-day) so events place proportionally in time, not evenly by index.
             case "timeline" -> new Timeline(parseData(lines, true), textColor);
             case "gantt" -> parseGantt(lines, textColor);
-            case "flowchart" -> parseFlowchart(lines, header, textColor);
+            case "flowchart" -> parseFlowchart(lines, header, textColor, parseConfig(src).direction());
             case "sequence" -> parseSequence(lines, header, textColor);
             // A mermaid-style state diagram — reuses the flowchart graph engine (§5); `statediagram`
             // is an accepted alias of `state`.
@@ -516,7 +516,11 @@ public final class DslParser {
     ///   A[Start] --> B[Process]
     ///   B --> C[End]
     /// ```
-    /// Header: `flowchart` optionally followed by a `TD` (default) or `LR` direction token. Each
+    /// Header: `flowchart` optionally followed by a `TD` or `LR` direction token. Precedence:
+    /// an EXPLICIT header token wins; with no header token the `%% direction:` config directive
+    /// (`configDirection`, {@code null} when absent/unknown) is the fallback; with neither it is `TD`.
+    /// So `flowchart LR` is always LR, a bare `flowchart` under `%% direction: LR` is LR, and a bare
+    /// `flowchart` with no config stays TD (byte-identical to before this fallback existed). Each
     /// body line is a `-->`-separated CHAIN of endpoints where an endpoint is a bare `id`,
     /// `id[Label]`, or `id{Label}`; a line with no top-level `-->` is a lone node declaration. A
     /// chained `A --> B --> C` expands to edges A→B and B→C (any length); an edge label rides its
@@ -533,14 +537,22 @@ public final class DslParser {
     /// missing closing edge-label pipe all drop the line. Caps: {@link #MAX_NODES}/{@link #MAX_EDGES}
     /// bound the graph. Empty body → a Flowchart with no nodes (still a flowchart, so `flowchart`
     /// round-trips — NOT degraded to Empty).
-    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor) {
-        String direction = "TD";
+    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
+            String configDirection) {
+        // An explicit header token (`flowchart LR`) always wins; leave direction null until one is
+        // seen so a defaulted header is distinguishable from an explicit `TD`.
+        String direction = null;
         for (int i = 1; i < header.length; i++) {
             if (header[i].equals("LR")) {
                 direction = "LR";
             } else if (header[i].equals("TD")) {
                 direction = "TD";
             }
+        }
+        if (direction == null) {
+            // No explicit header direction — honor the `%% direction:` config directive as the
+            // fallback (it is already validated to TD|LR|null by parseConfig), else the TD default.
+            direction = (configDirection != null) ? configDirection : "TD";
         }
         // Insertion-ordered id → label map: preserves first-seen node order and lets the first
         // decorated occurrence win the label (a later bare mention never overwrites it). Shapes
