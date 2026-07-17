@@ -400,4 +400,40 @@ class SequenceTest {
         double lifelineBottom = Double.parseDouble(m.group(3));
         assertEquals(lifelineBottom, bar[1] + bar[3], 1e-6, "the unbalanced bar closes at the diagram bottom");
     }
+
+    @Test
+    void activationSigilAfterArrowIsConsumedNeverAWrongActor() {
+        // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): mermaid activation
+        // syntax `A ->>+ B` swallowed the `+` into the actor name and minted a WRONG actor
+        // literally named "+ B". Activation bars stay unsupported (a dropped decoration, like an
+        // `opt` frame) — but the sigil is activation SYNTAX, so the actors and the message must
+        // parse clean. Actor names beginning with `+`/`-` are reserved as a consequence.
+        Sequence s = parse("sequence\nFixpoint ->>+ Metastore : recall query\n"
+            + "Metastore -->>- Fixpoint : hits\n");
+        assertEquals(List.of("Fixpoint", "Metastore"), s.actors(),
+            "no '+ Metastore' / '- Fixpoint' phantom actors");
+        assertEquals(2, s.messages().size());
+        assertEquals("Metastore", s.messages().get(0).to());
+        assertEquals("Fixpoint", s.messages().get(1).to());
+        // The attached (no-space) form parses the same way.
+        Sequence tight = parse("sequence\nA ->>+B : q\nB -->>-A : r\n");
+        assertEquals(List.of("A", "B"), tight.actors(), "tight sigil form");
+        assertEquals("B", tight.messages().get(0).to());
+        assertEquals("A", tight.messages().get(1).to());
+    }
+
+    @Test
+    void malformedRepeatedActivationSigilDropsNeverMintsPhantom() {
+        // REGRESSION (Lattice 7141 finding 3): a well-formed activation carries exactly ONE sigil.
+        // Stripping only the first left `->>++C` minting an actor named "+C". A repeated (`++`/`--`)
+        // or no-target sigil is malformed activation grammar → the whole message drops, and only
+        // the good line survives.
+        Sequence s = parse("sequence\nA ->>+ : no target\nB ->>++C : malformed\n"
+            + "E -->>--F : also malformed\nD ->> G : good\n");
+        assertEquals(List.of("D", "G"), s.actors(),
+            "no '+C' / '-F' phantom actors, no empty-target actor — only the good line's actors");
+        assertEquals(1, s.messages().size(), "only D ->> G survives");
+        assertEquals("D", s.messages().get(0).from());
+        assertEquals("G", s.messages().get(0).to());
+    }
 }
