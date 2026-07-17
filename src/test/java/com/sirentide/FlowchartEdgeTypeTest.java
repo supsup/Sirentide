@@ -194,6 +194,24 @@ class FlowchartEdgeTypeTest {
     }
 
     @Test
+    void anOverCapDottedEdgeCollapsesToOneSolidLine() {
+        // Robustness plan fe8c5bbc #1: a dotted segment emits one <line> per EDGE_DASH+GAP stride, so
+        // a canvas-spanning dotted edge (× up to MAX_EDGES) floods the shape list before the 5 MB emit
+        // cap can fire. Past MAX_DASH_PIECES a segment draws ONE solid line. Forcing the cap tiny (a
+        // genuinely canvas-spanning edge would need a giant graph), the SAME dotted-open edge that is
+        // many <line> pieces above collapses to exactly one — mutation-surviving vs the piece test.
+        int saved = com.sirentide.layout.FlowchartLayout.MAX_DASH_PIECES;
+        com.sirentide.layout.FlowchartLayout.MAX_DASH_PIECES = 2;
+        try {
+            String svg = Sirentide.render("flowchart\nA[x] -.- B[y]\n");
+            assertEquals(1, count(svg, "<line"),
+                "an over-cap dotted edge collapses to one solid line, not many pieces: " + count(svg, "<line"));
+        } finally {
+            com.sirentide.layout.FlowchartLayout.MAX_DASH_PIECES = saved;
+        }
+    }
+
+    @Test
     void openEdgeEmitsNoArrowheadPath() {
         // An arrowhead is a <path> filled with the edge stroke colour (#94a3b8). An OPEN link emits
         // none; an arrow edge emits exactly one. (Lines use stroke=, not fill=, so this counts heads.)
