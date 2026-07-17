@@ -127,4 +127,59 @@ class AxisScaleTest {
         // Integer domains are unchanged (round-trip through the new rounding is a no-op).
         assertEquals(List.of(0.0, 2.0, 4.0, 6.0, 8.0, 10.0), new AxisScale(0, 10).ticks());
     }
+
+    // -- edge battery (deep-review sirentide/14 T4: negatives / empty / non-finite / sub-1) ------
+    // These pin the constructor+factory GUARDS that no prior test exercised — a mutation that
+    // deleted the finiteness check or the empty→[0,0] fallback passed the whole suite before.
+
+    @Test
+    void constructorRejectsANonFiniteDomain() {
+        // The finiteness guard (a NaN/Infinity domain would poison every projection into NaN/Inf).
+        assertThrows(IllegalArgumentException.class, () -> new AxisScale(Double.NaN, 10));
+        assertThrows(IllegalArgumentException.class, () -> new AxisScale(0, Double.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> new AxisScale(Double.NEGATIVE_INFINITY, 0));
+    }
+
+    @Test
+    void ofEmptyOrAllNonFiniteYieldsAZeroDomain() {
+        // No finite value seen → the documented [0, 0] fallback (never a [+Inf, -Inf] inversion).
+        AxisScale empty = AxisScale.of();
+        assertEquals(0, empty.min(), EPS);
+        assertEquals(0, empty.max(), EPS);
+        AxisScale allBad = AxisScale.of(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
+        assertEquals(0, allBad.min(), EPS);
+        assertEquals(0, allBad.max(), EPS);
+    }
+
+    @Test
+    void ofSkipsNonFiniteButKeepsTheFiniteEnds() {
+        // A mix keeps only the finite values for the min/max — a stray NaN/Inf never widens the domain.
+        AxisScale a = AxisScale.of(5, Double.NaN, 10, Double.POSITIVE_INFINITY, 7);
+        assertEquals(5, a.min(), EPS);
+        assertEquals(10, a.max(), EPS);
+    }
+
+    @Test
+    void negativeAndCrossZeroDomainOrdersAndProjectsProportionally() {
+        // A reversed, cross-zero domain orders to [-10, 10] and projects proportionally: the low end
+        // at pixel 0, the midpoint value 0 at pixel 50, the high end at pixel 100.
+        AxisScale a = new AxisScale(10, -10);
+        assertEquals(-10, a.min(), EPS);
+        assertEquals(10, a.max(), EPS);
+        assertEquals(0, a.project(-10, 0, 100), EPS);
+        assertEquals(50, a.project(0, 0, 100), EPS);
+        assertEquals(100, a.project(10, 0, 100), EPS);
+        // All-negative values keep both ends negative (no clamp to zero).
+        AxisScale neg = AxisScale.of(-5, -1, -9);
+        assertEquals(-9, neg.min(), EPS);
+        assertEquals(-1, neg.max(), EPS);
+    }
+
+    @Test
+    void subOneDomainProjectsProportionally() {
+        // A sub-1 domain is not special-cased — 0.25 sits at the pixel midpoint of [0, 0.5].
+        AxisScale a = new AxisScale(0, 0.5);
+        assertEquals(50, a.project(0.25, 0, 100), EPS);
+        assertTrue(Double.isFinite(a.project(0.5, 0, 100)));
+    }
 }
