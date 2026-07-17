@@ -144,4 +144,20 @@ class ClassDiagramTest {
         assertEquals(RelationKind.AGGREGATION, cd.relations().get(0).kind());
         assertEquals("Animal", cd.relations().get(0).left());
     }
+
+    @Test
+    void aClassWithManyMembersIsDisplayRowCapped() {
+        // Robustness plan fe8c5bbc #2: a class near the parser's per-box member ceiling grew one row
+        // per member — an unreadable, canvas-blowing box. The DISPLAY cap shows at most
+        // MAX_DISPLAYED_ROWS rows (+ a synthesized "… N more" row), bounding the box height. N=300 with
+        // the cap yields ~30 rows; uncapped it would be ~300 rows (roughly 10× the height), so the
+        // bounded root-SVG height is the mutation-surviving proof.
+        StringBuilder src = new StringBuilder("classDiagram\nclass Big {\n");
+        for (int i = 0; i < 300; i++) {
+            src.append("  +int f").append(i).append("\n");
+        }
+        String svg = Sirentide.render(src.append("}\n").toString());
+        double h = Double.parseDouble(svg.replaceFirst("(?s).*?<svg[^>]*height=\"([0-9.]+)\".*", "$1"));
+        assertTrue(h < 1200, "the many-member class box is display-row-capped, height=" + h);
+    }
 }

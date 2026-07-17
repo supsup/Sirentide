@@ -53,6 +53,11 @@ public final class ClassDiagramLayout {
     private static final double MIN_W = 120;         // blank-canvas width (0 classes)
     private static final double MIN_H = 60;
     private static final double MAX_LABEL_W = 240;   // compartment lines ellipsize past this
+    // Displayed-member cap per compartment (robustness plan fe8c5bbc #2): disp() ellipsizes each row's
+    // WIDTH but nothing bounded the row COUNT, so a class with hundreds of members (up to the parser's
+    // MAX_NODES per box) grew an unreadable, canvas-blowing box. Show at most this many rows; a
+    // truncated compartment ends with one synthesized "… (N more)" row (legibility + a layout bound).
+    static final int MAX_DISPLAYED_ROWS = 30;
 
     private static final String BOX_FILL = "#eef2ff";    // member-compartment background (pale indigo)
     private static final String NAME_FILL = "#c7d2fe";   // name-compartment band (a shade darker)
@@ -157,7 +162,7 @@ public final class ClassDiagramLayout {
             List<MathLabel.Measured> am = new ArrayList<>();
             List<Double> arh = new ArrayList<>();
             double attrSum = 0;
-            for (String a : b.attributes()) {
+            for (String a : capMembers(b.attributes())) {
                 Disp d = disp(a, MEMBER_SIZE, math);
                 attrs.add(d.display());
                 am.add(d.measure());
@@ -170,7 +175,7 @@ public final class ClassDiagramLayout {
             List<MathLabel.Measured> mm = new ArrayList<>();
             List<Double> mrh = new ArrayList<>();
             double methodSum = 0;
-            for (String m : b.methods()) {
+            for (String m : capMembers(b.methods())) {
                 Disp d = disp(m, MEMBER_SIZE, math);
                 methods.add(d.display());
                 mm.add(d.measure());
@@ -378,6 +383,20 @@ public final class ClassDiagramLayout {
     /// delimiters and silently drop the math (the reason the class/ER inline-math previously only worked
     /// for short fragments) — and is measured as a composite; a plain line is ellipsized to MAX_LABEL_W
     /// and carries a `null` measure (the byte-identical fixed-pitch text path). Mirrors the flowchart
+    /// Bound a compartment to {@link #MAX_DISPLAYED_ROWS} rows (robustness fe8c5bbc #2). A compartment
+    /// within the cap is returned unchanged; a longer one keeps its first {@code cap-1} members and
+    /// ends with a single synthesized "… (N more)" row — so the box stays readable and bounded even
+    /// for a class near the parser's per-box member ceiling. The synthesized row is an ordinary
+    /// display string (it flows through {@link #disp} + measurement like any member).
+    private static List<String> capMembers(List<String> members) {
+        if (members.size() <= MAX_DISPLAYED_ROWS) {
+            return members;
+        }
+        List<String> out = new ArrayList<>(members.subList(0, MAX_DISPLAYED_ROWS - 1));
+        out.add("… (" + (members.size() - (MAX_DISPLAYED_ROWS - 1)) + " more)");
+        return out;
+    }
+
     /// engine's math-skips-ellipsize rule.
     private record Disp(String display, MathLabel.Measured measure) {}
 

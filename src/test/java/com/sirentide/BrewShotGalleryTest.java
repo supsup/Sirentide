@@ -66,7 +66,20 @@ class BrewShotGalleryTest {
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
 
+    /// A class with more members than the display cap, so the box shows MAX_DISPLAYED_ROWS-1 rows
+    /// plus a synthesized "… (N more)" row instead of an unreadable, canvas-blowing tower
+    /// (robustness plan fe8c5bbc #2). The BrewShot containment audit proves the capped box + the
+    /// "… more" row all stay inside the declared canvas.
+    private static String cappedMemberClass() {
+        StringBuilder s = new StringBuilder("classDiagram\nclass BigConfig {\n");
+        for (int i = 0; i < 45; i++) {
+            s.append("+flag").append(i).append(" bool\n");
+        }
+        return s.append("}\n").toString();
+    }
+
     private static final List<Case> GALLERY = List.of(
+        new Case("class-member-cap", "Class member-row cap (… N more)", cappedMemberClass()),
         new Case("pie", "Pie", "pie\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
         new Case("pie-legend", "Pie with a legend",
             "pie legend\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
