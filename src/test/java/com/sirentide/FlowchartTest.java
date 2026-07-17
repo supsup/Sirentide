@@ -413,4 +413,43 @@ class FlowchartTest {
         String plain = Sirentide.render("flowchart LR\nA[Go] --> B[Ship]\n");
         assertTrue(count(labeled, "<path") > count(plain, "<path"), "the LR edge label adds glyph paths");
     }
+
+    @Test
+    void reservedDirectiveLinesDropInertNeverMintNodes() {
+        // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): a directive-shaped
+        // line whose keyword this parser does not implement (`style`, `click`, `direction`, …)
+        // used to fall through to the lone-node path and mint a phantom node wearing its own
+        // directive text as a name. Recognized-but-unimplemented directives now drop inert —
+        // the loud-or-dropped forward-compat rule.
+        Flowchart fc = parse("flowchart\nA[Start] --> B[End]\n"
+            + "style A fill:#f9f,stroke:#333\n"
+            + "click A callback \"tooltip\"\n"
+            + "direction LR\n");
+        assertEquals(List.of("A", "B"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "no phantom 'style …' / 'click …' / 'direction …' nodes");
+        // Only the two-token directive SHAPE is reserved: a deliberate lone node whose id is a
+        // bare directive keyword still parses as a node.
+        Flowchart bare = parse("flowchart\nstyle\n");
+        assertEquals(List.of("style"),
+            bare.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "a bare keyword with no rest is still a node");
+    }
+
+    @Test
+    void bidirectionalArrowDropsTheLineNeverMintsLtNode() {
+        // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): `A <--> B` scanned
+        // the `-->` mid-token and minted a phantom head node named "A <". Until bidirectional
+        // edges are a real feature the whole line DROPS — loud-not-silent, the same convention
+        // as a malformed endpoint — across all three operator families.
+        Flowchart fc = parse("flowchart\nA <--> B\nC <-.-> D\nE <==> F\nG --> H\n");
+        assertEquals(List.of("G", "H"),
+            fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
+            "only the valid line's nodes exist — no 'A <' phantom");
+        assertEquals(1, fc.edges().size(), "only G --> H drew");
+        // A '<' inside a bracketed label span is untouched by the guard.
+        Flowchart lbl = parse("flowchart\nA[x < y] --> B\n");
+        assertEquals(2, lbl.nodes().size(), "label '<' does not trip the guard");
+        assertEquals("x < y", labelsById(lbl).get("A"));
+    }
 }
