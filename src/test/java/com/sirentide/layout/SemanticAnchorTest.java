@@ -524,6 +524,14 @@ class SemanticAnchorTest {
         // inside the a11y `<desc>` text (`&lt;img … onerror …&gt;`), which is inert. No `<` opens a tag.
         assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
         assertFalse(svg.contains("<img"), "no element injection from the label: " + svg);
+        // NON-VACUITY (Lattice sirentide/215 follow-up 1): also assert the hostile
+        // labels ARE present XML-ESCAPED, so this pins "the label went through the
+        // parser + escaping sink" — not merely "no live tag", which a label silently
+        // dropped would also satisfy.
+        assertTrue(svg.contains("&lt;script&gt;"),
+            "the <script> label survives XML-escaped (reached the sink, not dropped): " + svg);
+        assertTrue(svg.contains("&lt;img") && svg.contains("onerror"),
+            "the <img … onerror> label is present but inert-escaped, pinning parser-through-sink coverage: " + svg);
     }
 
     // -- seq WIRE value saturates at 4 digits to match the /docs contract bound ^[0-9]{1,4}$ ---------
