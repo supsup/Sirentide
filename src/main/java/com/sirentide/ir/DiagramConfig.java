@@ -15,9 +15,10 @@ package com.sirentide.ir;
 ///   - `title`     — feeds the a11y `<title>` (overrides the derived accessible name). Capped to the
 ///                   parser's label cap.
 ///   - `theme`     — `default` | `dark` | `neutral` ({@link Theme}); an unknown value → `default`.
-///   - `direction` — `TD` | `LR` (a forward-looking generalization; carried here for the types that
-///                   will honour it — currently only surfaced, not yet re-applied over a type's own
-///                   header direction). An unknown value → `null`.
+///   - `direction` — `TD` | `LR`. Applied to `flowchart` as the FALLBACK direction when its header
+///                   carries no explicit `TD`/`LR` token (an explicit header token always wins); the
+///                   axis-less types (sequence/pie/…) ignore it and stay byte-identical. An unknown
+///                   value → `null` (no fallback, so the type's own default holds).
 ///   - `caption`   — a visible annotation line rendered BELOW the diagram, centered + word-wrapped to
 ///                   the canvas width, for ANY diagram type (plan sirentide-caption-note-directive).
 ///                   `note` is an accepted alias. Capped to the parser's label cap. `null` = no caption

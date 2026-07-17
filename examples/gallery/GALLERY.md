@@ -171,6 +171,16 @@ B --> C[Merge]
 
 ![Caption / note directive (annotation band below any diagram)](flowchart-caption.png)
 
+## Config direction directive (%% direction: LR drives a bare header)
+
+```
+%% direction: LR
+flowchart
+A[Parse] --> B[Layout] --> C[Emit]
+```
+
+![Config direction directive (%% direction: LR drives a bare header)](flowchart-config-direction.png)
+
 ## Sequence (API token flow)
 
 ```

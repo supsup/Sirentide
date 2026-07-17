@@ -101,6 +101,8 @@ class BrewShotGalleryTest {
         new Case("flowchart-caption", "Caption / note directive (annotation band below any diagram)",
             "%% caption: A merge lands only after both peers approve and no conflicts remain.\n"
                 + "flowchart LR\nA[Author] --> B[Review]\nB --> C[Merge]"),
+        new Case("flowchart-config-direction", "Config direction directive (%% direction: LR drives a bare header)",
+            "%% direction: LR\nflowchart\nA[Parse] --> B[Layout] --> C[Emit]"),
         new Case("sequence", "Sequence (API token flow)",
             "sequence\nClient ->> Gateway : GET /token\nGateway ->> Auth : validate"
                 + "\nAuth -->> Gateway : ok\nGateway ->> Gateway : sign JWT"

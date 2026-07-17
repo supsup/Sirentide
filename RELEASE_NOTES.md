@@ -6,6 +6,25 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-17 — `%% direction:` now steers a flowchart
+
+The config-block directive `%% direction: TD|LR` was parsed but inert — a bare `flowchart`
+header ignored it and always laid out top-down. It now drives the layout:
+
+> `%% direction: LR`
+> `flowchart`
+> `A[Parse] --> B[Layout] --> C[Emit]`
+
+lays out left-to-right, exactly as `flowchart LR` would.
+
+**Precedence — an explicit header token always wins.** `flowchart LR` stays LR and
+`flowchart TD` stays TD regardless of any `%% direction:`; the directive is only a *fallback*
+for a bare `flowchart`. An unknown value (`%% direction: sideways`) leaves the `TD` default.
+The axis-less types (sequence, pie, …) ignore direction and bake **byte-identically** — a
+flowchart with no `%% direction:` block is unchanged too.
+
+---
+
 ## 2026-07-12 — Node & edge styling (`classDef` stroke/colour + `linkStyle`)
 
 Flowchart nodes and edges can now carry colour, not just a fill.
