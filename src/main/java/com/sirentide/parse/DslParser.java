@@ -734,27 +734,46 @@ public final class DslParser {
                     clusterRep.putIfAbsent(c.id(), c.memberNodeIds().get(0));
                 }
             }
+            // A cluster id ROUTES (edges to it retarget into the cluster, its phantom node drops)
+            // ONLY when it is not ALSO a real, explicitly-declared node. A subgraph open never
+            // registers its id as a node, so a bare cluster id in the node maps is a phantom minted
+            // by a reference (`EPR --> PROJ`). But an author may have declared a REAL node sharing a
+            // subgraph's id (`PROJ[Real] --> Y`); that node is DECORATED (a custom label, or a
+            // shape/colour/class), and a collision with it is the author's ambiguity — keep the node
+            // and point edges at it, never silently reroute or delete it (7c… B2).
             Set<String> clusterIds = new java.util.HashSet<>();
             for (FlowCluster c : clusters) {
                 clusterIds.add(c.id());
             }
-            // A subgraph open never registers its id as a node, so any cluster id sitting in the node
-            // maps is a phantom minted solely by an edge/decl that named it — drop every facet of it.
+            Set<String> routingIds = new java.util.HashSet<>();
             for (String cid : clusterIds) {
-                nodeLabels.remove(cid);
-                nodeShapes.remove(cid);
-                nodeColors.remove(cid);
-                nodeClass.remove(cid);
+                boolean realNode = nodeLabels.containsKey(cid)
+                    && (!cid.equals(nodeLabels.get(cid))    // a custom label ≠ the bare id
+                        || nodeShapes.containsKey(cid)
+                        || nodeColors.containsKey(cid)
+                        || nodeClass.containsKey(cid));
+                if (!realNode) {
+                    routingIds.add(cid);
+                    nodeLabels.remove(cid);   // drop the phantom (if a bare reference registered one)
+                    nodeShapes.remove(cid);
+                    nodeColors.remove(cid);
+                    nodeClass.remove(cid);
+                }
             }
             List<FlowEdge> routed = new ArrayList<>(edges.size());
             for (FlowEdge e : edges) {
-                String from = clusterIds.contains(e.from()) ? clusterRep.get(e.from()) : e.from();
-                String to = clusterIds.contains(e.to()) ? clusterRep.get(e.to()) : e.to();
-                // A cluster endpoint with no representative (empty cluster) → null → drop the edge.
-                // A remap that collapses both ends onto the same member is an inert self-loop → drop.
-                if (from != null && to != null && !from.equals(to)) {
-                    routed.add(e.withEndpoints(from, to));
+                boolean fromR = routingIds.contains(e.from());
+                boolean toR = routingIds.contains(e.to());
+                String from = fromR ? clusterRep.get(e.from()) : e.from();
+                String to = toR ? clusterRep.get(e.to()) : e.to();
+                if (from == null || to == null) {
+                    continue; // an endpoint naming an EMPTY routing cluster → no member → drop (B1)
                 }
+                if ((fromR || toR) && from.equals(to)) {
+                    continue; // a REMAP collapsed both ends onto one member → inert self-loop → drop
+                }
+                // A literal author-written self-loop (`A --> A`, no remap) is preserved unchanged.
+                routed.add((fromR || toR) ? e.withEndpoints(from, to) : e);
             }
             edges.clear();
             edges.addAll(routed);

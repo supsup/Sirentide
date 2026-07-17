@@ -426,6 +426,28 @@ class FlowchartTest {
         assertEquals("X", external.to(), "an edge to a real member is not rerouted");
     }
 
+    @Test
+    void aLiteralSelfLoopSurvivesWhenASubgraphExists() {
+        // REGRESSION (7c… B1): the routing pass's collapse-drop must fire ONLY for a remap-induced
+        // self-loop, never for a literal author-written `A --> A` (neither endpoint a cluster id).
+        // Before the fix, ANY subgraph in the chart silently dropped the self-loop.
+        Flowchart fc = parse("flowchart\n  A --> A\n  subgraph G\n    X --> Y\n  end\n");
+        assertEquals(1,
+            fc.edges().stream().filter(e -> e.from().equals("A") && e.to().equals("A")).count(),
+            "the literal A --> A self-loop is preserved even though a subgraph exists");
+    }
+
+    @Test
+    void aRealNodeSharingASubgraphIdIsKeptNotRoutedOrDeleted() {
+        // REGRESSION (7c… B2): an author-declared REAL node whose id collides with a subgraph id
+        // (a custom label → decorated) must be kept, and edges to it must point at THAT node — not
+        // be silently rerouted into the cluster or have the node deleted.
+        Flowchart fc = parse("flowchart\n  PROJ[Real] --> Y\n  subgraph PROJ\n    X --> Z\n  end\n");
+        assertEquals("Real", labelsById(fc).get("PROJ"), "the real decorated PROJ node survives");
+        FlowEdge toY = fc.edges().stream().filter(e -> e.to().equals("Y")).findFirst().orElseThrow();
+        assertEquals("PROJ", toY.from(), "the edge stays on the real PROJ node, not routed to the cluster");
+    }
+
     // -- render ---------------------------------------------------------------
 
     @Test
