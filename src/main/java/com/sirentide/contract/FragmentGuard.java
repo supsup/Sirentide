@@ -49,11 +49,21 @@ public final class FragmentGuard {
     /// no url(), no expressions). Matches the deterministic form the emitter's fmt() produces.
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(\\.\\d+)?");
 
+    /// A contract-clean fragment longer than this is treated as NOT clean, so the caller degrades to
+    /// the raw `$…$` source (robustness plan fe8c5bbc #6): {@link #isClean} validates the fragment
+    /// SHAPE but not its LENGTH, so a legitimately clean-but-enormous fragment would otherwise be
+    /// held whole. A real inline-math fragment (rendered from a ≤MAX_LABEL_LEN source) never
+    /// approaches this ceiling — it only bites a pathological one. 64 KiB.
+    public static final int MAX_FRAGMENT_LEN = 65_536;
+
     /// True iff `innerSvg` is a contract-clean fragment (only g/path, allowed attrs, legal values).
     /// A `null` or blank fragment is NOT clean (there is nothing to trust).
     public static boolean isClean(String innerSvg) {
         if (innerSvg == null || innerSvg.isBlank()) {
             return false;
+        }
+        if (innerSvg.length() > MAX_FRAGMENT_LEN) {
+            return false;   // #6: don't trust an oversize fragment whole — degrade to raw $…$
         }
         Matcher m = TAG.matcher(innerSvg);
         int cursor = 0;
