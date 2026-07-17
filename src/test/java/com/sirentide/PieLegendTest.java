@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /// The opt-in `pie legend` (left colour key) mode. The legend lists each drawn slice once as a
@@ -96,5 +97,40 @@ class PieLegendTest {
         String svg = Sirentide.render("pie legned\n  \"A\" : 40\n  \"B\" : 60\n");
         assertEquals(0, count(svg, "<rect"), "unknown modifier ignored → plain pie, no swatches");
         assertTrue(svg.startsWith("<svg"), "still a valid svg");
+    }
+
+    /// Does any element opened by `tag` (e.g. `<rect` / `<path`) carry `fill="value"`? Scans each
+    /// element's own attribute run (up to its `>`), so a fill on a rect can't be mistaken for one
+    /// on a path.
+    private static boolean anyElementHasFill(String svg, String tag, String value) {
+        String needle = "fill=\"" + value + "\"";
+        for (int i = svg.indexOf(tag); i >= 0; i = svg.indexOf(tag, i + 1)) {
+            int end = svg.indexOf('>', i);
+            if (end < 0) {
+                break;
+            }
+            if (svg.substring(i, end).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
+    void eachLegendSwatchCarriesItsOwnSliceColour() {
+        // T-net (deep-review sirentide/14): the count tests above never bound a swatch's FILL to its
+        // wedge's fill — a swatch minted with a constant/wrong colour passed them all. With explicit
+        // per-slice colours, every slice colour must appear on BOTH a wedge <path> AND a legend <rect>.
+        String svg = Sirentide.render("""
+            pie legend
+              "Ship"    : 40 #22c55e
+              "WIP"     : 25 #eab308
+              "Blocked" : 20 #ef4444
+              "Backlog" : 15 #64748b
+            """);
+        for (String colour : List.of("#22c55e", "#eab308", "#ef4444", "#64748b")) {
+            assertTrue(anyElementHasFill(svg, "<path", colour), "a wedge path is filled " + colour);
+            assertTrue(anyElementHasFill(svg, "<rect", colour), "its legend swatch is filled " + colour);
+        }
     }
 }
