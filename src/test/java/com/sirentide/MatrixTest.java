@@ -107,4 +107,25 @@ class MatrixTest {
         assertTrue(svg.contains("snapshot") && svg.contains("bare"), "desc names the columns");
         assertTrue(svg.contains("partial, fail"), "desc reads the row's normalized verdicts (diverge→fail)");
     }
+
+    @Test
+    void aPathologicallyWideMatrixIsColumnCapped() {
+        // Robustness plan fe8c5bbc #4: rows are bounded by MAX_DATA_ROWS but the `cols:` header token
+        // count AND each row's cell count were uncapped, so `cols: c,c,…×N` + an N-cell row forced an
+        // N-wide grid that OOMs in layout before the 5 MB emit cap can fire. N=1000 here sits well
+        // above MAX_COLUMNS (200) and well below the emit cap, so the assertion pins the COLUMN cap
+        // specifically: without it there'd be 1000 pass cells; with it, exactly MAX_COLUMNS.
+        int n = 1000;
+        StringBuilder src = new StringBuilder("matrix\ncols:");
+        StringBuilder row = new StringBuilder("\n\"r\" :");
+        for (int i = 0; i < n; i++) {
+            src.append(" c,");
+            row.append(" pass,");
+        }
+        String svg = Sirentide.render(src.append(row).toString());
+        // The load-bearing, mutation-surviving assertion: exactly MAX_COLUMNS pass cells. Without the
+        // cap there'd be N (or a degraded/truncated count once the ~5 MB emit cap fires) — never 200.
+        assertEquals(com.sirentide.parse.DslParser.MAX_COLUMNS, count(svg, "fill=\"" + PASS + "\""),
+            "the wide matrix is column-capped to exactly MAX_COLUMNS pass cells, not " + n);
+    }
 }
