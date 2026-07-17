@@ -718,6 +718,66 @@ public final class DslParser {
         while (!clusterStack.isEmpty()) {
             clusters.add(clusterStack.pop().freeze());
         }
+        // Subgraph-id edge routing (plan ea20153b part 3). In v1 a cluster id was never an edge
+        // endpoint — an edge to a subgraph id (`EPR --> PROJ` where PROJ is a subgraph) minted a
+        // SEPARATE empty "PROJ" node (a phantom wearing the group's name). Now such an endpoint
+        // routes INTO the cluster: it retargets to the cluster's representative member (its first-
+        // seen member) so the edge visibly connects to the group's content, and the phantom node is
+        // dropped. An endpoint naming an EMPTY cluster (no members → no representative) drops the
+        // whole edge — loud-or-dropped, the same convention as a malformed endpoint, never a phantom.
+        // Runs BEFORE the linkStyle pass below so drawn-edge indices reflect the final edge set.
+        if (!clusters.isEmpty()) {
+            Map<String, String> clusterRep = new java.util.HashMap<>();
+            for (FlowCluster c : clusters) {
+                if (!c.memberNodeIds().isEmpty()) {
+                    // Ids are unique per open, but a defensive putIfAbsent keeps the first member.
+                    clusterRep.putIfAbsent(c.id(), c.memberNodeIds().get(0));
+                }
+            }
+            // A cluster id ROUTES (edges to it retarget into the cluster, its phantom node drops)
+            // ONLY when it is not ALSO a real, explicitly-declared node. A subgraph open never
+            // registers its id as a node, so a bare cluster id in the node maps is a phantom minted
+            // by a reference (`EPR --> PROJ`). But an author may have declared a REAL node sharing a
+            // subgraph's id (`PROJ[Real] --> Y`); that node is DECORATED (a custom label, or a
+            // shape/colour/class), and a collision with it is the author's ambiguity — keep the node
+            // and point edges at it, never silently reroute or delete it (7c… B2).
+            Set<String> clusterIds = new java.util.HashSet<>();
+            for (FlowCluster c : clusters) {
+                clusterIds.add(c.id());
+            }
+            Set<String> routingIds = new java.util.HashSet<>();
+            for (String cid : clusterIds) {
+                boolean realNode = nodeLabels.containsKey(cid)
+                    && (!cid.equals(nodeLabels.get(cid))    // a custom label ≠ the bare id
+                        || nodeShapes.containsKey(cid)
+                        || nodeColors.containsKey(cid)
+                        || nodeClass.containsKey(cid));
+                if (!realNode) {
+                    routingIds.add(cid);
+                    nodeLabels.remove(cid);   // drop the phantom (if a bare reference registered one)
+                    nodeShapes.remove(cid);
+                    nodeColors.remove(cid);
+                    nodeClass.remove(cid);
+                }
+            }
+            List<FlowEdge> routed = new ArrayList<>(edges.size());
+            for (FlowEdge e : edges) {
+                boolean fromR = routingIds.contains(e.from());
+                boolean toR = routingIds.contains(e.to());
+                String from = fromR ? clusterRep.get(e.from()) : e.from();
+                String to = toR ? clusterRep.get(e.to()) : e.to();
+                if (from == null || to == null) {
+                    continue; // an endpoint naming an EMPTY routing cluster → no member → drop (B1)
+                }
+                if ((fromR || toR) && from.equals(to)) {
+                    continue; // a REMAP collapsed both ends onto one member → inert self-loop → drop
+                }
+                // A literal author-written self-loop (`A --> A`, no remap) is preserved unchanged.
+                routed.add((fromR || toR) ? e.withEndpoints(from, to) : e);
+            }
+            edges.clear();
+            edges.addAll(routed);
+        }
         // Apply per-edge linkStyle overrides by DRAWN-edge index (authoring order of the edges that
         // actually registered). An index-specific override wins over `default`; an edge matched by
         // neither keeps its built-in colour/width. All values were validated at parse time.
