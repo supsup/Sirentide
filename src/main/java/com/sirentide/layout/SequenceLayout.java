@@ -50,6 +50,11 @@ public final class SequenceLayout {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final double LABEL_SIZE = 12;      // head-label size
     private static final double MSG_LABEL_SIZE = 11;  // message-label size
+    // Hard message-label width cap (robustness plan fe8c5bbc #3): the label ellipsized to the SPAN
+    // between the two actors, so a message across DISTANT actors (a wide span, up to ~10000px) admitted
+    // a full 512-char label — a giant, unreadable run. Cap the ellipsize width at min(span-8, this),
+    // matching the head-label discipline; a long label now truncates even on a wide span.
+    private static final double MAX_MSG_LABEL_W = 220;
 
     private static final String HEAD_FILL = "#dbe4ff";
     private static final String LIFELINE_STROKE = "#cbd5e1";
@@ -504,7 +509,7 @@ public final class SequenceLayout {
                 double runX = clamp(midX - mm.width() / 2, mm.width(), canvasW);
                 MathLabel.emit(mm, runX, y - LABEL_LIFT, textColor, MSG_LABEL_SIZE, FONT, shapes);
             } else {
-                String text = FONT.ellipsize(m.label(), span - 8, MSG_LABEL_SIZE);
+                String text = FONT.ellipsize(m.label(), Math.min(span - 8, MAX_MSG_LABEL_W), MSG_LABEL_SIZE);
                 double w = FONT.runWidth(text, MSG_LABEL_SIZE);
                 double runX = clamp(midX - w / 2, w, canvasW);
                 String d = FONT.textPathD(text, runX, y - LABEL_LIFT, MSG_LABEL_SIZE);

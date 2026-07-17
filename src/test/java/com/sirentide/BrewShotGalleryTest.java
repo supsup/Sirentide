@@ -3,6 +3,7 @@ package com.sirentide;
 import com.brewshot.BrewShot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
@@ -208,5 +209,30 @@ class BrewShotGalleryTest {
             }
         }
         Files.writeString(dir.resolve("GALLERY.md"), md.toString());
+    }
+
+    @Test
+    void aWideSpanSequenceMessageLabelIsWidthCapped() throws Exception {
+        // Robustness plan fe8c5bbc #3: a message label ellipsized to the SPAN between its two actors,
+        // so a message across DISTANT actors (a wide span) admitted a full-length, enormously wide
+        // label run. The hard cap min(span-8, MAX_MSG_LABEL_W) truncates it. Measured in a real
+        // browser: the label is ONE glyph <path>, so its bbox width is the label width — with the cap
+        // the widest glyph path stays bounded; without it, the A→E label would be many times wider.
+        assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
+        String longLabel = "this is a deliberately very long message label that without the hard "
+            + "width cap would render as an enormous run spanning the whole distance between the "
+            + "far-apart actors A and E and blow well past any readable width";
+        String dsl = "sequence\nA ->> B : x\nB ->> C : x\nC ->> D : x\nD ->> E : x\nA ->> E : " + longLabel;
+        try (BrewShot shot = BrewShot.launch(1600, 400)) {
+            shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
+                + Sirentide.render(dsl) + "</body></html>");
+            shot.settle(120);
+            Object maxW = shot.eval("(function(){var m=0;document.querySelectorAll('svg path')"
+                + ".forEach(function(p){var w=p.getBoundingClientRect().width;if(isFinite(w)&&w>m)m=w;});"
+                + "return m;})()");
+            double widest = ((Number) maxW).doubleValue();
+            assertTrue(widest < 300,
+                "the wide-span message label is width-capped; widest glyph path=" + widest);
+        }
     }
 }
