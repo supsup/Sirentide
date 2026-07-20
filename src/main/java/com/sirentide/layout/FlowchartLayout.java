@@ -72,6 +72,17 @@ public final class FlowchartLayout {
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
     private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
+    // Back-edge RAIL node-obstacle avoidance (plan e7144b77 #1). A back-edge's horizontal (TD) /
+    // vertical (LR) rail leaves a node at its mid-edge and runs out to a far lane; a straight rail at
+    // that mid-coordinate slices through a same-rank SIBLING node's fill (the sibling sits between the
+    // node and the lane), so the drawing asserts a false data path. The rail is DETOURED into the clear
+    // inter-layer gap — but ONLY when the straight rail actually crosses a non-endpoint box, so an
+    // already-clear back-edge (every existing golden) is byte-identical. Same containment class as
+    // {@link EdgeRouter} (edges-vs-nodes), deterministic (nearest clear offset, `-`-before-`+` sign).
+    private static final double RAIL_DETOUR_STEP = 6;      // offset search granularity
+    private static final double RAIL_DETOUR_MAX = 240;     // cap — past this keep the rail straight (honest residual)
+    private static final double RAIL_OBSTACLE_INSET = 1.0; // shrink a box to its interior for the CROSSING test (matches the geometry oracle)
+    private static final double RAIL_CLEARANCE = 6;        // grow a box by this for the DETOUR target so the rerouted rail sits clear of the fill
     private static final double EDGE_LABEL_SIZE = 10;   // edge-label font size (M1.2, `-->|yes|`)
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
@@ -687,6 +698,9 @@ public final class FlowchartLayout {
         // 0..E-1 over edges then E..E+N-1 over nodes — the element's emit-order index. Unused when
         // !anchored (state diagram): the shapes go straight onto the flat list, byte-identical.
         AnchorAssigner assigner = new AnchorAssigner();
+        // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1) — coordinates are
+        // final here (post cluster-shift), so the rects match what draws.
+        List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -703,19 +717,27 @@ public final class FlowchartLayout {
                 double sx = vx[u] + boxW[u];
                 double ty = vy[v] + boxH[v] / 2;        // target right-middle
                 double tx = vx[v] + boxW[v];
-                emitEdgeLine(tgt, sx, sy, laneX, sy, e.style(), e.stroke(), e.width());      // out right
-                emitEdgeLine(tgt, laneX, sy, laneX, ty, e.style(), e.stroke(), e.width());   // up the lane
+                double approachX = e.arrow() ? tx + ARROW_LEN : tx;   // where the back-in rail ends
+                // Detour each mid-height rail into the clear inter-layer gap iff it slices a SIBLING's
+                // fill (plan e7144b77 #1). Clear rails keep railY==attach → byte-identical emission.
+                double railYs = clearRailY(sx, sy, laneX, obstacles, u, v, canvasH);
+                double railYt = clearRailY(approachX, ty, laneX, obstacles, u, v, canvasH);
+                if (railYs != sy) {
+                    emitEdgeLine(tgt, sx, sy, sx, railYs, e.style(), e.stroke(), e.width());  // connector down the source's own right edge (clear)
+                }
+                emitEdgeLine(tgt, sx, railYs, laneX, railYs, e.style(), e.stroke(), e.width());    // out right (in the gap)
+                emitEdgeLine(tgt, laneX, railYs, laneX, railYt, e.style(), e.stroke(), e.width()); // up the lane
+                emitEdgeLine(tgt, laneX, railYt, approachX, railYt, e.style(), e.stroke(), e.width()); // back in (in the gap)
+                if (railYt != ty) {
+                    emitEdgeLine(tgt, approachX, railYt, approachX, ty, e.style(), e.stroke(), e.width()); // connector to the target attach y (clear)
+                }
                 if (e.arrow()) {
-                    emitEdgeLine(tgt, laneX, ty, tx + ARROW_LEN, ty, e.style(), e.stroke(), e.width());   // back in to arrow base
-                    // Left-pointing arrowhead, tip on the target's right edge.
+                    // Left-pointing arrowhead, tip on the target's right edge (unchanged).
                     String bd = "M " + fmt(tx) + " " + fmt(ty)
                         + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty - ARROW_HALF_W)
                         + " L " + fmt(tx + ARROW_LEN) + " " + fmt(ty + ARROW_HALF_W)
                         + " Z";
                     tgt.add(new Path(bd, e.stroke()));
-                } else {
-                    // OPEN back-edge: run to the target's right edge itself, NO arrowhead.
-                    emitEdgeLine(tgt, laneX, ty, tx, ty, e.style(), e.stroke(), e.width());
                 }
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
                 emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
@@ -1071,6 +1093,8 @@ public final class FlowchartLayout {
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
         // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
         AnchorAssigner assigner = new AnchorAssigner();
+        // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1), coordinates final here.
+        List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -1086,19 +1110,28 @@ public final class FlowchartLayout {
                 double sy = vy[u] + boxH[u];
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
                 double ty = vy[v] + boxH[v];
-                emitEdgeLine(tgt, sx, sy, sx, laneY, e.style(), e.stroke(), e.width());      // down out
-                emitEdgeLine(tgt, sx, laneY, tx, laneY, e.style(), e.stroke(), e.width());   // along the lane
+                double approachY = e.arrow() ? ty + ARROW_LEN : ty;   // where the up-in rail ends
+                // Detour each mid-width rail sideways into the clear inter-column gap iff it slices a
+                // same-column node's fill (plan e7144b77 #1; LR transpose of the TD detour). Clear
+                // rails keep railX==attach → byte-identical emission.
+                double railXs = clearRailX(sx, sy, laneY, obstacles, u, v, canvasW);
+                double railXt = clearRailX(tx, approachY, laneY, obstacles, u, v, canvasW);
+                if (railXs != sx) {
+                    emitEdgeLine(tgt, sx, sy, railXs, sy, e.style(), e.stroke(), e.width());  // connector along the source's own bottom edge (clear)
+                }
+                emitEdgeLine(tgt, railXs, sy, railXs, laneY, e.style(), e.stroke(), e.width());    // down out (in the gap)
+                emitEdgeLine(tgt, railXs, laneY, railXt, laneY, e.style(), e.stroke(), e.width()); // along the lane
+                emitEdgeLine(tgt, railXt, laneY, railXt, approachY, e.style(), e.stroke(), e.width()); // up in (in the gap)
+                if (railXt != tx) {
+                    emitEdgeLine(tgt, railXt, approachY, tx, approachY, e.style(), e.stroke(), e.width()); // connector to the target attach x (clear)
+                }
                 if (e.arrow()) {
-                    emitEdgeLine(tgt, tx, laneY, tx, ty + ARROW_LEN, e.style(), e.stroke(), e.width());   // up in to arrow base
-                    // Up-pointing arrowhead, tip on the target's bottom edge.
+                    // Up-pointing arrowhead, tip on the target's bottom edge (unchanged).
                     String bd = "M " + fmt(tx) + " " + fmt(ty)
                         + " L " + fmt(tx - ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
                         + " L " + fmt(tx + ARROW_HALF_W) + " " + fmt(ty + ARROW_LEN)
                         + " Z";
                     tgt.add(new Path(bd, e.stroke()));
-                } else {
-                    // OPEN back-edge: run up to the target's bottom edge itself, NO arrowhead.
-                    emitEdgeLine(tgt, tx, laneY, tx, ty, e.style(), e.stroke(), e.width());
                 }
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
                 emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
@@ -1373,6 +1406,118 @@ public final class FlowchartLayout {
             + " L " + fmt(baseX - ARROW_HALF_W * px) + " " + fmt(baseY - ARROW_HALF_W * py)
             + " Z";
         shapes.add(new Path(d, stroke));
+    }
+
+    /// The per-node obstacle rectangles `[x, y, w, h]` (indexed by node index, virtual waypoints
+    /// EXCLUDED — a thin waypoint slot is never a fill to avoid), used by the back-edge rail-detour to
+    /// treat node boxes as obstacles. Built once per layout pass after coordinates settle (post
+    /// cluster-shift), so the rects match what actually draws.
+    private static List<double[]> nodeObstacles(int n, double[] vx, double[] vy, double[] boxW,
+                                                double[] boxH) {
+        List<double[]> boxes = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            boxes.add(new double[] {vx[i], vy[i], boxW[i], boxH[i]});
+        }
+        return boxes;
+    }
+
+    /// True if segment (x1,y1)-(x2,y2) crosses any obstacle box OTHER than `exclU`/`exclV` (the edge's
+    /// own endpoints), each box inflated/shrunk by `inset` (positive shrinks to the interior for the
+    /// crossing test; negative GROWS it so a detour target clears the fill with margin).
+    private static boolean segCrossesBoxes(double x1, double y1, double x2, double y2,
+                                           List<double[]> boxes, int exclU, int exclV, double inset) {
+        for (int i = 0; i < boxes.size(); i++) {
+            if (i == exclU || i == exclV) {
+                continue;
+            }
+            double[] b = boxes.get(i);
+            if (segIntersectsRect(x1, y1, x2, y2,
+                b[0] + inset, b[1] + inset, b[0] + b[2] - inset, b[1] + b[3] - inset)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// The y at which a TD back-edge's HORIZONTAL rail from a node (`attachX`,`attachY`) out to the
+    /// vertical lane at `laneX` crosses no non-endpoint node fill. Returns `attachY` unchanged when the
+    /// straight rail is already clear (byte-identical to the pre-fix bake); otherwise the nearest y (in
+    /// the clear inter-layer gap, `-` above before `+` below) whose rail AND the short connector back to
+    /// the attach point both clear every OTHER box by {@link #RAIL_CLEARANCE}. Falls back to `attachY`
+    /// if no in-canvas detour exists — never worse than today, and never escapes the canvas.
+    private static double clearRailY(double attachX, double attachY, double laneX,
+                                     List<double[]> boxes, int u, int v, double canvasH) {
+        if (!segCrossesBoxes(attachX, attachY, laneX, attachY, boxes, u, v, RAIL_OBSTACLE_INSET)) {
+            return attachY;
+        }
+        for (double off = RAIL_DETOUR_STEP; off <= RAIL_DETOUR_MAX; off += RAIL_DETOUR_STEP) {
+            for (int dir = -1; dir <= 1; dir += 2) {
+                double y = attachY + dir * off;
+                if (y < MARGIN || y > canvasH - MARGIN) {
+                    continue;   // the detour would escape the canvas — reject (containment)
+                }
+                if (!segCrossesBoxes(attachX, attachY, attachX, y, boxes, u, v, -RAIL_CLEARANCE)
+                    && !segCrossesBoxes(attachX, y, laneX, y, boxes, u, v, -RAIL_CLEARANCE)) {
+                    return y;
+                }
+            }
+        }
+        return attachY;   // no in-canvas detour — honest residual (unchanged from the pre-fix rail)
+    }
+
+    /// The LR transpose of {@link #clearRailY}: the x at which a back-edge's VERTICAL rail from a node
+    /// (`attachX`,`attachY`) down to the horizontal lane at `laneY` clears every non-endpoint fill.
+    /// Returns `attachX` unchanged when already clear (byte-identical); else the nearest clear x
+    /// (`-` left before `+` right) whose rail + connector clear the boxes, or `attachX` if none fits.
+    private static double clearRailX(double attachX, double attachY, double laneY,
+                                     List<double[]> boxes, int u, int v, double canvasW) {
+        if (!segCrossesBoxes(attachX, attachY, attachX, laneY, boxes, u, v, RAIL_OBSTACLE_INSET)) {
+            return attachX;
+        }
+        for (double off = RAIL_DETOUR_STEP; off <= RAIL_DETOUR_MAX; off += RAIL_DETOUR_STEP) {
+            for (int dir = -1; dir <= 1; dir += 2) {
+                double x = attachX + dir * off;
+                if (x < MARGIN || x > canvasW - MARGIN) {
+                    continue;
+                }
+                if (!segCrossesBoxes(attachX, attachY, x, attachY, boxes, u, v, -RAIL_CLEARANCE)
+                    && !segCrossesBoxes(x, attachY, x, laneY, boxes, u, v, -RAIL_CLEARANCE)) {
+                    return x;
+                }
+            }
+        }
+        return attachX;
+    }
+
+    /// Liang-Barsky segment-vs-axis-aligned-rect overlap (inclusive) — true if any part of the segment
+    /// lies within `[xmin,xmax]x[ymin,ymax]`. Local twin of {@link EdgeRouter}'s test (the two routers
+    /// stay decoupled: this one avoids back-edge rails, that one avoids grid straight edges).
+    private static boolean segIntersectsRect(double x1, double y1, double x2, double y2,
+                                             double xmin, double ymin, double xmax, double ymax) {
+        if (xmax <= xmin || ymax <= ymin) {
+            return false;
+        }
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        double[] p = {-dx, dx, -dy, dy};
+        double[] q = {x1 - xmin, xmax - x1, y1 - ymin, ymax - y1};
+        double u1 = 0;
+        double u2 = 1;
+        for (int k = 0; k < 4; k++) {
+            if (p[k] == 0) {
+                if (q[k] < 0) {
+                    return false;
+                }
+            } else {
+                double t = q[k] / p[k];
+                if (p[k] < 0) {
+                    u1 = Math.max(u1, t);
+                } else {
+                    u2 = Math.min(u2, t);
+                }
+            }
+        }
+        return u1 <= u2;
     }
 
     /// A layer's laid width: sum of its slot widths + NODE_GAP between consecutive slots.
