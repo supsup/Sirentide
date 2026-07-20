@@ -162,6 +162,12 @@ class GoldenSvgTest {
         FIXTURES.put("sankey",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
                 + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
+        // A continued-fraction snake graph (16th type): √2 = [1; 2, 2, 2]. Four partial quotients →
+        // four alternating runs (1 right, 2 up, 2 right, 2 up) = a 7-square staircase strip. Pins the
+        // per-square rect geometry, the y-flip, the alternating turn directions, the per-run tint, and
+        // the run-quotient labels byte-for-byte.
+        FIXTURES.put("snake",
+            "snake\n  cf: 1, 2, 2, 2\n");
     }
 
     @Test

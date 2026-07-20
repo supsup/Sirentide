@@ -96,8 +96,33 @@ public final class A11yDescriber {
             case Journey j -> journey(j);
             case Mindmap m -> mindmap(m);
             case Sankey s -> sankey(s);
+            case com.sirentide.ir.Snake sn -> snake(sn);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Snake graph: "Continued-fraction snake graph with 4 partial quotients and 7 squares. Quotients:
+    /// 1, 2, 2, 2." The quotient list reads in order (each `a_i` is a run of `a_i` unit squares); the
+    /// square total is the sum. Bounded (the quotient list capped at {@link #ITEM_CAP}) + deterministic
+    /// (pure IR walk). A bare snake (no quotients) reads as an empty snake graph.
+    private static A11y snake(com.sirentide.ir.Snake s) {
+        java.util.List<Integer> qs = s.quotients();
+        int total = 0;
+        for (int a : qs) {
+            total += a;
+        }
+        StringBuilder d = new StringBuilder("Continued-fraction snake graph with ")
+            .append(qs.size()).append(qs.size() == 1 ? " partial quotient" : " partial quotients")
+            .append(" and ").append(total).append(total == 1 ? " square" : " squares").append('.');
+        if (!qs.isEmpty()) {
+            d.append(" Quotients: ");
+            int shown = Math.min(qs.size(), ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                d.append(i > 0 ? ", " : "").append(qs.get(i));
+            }
+            d.append(qs.size() > shown ? ", …." : ".");
+        }
+        return new A11y("Snake graph", d.toString());
     }
 
     /// Sankey: "Sankey diagram with 5 nodes and 4 flows. Flows: Coal to Electricity 25; Gas to
