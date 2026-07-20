@@ -162,6 +162,16 @@ class BrewShotGalleryTest {
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
+        // Continued-fraction snake graphs (canonical Çanakçı–Schiffler square snakes, plan
+        // sirentide-snake-graph-primitive). Bare tinted tile strips — NO labels (review sir344); the
+        // per-run tint delineates the segments, the CF lives in the a11y desc. The containment audit
+        // proves the whole strip stays inside its grow-to-fit canvas.
+        new Case("snake-phi", "Snake graph — φ = [1,1,1,1,1] (a straight strip)",
+            "snake\ncf: 1, 1, 1, 1, 1\n"),
+        new Case("snake-sqrt2", "Snake graph — √2 = [1,2,2,2] (the golden)",
+            "snake\ncf: 1, 2, 2, 2\n"),
+        new Case("snake-e", "Snake graph — e-start = [2,1,2,1,1,4]",
+            "snake\ncf: 2, 1, 2, 1, 1, 4\n"),
         new Case("tensornetwork", "Tensor network (MPS chain — cores, bonds, physical legs)",
             "tensornetwork\nmps A B C D"),
         new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",

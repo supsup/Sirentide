@@ -434,6 +434,36 @@ Solar,Industry,5
 
 ![Sankey (weighted flows in depth columns)](sankey.png)
 
+## Snake graph — φ = [1,1,1,1,1] (a straight strip)
+
+```
+snake
+cf: 1, 1, 1, 1, 1
+
+```
+
+![Snake graph — φ = [1,1,1,1,1] (a straight strip)](snake-phi.png)
+
+## Snake graph — √2 = [1,2,2,2] (the golden)
+
+```
+snake
+cf: 1, 2, 2, 2
+
+```
+
+![Snake graph — √2 = [1,2,2,2] (the golden)](snake-sqrt2.png)
+
+## Snake graph — e-start = [2,1,2,1,1,4]
+
+```
+snake
+cf: 2, 1, 2, 1, 1, 4
+
+```
+
+![Snake graph — e-start = [2,1,2,1,1,4]](snake-e.png)
+
 ## Tensor network (MPS chain — cores, bonds, physical legs)
 
 ```

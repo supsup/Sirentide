@@ -96,10 +96,37 @@ public final class A11yDescriber {
             case Journey j -> journey(j);
             case Mindmap m -> mindmap(m);
             case Sankey s -> sankey(s);
+            case com.sirentide.ir.Snake sn -> snake(sn);
             case com.sirentide.ir.TensorNetwork tn -> tensorNetwork(tn);
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Snake graph: "Continued-fraction snake graph with 4 partial quotients and 6 tiles. Quotients:
+    /// 1, 2, 2, 2." Canonical Çanakçı–Schiffler square snake — the tile count is `sum(a_i) − 1` (a
+    /// single quotient `[1]` is a 0-tile single edge). Bounded (the quotient list capped at {@link
+    /// #ITEM_CAP}) + deterministic (pure IR walk). A bare snake (no quotients) reads as an empty
+    /// snake graph.
+    private static A11y snake(com.sirentide.ir.Snake s) {
+        java.util.List<Integer> qs = s.quotients();
+        long sum = 0;
+        for (int a : qs) {
+            sum += a;
+        }
+        int tiles = qs.isEmpty() ? 0 : (int) (sum - 1);   // CANONICAL: sum(a_i) − 1 tiles.
+        StringBuilder d = new StringBuilder("Continued-fraction snake graph with ")
+            .append(qs.size()).append(qs.size() == 1 ? " partial quotient" : " partial quotients")
+            .append(" and ").append(tiles).append(tiles == 1 ? " tile" : " tiles").append('.');
+        if (!qs.isEmpty()) {
+            d.append(" Quotients: ");
+            int shown = Math.min(qs.size(), ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                d.append(i > 0 ? ", " : "").append(qs.get(i));
+            }
+            d.append(qs.size() > shown ? ", …." : ".");
+        }
+        return new A11y("Snake graph", d.toString());
     }
 
     /// Sankey: "Sankey diagram with 5 nodes and 4 flows. Flows: Coal to Electricity 25; Gas to

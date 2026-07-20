@@ -162,6 +162,13 @@ class GoldenSvgTest {
         FIXTURES.put("sankey",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
                 + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
+        // A continued-fraction snake graph: √2 = [1; 2, 2, 2]. Canonical Çanakçı–Schiffler
+        // square snake — sum(a_i) − 1 = 6 tiles (its matching count = 17 = the convergent's numerator;
+        // see SnakeGraphLayoutTest's matching-count oracle). Pins the per-tile rect geometry, the
+        // y-flip, the sign-sequence turn structure, and the per-segment tint byte-for-byte — the snake
+        // carries NO visible labels (review sir344: the continued fraction lives in the a11y desc).
+        FIXTURES.put("snake",
+            "snake\n  cf: 1, 2, 2, 2\n");
         // A tensor-network diagram: a 4-core MPS chain in Penrose graphical notation —
         // four tensor-core discs on a horizontal midline, three bond edges (virtual indices) between
         // adjacent cores, and one dangling physical leg per core. Pins the even core spacing, the

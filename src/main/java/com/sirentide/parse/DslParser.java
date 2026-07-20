@@ -40,6 +40,7 @@ import com.sirentide.ir.SeqMessage;
 import com.sirentide.ir.SeqNote;
 import com.sirentide.ir.Sequence;
 import com.sirentide.ir.Slice;
+import com.sirentide.ir.Snake;
 import com.sirentide.ir.StateDiagram;
 import com.sirentide.ir.Task;
 import com.sirentide.ir.Theme;
@@ -105,6 +106,13 @@ public final class DslParser {
     // Mindmap tab-indent width: a leading tab counts as this many indent columns (spaces count 1
     // each). A fixed, documented width keeps depth deterministic when tabs + spaces mix.
     public static final int MINDMAP_TAB_WIDTH = 4;
+    // Snake-graph continued-fraction caps (plan sirentide-snake-graph-primitive). The COUNT of partial
+    // quotients is bounded, each quotient VALUE is clamped, and the running QUOTIENT SUM (which bounds
+    // the emitted tile count sum − 1) is bounded by MAX_DATA_ROWS — so a huge CF (`cf: 1000000, …`)
+    // can't build a runaway tile list before the output-cap degrade ever runs (mirrors the per-path
+    // cap discipline; the quotient sum drives the emitted shape count).
+    public static final int MAX_SNAKE_QUOTIENTS = 500;
+    public static final int MAX_SNAKE_QUOTIENT = 1000;
     // Tensor-network core cap (mirrors MAX_COLUMNS/MAX_NODES discipline): a `mps`/`mpo` line names a
     // ROW of cores whose canvas width grows linearly with the count, so a pathological chain is
     // bounded here — cores past this are dropped, never OOMs the layout/emit.
@@ -200,6 +208,9 @@ public final class DslParser {
             // as a band whose width tracks its value. `sankey-beta` is mermaid's spelling; `sankey` is
             // the short alias.
             case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
+            // A continued-fraction snake graph — a `cf:` line of positive-integer partial quotients
+            // `[a1; a2, …]` renders as the canonical Çanakçı–Schiffler square snake (sum − 1 tiles).
+            case "snake" -> parseSnake(lines, textColor);
             // A tensor-network diagram (Penrose graphical notation) — a `mps`/`mpo` body line names a
             // chain of tensor cores; layout derives the bond edges + dangling physical legs.
             case "tensornetwork" -> parseTensorNetwork(lines, textColor);
@@ -2081,6 +2092,69 @@ public final class DslParser {
             quadrantLabels, points, textColor);
     }
 
+    /// Parse a snake-graph continued fraction (plan sirentide-snake-graph-primitive). The body carries
+    /// the partial quotients `[a0; a1, a2, …]` on a `cf:` line (a bare list line, with no `cf:` prefix,
+    /// is also accepted); the value is split on commas, and the classic first-term semicolon (`1; 1, 2`)
+    /// plus optional surrounding `[ ]` brackets are tolerated as separators/noise. Each token must parse
+    /// to a POSITIVE integer — a non-positive or unparseable token is DROPPED (never fails the bake).
+    /// The kept quotients are bounded: at most {@link #MAX_SNAKE_QUOTIENTS} of them, each CLAMPED to
+    /// {@link #MAX_SNAKE_QUOTIENT}, and the running QUOTIENT SUM (which bounds the emitted tile count
+    /// `sum − 1`) bounded by {@link #MAX_DATA_ROWS} — a quotient that would push the sum past that cap
+    /// (and every one after it) is dropped. A bare `snake` (no quotients at all) round-trips to a
+    /// {@link Snake} with an empty list, which bakes a valid empty canvas, never {@link Empty}.
+    private static Diagram parseSnake(String[] lines, String textColor) {
+        // Pass 1: collect the raw positive quotients, bounded by count + per-value clamp.
+        List<Integer> raw = new ArrayList<>();
+        for (int i = 1; i < lines.length && raw.size() < MAX_SNAKE_QUOTIENTS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String body = line.regionMatches(true, 0, "cf:", 0, 3) ? line.substring(3) : line;
+            // Tolerate `[a0; a1, …]` — brackets are noise, the leading `;` is a separator like a comma.
+            body = body.replace("[", " ").replace("]", " ").replace(";", ",");
+            for (String tok : body.split(",")) {
+                if (raw.size() >= MAX_SNAKE_QUOTIENTS) {
+                    break;
+                }
+                Integer v = parsePositiveInt(tok.strip());
+                if (v != null) {
+                    raw.add(Math.min(v, MAX_SNAKE_QUOTIENT));
+                }
+            }
+        }
+        // Pass 2: keep quotients while the running quotient sum stays within MAX_DATA_ROWS (the sum
+        // bounds the tile count sum − 1).
+        List<Integer> quotients = new ArrayList<>();
+        long quotientSum = 0;
+        for (int a : raw) {
+            if (quotientSum + a > MAX_DATA_ROWS) {
+                break;   // this quotient (and every one after it) would overflow the sum cap → drop
+            }
+            quotients.add(a);
+            quotientSum += a;
+        }
+        return new Snake(quotients, textColor);
+    }
+
+    /// Parse a strictly-POSITIVE integer token (a snake partial quotient), returning null on anything
+    /// non-positive or unparseable (never throws). An out-of-int-range magnitude saturates to
+    /// {@link Integer#MAX_VALUE} (the caller then clamps to {@link #MAX_SNAKE_QUOTIENT}).
+    private static Integer parsePositiveInt(String t) {
+        if (t.isEmpty()) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(t);
+            if (v <= 0) {
+                return null;
+            }
+            return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias
     /// `columns:`) line names the M column headers; every other `"label" : v1, v2, …` line is a row
     /// whose comma-separated tokens become verdict cells. Every row is padded/truncated to exactly M
@@ -3242,23 +3316,5 @@ public final class DslParser {
             totalBoxes += part;
         }
         return new YoungDiagram(rows, textColor);
-    }
-
-    /// Parse a strictly-POSITIVE integer, returning {@code null} for empty, non-numeric, zero, or
-    /// negative input (so the caller drops it) and saturating an over-{@code int} magnitude at
-    /// {@link Integer#MAX_VALUE} (the per-value cap clamps it further). Never throws (DESIGN §6).
-    private static Integer parsePositiveInt(String t) {
-        if (t.isEmpty()) {
-            return null;
-        }
-        try {
-            long v = Long.parseLong(t);
-            if (v <= 0) {
-                return null;
-            }
-            return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 }
