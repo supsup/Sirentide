@@ -21,7 +21,8 @@ import org.junit.jupiter.api.Test;
 ///
 /// <p>Every assertion parses emitted geometry, following the {@link FlowchartGeometryTest} idiom (no
 /// layout re-implementation). Node boxes are the bounding box of each {@code data-sirentide-role="node"}
-/// group (shape-agnostic — rect, diamond, stadium, …); edge segments are the {@code <line>}s inside
+/// group (rect + diamond — the two shapes these fixtures use; extend the parser before a fixture
+/// uses an arc-based shape); edge segments are the {@code <line>}s inside
 /// each {@code data-sirentide-role="edge"} group, so a node's OWN decoration lines (a subroutine's
 /// inner bars, a cylinder rim) are never mistaken for an edge crossing.
 ///
@@ -76,6 +77,35 @@ class FlowchartRouterNodeCollisionTest {
     @Test
     void loopBackRailClearsSiblingFill_planShape() {
         assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(REPRO_PLAN_SHAPE));
+    }
+
+    // ------------------------------------------------------------------
+    // LR discriminators (review sir292, Confluence): the fix is two-sided — clearRailY (TD) and
+    // clearRailX (LR) — but every fixture above is TD, so the LR half shipped with zero coverage: a
+    // transposition typo or a future "simplification" of clearRailX would return the defect with the
+    // whole suite green. These are the reviewer's probe fixtures, committed verbatim as permanent
+    // discriminators (the could-this-test-stop-testing class). Both proven RED with FlowchartLayout
+    // reverted to base, GREEN at the fix — by the reviewer at my tip, re-proven by me pre-commit.
+    // ------------------------------------------------------------------
+
+    private static final String REPRO_A_LR =
+        "flowchart LR\n  Root[Root] --> G{decide?}\n"
+            + "  G -->|left| L[Left Branch]\n  L --> Root\n"
+            + "  G -->|right| R[Right Branch]\n  R --> Root\n";
+
+    private static final String REPRO_A_LR_MIRROR =
+        "flowchart LR\n  Root[Root] --> G{decide?}\n"
+            + "  G -->|right| R[Right Branch]\n  R --> Root\n"
+            + "  G -->|left| L[Left Branch]\n  L --> Root\n";
+
+    @Test
+    void loopBackRailClearsSiblingFill_lr() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(REPRO_A_LR));
+    }
+
+    @Test
+    void loopBackRailClearsSiblingFill_lrMirror() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(REPRO_A_LR_MIRROR));
     }
 
     @Test
