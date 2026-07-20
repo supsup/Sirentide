@@ -9,12 +9,19 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 ## 2026-07-17 — Release **0.2.0**
 
 Version bump **0.1.0 → 0.2.0** (commit `829aba0`), vendored into stafficy `/docs` as
-`sirentide-0.2.0.jar` — the first republish since the M0 vendor, so a consumer pinned to `0.1.0`
-picks up everything since: M1's type explosion, M2's flowchart fidelity + theming + play-through,
-the semantic anchors, the 07-11 annotations (caption band, `classDef` semantic colour, node-label
-word-wrap), the `matrix` comparison/verdict grid (see below), the `%% direction:` directive, the
-six per-path OOM caps, and subgraph-id edge routing (the last two described in their own dated
-entries below).
+`sirentide-0.2.0.jar`. Measured **artifact-to-artifact** against the vendored `0.1.0` jar (which
+already carried all fifteen pre-matrix types, `renderFrames`, the M1/M2 flowchart + sequence
+surfaces, dark theming, and semantic anchors), a `0.1.0` consumer gains exactly:
+
+- the `matrix` comparison/verdict grid — the 16th type (see below; it degrades to the inert
+  `0×0` shell on `0.1.0`),
+- the `%% direction:` directive,
+- semantic anchors on `matrix`,
+- the six per-path OOM caps (their own dated entry below).
+
+**Not in the shipped `0.2.0` jar:** subgraph-id edge routing merged to mainline *after* the
+`0.2.0` vendor (jar `11:25`, routing merge `13:39` the same day) and is unreleased until the next
+cut — its dated entry above describes mainline, not this artifact.
 
 ### `matrix` — comparison / verdict grid (16th type)
 A `matrix` diagram renders a labelled comparison grid: row/column headers and cells, with a
