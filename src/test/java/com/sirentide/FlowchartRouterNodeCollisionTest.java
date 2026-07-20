@@ -196,16 +196,22 @@ class FlowchartRouterNodeCollisionTest {
     // Empirical sweep with both growth assignments deleted, ALL public fixtures in this file: exactly
     // ONE triggers — REPRO_A_LR's beyond-rightmost detour candidate drops the right margin to 17.0px
     // (the reviewer's exact number). Both LR declaration orders are pinned here and are RED under the
-    // canvasW-growth deletion. The TD HEIGHT-growth branch is empirically unreachable from every
-    // public fixture (the inter-rank band above the obstacle always exists and wins the
-    // nearest-candidate tie-break upward), so the TD assertions below pin the containment contract on
-    // the growth-eligible tall fixtures but are HONESTLY NOT red under the TD-growth deletion — a
-    // fixture that forces the below-content candidate is not known to exist under the current
-    // candidate policy; if one is found it must be committed here (stated in the re-hand, not hidden).
+    // canvasW-growth deletion. The TD HEIGHT-growth branch IS reachable — I first claimed it was not
+    // (tall fixtures keep an inter-rank band above the obstacle that wins the upward tie-break), and
+    // Lattice (sir317) refuted that with the fixture below: TWO self-loops in the sole rank. Both are
+    // back edges in one rank, the above-obstacle candidate is rejected at the top margin, so routing
+    // selects the below-content candidate and requires canvasH growth. Deleting only the TD canvasH
+    // assignment drops the bottom margin to 17px (measured) — these two TD tests go RED under it.
     // ------------------------------------------------------------------
 
     /// FlowchartLayout.MARGIN — the containment contract every emitted element honors.
     private static final double LAYOUT_MARGIN = 24;
+
+    // Lattice's sir317 fixture: two self-loops in the sole rank force the below-content detour
+    // candidate, so the TD canvasH growth pre-pass is load-bearing here (unlike the tall-matrix
+    // fixtures, whose above-obstacle band keeps them growth-free on the height axis).
+    private static final String TD_SELFLOOPS = "flowchart TD\n  A[Alpha] --> A\n  B[Beta] --> B\n";
+    private static final String TD_SELFLOOPS_MIRROR = "flowchart TD\n  B[Beta] --> B\n  A[Alpha] --> A\n";
 
     @Test
     void detourGrowthKeepsFullRightMargin_lr() {
@@ -218,13 +224,13 @@ class FlowchartRouterNodeCollisionTest {
     }
 
     @Test
-    void detourGeometryKeepsFullBottomMargin_td() {
-        assertEdgeGeometryKeepsMargin(Sirentide.render(tdTallDsl(true), REAL), "height");
+    void detourGrowthKeepsFullBottomMargin_td() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(TD_SELFLOOPS), "height");
     }
 
     @Test
-    void detourGeometryKeepsFullBottomMargin_tdMirror() {
-        assertEdgeGeometryKeepsMargin(Sirentide.render(tdTallDsl(false), REAL), "height");
+    void detourGrowthKeepsFullBottomMargin_tdMirror() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(TD_SELFLOOPS_MIRROR), "height");
     }
 
     /// Every edge segment endpoint keeps the layout's full MARGIN to the far canvas edge on the given
