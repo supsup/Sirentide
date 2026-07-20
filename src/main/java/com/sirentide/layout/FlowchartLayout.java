@@ -72,17 +72,27 @@ public final class FlowchartLayout {
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)
     private static final double BACK_LANE_GAP = 18; // spacing between right-side back-edge lanes (M1.1)
-    // Back-edge RAIL node-obstacle avoidance (plan e7144b77 #1). A back-edge's horizontal (TD) /
-    // vertical (LR) rail leaves a node at its mid-edge and runs out to a far lane; a straight rail at
-    // that mid-coordinate slices through a same-rank SIBLING node's fill (the sibling sits between the
-    // node and the lane), so the drawing asserts a false data path. The rail is DETOURED into the clear
-    // inter-layer gap — but ONLY when the straight rail actually crosses a non-endpoint box, so an
+    // Back-edge RAIL node-obstacle avoidance (plan e7144b77 #1; review sir297). A back-edge's
+    // horizontal (TD) / vertical (LR) rail leaves a node at its mid-edge and runs out to a far lane; a
+    // straight rail at that mid-coordinate slices through a same-rank SIBLING node's fill (the sibling
+    // sits between the node and the lane), so the drawing asserts a false data path. The rail is
+    // DETOURED to a coordinate DERIVED FROM THE OBSTACLE EXTENTS — the clear gaps between the boxes and
+    // the regions just beyond the outermost box (each box top/bottom, TD, or left/right, LR, offset by
+    // RAIL_CLEARANCE). Because those candidates are read from the actual box list, a clear rail always
+    // exists in principle, so the detour NEVER falls back to the known-colliding straight rail (the
+    // sir297 defect: a fixed 240px offset scan could not reach a tall/wide sibling's far edge and
+    // returned the colliding mid-coordinate). When the only clear coordinate lies past the current
+    // canvas, the canvas GROWS to contain it (mirror of the back-edge lane grow) rather than clipping.
+    // The detour engages ONLY when the straight rail actually crosses a non-endpoint box, so an
     // already-clear back-edge (every existing golden) is byte-identical. Same containment class as
-    // {@link EdgeRouter} (edges-vs-nodes), deterministic (nearest clear offset, `-`-before-`+` sign).
-    private static final double RAIL_DETOUR_STEP = 6;      // offset search granularity
-    private static final double RAIL_DETOUR_MAX = 240;     // cap — past this keep the rail straight (honest residual)
+    // {@link EdgeRouter} (edges-vs-nodes); deterministic (nearest clear candidate, above/left before
+    // below/right on a tie).
     private static final double RAIL_OBSTACLE_INSET = 1.0; // shrink a box to its interior for the CROSSING test (matches the geometry oracle)
     private static final double RAIL_CLEARANCE = 6;        // grow a box by this for the DETOUR target so the rerouted rail sits clear of the fill
+    // A derived candidate sits this far PAST a box edge — strictly BEYOND the RAIL_CLEARANCE-grown box
+    // used by the crossing test, so the candidate never lands on the (inclusive) grown boundary and is
+    // provably clear of that box. Kept tiny so the detour hugs the gap it routes through.
+    private static final double RAIL_CANDIDATE_PAD = RAIL_CLEARANCE + 1;
     private static final double EDGE_LABEL_SIZE = 10;   // edge-label font size (M1.2, `-->|yes|`)
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
@@ -701,6 +711,29 @@ public final class FlowchartLayout {
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1) — coordinates are
         // final here (post cluster-shift), so the rects match what draws.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
+        // Pre-pass (review sir297): derive every back-edge's detour rail y FIRST and GROW the canvas
+        // DOWN so a rail forced past the current content bottom stays contained (mirror of the lane
+        // grow above; a rail is never routed above MARGIN). clearRailY is a pure function of the attach
+        // point + obstacles — independent of canvasH — so the emit pass below recomputes byte-identical
+        // values. railMaxY stays 0 for a chart with no detour (no back-edge crosses a box), so canvasH
+        // and every existing golden are unchanged.
+        double railMaxY = 0;
+        int lanePeek = 0;
+        for (int ei = 0; ei < edges.size(); ei++) {
+            if (!isBack[ei]) {
+                continue;
+            }
+            Edge e = edges.get(ei);
+            int u = e.u();
+            int v = e.v();
+            double laneX = contentW - MARGIN + offX + BACK_LANE_GAP * (++lanePeek);
+            double approachX = e.arrow() ? vx[v] + boxW[v] + ARROW_LEN : vx[v] + boxW[v];
+            railMaxY = Math.max(railMaxY,
+                clearRailY(vx[u] + boxW[u], vy[u] + boxH[u] / 2, laneX, obstacles, u, v));
+            railMaxY = Math.max(railMaxY,
+                clearRailY(approachX, vy[v] + boxH[v] / 2, laneX, obstacles, u, v));
+        }
+        canvasH = Math.max(canvasH, railMaxY + MARGIN);
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -720,8 +753,8 @@ public final class FlowchartLayout {
                 double approachX = e.arrow() ? tx + ARROW_LEN : tx;   // where the back-in rail ends
                 // Detour each mid-height rail into the clear inter-layer gap iff it slices a SIBLING's
                 // fill (plan e7144b77 #1). Clear rails keep railY==attach → byte-identical emission.
-                double railYs = clearRailY(sx, sy, laneX, obstacles, u, v, canvasH);
-                double railYt = clearRailY(approachX, ty, laneX, obstacles, u, v, canvasH);
+                double railYs = clearRailY(sx, sy, laneX, obstacles, u, v);
+                double railYt = clearRailY(approachX, ty, laneX, obstacles, u, v);
                 if (railYs != sy) {
                     emitEdgeLine(tgt, sx, sy, sx, railYs, e.style(), e.stroke(), e.width());  // connector down the source's own right edge (clear)
                 }
@@ -1080,6 +1113,31 @@ public final class FlowchartLayout {
         canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
         canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
 
+        // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1), coordinates final here.
+        List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
+        // Pre-pass (review sir297): derive every back-edge's detour rail x FIRST and GROW the canvas
+        // RIGHT so a rail forced past the current content edge stays contained (LR transpose of the TD
+        // grow; a rail is never routed left of MARGIN). Done BEFORE the cluster frames emit because they
+        // read canvasW. clearRailX is a pure function of the attach point + obstacles, so the emit pass
+        // recomputes identical values. railMaxX stays 0 for a chart with no detour → byte-identical.
+        double railMaxX = 0;
+        int lanePeek = 0;
+        for (int ei = 0; ei < edges.size(); ei++) {
+            if (!isBack[ei]) {
+                continue;
+            }
+            Edge e = edges.get(ei);
+            int u = e.u();
+            int v = e.v();
+            double laneY = contentH - MARGIN + offY + BACK_LANE_GAP * (++lanePeek);
+            double approachY = e.arrow() ? vy[v] + boxH[v] + ARROW_LEN : vy[v] + boxH[v];
+            railMaxX = Math.max(railMaxX,
+                clearRailX(vx[u] + boxW[u] / 2, vy[u] + boxH[u], laneY, obstacles, u, v));
+            railMaxX = Math.max(railMaxX,
+                clearRailX(vx[v] + boxW[v] / 2, approachY, laneY, obstacles, u, v));
+        }
+        canvasW = Math.max(canvasW, railMaxX + MARGIN);
+
         // -- emit order (readability + containment audit): cluster frames under edges, edges under
         // nodes, then boxes, then labels.
         List<Shape> shapes = new ArrayList<>();
@@ -1093,8 +1151,6 @@ public final class FlowchartLayout {
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
         // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
         AnchorAssigner assigner = new AnchorAssigner();
-        // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1), coordinates final here.
-        List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
         int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
@@ -1114,8 +1170,8 @@ public final class FlowchartLayout {
                 // Detour each mid-width rail sideways into the clear inter-column gap iff it slices a
                 // same-column node's fill (plan e7144b77 #1; LR transpose of the TD detour). Clear
                 // rails keep railX==attach → byte-identical emission.
-                double railXs = clearRailX(sx, sy, laneY, obstacles, u, v, canvasW);
-                double railXt = clearRailX(tx, approachY, laneY, obstacles, u, v, canvasW);
+                double railXs = clearRailX(sx, sy, laneY, obstacles, u, v);
+                double railXt = clearRailX(tx, approachY, laneY, obstacles, u, v);
                 if (railXs != sx) {
                     emitEdgeLine(tgt, sx, sy, railXs, sy, e.style(), e.stroke(), e.width());  // connector along the source's own bottom edge (clear)
                 }
@@ -1439,54 +1495,96 @@ public final class FlowchartLayout {
         return false;
     }
 
+    /// Candidate detour coordinates DERIVED FROM THE OBSTACLE EXTENTS (review sir297): for every
+    /// non-endpoint box, the coordinate just BEFORE its low edge and just AFTER its high edge — grown by
+    /// {@link #RAIL_CLEARANCE} — along the axis of interest (`vertical` = box top/bottom → y candidates
+    /// for the TD horizontal rail; else box left/right → x candidates for the LR vertical rail). These
+    /// are exactly the clear gaps BETWEEN the boxes plus the regions just beyond the outermost box (the
+    /// smallest/largest candidate), so a coordinate whose rail clears every fill provably exists — the
+    /// derivation never has to return the known-colliding attach coordinate. Sorted nearest-to-`attach`
+    /// first, ties broken toward the SMALLER coordinate (above/left before below/right) — deterministic.
+    private static List<Double> railCandidates(double attach, List<double[]> boxes,
+                                               int exclU, int exclV, boolean vertical) {
+        List<Double> out = new ArrayList<>(boxes.size() * 2);
+        for (int i = 0; i < boxes.size(); i++) {
+            if (i == exclU || i == exclV) {
+                continue;
+            }
+            double[] b = boxes.get(i);
+            double lo = vertical ? b[1] : b[0];
+            double hi = vertical ? b[1] + b[3] : b[0] + b[2];
+            out.add(lo - RAIL_CANDIDATE_PAD);
+            out.add(hi + RAIL_CANDIDATE_PAD);
+        }
+        out.sort((a, c) -> {
+            double da = Math.abs(a - attach);
+            double dc = Math.abs(c - attach);
+            int byDist = Double.compare(da, dc);
+            return byDist != 0 ? byDist : Double.compare(a, c);
+        });
+        return out;
+    }
+
     /// The y at which a TD back-edge's HORIZONTAL rail from a node (`attachX`,`attachY`) out to the
     /// vertical lane at `laneX` crosses no non-endpoint node fill. Returns `attachY` unchanged when the
-    /// straight rail is already clear (byte-identical to the pre-fix bake); otherwise the nearest y (in
-    /// the clear inter-layer gap, `-` above before `+` below) whose rail AND the short connector back to
-    /// the attach point both clear every OTHER box by {@link #RAIL_CLEARANCE}. Falls back to `attachY`
-    /// if no in-canvas detour exists — never worse than today, and never escapes the canvas.
+    /// straight rail is already clear (byte-identical to the pre-fix bake). Otherwise picks the nearest
+    /// obstacle-extent-derived y ({@link #railCandidates}) whose horizontal rail AND the short vertical
+    /// connector back to the attach point both clear every OTHER box by {@link #RAIL_CLEARANCE} — a
+    /// clear rail always exists (route beyond the outermost box), so this NEVER returns the colliding
+    /// `attachY` (review sir297); the caller has grown the canvas so a below-content y stays contained.
+    /// A y above the top MARGIN is rejected (that would need a global shift, not a grow). The rail
+    /// invariant is absolute: if some candidate's rail is clear but its connector is not (not observed
+    /// in practice), the nearest rail-clear y is returned rather than the proven-colliding straight rail.
     private static double clearRailY(double attachX, double attachY, double laneX,
-                                     List<double[]> boxes, int u, int v, double canvasH) {
+                                     List<double[]> boxes, int u, int v) {
         if (!segCrossesBoxes(attachX, attachY, laneX, attachY, boxes, u, v, RAIL_OBSTACLE_INSET)) {
             return attachY;
         }
-        for (double off = RAIL_DETOUR_STEP; off <= RAIL_DETOUR_MAX; off += RAIL_DETOUR_STEP) {
-            for (int dir = -1; dir <= 1; dir += 2) {
-                double y = attachY + dir * off;
-                if (y < MARGIN || y > canvasH - MARGIN) {
-                    continue;   // the detour would escape the canvas — reject (containment)
-                }
-                if (!segCrossesBoxes(attachX, attachY, attachX, y, boxes, u, v, -RAIL_CLEARANCE)
-                    && !segCrossesBoxes(attachX, y, laneX, y, boxes, u, v, -RAIL_CLEARANCE)) {
-                    return y;
-                }
+        double railOnly = Double.NaN;   // nearest y whose RAIL is clear (rail-invariant last resort)
+        for (double y : railCandidates(attachY, boxes, u, v, true)) {
+            if (y < MARGIN) {
+                continue;   // never route above the top margin (a grow adds room below, not above)
+            }
+            if (segCrossesBoxes(attachX, y, laneX, y, boxes, u, v, -RAIL_CLEARANCE)) {
+                continue;   // the horizontal rail itself still slices a fill — reject
+            }
+            if (Double.isNaN(railOnly)) {
+                railOnly = y;
+            }
+            if (!segCrossesBoxes(attachX, attachY, attachX, y, boxes, u, v, -RAIL_CLEARANCE)) {
+                return y;   // rail AND connector clear — the derived detour
             }
         }
-        return attachY;   // no in-canvas detour — honest residual (unchanged from the pre-fix rail)
+        return Double.isNaN(railOnly) ? attachY : railOnly;
     }
 
     /// The LR transpose of {@link #clearRailY}: the x at which a back-edge's VERTICAL rail from a node
     /// (`attachX`,`attachY`) down to the horizontal lane at `laneY` clears every non-endpoint fill.
-    /// Returns `attachX` unchanged when already clear (byte-identical); else the nearest clear x
-    /// (`-` left before `+` right) whose rail + connector clear the boxes, or `attachX` if none fits.
+    /// Returns `attachX` unchanged when already clear (byte-identical); else the nearest obstacle-extent-
+    /// derived x whose vertical rail + horizontal connector clear the boxes. A clear rail always exists
+    /// (route beyond the outermost box), so this NEVER returns the colliding `attachX`; the caller grew
+    /// the canvas so a past-content x stays contained. Same rail-invariant last resort as the TD twin.
     private static double clearRailX(double attachX, double attachY, double laneY,
-                                     List<double[]> boxes, int u, int v, double canvasW) {
+                                     List<double[]> boxes, int u, int v) {
         if (!segCrossesBoxes(attachX, attachY, attachX, laneY, boxes, u, v, RAIL_OBSTACLE_INSET)) {
             return attachX;
         }
-        for (double off = RAIL_DETOUR_STEP; off <= RAIL_DETOUR_MAX; off += RAIL_DETOUR_STEP) {
-            for (int dir = -1; dir <= 1; dir += 2) {
-                double x = attachX + dir * off;
-                if (x < MARGIN || x > canvasW - MARGIN) {
-                    continue;
-                }
-                if (!segCrossesBoxes(attachX, attachY, x, attachY, boxes, u, v, -RAIL_CLEARANCE)
-                    && !segCrossesBoxes(x, attachY, x, laneY, boxes, u, v, -RAIL_CLEARANCE)) {
-                    return x;
-                }
+        double railOnly = Double.NaN;
+        for (double x : railCandidates(attachX, boxes, u, v, false)) {
+            if (x < MARGIN) {
+                continue;   // never route left of the margin (a grow adds room to the right)
+            }
+            if (segCrossesBoxes(x, attachY, x, laneY, boxes, u, v, -RAIL_CLEARANCE)) {
+                continue;   // the vertical rail itself still slices a fill — reject
+            }
+            if (Double.isNaN(railOnly)) {
+                railOnly = x;
+            }
+            if (!segCrossesBoxes(attachX, attachY, x, attachY, boxes, u, v, -RAIL_CLEARANCE)) {
+                return x;
             }
         }
-        return attachX;
+        return Double.isNaN(railOnly) ? attachX : railOnly;
     }
 
     /// Liang-Barsky segment-vs-axis-aligned-rect overlap (inclusive) — true if any part of the segment

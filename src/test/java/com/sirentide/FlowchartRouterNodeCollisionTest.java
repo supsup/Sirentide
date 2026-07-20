@@ -3,7 +3,9 @@ package com.sirentide;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
+import com.sirentide.math.LatteXMathFragmentRenderer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -106,6 +108,82 @@ class FlowchartRouterNodeCollisionTest {
     @Test
     void loopBackRailClearsSiblingFill_lrMirror() {
         assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(REPRO_A_LR_MIRROR));
+    }
+
+    // ------------------------------------------------------------------
+    // NODE-SIZE-GROWTH discriminators (review sir297, Lattice). The prior fix DETOURED with a fixed
+    // 240px offset scan; once a node grows past that (a many-row matrix in TD, a long formula in LR —
+    // both legal DSL well within DslParser.MAX_LABEL_LEN=512), the straight rail crosses the sibling's
+    // FAR edge, the scan can't reach it, and the production fallback re-emitted the KNOWN-COLLIDING
+    // straight rail. These four fixtures reproduce the reviewer's exact TD (60-row matrix) and LR
+    // (long formula) shapes through the REAL LatteX renderer (the only way to grow a node box), plus
+    // the declaration-order mirror of each — so the obstacle-extent derivation + canvas-grow stays
+    // covered against a future "simplification" that reintroduces a bounded scan. Proven RED at the
+    // pre-fix HEAD (each produced a rail slicing the tall/wide sibling's interior), GREEN at the fix.
+    // ------------------------------------------------------------------
+
+    private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
+
+    /// A single-column `matrix` of `rows` rows — grows the node box TALL (each row ≈ one line height),
+    /// past the old 240px detour cap by ~40 rows. 60 rows stays well under MAX_LABEL_LEN=512.
+    private static String tallMatrix(int rows) {
+        StringBuilder sb = new StringBuilder("\\begin{matrix} ");
+        for (int i = 0; i < rows; i++) {
+            sb.append("a");
+            if (i < rows - 1) {
+                sb.append(" \\\\ ");
+            }
+        }
+        return sb.append(" \\end{matrix}").toString();
+    }
+
+    /// A `terms`-term `a + a + …` formula — grows the node box WIDE. 70 terms ≈ 277 chars, under 512.
+    private static String wideFormula(int terms) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < terms; i++) {
+            sb.append("a");
+            if (i < terms - 1) {
+                sb.append(" + ");
+            }
+        }
+        return sb.toString();
+    }
+
+    // TWO tall-matrix branches off one decision, BOTH looping back to Root: whichever barycenter puts
+    // on the left has its out-right rail run past the tall sibling on its right, whose far edge is far
+    // beyond the old 240px cap — a crossing guaranteed in BOTH declaration orders (mirror below).
+    private static String tdTallDsl(boolean leftFirst) {
+        String m = "[$" + tallMatrix(60) + "$]";
+        String lft = "  G -->|left| L" + m + "\n  L --> Root\n";
+        String rgt = "  G -->|right| R" + m + "\n  R --> Root\n";
+        return "flowchart TD\n  Root[Root] --> G{decide?}\n" + (leftFirst ? lft + rgt : rgt + lft);
+    }
+
+    private static String lrWideDsl(boolean leftFirst) {
+        String f = "[$" + wideFormula(70) + "$]";
+        String lft = "  G -->|left| L" + f + "\n  L --> Root\n";
+        String rgt = "  G -->|right| R" + f + "\n  R --> Root\n";
+        return "flowchart LR\n  Root[Root] --> G{decide?}\n" + (leftFirst ? lft + rgt : rgt + lft);
+    }
+
+    @Test
+    void loopBackRailClearsTallNodeFill_td() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(tdTallDsl(true), REAL));
+    }
+
+    @Test
+    void loopBackRailClearsTallNodeFill_tdMirror() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(tdTallDsl(false), REAL));
+    }
+
+    @Test
+    void loopBackRailClearsWideNodeFill_lr() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(lrWideDsl(true), REAL));
+    }
+
+    @Test
+    void loopBackRailClearsWideNodeFill_lrMirror() {
+        assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(lrWideDsl(false), REAL));
     }
 
     @Test
