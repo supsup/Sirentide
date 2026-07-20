@@ -44,6 +44,7 @@ import com.sirentide.ir.Task;
 import com.sirentide.ir.Theme;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
+import com.sirentide.ir.YoungDiagram;
 import com.sirentide.contract.SirentideContract;
 import com.sirentide.layout.AxisScale;
 import java.util.ArrayDeque;
@@ -103,6 +104,12 @@ public final class DslParser {
     // Mindmap tab-indent width: a leading tab counts as this many indent columns (spaces count 1
     // each). A fixed, documented width keeps depth deterministic when tabs + spaces mix.
     public static final int MINDMAP_TAB_WIDTH = 4;
+    // Young-diagram partition caps (plan sirentide-young-diagram-primitive). The COUNT of rows (parts)
+    // is bounded by MAX_YOUNG_ROWS, and each part (row length, = box count in that row) is clamped to
+    // MAX_YOUNG_PART — so a pathological `rows: 1000000, …` can't OOM the box grid. The running box
+    // total is additionally bounded by MAX_DATA_ROWS (mirrors the snake square-total discipline).
+    public static final int MAX_YOUNG_ROWS = 500;
+    public static final int MAX_YOUNG_PART = 1000;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -188,6 +195,9 @@ public final class DslParser {
             // as a band whose width tracks its value. `sankey-beta` is mermaid's spelling; `sankey` is
             // the short alias.
             case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
+            // A Young diagram — a `rows:` line of positive-integer partition parts `[λ0, λ1, …]` renders
+            // as left-justified rows of unit boxes (English convention: longest row on top, stacked down).
+            case "young" -> parseYoung(lines, textColor);
             default -> new Empty();
         };
     }
@@ -3126,5 +3136,77 @@ public final class DslParser {
             sb.append(line);
         }
         return new MathBlock(cap(sb.toString()));
+    }
+
+    /// Parse a Young diagram (plan sirentide-young-diagram-primitive). A `rows:` (alias `parts:`) line —
+    /// or a bare comma/space list line — names the partition parts `[λ0, λ1, …]`; every following body
+    /// line contributes more parts, so `rows: 3, 2\n1` reads the same as `rows: 3, 2, 1`. `[ ] ;` are
+    /// tolerated as noise/separators (so the math spelling `[3; 2, 1]` parses), reusing the snake-style
+    /// list tokenizer.
+    ///
+    /// NORMALIZATION (the documented degrade — never a throw, DESIGN §6): non-positive and unparseable
+    /// tokens are DROPPED; each surviving part is clamped to {@link #MAX_YOUNG_PART}; the part COUNT is
+    /// bounded by {@link #MAX_YOUNG_ROWS} and the running box total by {@link #MAX_DATA_ROWS}. Finally, if
+    /// the authored parts are NOT weakly-decreasing (e.g. `2, 3, 1`), they are SORTED DESCENDING to the
+    /// canonical English-convention partition (`3, 2, 1`) rather than rejected — a Young diagram is a
+    /// partition, and a partition is order-agnostic, so sorting yields the intended shape deterministically.
+    private static Diagram parseYoung(String[] lines, String textColor) {
+        // Pass 1: collect the raw positive parts, bounded by count + per-value clamp.
+        List<Integer> raw = new ArrayList<>();
+        for (int i = 1; i < lines.length && raw.size() < MAX_YOUNG_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String body = line;
+            if (body.regionMatches(true, 0, "rows:", 0, 5)) {
+                body = body.substring(5);
+            } else if (body.regionMatches(true, 0, "parts:", 0, 6)) {
+                body = body.substring(6);
+            }
+            // Tolerate `[λ0; λ1, …]` — brackets are noise, the leading `;` is a separator like a comma;
+            // a space-separated list works too (split on comma OR whitespace).
+            body = body.replace("[", " ").replace("]", " ").replace(";", ",");
+            for (String tok : body.split("[,\\s]+")) {
+                if (raw.size() >= MAX_YOUNG_ROWS) {
+                    break;
+                }
+                Integer v = parsePositiveInt(tok.strip());
+                if (v != null) {
+                    raw.add(Math.min(v, MAX_YOUNG_PART));
+                }
+            }
+        }
+        // Pass 2: canonicalize to a partition — SORT DESCENDING (weakly-decreasing English convention),
+        // then keep parts while the running box total (their sum) stays within MAX_DATA_ROWS.
+        raw.sort(java.util.Comparator.reverseOrder());
+        List<Integer> rows = new ArrayList<>();
+        long totalBoxes = 0;
+        for (int part : raw) {
+            if (totalBoxes + part > MAX_DATA_ROWS) {
+                break;   // this part (and every one after it) would overflow the box cap → drop
+            }
+            rows.add(part);
+            totalBoxes += part;
+        }
+        return new YoungDiagram(rows, textColor);
+    }
+
+    /// Parse a strictly-POSITIVE integer, returning {@code null} for empty, non-numeric, zero, or
+    /// negative input (so the caller drops it) and saturating an over-{@code int} magnitude at
+    /// {@link Integer#MAX_VALUE} (the per-value cap clamps it further). Never throws (DESIGN §6).
+    private static Integer parsePositiveInt(String t) {
+        if (t.isEmpty()) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(t);
+            if (v <= 0) {
+                return null;
+            }
+            return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }
