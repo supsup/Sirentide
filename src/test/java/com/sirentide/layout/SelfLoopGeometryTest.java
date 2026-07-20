@@ -42,6 +42,7 @@ class SelfLoopGeometryTest {
     private static final String EDGE = "#94a3b8";      // class relationship edge line
     private static final String ER_EDGE = "#5eead4";   // ER relationship edge line
     private static final String MK = "#475569";        // class marker glyph colour
+    private static final String ER_MK = "#0f766e";     // ER cardinality marker glyph colour
 
     // -- 1) long label stays inside the viewBox (class + ER) -------------------------------------
 
@@ -316,6 +317,76 @@ class SelfLoopGeometryTest {
             "no arrow line sits at the top attach");
     }
 
+    // -- 4b) marker FOOTPRINTS disjoint across groups (sirentide 275) -----------------------------
+    // The old collinear-leg oracle skipped marker-coloured lines AND every filled Path, so adjacent
+    // self-loop MARKER glyphs that overprinted were invisible to it. These pin the actual finding: with
+    // the footprint-derived attach pitch no two same-side markers overlap, so no later FUTURE relation
+    // can repaint part of an earlier ACTIVE one. Each carries a positive control (the marker rendered).
+
+    @Test
+    void multipleClassInheritanceSelfLoopMarkersDoNotOverlap() {
+        // Three same-side inheritance self-loops → three 16px triangles at the TOP attach. The old flat
+        // 12px pitch (< 16) overprinted them; the derived pitch (2·MAX_MARKER_HALF + clearance) separates.
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A <|-- A\n  A <|-- A\n  A <|-- A\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        for (Group g : loops) { // POSITIVE control: every group rendered its 3-line triangle (never vacuous)
+            assertEquals(3, markerLines(g).size(), "inheritance renders a 3-line triangle marker");
+        }
+        Rect boxA = boxRects(laid, SirentideRole.CLASS).get(0);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, MK, boxA.y() + boxA.height() / 2);
+        assertAllGeometryInside(laid);
+    }
+
+    @Test
+    void multipleClassCompositionSelfLoopMarkersDoNotOverlap() {
+        // Filled-path branch: two composition self-loops → two filled 14px diamond Paths. The old oracle
+        // never examined filled Paths at all; this exercises path-vs-path footprint disjointness.
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A *-- A\n  A *-- A\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(2, loops.size(), "two self-relations → two edge groups");
+        for (Group g : loops) { // POSITIVE control: each rendered a filled diamond Path
+            assertTrue(g.members().stream().anyMatch(s -> s instanceof Path),
+                "composition renders a filled diamond Path marker");
+        }
+        Rect boxA = boxRects(laid, SirentideRole.CLASS).get(0);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, MK, boxA.y() + boxA.height() / 2);
+        assertAllGeometryInside(laid);
+    }
+
+    @Test
+    void multipleErSelfLoopMarkersDoNotOverlap() {
+        // ER: two same-box self-loops → 18px crow-feet + 14px bars at adjacent attaches, both over the old
+        // 12px pitch. The derived pitch (2·MAX_MARKER_HALF + clearance, MAX=crow-foot 9) separates them.
+        LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(2, loops.size(), "two self-relations → two edge groups");
+        for (Group g : loops) { // POSITIVE control: each rendered its cardinality marker
+            assertTrue(markerFootprint(g, ER_MK) != null, "each ER self-loop rendered a cardinality marker");
+        }
+        Rect boxA = boxRects(laid, SirentideRole.ENTITY).get(0);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, ER_MK, boxA.y() + boxA.height() / 2);
+        assertAllGeometryInside(laid);
+    }
+
+    @Test
+    void theMarkerFootprintOracleActuallyDetectsAnOverlap() {
+        // Non-vacuity of the guard itself: two 16px-tall footprints only 12px apart (the OLD pitch) MUST
+        // register as overlapping, and the derived pitch (>= 2·MAX_MARKER_HALF) MUST separate them — so
+        // the render-based tests above can never pass vacuously because the detector silently never fires.
+        double[] lower = {100, 0, 110, 16};        // y in [0, 16]
+        double[] twelveApart = {100, 12, 110, 28}; // y in [12, 28] → 4px overlap with `lower`
+        assertTrue(footprintsOverlap(lower, twelveApart, 1e-6),
+            "the oracle detects a 12px (old-pitch) overlap of 16px markers");
+        double derived = 2 * ClassDiagramLayout.MAX_MARKER_HALF; // the pitch clears at least this
+        double[] derivedApart = {100, derived, 110, derived + 16};
+        assertFalse(footprintsOverlap(lower, derivedApart, 1e-6),
+            "2·MAX_MARKER_HALF separation removes the overlap the derived pitch is built to clear");
+    }
+
     // -- 5) tall math labels: ascent/descent participate in canvas growth ------------------------
 
     @Test
@@ -396,6 +467,89 @@ class SelfLoopGeometryTest {
             .filter(s -> s instanceof Line l && MK.equals(l.stroke()))
             .map(s -> (Line) s)
             .toList();
+    }
+
+    /// A group's marker FOOTPRINT (bbox {minX,minY,maxX,maxY}) over marker leaves whose y falls in
+    /// [yLo, yHi), or null if none. Marker leaves = marker-coloured Lines (triangle/crow-foot/bar/arrow/
+    /// ring) + every filled Path (composition diamond, arrowhead). Edge legs (EDGE/ER_EDGE) and labels
+    /// (GlyphRun/MathBox) are excluded. The y-band exists because a self-loop caps BOTH ends (an ER loop
+    /// has a top AND a bottom marker); banding at the box centre keeps a top marker from being merged with
+    /// its own bottom marker (which would make the outer lane's bbox enclose the inner and false-fail).
+    private static double[] markerFootprint(Group g, String markerColor, double yLo, double yHi) {
+        List<double[]> pts = new ArrayList<>();
+        for (Shape s : g.members()) {
+            if (s instanceof Line l && markerColor.equals(l.stroke())) {
+                addIfInBand(pts, l.x1(), l.y1(), yLo, yHi);
+                addIfInBand(pts, l.x2(), l.y2(), yLo, yHi);
+            } else if (s instanceof Path p) {
+                List<double[]> pp = new ArrayList<>();
+                pathPoints(p.d(), pp);
+                for (double[] q : pp) {
+                    addIfInBand(pts, q[0], q[1], yLo, yHi);
+                }
+            }
+        }
+        if (pts.isEmpty()) {
+            return null;
+        }
+        double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
+        for (double[] p : pts) {
+            minX = Math.min(minX, p[0]);
+            minY = Math.min(minY, p[1]);
+            maxX = Math.max(maxX, p[0]);
+            maxY = Math.max(maxY, p[1]);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    /// The whole-group marker footprint (any y) — for a positive "the marker rendered" control.
+    private static double[] markerFootprint(Group g, String markerColor) {
+        return markerFootprint(g, markerColor, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+    }
+
+    private static void addIfInBand(List<double[]> pts, double x, double y, double yLo, double yHi) {
+        if (y >= yLo && y < yHi) {
+            pts.add(new double[] {x, y});
+        }
+    }
+
+    /// Two footprints OVERLAP when their bboxes intersect beyond a touch tolerance (adjacent markers may
+    /// just touch at the stroke-clearance boundary without overlapping). Uniform over line-vs-line,
+    /// line-vs-path, and path-vs-path since both operands are already reduced to a bbox.
+    private static boolean footprintsOverlap(double[] a, double[] b, double tol) {
+        return a[0] < b[2] - tol && b[0] < a[2] - tol   // x overlap
+            && a[1] < b[3] - tol && b[1] < a[3] - tol;  // y overlap
+    }
+
+    /// No two edge groups' SAME-SIDE marker footprints overlap — the sirentide 275 invariant the old
+    /// collinear-leg oracle never checked. Split at `splitY` (the box centre): a self-loop caps both
+    /// ends, and only same-side markers of adjacent lanes can collide (top-vs-bottom are a box-height
+    /// apart). Checks the top band and the bottom band independently.
+    private static void assertMarkerFootprintsDisjointAcrossGroups(
+            List<Group> groups, String markerColor, double splitY) {
+        assertBandDisjoint(groups, markerColor, Double.NEGATIVE_INFINITY, splitY, "top");
+        assertBandDisjoint(groups, markerColor, splitY, Double.POSITIVE_INFINITY, "bottom");
+    }
+
+    private static void assertBandDisjoint(
+            List<Group> groups, String markerColor, double yLo, double yHi, String side) {
+        List<double[]> boxes = new ArrayList<>();
+        for (Group g : groups) {
+            boxes.add(markerFootprint(g, markerColor, yLo, yHi));
+        }
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] bi = boxes.get(i);
+                double[] bj = boxes.get(j);
+                if (bi == null || bj == null) {
+                    continue;
+                }
+                assertFalse(footprintsOverlap(bi, bj, 1e-6),
+                    side + "-attach marker footprints of edge groups " + i + " and " + j + " overlap: "
+                        + java.util.Arrays.toString(bi) + " vs " + java.util.Arrays.toString(bj));
+            }
+        }
     }
 
     /// EVERY coordinate a group's leaf geometry touches: line endpoints, rect corners, and every
