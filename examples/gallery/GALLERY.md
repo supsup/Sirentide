@@ -510,6 +510,28 @@ A --> A : third
 
 ![Three self-relation lanes (box grows; no collinear legs)](class-self-loops-three.png)
 
+## Stacked over-footprint markers (triangles + diamond)
+
+```
+classDiagram
+class A
+A <|-- A : inherits
+A <|-- A : also
+A *-- A : owns
+```
+
+![Stacked over-footprint markers (triangles + diamond)](class-self-loops-marker-stack.png)
+
+## Stacked ER self-relations (crow-feet + bars, same side)
+
+```
+erDiagram
+A ||--o{ A : first
+A ||--o{ A : second
+```
+
+![Stacked ER self-relations (crow-feet + bars, same side)](er-self-loops-stacked.png)
+
 ## Display math (standalone, baked LaTeX)
 
 ```

@@ -77,6 +77,12 @@ public final class ClassDiagramLayout {
     private static final double ARR_LEN = 11;
     private static final double ARR_HALF = 5;
 
+    /// Largest perpendicular marker half-extent over this diagram's marker menu (inheritance triangle 8,
+    /// composition/aggregation diamond 7, association/dependency arrow 5). The self-loop attach pitch and
+    /// the border inset derive from it so adjacent same-side markers can never overprint (sirentide 275);
+    /// the geometry oracle imports this SAME value so the pitch and its test can never drift apart.
+    static final double MAX_MARKER_HALF = Math.max(TRI_HALF, Math.max(DIA_HALF, ARR_HALF));
+
     private static final double DASH_ON = 6;   // dependency dash segment length
     private static final double DASH_OFF = 4;  // dependency dash gap length
 
@@ -92,7 +98,13 @@ public final class ClassDiagramLayout {
     // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
     // border span) so the horizontal legs never overpaint either. Labels stack separately (see
     // loopLabelBaseline), so an attach-clamp collapse can never merge them.
-    private static final double SELF_LOOP_ATTACH_STEP = 12;
+    // DERIVED from the marker footprint, NOT a flat constant (sirentide 275): two adjacent same-side
+    // markers sit one step apart perpendicular to their horizontal legs, each extending ±MAX_MARKER_HALF,
+    // so the pitch must clear 2·MAX_MARKER_HALF + stroke clearance or the glyphs overprint AND a later
+    // FUTURE relation repaints part of an earlier ACTIVE one under play-through. The old flat 12 was under
+    // the 16px triangle / 14px diamond footprints. CLEARANCE = the marker stroke + an anti-alias epsilon.
+    private static final double SELF_LOOP_MARKER_CLEARANCE = 2;
+    private static final double SELF_LOOP_ATTACH_STEP = 2 * MAX_MARKER_HALF + SELF_LOOP_MARKER_CLEARANCE;
     // Gap between the outermost loop leg and its label's left edge.
     private static final double SELF_LOOP_LABEL_GAP = 4;
 
@@ -261,7 +273,14 @@ public final class ClassDiagramLayout {
         for (int i = 0; i < n; i++) {
             if (selfLoops[i] > 1) {
                 boxH[i] = Math.max(boxH[i],
-                    (4 + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+                    (MAX_MARKER_HALF + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+            }
+            // sir288 F1 (class analog of the ER phantom-compartment fix): a memberless class is a
+            // SINGLE name-filled band — emitBox's documented invariant is nameH == h — and the
+            // multi-lane growth above raised only boxH, leaving a phantom body below the name fill.
+            // The grown height belongs to the only real compartment the class has.
+            if (attrH[i] == 0 && methodH[i] == 0) {
+                nameH[i] = boxH[i];
             }
         }
 
@@ -675,12 +694,14 @@ public final class ClassDiagramLayout {
     /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span — a BELT: the sizing pass grows a multi-lane box so the nudges
     /// never actually clamp two lanes together (collinear legs overpaint; Lattice r3 seq 227).
     private static double loopExitY(double boxY, double boxH, int lane) {
-        return Math.max(boxY + 4, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
+        // Clamp at MAX_MARKER_HALF (not a flat 4) so the outermost lane's marker top edge (attach −
+        // MAX_MARKER_HALF) stays at/inside the box border instead of poking above it (sirentide 275).
+        return Math.max(boxY + MAX_MARKER_HALF, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
     }
 
     /// Lane k's RETURN attach y (the bottom attach): 0.7·h nudged DOWN per lane, clamped in-span.
     private static double loopReturnY(double boxY, double boxH, int lane) {
-        return Math.min(boxY + boxH - 4, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
+        return Math.min(boxY + boxH - MAX_MARKER_HALF, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
     }
 
     /// Horizontal extent a node's self-loop lane adds past its right border: the outermost vertical
