@@ -275,6 +275,13 @@ public final class ClassDiagramLayout {
                 boxH[i] = Math.max(boxH[i],
                     (MAX_MARKER_HALF + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
             }
+            // sir288 F1 (class analog of the ER phantom-compartment fix): a memberless class is a
+            // SINGLE name-filled band — emitBox's documented invariant is nameH == h — and the
+            // multi-lane growth above raised only boxH, leaving a phantom body below the name fill.
+            // The grown height belongs to the only real compartment the class has.
+            if (attrH[i] == 0 && methodH[i] == 0) {
+                nameH[i] = boxH[i];
+            }
         }
 
         int cols = (int) Math.ceil(Math.sqrt(n));

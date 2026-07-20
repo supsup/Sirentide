@@ -413,13 +413,22 @@ class SelfLoopGeometryTest {
             "frame 0: the ACTIVE self-loop group must carry the accent on its own shapes");
         assertFalse(futureGroup.contains(ACCENT),
             "frame 0: a FUTURE self-loop group must NOT carry the active accent");
-        // the ACTIVE promotion also thickens: a 2x stroke width must appear in the active group
-        // The marker's own base stroke is 1, so ACTIVE must paint it at exactly 2 (verified against a
-        // real frame: the FUTURE group emits the same markers at 1).
-        assertTrue(activeGroup.contains("stroke-width=\"2\""),
-            "frame 0: the ACTIVE group's marker strokes must be promoted to the doubled width");
-        assertFalse(futureGroup.contains("stroke-width=\"2\""),
-            "frame 0: a FUTURE group's markers must stay at their base width");
+        // sir288 F3: "accent SOMEWHERE in the group + width-2 SOMEWHERE in the group" is satisfiable
+        // by an accented, promoted LEG while marker recolouring is entirely broken — proven by
+        // exact-tip mutation (marker Lines stripped of the ACTIVE accent survived the full suite).
+        // The claim is about the MARKERS, so it is asserted on the marker elements THEMSELVES,
+        // per element: frame geometry is invariant across frames (only colours/widths change), so
+        // each marker line in a group's ACTIVE render pairs by coordinates with the SAME line in a
+        // non-active render of the SAME group — and on that pair, ACTIVE must carry the accent AND
+        // exactly DOUBLE the width the non-active render paints (base widths differ per primitive,
+        // so a fixed "2" is wrong; the ratio is the contract). Both groups are held to it: group 0
+        // via frame0-ACTIVE vs frame1-DONE, group 1 via frame1-ACTIVE vs frame0-FUTURE — and the
+        // non-active side must never carry the accent. (Markers are the short lines: every class
+        // marker footprint is <= 17px while the shortest leg is SELF_LOOP_OUT = 30px.)
+        assertMarkerLinesPromotedPerElement(groupBlock(frames.get(0), 0), groupBlock(frames.get(1), 0),
+            "group 0 (frame 0 ACTIVE vs frame 1 DONE)");
+        assertMarkerLinesPromotedPerElement(groupBlock(frames.get(1), 1), groupBlock(frames.get(0), 1),
+            "group 1 (frame 1 ACTIVE vs frame 0 FUTURE)");
 
         // (b) geometry (identical in every frame): the two triangle footprints are disjoint, measured as
         // PAINTED bounds at the ACTIVE 2x stroke — the width a viewer actually sees during play-through.
@@ -475,6 +484,98 @@ class SelfLoopGeometryTest {
 
     /// The `<g data-sirentide-seq=k>` block for step k, so a frame assertion can be made about ONE
     /// group's own shapes rather than about the whole document.
+    /// sir288 F3(b): the composition marker is a FILLED {@code <path>}, a different colour sink from
+    /// line strokes — the line assertions above cannot see it, and an exact-tip mutation that left the
+    /// filled diamond unaccented survived the full suite. A real playback frame must accent the ACTIVE
+    /// group's marker path FILL itself and leave the FUTURE group's diamond unaccented. The diamond is
+    /// identified structurally (the only 4-vertex closed path in a self-loop group — label glyphs are
+    /// many-command outlines), so an accented LABEL cannot satisfy this vacuously.
+    @Test
+    void playbackAccentsTheFilledCompositionMarkerPathItself() {
+        String dsl = "classDiagram\n  class A\n  A *-- A : first\n  A *-- A : second\n";
+        List<String> frames = Sirentide.renderFrames(dsl);
+        String activeGroup = groupBlock(frames.get(0), 0);
+        String futureGroup = groupBlock(frames.get(0), 1);
+        List<String> activeDiamonds = diamondPaths(activeGroup);
+        List<String> futureDiamonds = diamondPaths(futureGroup);
+        assertFalse(activeDiamonds.isEmpty(), "the ACTIVE composition loop emits its filled diamond");
+        assertFalse(futureDiamonds.isEmpty(), "the FUTURE composition loop emits its filled diamond");
+        for (String el : activeDiamonds) {
+            assertTrue(el.contains("fill=\"" + ACCENT + "\""),
+                "frame 0: the ACTIVE composition diamond's own fill must take the accent: " + el);
+        }
+        for (String el : futureDiamonds) {
+            assertFalse(el.contains(ACCENT),
+                "frame 0: a FUTURE composition diamond must stay unaccented: " + el);
+        }
+    }
+
+    /// The 4-vertex closed marker paths in a group block ({@code M .. L .. L .. L .. Z}).
+    private static List<String> diamondPaths(String group) {
+        List<String> out = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("<path [^>]*/>").matcher(group);
+        while (m.find()) {
+            String el = m.group();
+            java.util.regex.Matcher d = java.util.regex.Pattern.compile("d=\"([^\"]+)\"").matcher(el);
+            if (d.find()) {
+                String path = d.group(1);
+                long vertices = path.chars().filter(ch -> ch == 'L').count();
+                if (path.trim().endsWith("Z") && vertices == 3) {
+                    out.add(el);
+                }
+            }
+        }
+        return out;
+    }
+
+    /// Every {@code <line>} element in a group block whose painted length is marker-scale (< 20px —
+    /// see the caller's leg-vs-marker separation argument), keyed by its coordinate signature.
+    private static java.util.Map<String, String> markerLengthLines(String group) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            "<line x1=\"([-0-9.]+)\" y1=\"([-0-9.]+)\" x2=\"([-0-9.]+)\" y2=\"([-0-9.]+)\"[^>]*/>")
+            .matcher(group);
+        while (m.find()) {
+            double dx = Double.parseDouble(m.group(3)) - Double.parseDouble(m.group(1));
+            double dy = Double.parseDouble(m.group(4)) - Double.parseDouble(m.group(2));
+            if (Math.hypot(dx, dy) < 20) {
+                out.put(m.group(1) + "," + m.group(2) + "," + m.group(3) + "," + m.group(4), m.group());
+            }
+        }
+        return out;
+    }
+
+    /// sir288 F3, the per-element promotion contract: pair each marker line of a group's ACTIVE render
+    /// with the coordinate-identical line in a NON-ACTIVE render of the same group, then assert on the
+    /// pair — ACTIVE carries the accent and exactly 2x the non-active width; non-active carries no
+    /// accent. Any marker line that loses its promotion (while a leg keeps the group-level accent
+    /// alive) fails HERE, on its own element.
+    private static void assertMarkerLinesPromotedPerElement(String activeRender, String otherRender,
+                                                            String what) {
+        java.util.Map<String, String> active = markerLengthLines(activeRender);
+        java.util.Map<String, String> other = markerLengthLines(otherRender);
+        assertFalse(active.isEmpty(), what + ": the active render has marker-length lines");
+        assertEquals(active.keySet(), other.keySet(),
+            what + ": frame geometry is invariant — the same marker lines exist in both renders");
+        for (var e : active.entrySet()) {
+            String activeEl = e.getValue();
+            String otherEl = other.get(e.getKey());
+            assertTrue(activeEl.contains(ACCENT),
+                what + ": an ACTIVE marker line must itself carry the accent: " + activeEl);
+            assertFalse(otherEl.contains(ACCENT),
+                what + ": a non-active marker line must not carry the accent: " + otherEl);
+            assertEquals(strokeWidthOf(otherEl) * 2, strokeWidthOf(activeEl), 1e-6,
+                what + ": ACTIVE promotes the SAME element to exactly double its base width: "
+                    + activeEl + " vs " + otherEl);
+        }
+    }
+
+    private static double strokeWidthOf(String lineElement) {
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("stroke-width=\"([-0-9.]+)\"").matcher(lineElement);
+        return m.find() ? Double.parseDouble(m.group(1)) : 1.0;
+    }
+
     private static String groupBlock(String svg, int seq) {
         String open = "data-sirentide-seq=\"" + seq + "\"";
         int at = svg.indexOf(open);
@@ -551,32 +652,64 @@ class SelfLoopGeometryTest {
     /// legitimately overlap in x while the strokes stay disjoint.
     @Test
     void aSelfLoopsOwnEndMarkersNeverCrossEachOther() {
-        // Every cardinality combo, so the invariant is proved for the whole marker menu rather than
-        // the one shape that regressed. `o--` aggregation repeated on one table is included: seq 275
-        // required it and it was still missing.
-        String[] cases = {
-            "erDiagram\n  A ||--o{ A\n",                       // the exact F1 repro
-            "erDiagram\n  A ||--|| A\n",                       // bar+bar at both ends
-            "erDiagram\n  A }o--o{ A\n",                       // crow+ring at both ends
-            "erDiagram\n  A |o--o| A\n",                       // bar+ring at both ends
-            "erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n", // two lanes
-            "erDiagram\n  A }o--o{ A : one\n  A }o--o{ A : two\n  A }o--o{ A : three\n",
+        // Every cardinality combo — ONE_OR_MANY included (sir288 F2: it was missing while the test
+        // claimed the menu) — and each case carries the EXPECTED marker-segment count PER END, derived
+        // from the authored cardinality's primitive anatomy (bar = 1 line, crow = 3, ring = 12).
+        //
+        // sir288 F2, why per-end: the old form pooled both ends and asserted >= 4 total — one
+        // ZERO_OR_MANY end alone contributes 15 segments, so suppressing the OTHER end's marker
+        // entirely stayed green, and the cross-end intersection loop then had nothing to catch. The
+        // authored marker must be present AT ITS OWN END before cross-end disjointness means anything.
+        record EndCounts(String dsl, int topSegments, int bottomSegments) {}
+        EndCounts[] cases = {
+            new EndCounts("erDiagram\n  A ||--o{ A\n", 2, 15),                 // the exact F1 repro
+            new EndCounts("erDiagram\n  A ||--|| A\n", 2, 2),                  // bar+bar at both ends
+            new EndCounts("erDiagram\n  A }o--o{ A\n", 15, 15),                // crow+ring at both ends
+            new EndCounts("erDiagram\n  A |o--o| A\n", 13, 13),                // bar+ring at both ends
+            new EndCounts("erDiagram\n  A }|--|{ A\n", 4, 4),                  // ONE_OR_MANY: crow+bar
+            new EndCounts("erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n", 2, 15),
+            new EndCounts("erDiagram\n  A }o--o{ A : one\n  A }o--o{ A : two\n  A }o--o{ A : three\n",
+                15, 15),
         };
-        for (String dsl : cases) {
-            LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(dsl));
+        for (EndCounts c : cases) {
+            LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(c.dsl()));
             List<Group> loops = edgeGroups(laid);
-            assertFalse(loops.isEmpty(), "the diagram rendered at least one self-loop: " + dsl);
+            assertFalse(loops.isEmpty(), "the diagram rendered at least one self-loop: " + c.dsl());
             for (Group g : loops) {
-                List<Line> marks = new ArrayList<>();
+                // The two attach heights come from the loop's own HORIZONTAL edge legs (exit at the
+                // top attach, return at the bottom); the vertical lane leg is excluded by y1 == y2.
+                // Dash segments ride their leg's y, so dashed loops partition identically. Nearest-
+                // attach assignment is exact: per-end marker ink stays within MAX_MARKER_HALF of its
+                // attach while the sizing floor keeps the attaches >= 2·MAX_MARKER_HALF apart — this
+                // is NOT the discredited midpoint band-split (a crow prong crossing the box midline
+                // still sits nearer its own attach than the other end's).
+                double ay = Double.POSITIVE_INFINITY;
+                double by = Double.NEGATIVE_INFINITY;
                 for (Shape s : g.members()) {
-                    if (s instanceof Line l && ER_MK.equals(l.stroke())) {
-                        marks.add(l);
+                    if (s instanceof Line l && !ER_MK.equals(l.stroke())
+                            && Math.abs(l.y1() - l.y2()) < 1e-6) {
+                        ay = Math.min(ay, l.y1());
+                        by = Math.max(by, l.y1());
                     }
                 }
-                // NON-VACUITY: a self-loop emits BOTH ends' combos, so a real fixture always has
-                // several marker segments. Without this, deleting every marker would pass.
-                assertTrue(marks.size() >= 4,
-                    "both ends rendered their cardinality combos (got " + marks.size() + "): " + dsl);
+                assertTrue(ay < by, "a loop has two distinct horizontal legs: " + c.dsl());
+                List<Line> top = new ArrayList<>();
+                List<Line> bottom = new ArrayList<>();
+                for (Shape s : g.members()) {
+                    if (s instanceof Line l && ER_MK.equals(l.stroke())) {
+                        double midY = (l.y1() + l.y2()) / 2;
+                        (Math.abs(midY - ay) <= Math.abs(midY - by) ? top : bottom).add(l);
+                    }
+                }
+                // The load-bearing half: the AUTHORED marker is present at EACH end, pinned by exact
+                // primitive anatomy. Deleting or swapping either end's marker changes its own end's
+                // count and fails HERE — no pooled total another end can satisfy.
+                assertEquals(c.topSegments(), top.size(),
+                    "top (left-cardinality) marker segments in: " + c.dsl());
+                assertEquals(c.bottomSegments(), bottom.size(),
+                    "bottom (right-cardinality) marker segments in: " + c.dsl());
+                List<Line> marks = new ArrayList<>(top);
+                marks.addAll(bottom);
                 for (int i = 0; i < marks.size(); i++) {
                     for (int j = i + 1; j < marks.size(); j++) {
                         Line a = marks.get(i);
@@ -587,12 +720,74 @@ class SelfLoopGeometryTest {
                         assertFalse(segmentsCross(a, b),
                             "two marker segments of the same self-loop cross: ("
                                 + a.x1() + "," + a.y1() + ")-(" + a.x2() + "," + a.y2() + ") x ("
-                                + b.x1() + "," + b.y1() + ")-(" + b.x2() + "," + b.y2() + ")  in: " + dsl);
+                                + b.x1() + "," + b.y1() + ")-(" + b.x2() + "," + b.y2() + ")  in: "
+                                + c.dsl());
                     }
                 }
             }
             assertAllGeometryInside(laid);
         }
+    }
+
+    /// sir288 F1 pin: loop-containment growth must PRESERVE the single-band invariant for empty nodes
+    /// (headerH == h for an attribute-less entity, nameH == h for a memberless class). The regression
+    /// grew the box and left the name band behind, rendering a phantom rows-colored body the layout's
+    /// own docs say an empty node never has. Pinned on emitted geometry: the node group's name-band
+    /// rect (second rect) must span the full box rect (first rect). The populated control pins the
+    /// other direction — a REAL rows compartment must survive the same growth un-swallowed.
+    @Test
+    void loopGrowthKeepsAnEmptyNodeSingleBand() {
+        assertNameBandSpansBox(
+            ErDiagramLayout.layout((ErDiagram) DslParser.parse("erDiagram\n  A ||--o{ A\n")),
+            SirentideRole.ENTITY, "attribute-less entity, single loop (the exact repro)");
+        assertNameBandSpansBox(
+            ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : one\n  A ||--o{ A : two\n")),
+            SirentideRole.ENTITY, "attribute-less entity, two lanes");
+        assertNameBandSpansBox(
+            ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  A <|-- A\n  A <|-- A\n")),
+            SirentideRole.CLASS, "memberless class, two lanes (the class analog)");
+
+        // POSITIVE control: a populated entity under the same growth keeps its real rows band.
+        LaidOut populated = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  A ||--o{ A\n  A {\n    int id\n  }\n"));
+        boolean sawPopulated = false;
+        for (Shape s : populated.shapes()) {
+            if (s instanceof Group g && g.anchor().role() == SirentideRole.ENTITY) {
+                List<Rect> rects = nodeRects(g);
+                assertTrue(rects.get(1).height() < rects.get(0).height() - 1e-6,
+                    "a populated entity keeps a rows compartment below its header");
+                sawPopulated = true;
+            }
+        }
+        assertTrue(sawPopulated, "the populated control actually rendered");
+    }
+
+    private static void assertNameBandSpansBox(LaidOut laid, SirentideRole role, String what) {
+        boolean saw = false;
+        for (Shape s : laid.shapes()) {
+            if (s instanceof Group g && g.anchor().role() == role) {
+                List<Rect> rects = nodeRects(g);
+                assertEquals(rects.get(0).height(), rects.get(1).height(), 1e-6,
+                    what + ": the name band must span the whole grown box — no phantom compartment");
+                assertEquals(rects.get(0).y(), rects.get(1).y(), 1e-6,
+                    what + ": box and name band share the same top");
+                saw = true;
+            }
+        }
+        assertTrue(saw, what + ": the node actually rendered");
+    }
+
+    private static List<Rect> nodeRects(Group g) {
+        List<Rect> rects = new ArrayList<>();
+        for (Shape m : g.members()) {
+            if (m instanceof Rect r) {
+                rects.add(r);
+            }
+        }
+        assertTrue(rects.size() >= 2, "a node group carries its box rect + name-band rect");
+        return rects;
     }
 
     private static boolean sharesEndpoint(Line a, Line b) {

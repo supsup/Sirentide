@@ -272,6 +272,14 @@ public final class ErDiagramLayout {
                 boxH[i] = Math.max(boxH[i],
                     (MAX_MARKER_HALF + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
             }
+            // sir288 F1: containment growth must never invent a compartment. An attribute-less entity
+            // is a SINGLE name-filled band — emitTable's documented invariant is headerH == h — and
+            // raising only boxH above left a phantom rows-colored body below the name band
+            // (A ||--o{ A: a 50px box with a 28.25px band + 21.75px of empty rows fill). The grown
+            // height belongs to the only real compartment the entity has: the header itself.
+            if (!entities.get(i).hasAttributes()) {
+                headerH[i] = boxH[i];
+            }
         }
 
         int cols = (int) Math.ceil(Math.sqrt(n));
