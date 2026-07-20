@@ -169,6 +169,12 @@ class GoldenSvgTest {
         // byte-for-byte.
         FIXTURES.put("tensornetwork",
             "tensornetwork\n  mps A B C D\n");
+        // The MPO variant (matrix-product OPERATOR): a 3-core chain where each core carries a SECOND
+        // vertical leg (the operator's row index up, its column index down) — 2 bonds, 6 legs (up+down
+        // per core). Pins the up-leg geometry + the taller canvas + the node/edge anchor groups (each
+        // core's up+down legs live inside its node group) byte-for-byte.
+        FIXTURES.put("tensornetwork-mpo",
+            "tensornetwork\n  mpo A B C\n");
     }
 
     @Test

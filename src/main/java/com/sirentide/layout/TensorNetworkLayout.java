@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.TensorNetwork;
 import java.util.ArrayList;
@@ -13,14 +14,26 @@ import java.util.List;
 /// from the core. An MPO ({@link TensorNetwork#operator()}) adds a SECOND vertical leg going UP
 /// (the operator's row index) per core.
 ///
-/// Emit order is bonds → legs → cores+labels, so the core discs sit OVER the bond line they connect
-/// and the leg roots tuck under the disc. Each core is a filled {@link Wedge} disc (the conventional
-/// tensor-core glyph, matching the disc convention gitGraph/journey/quadrant already use) with its
-/// label baked as a centred contrast-filled {@link GlyphRun} INSIDE the disc, ellipsized to the disc
-/// diameter so a long label can't overrun the node. The canvas grows to hold the whole chain plus a
-/// uniform {@link #MARGIN}; nothing is placed outside it (GeometryEscapeTest discipline). No new
-/// element/attribute shape reaches the emitter — only rect-free line/wedge/path geometry, exactly the
-/// sanitizer-survivable alphabet every other type emits.
+/// Emit order is bonds → cores (each core group carrying its own legs + label), so the bond lines sit
+/// in the BACKGROUND and every core disc draws OVER the bond it connects, with the leg roots tucked
+/// under the disc (the legs draw first WITHIN the core group, then the disc, then the in-disc label).
+/// Each core is a filled {@link Wedge} disc (the conventional tensor-core glyph, matching the disc
+/// convention gitGraph/journey/quadrant already use) with its label baked as a centred contrast-filled
+/// {@link GlyphRun} INSIDE the disc, ellipsized to the disc diameter so a long label can't overrun the
+/// node. The canvas grows to hold the whole chain plus a uniform {@link #MARGIN}; nothing is placed
+/// outside it (GeometryEscapeTest discipline). No new element/attribute shape reaches the emitter —
+/// only rect-free line/wedge/path geometry, exactly the sanitizer-survivable alphabet every other type
+/// emits.
+///
+/// SEMANTIC ANCHORS (plan sirentide-semantic-anchor-g): the tensor-network vocabulary maps onto the
+/// SHARED graph roles — a tensor CORE is a {@link SirentideRole#NODE} (like a flowchart/mindmap/sankey
+/// node), a virtual BOND is a {@link SirentideRole#EDGE} (like a flowchart/mindmap edge). No new role
+/// is introduced. Each core's disc + its dangling physical/operator leg(s) + its in-disc label wrap in
+/// ONE `<g role="node">` (id = the core label, uniquified so two cores both labelled "A" get distinct
+/// ids); each bond wraps in ONE `<g role="edge">` (id = the adjacent core labels, `left-right`). Bonds
+/// emit before cores, so — exactly like the sibling graph layouts — bonds carry the lower `seq` range
+/// and every core's play-through step follows the bonds. This is what lets {@code Sirentide.renderFrames}
+/// step through a multi-core network instead of collapsing it to a single static frame.
 public final class TensorNetworkLayout {
 
     private TensorNetworkLayout() {}
@@ -65,39 +78,45 @@ public final class TensorNetworkLayout {
         double canvasH = coreY + CORE_R + LEG + MARGIN;
 
         List<Shape> shapes = new ArrayList<>();
+        // ONE assigner per rendered diagram → ids are page-local-unique + `seq` runs 0..N in emit order
+        // (bonds first, then cores). Fully deterministic — identical input → identical anchors.
+        AnchorAssigner assigner = new AnchorAssigner();
 
         // 1. Bond edges (virtual indices): a horizontal segment between each adjacent pair of core
-        // centres. N cores → N-1 bonds; a 1-core chain draws none. Under the discs.
+        // centres, wrapped in ONE `<g role="edge">` each. N cores → N-1 bonds; a 1-core chain draws
+        // none. Emitted FIRST so they sit in the background (the discs draw over them) AND carry the
+        // lower seq range (bonds play before cores), mirroring the sibling graph layouts.
         for (int i = 0; i < n - 1; i++) {
             double x1 = firstCx + i * SPACING;
             double x2 = firstCx + (i + 1) * SPACING;
-            shapes.add(new Line(x1, coreY, x2, coreY, EDGE_STROKE, BOND_WIDTH));
+            Line bond = new Line(x1, coreY, x2, coreY, EDGE_STROKE, BOND_WIDTH);
+            String bondBase = cores.get(i) + "-" + cores.get(i + 1);
+            shapes.add(new Group(assigner.assign(SirentideRole.EDGE, bondBase), List.of(bond)));
         }
 
-        // 2. Dangling legs (physical indices): one vertical DOWN leg per core; an MPO adds a second UP
-        // leg (the operator's second physical index). Rooted at the disc edge, extending LEG past it.
+        // 2. Core discs — each wrapped in ONE `<g role="node">` carrying, IN DRAW ORDER: its dangling
+        // physical DOWN leg (and, for an MPO, the operator UP leg), then the filled disc OVER those leg
+        // roots, then the centred in-disc contrast label. The label is ellipsized to the disc diameter
+        // so it stays inside the node (containment). The node id is the core label, uniquified so two
+        // cores with the SAME label get distinct anchor ids (`A`, `A-1`).
         for (int i = 0; i < n; i++) {
             double cx = firstCx + i * SPACING;
-            shapes.add(new Line(cx, coreY + CORE_R, cx, coreY + CORE_R + LEG, EDGE_STROKE, LEG_WIDTH));
+            List<Shape> members = new ArrayList<>();
+            members.add(new Line(cx, coreY + CORE_R, cx, coreY + CORE_R + LEG, EDGE_STROKE, LEG_WIDTH));
             if (op) {
-                shapes.add(new Line(cx, coreY - CORE_R, cx, coreY - CORE_R - LEG, EDGE_STROKE, LEG_WIDTH));
+                members.add(new Line(cx, coreY - CORE_R, cx, coreY - CORE_R - LEG, EDGE_STROKE, LEG_WIDTH));
             }
-        }
-
-        // 3. Core discs + centred labels, over the bond line. The label is ellipsized to the disc
-        // diameter so it stays inside the node (containment) and takes a contrast fill against CORE_FILL.
-        for (int i = 0; i < n; i++) {
-            double cx = firstCx + i * SPACING;
-            shapes.add(new Wedge(cx, coreY, CORE_R, 0, 2 * Math.PI, CORE_FILL));
+            members.add(new Wedge(cx, coreY, CORE_R, 0, 2 * Math.PI, CORE_FILL));
             String label = FONT.ellipsize(cores.get(i), 2 * CORE_R - LABEL_PAD, LABEL_SIZE);
             if (!label.isBlank()) {
                 double w = FONT.runWidth(label, LABEL_SIZE);
                 double baseline = coreY + LABEL_SIZE * 0.35;
                 String d = FONT.textPathD(label, cx - w / 2, baseline, LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, Colors.contrastFill(CORE_FILL)));
+                    members.add(new GlyphRun(d, Colors.contrastFill(CORE_FILL)));
                 }
             }
+            shapes.add(new Group(assigner.assign(SirentideRole.NODE, cores.get(i)), members));
         }
 
         return new LaidOut(canvasW, canvasH, shapes);

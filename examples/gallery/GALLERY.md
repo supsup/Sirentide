@@ -434,6 +434,24 @@ Solar,Industry,5
 
 ![Sankey (weighted flows in depth columns)](sankey.png)
 
+## Tensor network (MPS chain — cores, bonds, physical legs)
+
+```
+tensornetwork
+mps A B C D
+```
+
+![Tensor network (MPS chain — cores, bonds, physical legs)](tensornetwork.png)
+
+## Tensor network (MPO — second operator leg per core)
+
+```
+tensornetwork
+mpo A B C D
+```
+
+![Tensor network (MPO — second operator leg per core)](tensornetwork-mpo.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```

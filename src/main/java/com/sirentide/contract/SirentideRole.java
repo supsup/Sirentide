@@ -23,7 +23,10 @@ import java.util.Set;
 /// reuses the existing graph node/edge vocabulary, no new role. sankey nodes → {@link #NODE} (each
 /// node's box + label), flow bands → {@link #FLOW} (each source→target band quadrilateral). matrix
 /// data cells → {@link #CELL} (each verdict cell's fill rect + centered token, in row-major reading
-/// order); the header band + row-label column are structural and stay un-anchored.
+/// order); the header band + row-label column are structural and stay un-anchored. tensornetwork tensor
+/// CORES → {@link #NODE} (each core's disc + dangling physical/operator leg(s) + in-disc label), virtual
+/// BONDS → {@link #EDGE} (each contracted-index segment between adjacent cores) — the Penrose chain reuses
+/// the shared graph node/edge vocabulary, no new role.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
