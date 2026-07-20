@@ -186,6 +186,69 @@ class FlowchartRouterNodeCollisionTest {
         assertNoEdgeSegmentCrossesForeignNodeFill(Sirentide.render(lrWideDsl(false), REAL));
     }
 
+    // ------------------------------------------------------------------
+    // CANVAS-GROWTH margin discriminators (review sir311/313, Lattice): the growth pre-passes
+    // (canvasH = max(canvasH, railMaxY + MARGIN) in TD; the canvasW mirror in LR) shipped with ZERO
+    // coverage — deleting BOTH left all 10 collision tests green, because the collision oracle checks
+    // fills, not containment: the detoured rail stayed clear of every box but sat 17px from the canvas
+    // edge instead of the layout's 24px MARGIN.
+    //
+    // Empirical sweep with both growth assignments deleted, ALL public fixtures in this file: exactly
+    // ONE triggers — REPRO_A_LR's beyond-rightmost detour candidate drops the right margin to 17.0px
+    // (the reviewer's exact number). Both LR declaration orders are pinned here and are RED under the
+    // canvasW-growth deletion. The TD HEIGHT-growth branch is empirically unreachable from every
+    // public fixture (the inter-rank band above the obstacle always exists and wins the
+    // nearest-candidate tie-break upward), so the TD assertions below pin the containment contract on
+    // the growth-eligible tall fixtures but are HONESTLY NOT red under the TD-growth deletion — a
+    // fixture that forces the below-content candidate is not known to exist under the current
+    // candidate policy; if one is found it must be committed here (stated in the re-hand, not hidden).
+    // ------------------------------------------------------------------
+
+    /// FlowchartLayout.MARGIN — the containment contract every emitted element honors.
+    private static final double LAYOUT_MARGIN = 24;
+
+    @Test
+    void detourGrowthKeepsFullRightMargin_lr() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(REPRO_A_LR), "width");
+    }
+
+    @Test
+    void detourGrowthKeepsFullRightMargin_lrMirror() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(REPRO_A_LR_MIRROR), "width");
+    }
+
+    @Test
+    void detourGeometryKeepsFullBottomMargin_td() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(tdTallDsl(true), REAL), "height");
+    }
+
+    @Test
+    void detourGeometryKeepsFullBottomMargin_tdMirror() {
+        assertEdgeGeometryKeepsMargin(Sirentide.render(tdTallDsl(false), REAL), "height");
+    }
+
+    /// Every edge segment endpoint keeps the layout's full MARGIN to the far canvas edge on the given
+    /// axis — the containment claim canvas growth exists to preserve.
+    private static void assertEdgeGeometryKeepsMargin(String svg, String axis) {
+        double canvas = canvasDim(svg, axis);
+        double max = 0;
+        for (Seg s : edgeSegments(svg)) {
+            max = Math.max(max, axis.equals("width")
+                ? Math.max(s.x1(), s.x2())
+                : Math.max(s.y1(), s.y2()));
+        }
+        assertTrue(canvas - max >= LAYOUT_MARGIN - 0.5,
+            "outermost edge geometry (" + max + ") must keep the full " + LAYOUT_MARGIN
+                + "px margin to the canvas " + axis + " (" + canvas
+                + ") — growth must expand the canvas, never squeeze the rail (sir311)");
+    }
+
+    private static double canvasDim(String svg, String attr) {
+        Matcher m = Pattern.compile("<svg[^>]*\\s" + attr + "=\"([-0-9.]+)\"").matcher(svg);
+        assertTrue(m.find(), "svg root must carry a numeric " + attr + " attribute");
+        return Double.parseDouble(m.group(1));
+    }
+
     @Test
     void normalEdgesStillAttachToTheirOwnBoxes() {
         // A plain forward chain: the oracle must NOT fire (no false positive), AND the edges must
