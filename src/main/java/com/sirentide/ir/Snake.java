@@ -15,15 +15,14 @@ import java.util.List;
 /// block) and STRAIGHT where they DIFFER (a block boundary). So `[1, 1, …, 1]` (n ones) is a STRAIGHT
 /// snake of `n − 1` tiles, and `[1]` is a single edge with ZERO tiles. This is the model whose
 /// PERFECT-MATCHING count equals the NUMERATOR of the continued fraction (the semantic oracle proved
-/// in {@code SnakeGraphLayoutTest}). NB: Propp's related construction (arXiv 2607.14332) uses HEXAGON
-/// tiles, not squares — the square snake is Çanakçı–Schiffler's; do not attribute it to Propp.
+/// in {@code SnakeGraphLayoutTest}).
 ///
 /// `quotients` is the parsed, cap-bounded partial-quotient list (each positive; parse-side clamped
 /// and the running quotient-sum bounded so a huge CF can't OOM — see {@code DslParser.parseSnake};
 /// the tile count `sum − 1` is bounded by that sum). An empty list (a bare `snake` with no `cf:`) is
-/// valid and bakes an empty canvas. `textColor` is unused by the current layout (the segment labels
-/// sit ON the tile tints and take a contrast-derived fill) but is threaded for parity with the other
-/// types and future off-strip labels; it defaults to `currentColor`.
+/// valid and bakes an empty canvas. `textColor` is UNUSED by the current layout because the snake is
+/// LABEL-FREE — it bakes only tinted tiles, no `<text>` (review sir344); the field is threaded for
+/// parity with the other types and for future off-strip labels, and defaults to `currentColor`.
 public record Snake(List<Integer> quotients, String textColor) implements Diagram {
 
     public Snake {

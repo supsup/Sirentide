@@ -38,10 +38,11 @@ import java.util.List;
 /// one — no cell is ever revisited (no self-overlap, ever).
 ///
 /// EMIT: one contract-clean {@link Rect} per unit tile (light per-SEGMENT tint + a grey border) — and
-/// NOTHING else. The figure carries NO visible labels: the continued fraction is recoverable from the
-/// tile GEOMETRY (via the perfect-matching count of the strip — the numerator oracle in {@code
-/// SnakeGraphLayoutTest}) and is stated in plain words in the a11y description; the per-run tint is what
-/// delineates the segments to the eye. (An earlier version stamped each maximal straight segment with
+/// NOTHING else. The figure carries NO visible labels: the strip's perfect-matching count equals the
+/// NUMERATOR of the continued fraction (the oracle in {@code SnakeGraphLayoutTest}) — but that count
+/// alone does NOT recover the authored quotient list (many CFs share a numerator), so the quotients are
+/// stated in plain words ONLY in the a11y description; the per-run tint is what delineates the segments
+/// to the eye. (An earlier version stamped each maximal straight segment with
 /// its tile COUNT; those read misleadingly as partial quotients — √2 = [1,2,2,2] visibly showed
 /// "2,2,2", omitting the initial 1 — so the labels were removed, review sir344.) Math coords are
 /// y-FLIPPED once here (SVG y grows DOWN); the canvas grows to fit the strip's bounding box plus a

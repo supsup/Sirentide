@@ -106,9 +106,9 @@ class SnakeGraphLayoutTest {
     void snakeCarriesNoVisibleLabels() {
         // review sir344: a snake renders as a BARE tinted tile strip — NO text/GlyphRun. The old
         // per-segment tile-COUNT labels read misleadingly as partial quotients (√2 = [1,2,2,2] showed
-        // "2,2,2", dropping the leading 1); the continued fraction is recoverable from the tile geometry
-        // (the matching-count oracle below) and stated in the a11y description instead. This pins the
-        // label-free contract so it can't silently regress.
+        // "2,2,2", dropping the leading 1). The strip's matching count recovers only the CF NUMERATOR
+        // (the oracle below), NOT the authored quotient list — so the quotients are stated in the a11y
+        // description instead. This pins the label-free contract so it can't silently regress.
         for (String dsl : List.of(
                 "snake\ncf: 1, 1, 1, 1, 1\n",   // φ — a straight strip
                 "snake\ncf: 1, 2, 2, 2\n",      // √2 — the golden
