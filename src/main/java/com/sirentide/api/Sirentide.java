@@ -379,6 +379,10 @@ public final class Sirentide {
             // A sankey: weighted flows between nodes placed in depth columns, each flow a filled band
             // whose width tracks its value.
             case com.sirentide.ir.Sankey s -> com.sirentide.layout.SankeyLayout.layout(s, math);
+            // A tensor-network (Penrose) diagram: a horizontal MPS/MPO chain of tensor cores with bond
+            // edges + dangling physical legs. No `$…$` labels in this slice, so `math` is unused here.
+            case com.sirentide.ir.TensorNetwork tn ->
+                com.sirentide.layout.TensorNetworkLayout.layout(tn);
             // A Young diagram: a partition drawn as left-justified rows of unit boxes (English convention).
             case com.sirentide.ir.YoungDiagram yd -> com.sirentide.layout.YoungDiagramLayout.layout(yd, math);
             case Empty ignored -> LaidOut.of(0, 0);

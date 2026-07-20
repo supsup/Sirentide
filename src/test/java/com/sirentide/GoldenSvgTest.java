@@ -162,7 +162,20 @@ class GoldenSvgTest {
         FIXTURES.put("sankey",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
                 + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
-        // A Young diagram (a new type): the partition [3, 2, 1] — a 6-box staircase, longest row on top,
+        // A tensor-network diagram: a 4-core MPS chain in Penrose graphical notation —
+        // four tensor-core discs on a horizontal midline, three bond edges (virtual indices) between
+        // adjacent cores, and one dangling physical leg per core. Pins the even core spacing, the
+        // bond segments at core-centre height, the down-leg geometry, and the in-disc contrast labels
+        // byte-for-byte.
+        FIXTURES.put("tensornetwork",
+            "tensornetwork\n  mps A B C D\n");
+        // The MPO variant (matrix-product OPERATOR): a 3-core chain where each core carries a SECOND
+        // vertical leg (the operator's row index up, its column index down) — 2 bonds, 6 legs (up+down
+        // per core). Pins the up-leg geometry + the taller canvas + the node/edge anchor groups (each
+        // core's up+down legs live inside its node group) byte-for-byte.
+        FIXTURES.put("tensornetwork-mpo",
+            "tensornetwork\n  mpo A B C\n");
+        // A Young diagram: the partition [3, 2, 1] — a 6-box staircase, longest row on top,
         // each row left-justified, stacked downward (English convention). Pins the left-justified box grid
         // (one Rect per box, per-row palette tint + grey border), the per-row anchor groups, and the
         // grow-to-fit canvas (2*MARGIN + maxLen*UNIT by 2*MARGIN + numRows*UNIT) byte-for-byte.

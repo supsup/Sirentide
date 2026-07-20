@@ -162,6 +162,10 @@ class BrewShotGalleryTest {
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
+        new Case("tensornetwork", "Tensor network (MPS chain — cores, bonds, physical legs)",
+            "tensornetwork\nmps A B C D"),
+        new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
+            "tensornetwork\nmpo A B C D"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

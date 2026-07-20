@@ -96,6 +96,7 @@ public final class A11yDescriber {
             case Journey j -> journey(j);
             case Mindmap m -> mindmap(m);
             case Sankey s -> sankey(s);
+            case com.sirentide.ir.TensorNetwork tn -> tensorNetwork(tn);
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case Empty ignored -> A11y.NONE;
         };
@@ -131,6 +132,29 @@ public final class A11yDescriber {
             d.append(flowCount > shown ? "; …." : ".");
         }
         return new A11y("Sankey diagram", d.toString());
+    }
+
+    /// Tensor network: "Tensor-network (MPS) diagram with 4 cores: A, B, C, D." The chain flavour
+    /// (MPS/MPO) and the ordered core labels are read in declaration order. Bounded (cores capped at
+    /// {@link #ITEM_CAP}, labels capped) + deterministic (pure IR walk). A single-core chain reads
+    /// "1 core".
+    private static A11y tensorNetwork(com.sirentide.ir.TensorNetwork tn) {
+        int n = tn.cores().size();
+        String kind = tn.operator() ? "MPO" : "MPS";
+        StringBuilder d = new StringBuilder("Tensor-network (").append(kind)
+            .append(") diagram with ").append(n).append(n == 1 ? " core" : " cores");
+        if (n > 0) {
+            d.append(": ");
+            int shown = Math.min(n, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append(", ");
+                }
+                d.append(label(tn.cores().get(i)));
+            }
+            d.append(n > shown ? ", …." : ".");
+        }
+        return new A11y("Tensor-network diagram", d.toString());
     }
 
     /// Young diagram: "Young diagram of the partition 3 + 2 + 1 with 6 boxes in 3 rows. Row lengths:

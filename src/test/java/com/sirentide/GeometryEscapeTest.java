@@ -65,6 +65,13 @@ class GeometryEscapeTest {
             "flowchart\nA -->|this is an extremely long edge label that far exceeds the canvas width| B");
     }
 
+    @Test
+    void tensorNetworkChainAndLongCoreLabelStayInCanvas() {
+        // A 4-core MPS chain (bond edges + physical legs) plus an over-long core label that must
+        // ellipsize INSIDE its disc rather than overrun the canvas edge.
+        assertContained("tensornetwork\nmps A B C ThisCoreLabelIsFarTooLongToFitInsideOneDisc");
+    }
+
     private static void assertContained(String dsl) {
         String svg = Sirentide.render(dsl);
         Matcher wm = SVG_WIDTH.matcher(svg);

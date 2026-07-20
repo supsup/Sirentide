@@ -159,6 +159,33 @@ class PlayThroughFramesTest {
             "same dsl → same List<String> (byte-stable)");
     }
 
+    // ---- Receipt 9: a tensor-network CHAIN plays through multiple distinct frames -------------
+
+    /// review sir330 BLOCKER 1 regression: a 4-core `mps A B C D` network must produce MULTIPLE
+    /// distinct play-through frames (the defect was ONE static frame for the whole network, because the
+    /// layout emitted bare shapes with no seq anchors). With the cores/bonds now anchored, the chain has
+    /// 3 bond + 4 core = 7 seq steps → 7 frames, each byte-distinct, while the GEOMETRY stays invariant
+    /// across every frame (only fills/strokes change — layout runs once).
+    @Test
+    void tensorNetworkChainPlaysThroughMultipleDistinctFrames() {
+        String tn = "tensornetwork\n  mps A B C D\n";
+        List<String> frames = Sirentide.renderFrames(tn);
+        int distinct = distinctSeqCount(Sirentide.render(tn));
+        assertEquals(7, distinct, "mps A B C D → 3 bonds + 4 cores = 7 seq steps");
+        assertEquals(7, frames.size(), "one frame per distinct seq — NOT one static frame");
+        // Frames are pairwise distinct (a different active step each) — the anti-single-frame proof.
+        for (int i = 1; i < frames.size(); i++) {
+            assertNotEquals(frames.get(i - 1), frames.get(i),
+                "tensornetwork frame " + (i - 1) + " and " + i + " must differ (different active step)");
+        }
+        // Geometry is invariant: stripping fills/strokes leaves EXACTLY the static render's geometry.
+        String baseGeom = stripPresentation(Sirentide.render(tn));
+        for (int i = 0; i < frames.size(); i++) {
+            assertEquals(baseGeom, stripPresentation(frames.get(i)),
+                "tensornetwork frame " + i + ": geometry must be invariant across frames");
+        }
+    }
+
     // ==== helpers ==============================================================================
 
     private static int distinctSeqCount(String svg) {

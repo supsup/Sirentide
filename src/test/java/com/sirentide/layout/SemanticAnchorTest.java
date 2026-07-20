@@ -147,7 +147,9 @@ class SemanticAnchorTest {
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n"
                 + "  Electricity,Industry,20\n",
             "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : pass, fail\n"
-                + "  \"PC1 soft-intent\" : partial, na\n");
+                + "  \"PC1 soft-intent\" : partial, na\n",
+            "tensornetwork\n  mps A B C D\n",
+            "tensornetwork\n  mpo A B C\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -503,6 +505,67 @@ class SemanticAnchorTest {
 
     private static int seqOf(List<Anc> a, String id) {
         return a.stream().filter(x -> x.id().equals(id)).mapToInt(Anc::seq).findFirst().orElseThrow();
+    }
+
+    /// tensornetwork (review sir330 BLOCKER 1): every tensor CORE's disc + dangling leg(s) + in-disc
+    /// label wraps in ONE `<g role="node">` (id = the core label, uniquified) and every virtual BOND in
+    /// ONE `<g role="edge">` (id = the adjacent core labels, `left-right`). A 4-core `mps A B C D` chain
+    /// → 3 bond edges + 4 core nodes = 7 anchor groups, seq 0..6 contiguous; bonds emit before cores so
+    /// they carry the lower seq range. Proves the type is no longer emitting bare, un-anchored shapes
+    /// (the defect: roleAnchors=0 / seqAnchors=0). DROP the `<g>` wrappers in TensorNetworkLayout (emit
+    /// the shapes bare) and every count below falls to 0 → RED.
+    @Test
+    void tensorNetworkEmitsNodeAndEdgeAnchors() {
+        List<Anc> a = anchors(Sirentide.render("tensornetwork\n  mps A B C D\n"));
+        assertWellFormed(a, 7);
+        assertEquals(4, countRole(a, "node"), "four core node anchors: " + a);
+        assertEquals(3, countRole(a, "edge"), "three bond edge anchors (N-1): " + a);
+        // Core ids are the labels; bond ids are the adjacent-core pair (left-right).
+        for (String coreId : List.of("A", "B", "C", "D")) {
+            assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals(coreId)),
+                "core " + coreId + " is anchored under its label: " + a);
+        }
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("A-B")),
+            "a bond id is the adjacent core pair (A-B): " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("C-D")),
+            "the last bond id is C-D: " + a);
+        // Bonds emit before cores → bonds carry the lower seq range (the play order plays bonds first).
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge")).mapToInt(Anc::seq).max().orElse(-1);
+        int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minNodeSeq, "bonds (edges) seq before cores (nodes): " + a);
+        // The role vocabulary is the CLOSED graph one — no new role was invented for this type.
+        for (Anc x : a) {
+            assertTrue(List.of("node", "edge").contains(x.role()),
+                "tensornetwork emits only the closed node/edge roles, saw: " + x.role());
+        }
+    }
+
+    /// tensornetwork MPO: each core gains a SECOND (operator) UP leg, but that leg lives INSIDE the
+    /// core's node group, so the anchor counts are unchanged — a 3-core `mpo A B C` still has exactly 3
+    /// node anchors + 2 bond edges = 5 groups. Proves the operator leg does not spawn a stray anchor.
+    @Test
+    void tensorNetworkMpoAnchorsMatchMpsShape() {
+        List<Anc> a = anchors(Sirentide.render("tensornetwork\n  mpo A B C\n"));
+        assertWellFormed(a, 5);
+        assertEquals(3, countRole(a, "node"), "three core node anchors (mpo): " + a);
+        assertEquals(2, countRole(a, "edge"), "two bond edge anchors (mpo): " + a);
+    }
+
+    /// tensornetwork DUPLICATE-LABEL id stability (review sir330): two cores that share a label must
+    /// still get DISTINCT, deterministic anchor ids — the assigner uniquifies `A` → `A`, `A-1`. Without
+    /// per-diagram uniquification a narrator/consumer could not address the second core. `mps A A B`
+    /// → cores A, A-1, B (3 nodes) + bonds A-A, A-B... wait: adjacent pairs are (A,A) and (A,B), so the
+    /// bond ids are A-A and A-B — themselves uniquified if they collided (they don't here).
+    @Test
+    void tensorNetworkDuplicateCoreLabelsGetDistinctIds() {
+        List<Anc> a = anchors(Sirentide.render("tensornetwork\n  mps A A B\n"));
+        assertWellFormed(a, 5);   // 3 cores + 2 bonds
+        List<String> nodeIds = a.stream().filter(x -> x.role().equals("node")).map(Anc::id).sorted().toList();
+        assertEquals(3, nodeIds.size(), "three core nodes: " + a);
+        assertEquals(List.of("A", "A-1", "B"), nodeIds,
+            "the two same-label cores get distinct deterministic ids (A, A-1): " + nodeIds);
+        // Every node id is unique (the uniquification invariant, stated positively).
+        assertEquals(nodeIds.size(), nodeIds.stream().distinct().count(), "core ids are all distinct");
     }
 
     /// A hostile row/column/cell label can NEVER place an illegal char into an emitted matrix cell

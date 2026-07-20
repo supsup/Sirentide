@@ -32,6 +32,7 @@ import com.sirentide.ir.Point;
 import com.sirentide.ir.QuadrantChart;
 import com.sirentide.ir.Sankey;
 import com.sirentide.ir.SankeyFlow;
+import com.sirentide.ir.TensorNetwork;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqLifecycle;
@@ -104,6 +105,10 @@ public final class DslParser {
     // Mindmap tab-indent width: a leading tab counts as this many indent columns (spaces count 1
     // each). A fixed, documented width keeps depth deterministic when tabs + spaces mix.
     public static final int MINDMAP_TAB_WIDTH = 4;
+    // Tensor-network core cap (mirrors MAX_COLUMNS/MAX_NODES discipline): a `mps`/`mpo` line names a
+    // ROW of cores whose canvas width grows linearly with the count, so a pathological chain is
+    // bounded here — cores past this are dropped, never OOMs the layout/emit.
+    public static final int MAX_TENSOR_CORES = 500;
     // Young-diagram partition caps (plan sirentide-young-diagram-primitive). The COUNT of rows (parts)
     // is bounded by MAX_YOUNG_ROWS, and each part (row length, = box count in that row) is clamped to
     // MAX_YOUNG_PART — so a pathological `rows: 1000000, …` can't OOM the box grid. The running box
@@ -195,6 +200,9 @@ public final class DslParser {
             // as a band whose width tracks its value. `sankey-beta` is mermaid's spelling; `sankey` is
             // the short alias.
             case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
+            // A tensor-network diagram (Penrose graphical notation) — a `mps`/`mpo` body line names a
+            // chain of tensor cores; layout derives the bond edges + dangling physical legs.
+            case "tensornetwork" -> parseTensorNetwork(lines, textColor);
             // A Young diagram — a `rows:` line of positive-integer partition parts `[λ0, λ1, …]` renders
             // as left-justified rows of unit boxes (English convention: longest row on top, stacked down).
             case "young" -> parseYoung(lines, textColor);
@@ -3000,6 +3008,50 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// The reserved tensor-network CHAIN keywords — the first token of a `tensornetwork` body line
+    /// selects the chain flavour: `mps` (matrix-product STATE — one dangling physical leg per core)
+    /// or `mpo` (matrix-product OPERATOR — a second, operator, leg per core). Anything else is a
+    /// malformed chain line and is skipped (DESIGN §6: never fail the bake).
+    private static final String KW_MPS = "mps";
+    private static final String KW_MPO = "mpo";
+
+    /// Parses a `tensornetwork` diagram (Penrose graphical notation). The header line is the bare
+    /// `tensornetwork` type token; the BODY's first `mps`/`mpo` line names the chain:
+    /// ```
+    /// tensornetwork
+    ///   mps A B C D
+    /// ```
+    /// The first whitespace token is the chain keyword (`mps`/`mpo`, case-insensitive); the remaining
+    /// whitespace-split tokens are the ordered CORE LABELS. This first slice reads ONE chain line
+    /// (the first well-formed `mps`/`mpo` line); later lines are reserved for future stacking slices.
+    /// Cores are `cap()`'d to {@link #MAX_LABEL_LEN} and bounded by {@link #MAX_TENSOR_CORES} (past the
+    /// cap they are dropped). An empty/absent chain degrades to {@link Empty} (inert, never throws).
+    private static Diagram parseTensorNetwork(String[] lines, String textColor) {
+        boolean operator = false;
+        java.util.List<String> cores = new java.util.ArrayList<>();
+        for (int i = 1; i < lines.length; i++) {
+            String s = lines[i].strip();
+            if (s.isEmpty()) {
+                continue;
+            }
+            String[] toks = s.split("\\s+");
+            String kw = toks[0].toLowerCase(java.util.Locale.ROOT);
+            if (kw.equals(KW_MPO)) {
+                operator = true;
+            } else if (!kw.equals(KW_MPS)) {
+                continue;   // not a chain keyword — skip this line (malformed → inert)
+            }
+            for (int t = 1; t < toks.length && cores.size() < MAX_TENSOR_CORES; t++) {
+                cores.add(cap(toks[t]));
+            }
+            break;   // first well-formed chain line only (this slice)
+        }
+        if (cores.isEmpty()) {
+            return new Empty();
+        }
+        return new TensorNetwork(cores, operator, textColor);
     }
 
     /// The reserved leading gitGraph keywords. A body line's FIRST whitespace-delimited token selects
