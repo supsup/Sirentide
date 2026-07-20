@@ -162,6 +162,13 @@ class GoldenSvgTest {
         FIXTURES.put("sankey",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
                 + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
+        // A tensor-network diagram (16th type): a 4-core MPS chain in Penrose graphical notation —
+        // four tensor-core discs on a horizontal midline, three bond edges (virtual indices) between
+        // adjacent cores, and one dangling physical leg per core. Pins the even core spacing, the
+        // bond segments at core-centre height, the down-leg geometry, and the in-disc contrast labels
+        // byte-for-byte.
+        FIXTURES.put("tensornetwork",
+            "tensornetwork\n  mps A B C D\n");
     }
 
     @Test
