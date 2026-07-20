@@ -88,6 +88,12 @@ public final class ErDiagramLayout {
     private static final double CIRCLE_R = 5;
     private static final int CIRCLE_SIDES = 12;
 
+    /// Largest perpendicular marker half-extent over this diagram's cardinality menu (crow-foot 9, bar 7,
+    /// hollow ring radius 5). The self-loop attach pitch and the border inset derive from it so adjacent
+    /// same-side markers can never overprint (sirentide 275); the geometry oracle imports this SAME value
+    /// so the pitch and its test can never drift apart.
+    static final double MAX_MARKER_HALF = Math.max(CROW_HALF, Math.max(BAR_HALF, CIRCLE_R));
+
     private static final double DASH_ON = 6;   // non-identifying (dashed) edge dash segment length
     private static final double DASH_OFF = 4;  // dashed edge gap length
 
@@ -104,7 +110,13 @@ public final class ErDiagramLayout {
     // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
     // border span) so the horizontal legs never overpaint either. Labels stack separately (see
     // loopLabelBaseline), so an attach-clamp collapse can never merge them.
-    private static final double SELF_LOOP_ATTACH_STEP = 12;
+    // DERIVED from the marker footprint, NOT a flat constant (sirentide 275): two adjacent same-side
+    // markers sit one step apart perpendicular to their horizontal legs, each extending ±MAX_MARKER_HALF,
+    // so the pitch must clear 2·MAX_MARKER_HALF + stroke clearance or the glyphs overprint AND a later
+    // FUTURE relation repaints part of an earlier ACTIVE one under play-through. The old flat 12 was under
+    // the 18px crow-foot / 14px bar footprints. CLEARANCE = the marker stroke + an anti-alias epsilon.
+    private static final double SELF_LOOP_MARKER_CLEARANCE = 2;
+    private static final double SELF_LOOP_ATTACH_STEP = 2 * MAX_MARKER_HALF + SELF_LOOP_MARKER_CLEARANCE;
     // Gap between the outermost loop leg and its label's left edge.
     private static final double SELF_LOOP_LABEL_GAP = 4;
 
@@ -241,10 +253,32 @@ public final class ErDiagramLayout {
         // relation rendered (rejecting the "unsupported" count would erase valid relations — the
         // original bug class): 0.3·h must clear the border inset plus one ATTACH_STEP per extra
         // lane, which by the 0.3/0.7 symmetry bounds the bottom nudges too.
+        // ...AND a table with even ONE self-loop must be tall enough that the loop's OWN two ends —
+        // the top marker and the bottom marker of the SAME relationship — cannot intersect (Lattice
+        // seq 281 F1). The lane nudges push the top attach UP and the bottom attach DOWN, so
+        // top-vs-bottom separation GROWS with lane index: lane 0 is the worst case, which is exactly
+        // why the multi-lane rule below could not see it. A single relationship still emits BOTH
+        // cardinality combos, and on a short attribute-less entity the border clamps compress them
+        // onto intersecting geometry: `A ||--o{ A` produced a 28.25px table whose top exact-one bar
+        // (129,26)..(129,40) was crossed by the bottom crow prong (136,43.25)..(120,34.25).
+        // Unclamped lane-0 separation is 0.4·h (0.7·h − 0.3·h), so 0.4·h must clear BOTH ends'
+        // perpendicular half-extents plus painted-stroke/antialias clearance.
+        double minSelfLoopBoxH = (2 * MAX_MARKER_HALF + SELF_LOOP_MARKER_CLEARANCE) / 0.4;
         for (int i = 0; i < n; i++) {
+            if (selfLoops[i] >= 1) {
+                boxH[i] = Math.max(boxH[i], minSelfLoopBoxH);
+            }
             if (selfLoops[i] > 1) {
                 boxH[i] = Math.max(boxH[i],
-                    (4 + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+                    (MAX_MARKER_HALF + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
+            }
+            // sir288 F1: containment growth must never invent a compartment. An attribute-less entity
+            // is a SINGLE name-filled band — emitTable's documented invariant is headerH == h — and
+            // raising only boxH above left a phantom rows-colored body below the name band
+            // (A ||--o{ A: a 50px box with a 28.25px band + 21.75px of empty rows fill). The grown
+            // height belongs to the only real compartment the entity has: the header itself.
+            if (!entities.get(i).hasAttributes()) {
+                headerH[i] = boxH[i];
             }
         }
 
@@ -639,12 +673,14 @@ public final class ErDiagramLayout {
     /// lane so stacked loops' horizontal legs never overpaint, clamped just inside the border span — a BELT: the sizing pass grows a multi-lane table so the nudges
     /// never actually clamp two lanes together (collinear legs overpaint; Lattice r3 seq 227).
     private static double loopExitY(double boxY, double boxH, int lane) {
-        return Math.max(boxY + 4, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
+        // Clamp at MAX_MARKER_HALF (not a flat 4) so the outermost lane's marker top edge (attach −
+        // MAX_MARKER_HALF) stays at/inside the table border instead of poking above it (sirentide 275).
+        return Math.max(boxY + MAX_MARKER_HALF, boxY + boxH * 0.3 - lane * SELF_LOOP_ATTACH_STEP);
     }
 
     /// Lane k's RETURN attach y (the bottom attach): 0.7·h nudged DOWN per lane, clamped in-span.
     private static double loopReturnY(double boxY, double boxH, int lane) {
-        return Math.min(boxY + boxH - 4, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
+        return Math.min(boxY + boxH - MAX_MARKER_HALF, boxY + boxH * 0.7 + lane * SELF_LOOP_ATTACH_STEP);
     }
 
     /// Horizontal extent a table's self-loop lane adds past its right border: the outermost vertical
