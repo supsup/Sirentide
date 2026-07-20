@@ -162,13 +162,19 @@ class GoldenSvgTest {
         FIXTURES.put("sankey",
             "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n"
                 + "  Electricity,Homes,20\n  Electricity,Industry,20\n");
-        // A continued-fraction snake graph (16th type): √2 = [1; 2, 2, 2]. Canonical Çanakçı–Schiffler
-        // square snake — sum(a_i) − 1 = 6 tiles (numerator of √2's convergent 17/12 = 6+1 matchings...
+        // A continued-fraction snake graph: √2 = [1; 2, 2, 2]. Canonical Çanakçı–Schiffler
+        // square snake — sum(a_i) − 1 = 6 tiles (its matching count = 17 = the convergent's numerator;
         // see SnakeGraphLayoutTest's matching-count oracle). Pins the per-tile rect geometry, the
         // y-flip, the sign-sequence turn structure, the per-segment tint, and the segment labels
         // byte-for-byte.
         FIXTURES.put("snake",
             "snake\n  cf: 1, 2, 2, 2\n");
+        // A Young diagram: the partition [3, 2, 1] — a 6-box staircase, longest row on top,
+        // each row left-justified, stacked downward (English convention). Pins the left-justified box grid
+        // (one Rect per box, per-row palette tint + grey border), the per-row anchor groups, and the
+        // grow-to-fit canvas (2*MARGIN + maxLen*UNIT by 2*MARGIN + numRows*UNIT) byte-for-byte.
+        FIXTURES.put("young",
+            "young\n  rows: 3, 2, 1\n");
     }
 
     @Test

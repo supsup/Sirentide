@@ -5,4 +5,5 @@ package com.sirentide.ir;
 /// never sees it. New diagram types (xychart, sequence) join as permitted records.
 public sealed interface Diagram
     permits Empty, Pie, XyChart, Timeline, Gantt, Flowchart, Sequence, StateDiagram, QuadrantChart,
-        ClassDiagram, ErDiagram, MathBlock, GitGraph, Journey, Mindmap, Sankey, Matrix, Snake {}
+        ClassDiagram, ErDiagram, MathBlock, GitGraph, Journey, Mindmap, Sankey, Matrix, Snake,
+        YoungDiagram {}
