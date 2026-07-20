@@ -382,6 +382,10 @@ public final class Sirentide {
             // A continued-fraction snake graph: the canonical Çanakçı–Schiffler square snake — a strip
             // of sum(a_i) − 1 unit tiles whose sign-sequence turns encode the partial quotients.
             case com.sirentide.ir.Snake sn -> com.sirentide.layout.SnakeGraphLayout.layout(sn, math);
+            // A tensor-network (Penrose) diagram: a horizontal MPS/MPO chain of tensor cores with bond
+            // edges + dangling physical legs. No `$…$` labels in this slice, so `math` is unused here.
+            case com.sirentide.ir.TensorNetwork tn ->
+                com.sirentide.layout.TensorNetworkLayout.layout(tn);
             // A Young diagram: a partition drawn as left-justified rows of unit boxes (English convention).
             case com.sirentide.ir.YoungDiagram yd -> com.sirentide.layout.YoungDiagramLayout.layout(yd, math);
             case Empty ignored -> LaidOut.of(0, 0);

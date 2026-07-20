@@ -172,6 +172,10 @@ class BrewShotGalleryTest {
             "snake\ncf: 1, 2, 2, 2\n"),
         new Case("snake-e", "Snake graph — e-start = [2,1,2,1,1,4]",
             "snake\ncf: 2, 1, 2, 1, 1, 4\n"),
+        new Case("tensornetwork", "Tensor network (MPS chain — cores, bonds, physical legs)",
+            "tensornetwork\nmps A B C D"),
+        new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
+            "tensornetwork\nmpo A B C D"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

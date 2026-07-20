@@ -155,6 +155,19 @@ class ShowcaseGenTest {
                 + "of its in- or out-flow. Bands are a lighter tint of their source's color.",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
+        new Card("Tensor network — MPS chain", "tensornetwork",
+            "Penrose graphical notation: a matrix-product state as a horizontal chain of tensor "
+                + "<em>cores</em> (discs), a <em>bond</em> (the contracted virtual index) between each "
+                + "adjacent pair, and one dangling <em>physical leg</em> per core. Each core anchors as a "
+                + "<code>node</code>, each bond as an <code>edge</code>, so the chain plays through frame "
+                + "by frame like every other diagram.",
+            "tensornetwork\nmps A B C D"),
+        new Card("Tensor network — MPO operator", "tensornetwork mpo",
+            "An <code>mpo</code> chain is a matrix-product <em>operator</em>: every core carries a "
+                + "SECOND vertical leg (the operator's row index goes up, its column index down), so the "
+                + "chain reads as an operator acting on a state. Same core/bond geometry, two legs per "
+                + "core instead of one.",
+            "tensornetwork\nmpo A B C D"),
         new Card("Flowchart — nested subgraphs", "subgraph",
             "Cluster containers group nodes inside a titled frame; nest them for pipelines "
                 + "within pipelines. The frame border, title tab, and canvas grow-to-fit are all baked.",
@@ -292,7 +305,18 @@ class ShowcaseGenTest {
                 + "of its in- and out-flow totals. Every flow draws as a band whose width is "
                 + "proportional to its value, tinted from its source node's colour.",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
-                + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5", false));
+                + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5", false),
+        new TypePage("tensornetwork.html", "Tensor network", "Tensor-network diagram",
+            "A tensor-network diagram in Penrose graphical notation — the notation of "
+                + "quantum-information / DMRG / tensor-network-ML papers. <code>mps A B C D</code> lays "
+                + "out a matrix-product STATE: an ordered row of tensor <code>cores</code> (discs), a "
+                + "<code>bond</code> (the contracted virtual index) drawn between every adjacent pair, and "
+                + "one dangling <code>physical leg</code> per core. <code>mpo A B C D</code> makes it a "
+                + "matrix-product OPERATOR — each core gains a second vertical leg (one physical index "
+                + "up, one down). Each core anchors as a <code>node</code> and each bond as an "
+                + "<code>edge</code>, so the chain is queryable and plays through frame-by-frame like "
+                + "every other type; pure line/disc geometry, no runtime dependency.",
+            "tensornetwork\nmps A B C D", false));
 
     @Test
     void showcaseRendersEveryTypeAndFeature() throws Exception {
