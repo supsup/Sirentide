@@ -165,8 +165,8 @@ class GoldenSvgTest {
         // A continued-fraction snake graph: √2 = [1; 2, 2, 2]. Canonical Çanakçı–Schiffler
         // square snake — sum(a_i) − 1 = 6 tiles (its matching count = 17 = the convergent's numerator;
         // see SnakeGraphLayoutTest's matching-count oracle). Pins the per-tile rect geometry, the
-        // y-flip, the sign-sequence turn structure, the per-segment tint, and the segment labels
-        // byte-for-byte.
+        // y-flip, the sign-sequence turn structure, and the per-segment tint byte-for-byte — the snake
+        // carries NO visible labels (review sir344: the continued fraction lives in the a11y desc).
         FIXTURES.put("snake",
             "snake\n  cf: 1, 2, 2, 2\n");
         // A Young diagram: the partition [3, 2, 1] — a 6-box staircase, longest row on top,

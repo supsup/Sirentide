@@ -2,14 +2,13 @@ package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.contract.SirentideRole;
-import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Snake;
 import java.util.ArrayList;
 import java.util.List;
 
 /// Pure snake-graph layout (plan sirentide-snake-graph-primitive): a continued fraction
 /// `[a_1, a_2, …, a_n]` (positive integers) drawn as the canonical Çanakçı–Schiffler SQUARE snake
-/// graph (arXiv 1608.06568, "Snake graphs and continued fractions"). Deterministic arithmetic, zero
+/// graph (arXiv 1608.06568, "Cluster algebras and continued fractions"). Deterministic arithmetic, zero
 /// graph optimization (docs/DESIGN.md §6).
 ///
 /// CANONICAL MODEL (matches {@link Snake}'s javadoc; the exact rule, non-circular-verified by the
@@ -38,44 +37,41 @@ import java.util.List;
 /// staircase anchored at the origin (`minGx = minGy = 0`), and — because each step raises `gx+gy` by
 /// one — no cell is ever revisited (no self-overlap, ever).
 ///
-/// EMIT: one contract-clean {@link Rect} per unit tile (light per-SEGMENT tint + a grey border) plus
-/// one {@link GlyphRun} per maximal straight segment carrying that segment's tile count, contrast-
-/// filled against the tint so it reads on light AND dark host pages. Math coords are y-FLIPPED once
-/// here (SVG y grows DOWN); the canvas grows to fit the strip's bounding box plus a uniform
-/// {@link #MARGIN}, so nothing ever escapes the canvas (the {@code GeometryEscapeTest} invariant).
-/// Each maximal straight segment is wrapped in ONE `<g role="cell">` anchor group (its tiles + label),
-/// `seq` = segment index, so a play-through reveals the snake one straight run at a time (plan
-/// sirentide-play-through-frames).
+/// EMIT: one contract-clean {@link Rect} per unit tile (light per-SEGMENT tint + a grey border) — and
+/// NOTHING else. The figure carries NO visible labels: the continued fraction is recoverable from the
+/// tile GEOMETRY (via the perfect-matching count of the strip — the numerator oracle in {@code
+/// SnakeGraphLayoutTest}) and is stated in plain words in the a11y description; the per-run tint is what
+/// delineates the segments to the eye. (An earlier version stamped each maximal straight segment with
+/// its tile COUNT; those read misleadingly as partial quotients — √2 = [1,2,2,2] visibly showed
+/// "2,2,2", omitting the initial 1 — so the labels were removed, review sir344.) Math coords are
+/// y-FLIPPED once here (SVG y grows DOWN); the canvas grows to fit the strip's bounding box plus a
+/// uniform {@link #MARGIN}, so nothing ever escapes the canvas (the {@code GeometryEscapeTest}
+/// invariant). Each maximal straight segment is still wrapped in ONE `<g role="cell">` anchor group
+/// (its tiles), `seq` = segment index, so a play-through reveals the snake one straight run at a time
+/// (plan sirentide-play-through-frames).
 public final class SnakeGraphLayout {
 
     private SnakeGraphLayout() {}
-
-    private static final FontMetrics FONT = FontMetrics.bundled();
 
     /// Unit-square side and the uniform canvas margin around the strip.
     private static final double UNIT = 32;
     private static final double MARGIN = 24;
 
-    /// Segment-label type size and its ellipsize budget (a defensive cap — a tile count is at most 4
-    /// digits, comfortably inside the strip interior, so a label never approaches the canvas edge).
-    private static final double LABEL_SIZE = 14;
-    private static final double LABEL_MAX_W = UNIT * 1.6;
-
     /// The square border — the same axis grey the other types use, so the grid reads as a strip.
     private static final String BORDER_STROKE = "#94a3b8";
     private static final double BORDER_WIDTH = 1;
 
-    /// How far each palette colour is lightened toward white for the square fill (a soft tint that
-    /// {@link Colors#contrastFill} still yields a dark, page-theme-agnostic label ink against).
+    /// How far each palette colour is lightened toward white for the square fill (a soft per-segment
+    /// tint — the only thing that delineates the straight runs now that the snake carries no labels).
     private static final double TINT = 0.62;
 
     public static LaidOut layout(Snake snake) {
         return layout(snake, null);
     }
 
-    /// Inline-math entry (parity with every other layout): the segment labels are plain integers, so a
-    /// `$…$` seam is never triggered — the `math` argument is accepted and ignored, and this is
-    /// byte-identical to {@link #layout(Snake)}.
+    /// Inline-math entry (parity with every other layout): a snake carries no text at all, so there is
+    /// no `$…$` seam to bake — the `math` argument is accepted and ignored, and this is byte-identical
+    /// to {@link #layout(Snake)}.
     public static LaidOut layout(Snake snake, MathFragmentRenderer math) {
         List<Integer> qs = snake.quotients();
         if (qs.isEmpty()) {
@@ -145,8 +141,8 @@ public final class SnakeGraphLayout {
         double canvasW = 2 * MARGIN + cols * UNIT;
         double canvasH = 2 * MARGIN + rows * UNIT;
 
-        // 3. Group the tiles by straight segment so each segment becomes ONE anchor group (its tiles +
-        //    its tile-count label), and so the label can centre on the segment's centroid.
+        // 3. Group the tiles by straight segment so each segment becomes ONE anchor group. The snake
+        //    carries NO visible labels (review sir344) — the group holds only its tinted tiles.
         List<List<int[]>> bySeg = new ArrayList<>();
         for (int s = 0; s < segments; s++) {
             bySeg.add(new ArrayList<>());
@@ -159,25 +155,10 @@ public final class SnakeGraphLayout {
         for (int s = 0; s < segments; s++) {
             String tint = Colors.lighten(Colors.PALETTE[s % Colors.PALETTE.length], TINT);
             List<Shape> group = new ArrayList<>();
-            double sumCx = 0;
-            double sumCy = 0;
             for (int[] c : bySeg.get(s)) {
                 double sx = MARGIN + c[0] * UNIT;
                 double sy = MARGIN + (maxGy - c[1]) * UNIT;   // y FLIP: higher gy → higher on screen
                 group.add(new Rect(sx, sy, UNIT, UNIT, tint, BORDER_STROKE, BORDER_WIDTH));
-                sumCx += sx + UNIT / 2;
-                sumCy += sy + UNIT / 2;
-            }
-            int n = bySeg.get(s).size();
-            // The segment's tile count, centred on the segment's centroid, contrast-filled vs the tint.
-            String text = Integer.toString(n);
-            String fit = FONT.ellipsize(text, LABEL_MAX_W, LABEL_SIZE);
-            double w = FONT.runWidth(fit, LABEL_SIZE);
-            double cx = sumCx / n;
-            double baseline = sumCy / n + LABEL_SIZE * 0.35;
-            String d = FONT.textPathD(fit, cx - w / 2, baseline, LABEL_SIZE);
-            if (!d.isBlank()) {
-                group.add(new GlyphRun(d, Colors.contrastFill(tint)));
             }
             shapes.add(new Group(assigner.assign(SirentideRole.CELL, "seg" + s), group));
         }

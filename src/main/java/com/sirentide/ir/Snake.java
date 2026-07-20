@@ -4,8 +4,8 @@ import java.util.List;
 
 /// A snake-graph continued-fraction figure (plan sirentide-snake-graph-primitive). A continued
 /// fraction `[a_1, a_2, …, a_n]` — a list of POSITIVE-INTEGER partial quotients — renders as the
-/// canonical Çanakçı–Schiffler SQUARE snake graph (Çanakçı & Schiffler, "Snake graphs and continued
-/// fractions", arXiv 1608.06568): a connected strip of unit-square tiles whose turns encode the
+/// canonical Çanakçı–Schiffler SQUARE snake graph (Çanakçı & Schiffler, "Cluster algebras and
+/// continued fractions", arXiv 1608.06568): a connected strip of unit-square tiles whose turns encode the
 /// quotients via the continued fraction's sign sequence.
 ///
 /// TILE COUNT + TURNS (documented once, here, and mirrored by {@link

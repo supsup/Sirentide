@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Snake;
+import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.Group;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Line;
@@ -45,8 +46,8 @@ class SnakeGraphLayoutTest {
     }
 
     /// The laid-out tile {@link Rect}s in strip order (flattening the per-segment anchor groups). The
-    /// segments partition the tiles CONTIGUOUSLY in strip order and each emits its tiles before its
-    /// label glyph, so the filtered Rect sequence is exactly the strip sequence t0, t1, … .
+    /// segments partition the tiles CONTIGUOUSLY in strip order (and the snake emits ONLY tiles — no
+    /// labels), so the filtered Rect sequence is exactly the strip sequence t0, t1, … .
     private static List<Rect> tiles(LaidOut laid) {
         List<Rect> out = new ArrayList<>();
         for (Shape s : Group.flatten(laid.shapes())) {
@@ -99,6 +100,25 @@ class SnakeGraphLayoutTest {
         assertTrue(tiles(laid).isEmpty(), "[1] emits ZERO tiles");
         long lines = Group.flatten(laid.shapes()).stream().filter(s -> s instanceof Line).count();
         assertEquals(1, lines, "[1] emits exactly one edge (a <line>)");
+    }
+
+    @Test
+    void snakeCarriesNoVisibleLabels() {
+        // review sir344: a snake renders as a BARE tinted tile strip — NO text/GlyphRun. The old
+        // per-segment tile-COUNT labels read misleadingly as partial quotients (√2 = [1,2,2,2] showed
+        // "2,2,2", dropping the leading 1); the continued fraction is recoverable from the tile geometry
+        // (the matching-count oracle below) and stated in the a11y description instead. This pins the
+        // label-free contract so it can't silently regress.
+        for (String dsl : List.of(
+                "snake\ncf: 1, 1, 1, 1, 1\n",   // φ — a straight strip
+                "snake\ncf: 1, 2, 2, 2\n",      // √2 — the golden
+                "snake\ncf: 2, 1, 2, 1, 1, 4\n" // e-start — several segments
+        )) {
+            long glyphs = Group.flatten(SnakeGraphLayout.layout(parse(dsl)).shapes()).stream()
+                .filter(s -> s instanceof GlyphRun)
+                .count();
+            assertEquals(0, glyphs, "the snake emits ZERO text labels for " + dsl);
+        }
     }
 
     // --------------------------------------------------- THE SEMANTIC ORACLE ------
