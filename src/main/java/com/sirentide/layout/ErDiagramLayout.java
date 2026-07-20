@@ -253,7 +253,21 @@ public final class ErDiagramLayout {
         // relation rendered (rejecting the "unsupported" count would erase valid relations — the
         // original bug class): 0.3·h must clear the border inset plus one ATTACH_STEP per extra
         // lane, which by the 0.3/0.7 symmetry bounds the bottom nudges too.
+        // ...AND a table with even ONE self-loop must be tall enough that the loop's OWN two ends —
+        // the top marker and the bottom marker of the SAME relationship — cannot intersect (Lattice
+        // seq 281 F1). The lane nudges push the top attach UP and the bottom attach DOWN, so
+        // top-vs-bottom separation GROWS with lane index: lane 0 is the worst case, which is exactly
+        // why the multi-lane rule below could not see it. A single relationship still emits BOTH
+        // cardinality combos, and on a short attribute-less entity the border clamps compress them
+        // onto intersecting geometry: `A ||--o{ A` produced a 28.25px table whose top exact-one bar
+        // (129,26)..(129,40) was crossed by the bottom crow prong (136,43.25)..(120,34.25).
+        // Unclamped lane-0 separation is 0.4·h (0.7·h − 0.3·h), so 0.4·h must clear BOTH ends'
+        // perpendicular half-extents plus painted-stroke/antialias clearance.
+        double minSelfLoopBoxH = (2 * MAX_MARKER_HALF + SELF_LOOP_MARKER_CLEARANCE) / 0.4;
         for (int i = 0; i < n; i++) {
+            if (selfLoops[i] >= 1) {
+                boxH[i] = Math.max(boxH[i], minSelfLoopBoxH);
+            }
             if (selfLoops[i] > 1) {
                 boxH[i] = Math.max(boxH[i],
                     (MAX_MARKER_HALF + SELF_LOOP_ATTACH_STEP * (selfLoops[i] - 1)) / 0.3);
