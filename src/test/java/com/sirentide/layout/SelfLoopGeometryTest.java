@@ -42,7 +42,9 @@ class SelfLoopGeometryTest {
     private static final String EDGE = "#94a3b8";      // class relationship edge line
     private static final String ER_EDGE = "#5eead4";   // ER relationship edge line
     private static final String MK = "#475569";        // class marker glyph colour
-    private static final String ER_MK = "#0f766e";     // ER cardinality marker glyph colour
+    private static final String ER_MK = "#0f766e";
+    private static final String ACCENT = "#e8590c";      // Emphasis.ACCENT (play-through active)
+    private static final double ACTIVE_WIDTH_MULT = 2.0; // Emphasis.ACTIVE_WIDTH_MULT     // ER cardinality marker glyph colour
 
     // -- 1) long label stays inside the viewBox (class + ER) -------------------------------------
 
@@ -368,7 +370,7 @@ class SelfLoopGeometryTest {
             assertTrue(markerFootprint(g, ER_MK) != null, "each ER self-loop rendered a cardinality marker");
         }
         Rect boxA = boxRects(laid, SirentideRole.ENTITY).get(0);
-        assertMarkerFootprintsDisjointAcrossGroups(loops, ER_MK, boxA.y() + boxA.height() / 2);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, ER_MK, boxA.y() + boxA.height() / 2, true);
         assertAllGeometryInside(laid);
     }
 
@@ -401,11 +403,86 @@ class SelfLoopGeometryTest {
         List<String> frames = Sirentide.renderFrames(dsl);
         assertTrue(frames.get(0).contains("#e8590c"), "frame 0 accents the active self-loop marker group");
         assertFalse(Sirentide.render(dsl).contains("#e8590c"), "the static render has no active accent");
-        // (b) geometry (identical in every frame): the two triangle footprints are disjoint.
+        // (a2) MARKER-SPECIFIC recolour (Lattice 281 F2): "the frame contains the accent SOMEWHERE" is
+        // satisfied by an accented leg or label even if marker recolouring broke entirely. Pin it to the
+        // marker groups themselves: in frame 0 the ACTIVE group's own <g> must carry the accent AND the
+        // doubled stroke width, and the FUTURE group's <g> must NOT carry the accent at all.
+        String activeGroup = groupBlock(frames.get(0), 0);
+        String futureGroup = groupBlock(frames.get(0), 1);
+        assertTrue(activeGroup.contains(ACCENT),
+            "frame 0: the ACTIVE self-loop group must carry the accent on its own shapes");
+        assertFalse(futureGroup.contains(ACCENT),
+            "frame 0: a FUTURE self-loop group must NOT carry the active accent");
+        // the ACTIVE promotion also thickens: a 2x stroke width must appear in the active group
+        // The marker's own base stroke is 1, so ACTIVE must paint it at exactly 2 (verified against a
+        // real frame: the FUTURE group emits the same markers at 1).
+        assertTrue(activeGroup.contains("stroke-width=\"2\""),
+            "frame 0: the ACTIVE group's marker strokes must be promoted to the doubled width");
+        assertFalse(futureGroup.contains("stroke-width=\"2\""),
+            "frame 0: a FUTURE group's markers must stay at their base width");
+
+        // (b) geometry (identical in every frame): the two triangle footprints are disjoint, measured as
+        // PAINTED bounds at the ACTIVE 2x stroke — the width a viewer actually sees during play-through.
         LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(dsl));
         List<Group> loops = edgeGroups(laid);
         Rect boxA = boxRects(laid, SirentideRole.CLASS).get(0);
         assertMarkerFootprintsDisjointAcrossGroups(loops, MK, boxA.y() + boxA.height() / 2);
+        assertPaintedMarkersDisjointAtActiveWidth(loops, MK, boxA.y() + boxA.height() / 2);
+    }
+
+    /// Lattice 281 F2, the aggregation gap: seq 275 required cross-group marker coverage for AGGREGATION
+    /// as well as inheritance/composition/ER. Aggregation (`o--`) draws a hollow diamond, a different
+    /// primitive from the inheritance triangle, so it needs its own case rather than inheriting the
+    /// triangle's proof. Repeated on ONE class so the two markers land on the same side.
+    @Test
+    void repeatedAggregationSelfLoopMarkersStayDisjoint() {
+        String dsl = "classDiagram\n  class A\n  A o-- A : first\n  A o-- A : second\n";
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(dsl));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(2, loops.size(), "two aggregation self-relations → two edge groups");
+        for (Group g : loops) { // POSITIVE control: each rendered its diamond
+            assertTrue(markerFootprint(g, MK) != null, "each aggregation self-loop rendered its marker");
+        }
+        Rect boxA = boxRects(laid, SirentideRole.CLASS).get(0);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, MK, boxA.y() + boxA.height() / 2);
+        assertPaintedMarkersDisjointAtActiveWidth(loops, MK, boxA.y() + boxA.height() / 2);
+        assertAllGeometryInside(laid);
+    }
+
+    /// Disjointness measured at the ACTIVE playback stroke width, where the painted marks are fattest.
+    private static void assertPaintedMarkersDisjointAtActiveWidth(
+            List<Group> groups, String markerColor, double splitY) {
+        for (double[] band : new double[][] {
+                {Double.NEGATIVE_INFINITY, splitY}, {splitY, Double.POSITIVE_INFINITY}}) {
+            List<double[]> boxes = new ArrayList<>();
+            for (Group g : groups) {
+                boxes.add(paintedMarkerFootprint(g, markerColor, band[0], band[1], ACTIVE_WIDTH_MULT));
+            }
+            for (int i = 0; i < boxes.size(); i++) {
+                for (int j = i + 1; j < boxes.size(); j++) {
+                    if (boxes.get(i) == null || boxes.get(j) == null) {
+                        continue;
+                    }
+                    assertFalse(footprintsOverlap(boxes.get(i), boxes.get(j), 1e-6),
+                        "markers of groups " + i + " and " + j + " overlap once PAINTED at the active "
+                            + ACTIVE_WIDTH_MULT + "x stroke: "
+                            + java.util.Arrays.toString(boxes.get(i)) + " vs "
+                            + java.util.Arrays.toString(boxes.get(j)));
+                }
+            }
+        }
+    }
+
+    /// The `<g data-sirentide-seq=k>` block for step k, so a frame assertion can be made about ONE
+    /// group's own shapes rather than about the whole document.
+    private static String groupBlock(String svg, int seq) {
+        String open = "data-sirentide-seq=\"" + seq + "\"";
+        int at = svg.indexOf(open);
+        assertTrue(at >= 0, "frame has no group for seq " + seq);
+        int start = svg.lastIndexOf("<g", at);
+        int end = svg.indexOf("</g>", at);
+        assertTrue(start >= 0 && end > start, "malformed group block for seq " + seq);
+        return svg.substring(start, end);
     }
 
     // -- 5) tall math labels: ascent/descent participate in canvas growth ------------------------
@@ -637,15 +714,34 @@ class SelfLoopGeometryTest {
     /// apart). Checks the top band and the bottom band independently.
     private static void assertMarkerFootprintsDisjointAcrossGroups(
             List<Group> groups, String markerColor, double splitY) {
-        assertBandDisjoint(groups, markerColor, Double.NEGATIVE_INFINITY, splitY, "top");
-        assertBandDisjoint(groups, markerColor, splitY, Double.POSITIVE_INFINITY, "bottom");
+        assertMarkerFootprintsDisjointAcrossGroups(groups, markerColor, splitY, false);
+    }
+
+    /// `requireBothBands` (Lattice 281 F2): when every group is KNOWN to emit a marker at both
+    /// attaches — an ER relationship always emits both cardinality combos — assert each expected
+    /// marker is actually PRESENT before comparing. Without it the pairwise loop below silently
+    /// `continue`s past a null footprint, so a fixture that stopped rendering one end entirely would
+    /// still pass "nothing overlaps". A whole-group positive control does not cover this, because it
+    /// cannot tell which band the marker it found was in.
+    private static void assertMarkerFootprintsDisjointAcrossGroups(
+            List<Group> groups, String markerColor, double splitY, boolean requireBothBands) {
+        assertBandDisjoint(groups, markerColor, Double.NEGATIVE_INFINITY, splitY, "top", requireBothBands);
+        assertBandDisjoint(groups, markerColor, splitY, Double.POSITIVE_INFINITY, "bottom", requireBothBands);
     }
 
     private static void assertBandDisjoint(
-            List<Group> groups, String markerColor, double yLo, double yHi, String side) {
+            List<Group> groups, String markerColor, double yLo, double yHi, String side,
+            boolean requireMarker) {
         List<double[]> boxes = new ArrayList<>();
         for (Group g : groups) {
-            boxes.add(markerFootprint(g, markerColor, yLo, yHi));
+            boxes.add(paintedMarkerFootprint(g, markerColor, yLo, yHi, 1.0));
+        }
+        if (requireMarker) {
+            for (int i = 0; i < boxes.size(); i++) {
+                assertTrue(boxes.get(i) != null,
+                    "edge group " + i + " rendered no " + side + "-attach marker at all — the "
+                        + "disjointness below would be vacuous for it");
+            }
         }
         for (int i = 0; i < boxes.size(); i++) {
             for (int j = i + 1; j < boxes.size(); j++) {
@@ -659,6 +755,45 @@ class SelfLoopGeometryTest {
                         + java.util.Arrays.toString(bi) + " vs " + java.util.Arrays.toString(bj));
             }
         }
+    }
+
+    /// The PAINTED footprint (Lattice 281 F2): the centerline bbox inflated by half the stroke width,
+    /// because a stroke is painted centred on its path — two markers whose CENTERLINES clear each other
+    /// by less than their combined half-widths still visibly overlap on screen. `widthMultiplier` models
+    /// a playback state: an ACTIVE group is emitted at {@code Emphasis.ACTIVE_WIDTH_MULT} (2x) stroke,
+    /// so the frame a viewer actually sees is fatter than the static geometry the old oracle measured.
+    private static double[] paintedMarkerFootprint(
+            Group g, String markerColor, double yLo, double yHi, double widthMultiplier) {
+        double[] box = null;
+        for (Shape s : g.members()) {
+            if (s instanceof Line l && markerColor.equals(l.stroke())) {
+                double pad = (l.strokeWidth() * widthMultiplier) / 2.0;
+                box = mergePoint(box, l.x1(), l.y1(), pad, yLo, yHi);
+                box = mergePoint(box, l.x2(), l.y2(), pad, yLo, yHi);
+            } else if (s instanceof Path pth) {
+                List<double[]> pp = new ArrayList<>();
+                pathPoints(pth.d(), pp);
+                for (double[] q : pp) {
+                    box = mergePoint(box, q[0], q[1], 0, yLo, yHi);
+                }
+            }
+        }
+        return box;
+    }
+
+    private static double[] mergePoint(double[] box, double x, double y, double pad,
+                                       double yLo, double yHi) {
+        if (y < yLo || y >= yHi) {
+            return box;
+        }
+        if (box == null) {
+            return new double[] {x - pad, y - pad, x + pad, y + pad};
+        }
+        box[0] = Math.min(box[0], x - pad);
+        box[1] = Math.min(box[1], y - pad);
+        box[2] = Math.max(box[2], x + pad);
+        box[3] = Math.max(box[3], y + pad);
+        return box;
     }
 
     /// EVERY coordinate a group's leaf geometry touches: line endpoints, rect corners, and every
