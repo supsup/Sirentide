@@ -387,6 +387,27 @@ class SelfLoopGeometryTest {
             "2·MAX_MARKER_HALF separation removes the overlap the derived pitch is built to clear");
     }
 
+    @Test
+    void stackedSelfLoopMarkersStayDisjointAcrossPlaybackFrames() {
+        // Requirement 3 (Lattice 275): pin a REAL playback frame where no later FUTURE marker intersects
+        // the ACTIVE one. Frame GEOMETRY is invariant — renderFrames recolours the one layout, SvgEmitter
+        // only changes fills/strokes by group state — so the static marker disjointness proven above IS the
+        // playback-overpaint guarantee (the same principle the leg oracle records at
+        // assertNoCollinearOverlapAcrossGroups: "static disjointness is playback disjointness"). This pins
+        // both halves: (a) a real frame recolours the marker groups active-vs-future, and (b) the markers
+        // are geometrically disjoint, so the recolour can never overpaint one marker with another.
+        String dsl = "classDiagram\n  class A\n  A <|-- A\n  A <|-- A\n";
+        // (a) real playback: frame 0 accents the ACTIVE group (the static render carries no accent).
+        List<String> frames = Sirentide.renderFrames(dsl);
+        assertTrue(frames.get(0).contains("#e8590c"), "frame 0 accents the active self-loop marker group");
+        assertFalse(Sirentide.render(dsl).contains("#e8590c"), "the static render has no active accent");
+        // (b) geometry (identical in every frame): the two triangle footprints are disjoint.
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(dsl));
+        List<Group> loops = edgeGroups(laid);
+        Rect boxA = boxRects(laid, SirentideRole.CLASS).get(0);
+        assertMarkerFootprintsDisjointAcrossGroups(loops, MK, boxA.y() + boxA.height() / 2);
+    }
+
     // -- 5) tall math labels: ascent/descent participate in canvas growth ------------------------
 
     @Test

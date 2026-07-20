@@ -182,6 +182,13 @@ class BrewShotGalleryTest {
             "erDiagram\nEMPLOYEE ||--o{ EMPLOYEE : manages\nEMPLOYEE ||--|| DESK : uses"),
         new Case("class-self-loops-three", "Three self-relation lanes (box grows; no collinear legs)",
             "classDiagram\nclass A\nA --> A : first\nA --> A : second\nA --> A : third"),
+        // sirentide 275: stack SAME-SIDE markers whose footprint exceeds the old 12px pitch (inheritance
+        // triangle 16, composition diamond 14, ER crow-foot 18) so the capture actually exercises marker
+        // disjointness — the three-arrow case above uses 10px arrows that fit the old pitch and hid it.
+        new Case("class-self-loops-marker-stack", "Stacked over-footprint markers (triangles + diamond)",
+            "classDiagram\nclass A\nA <|-- A : inherits\nA <|-- A : also\nA *-- A : owns"),
+        new Case("er-self-loops-stacked", "Stacked ER self-relations (crow-feet + bars, same side)",
+            "erDiagram\nA ||--o{ A : first\nA ||--o{ A : second"),
         // THE MOAT — real baked LaTeX (via the injected LatteX renderer), audited to stay in-canvas.
         new Case("mathblock", "Display math (standalone, baked LaTeX)",
             "mathblock\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", REAL),
