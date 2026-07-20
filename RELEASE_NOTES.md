@@ -6,6 +6,24 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-17 — Release **0.2.0**
+
+Version bump **0.1.0 → 0.2.0** (commit `829aba0`), vendored into stafficy `/docs` as
+`sirentide-0.2.0.jar` — the first republish since the M0 vendor, so a consumer pinned to `0.1.0`
+picks up everything since: M1's type explosion, M2's flowchart fidelity + theming + play-through,
+the semantic anchors, the 07-11 annotations (caption band, `classDef` semantic colour, node-label
+word-wrap), the `matrix` comparison/verdict grid (see below), the `%% direction:` directive, the
+six per-path OOM caps, and subgraph-id edge routing (the last two described in their own dated
+entries below).
+
+### `matrix` — comparison / verdict grid (16th type)
+A `matrix` diagram renders a labelled comparison grid: row/column headers and cells, with a
+`text:verdict` cell syntax for a descriptive cell carrying its own colour. Cells bake to the same
+`<rect>` + glyph-`<path>` alphabet every other type uses — no new element or attribute shape
+reaches the emitter, so it is sanitizer-safe by the same construction as the existing types.
+(Sixteenth verified against the parser dispatch at this tip: exactly sixteen diagram kinds,
+`matrix` the newest.)
+
 ## 2026-07-17 — An edge to a subgraph id routes into the cluster
 
 An edge whose endpoint names a **subgraph** used to mint a separate empty node wearing the
