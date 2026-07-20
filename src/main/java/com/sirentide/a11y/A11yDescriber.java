@@ -97,6 +97,7 @@ public final class A11yDescriber {
             case Mindmap m -> mindmap(m);
             case Sankey s -> sankey(s);
             case com.sirentide.ir.TensorNetwork tn -> tensorNetwork(tn);
+            case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case Empty ignored -> A11y.NONE;
         };
     }
@@ -154,6 +155,37 @@ public final class A11yDescriber {
             d.append(n > shown ? ", …." : ".");
         }
         return new A11y("Tensor-network diagram", d.toString());
+    }
+
+    /// Young diagram: "Young diagram of the partition 3 + 2 + 1 with 6 boxes in 3 rows. Row lengths:
+    /// 3, 2, 1." The parts read top-to-bottom (weakly-decreasing, English convention); the box total is
+    /// their sum. Bounded (the part list capped at {@link #ITEM_CAP}) + deterministic (pure IR walk). A
+    /// bare young (no parts) reads as an empty Young diagram.
+    private static A11y young(com.sirentide.ir.YoungDiagram y) {
+        java.util.List<Integer> parts = y.rows();
+        if (parts.isEmpty()) {
+            return new A11y("Young diagram", "Empty Young diagram.");
+        }
+        int total = 0;
+        for (int p : parts) {
+            total += p;
+        }
+        int shown = Math.min(parts.size(), ITEM_CAP);
+        StringBuilder d = new StringBuilder("Young diagram of the partition ");
+        for (int i = 0; i < shown; i++) {
+            d.append(i > 0 ? " + " : "").append(parts.get(i));
+        }
+        if (parts.size() > shown) {
+            d.append(" + …");
+        }
+        d.append(" with ").append(total).append(total == 1 ? " box" : " boxes")
+            .append(" in ").append(parts.size()).append(parts.size() == 1 ? " row." : " rows.");
+        d.append(" Row lengths: ");
+        for (int i = 0; i < shown; i++) {
+            d.append(i > 0 ? ", " : "").append(parts.get(i));
+        }
+        d.append(parts.size() > shown ? ", …." : ".");
+        return new A11y("Young diagram", d.toString());
     }
 
     /// Comparison matrix: "Comparison matrix with 4 rows and 2 columns. Columns: snapshot, bare. Rows:
