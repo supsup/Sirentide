@@ -101,19 +101,21 @@ public final class A11yDescriber {
         };
     }
 
-    /// Snake graph: "Continued-fraction snake graph with 4 partial quotients and 7 squares. Quotients:
-    /// 1, 2, 2, 2." The quotient list reads in order (each `a_i` is a run of `a_i` unit squares); the
-    /// square total is the sum. Bounded (the quotient list capped at {@link #ITEM_CAP}) + deterministic
-    /// (pure IR walk). A bare snake (no quotients) reads as an empty snake graph.
+    /// Snake graph: "Continued-fraction snake graph with 4 partial quotients and 6 tiles. Quotients:
+    /// 1, 2, 2, 2." Canonical Çanakçı–Schiffler square snake — the tile count is `sum(a_i) − 1` (a
+    /// single quotient `[1]` is a 0-tile single edge). Bounded (the quotient list capped at {@link
+    /// #ITEM_CAP}) + deterministic (pure IR walk). A bare snake (no quotients) reads as an empty
+    /// snake graph.
     private static A11y snake(com.sirentide.ir.Snake s) {
         java.util.List<Integer> qs = s.quotients();
-        int total = 0;
+        long sum = 0;
         for (int a : qs) {
-            total += a;
+            sum += a;
         }
+        int tiles = qs.isEmpty() ? 0 : (int) (sum - 1);   // CANONICAL: sum(a_i) − 1 tiles.
         StringBuilder d = new StringBuilder("Continued-fraction snake graph with ")
             .append(qs.size()).append(qs.size() == 1 ? " partial quotient" : " partial quotients")
-            .append(" and ").append(total).append(total == 1 ? " square" : " squares").append('.');
+            .append(" and ").append(tiles).append(tiles == 1 ? " tile" : " tiles").append('.');
         if (!qs.isEmpty()) {
             d.append(" Quotients: ");
             int shown = Math.min(qs.size(), ITEM_CAP);

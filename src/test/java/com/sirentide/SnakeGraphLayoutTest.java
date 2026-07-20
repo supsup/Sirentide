@@ -8,21 +8,31 @@ import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Snake;
 import com.sirentide.layout.Group;
 import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Line;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import com.sirentide.layout.SnakeGraphLayout;
 import com.sirentide.parse.DslParser;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
-/// The snake graph (16th diagram type): a continued fraction `[a0; a1, …]` drawn as a connected strip
-/// of unit squares. These tests assert on the EMITTED GEOMETRY (the placed {@link Rect}s and the
-/// rendered `<rect>`s), not on layout internals, so they survive a refactor of the layout that keeps
-/// the contract shape. Covers the three canonical fixtures (φ, √2, e), the direction convention (runs
-/// alternate horizontal/vertical), canvas containment (nothing escapes), and the parse-side caps.
+/// The snake graph (16th diagram type): a continued fraction `[a_1, a_2, …]` drawn as the canonical
+/// Çanakçı–Schiffler SQUARE snake graph (arXiv 1608.06568). These tests assert on the EMITTED GEOMETRY
+/// (the placed {@link Rect} tiles) and — the load-bearing part — on the SEMANTIC ORACLE that proves
+/// the model is canonical: the number of PERFECT MATCHINGS of the emitted snake graph equals the
+/// NUMERATOR of the continued fraction. That discriminator fails on a wrong tile model (it is exactly
+/// what the previous ad-hoc "sum(a_i) squares" staircase lacked — review sir329).
+///
+/// Invariants covered: tile count = `sum(a_i) − 1`; `[1,1,1,1,1]` is a STRAIGHT 4-tile snake;
+/// `[1]` is a 0-tile single edge; the matching-count = numerator oracle over several fixtures; canvas
+/// containment; and the parse-side caps.
 class SnakeGraphLayoutTest {
 
     // Mirrors SnakeGraphLayout's constants (UNIT=32, MARGIN=24).
@@ -34,10 +44,10 @@ class SnakeGraphLayoutTest {
         return (Snake) DslParser.parse(dsl);
     }
 
-    /// The laid-out square {@link Rect}s in strip order (flattening the per-run anchor groups). Each
-    /// run emits its squares before its label glyph, and runs emit in index order, so this is exactly
-    /// the strip sequence s0, s1, … .
-    private static List<Rect> squares(LaidOut laid) {
+    /// The laid-out tile {@link Rect}s in strip order (flattening the per-segment anchor groups). The
+    /// segments partition the tiles CONTIGUOUSLY in strip order and each emits its tiles before its
+    /// label glyph, so the filtered Rect sequence is exactly the strip sequence t0, t1, … .
+    private static List<Rect> tiles(LaidOut laid) {
         List<Rect> out = new ArrayList<>();
         for (Shape s : Group.flatten(laid.shapes())) {
             if (s instanceof Rect r) {
@@ -58,42 +68,169 @@ class SnakeGraphLayoutTest {
     // -------------------------------------------------------- canonical shapes ----
 
     @Test
-    void phiIsAPureDiagonalStaircaseOfFiveSquares() {
-        // φ = [1; 1, 1, 1, 1] — every run length 1, pure alternating → a 5-square diagonal staircase.
-        LaidOut laid = SnakeGraphLayout.layout(parse("snake\ncf: 1, 1, 1, 1, 1\n"));
-        List<Rect> sq = squares(laid);
-        assertEquals(5, sq.size(), "square count == sum of quotients (1+1+1+1+1)");
-        // Consecutive squares alternate a horizontal step (run 0,2,4 → +x, same row) with a vertical
-        // step (run 1,3 → up = smaller SVG y, same column). Each step is exactly one UNIT.
-        assertStrictStaircase(sq);
-        // A pure diagonal: exactly one horizontal AND one vertical step between every pair, so the
-        // strip is 3 cells wide and 3 tall (maxGx=2, maxGy=2).
-        assertCanvas(laid, 3, 3);
+    void tileCountIsSumOfQuotientsMinusOne() {
+        // The canonical invariant: sum(a_i) − 1 tiles, NOT sum(a_i).
+        assertEquals(4, tiles(SnakeGraphLayout.layout(parse("snake\ncf: 1, 1, 1, 1, 1\n"))).size(),
+            "[1,1,1,1,1] → 5−1 = 4 tiles");
+        assertEquals(6, tiles(SnakeGraphLayout.layout(parse("snake\ncf: 1, 2, 2, 2\n"))).size(),
+            "[1,2,2,2] → 7−1 = 6 tiles");
+        assertEquals(10, tiles(SnakeGraphLayout.layout(parse("snake\ncf: 2, 1, 2, 1, 1, 4\n"))).size(),
+            "[2,1,2,1,1,4] → 11−1 = 10 tiles");
     }
 
     @Test
-    void sqrt2IsATwoUpTwoRightZigZagOfSevenSquares() {
-        // √2 = [1; 2, 2, 2] — runs 1,2,2,2 alternating right/up/right/up → 7 squares.
-        LaidOut laid = SnakeGraphLayout.layout(parse("snake\ncf: 1, 2, 2, 2\n"));
-        List<Rect> sq = squares(laid);
-        assertEquals(7, sq.size(), "square count == 1+2+2+2");
-        assertStrictStaircase(sq);
-        // Run lengths 1,2,2,2 with even=horizontal, odd=vertical → the runs' step directions must be
-        // [ (start), V, V, H, H, V, V ] between the 7 squares (first square has no predecessor).
-        assertRunDirections(sq, new int[] {1, 2, 2, 2});
-        // Strip spans gx 0..2 (1 + 2 right steps) and gy 0..4 (2 + 2 up steps) → 3 wide, 5 tall.
-        assertCanvas(laid, 3, 5);
+    void allOnesIsAStraightSnakeNoTurns() {
+        // φ = [1;1,1,1,1] → every sign-sequence block has length 1 → every junction is a block
+        // boundary → STRAIGHT. So a straight 4-tile line, NOT a staircase.
+        List<Rect> t = tiles(SnakeGraphLayout.layout(parse("snake\ncf: 1, 1, 1, 1, 1\n")));
+        assertEquals(4, t.size());
+        assertStrictStaircase(t);
+        double y0 = t.get(0).y();
+        for (int i = 0; i < t.size(); i++) {
+            assertEquals(y0, t.get(i).y(), EPS, "straight snake: every tile shares one row (no turn)");
+            assertEquals(MARGIN + i * UNIT, t.get(i).x(), EPS, "tile " + i + " steps one UNIT right");
+        }
     }
 
     @Test
-    void eStartIsAnElevenSquareMixedRunStrip() {
-        // e's start = [2; 1, 2, 1, 1, 4] — its characteristic mixed run pattern, 11 squares.
-        int[] cf = {2, 1, 2, 1, 1, 4};
-        LaidOut laid = SnakeGraphLayout.layout(parse("snake\ncf: 2, 1, 2, 1, 1, 4\n"));
-        List<Rect> sq = squares(laid);
-        assertEquals(sum(cf), sq.size(), "square count == 2+1+2+1+1+4 == 11");
-        assertStrictStaircase(sq);
-        assertRunDirections(sq, cf);
+    void singleQuotientOneIsAZeroTileSingleEdge() {
+        // [1] → sum 1 → sum − 1 = 0 tiles: a single edge (one perfect matching), never a tile.
+        LaidOut laid = SnakeGraphLayout.layout(parse("snake\ncf: 1\n"));
+        assertTrue(tiles(laid).isEmpty(), "[1] emits ZERO tiles");
+        long lines = Group.flatten(laid.shapes()).stream().filter(s -> s instanceof Line).count();
+        assertEquals(1, lines, "[1] emits exactly one edge (a <line>)");
+    }
+
+    // --------------------------------------------------- THE SEMANTIC ORACLE ------
+    // The number of perfect matchings of the emitted snake graph MUST equal the numerator of the
+    // continued fraction (Çanakçı–Schiffler). The matching count is computed INDEPENDENTLY of the
+    // numerator (a brute-force dimer enumeration over the emitted tile geometry vs. the continuant
+    // recurrence for the numerator) so the assertion is non-circular. This is what discriminates the
+    // canonical model from a wrong one.
+
+    @Test
+    void perfectMatchingCountEqualsContinuedFractionNumerator() {
+        assertMatchesNumerator(new int[] {1, 1, 1, 1, 1}, 8);      // φ convergent 8/5
+        assertMatchesNumerator(new int[] {1, 2, 2, 2}, 17);       // √2 convergent 17/12
+        assertMatchesNumerator(new int[] {2, 1, 2, 1, 1, 4}, 87); // e-start convergent 87/32
+        assertMatchesNumerator(new int[] {1, 2, 2}, 7);
+        assertMatchesNumerator(new int[] {3, 3}, 10);
+        assertMatchesNumerator(new int[] {2, 3, 1, 2, 3}, 84);    // the paper's worked example, 84/37
+    }
+
+    private void assertMatchesNumerator(int[] cf, int expectedNumerator) {
+        // 1. Numerator via the continuant recurrence p_k = a_k p_{k-1} + p_{k-2}, p_0=1, p_{-1}=0
+        //    (fully independent of the geometry).
+        long num = numerator(cf);
+        assertEquals(expectedNumerator, num, "continuant numerator of " + java.util.Arrays.toString(cf));
+
+        // 2. Perfect-matching count of the EMITTED tile geometry (independent brute-force dimer count).
+        StringBuilder dsl = new StringBuilder("snake\ncf: ");
+        for (int i = 0; i < cf.length; i++) {
+            dsl.append(i > 0 ? ", " : "").append(cf[i]);
+        }
+        dsl.append('\n');
+        List<Rect> t = tiles(SnakeGraphLayout.layout(parse(dsl.toString())));
+        assertEquals(sum(cf) - 1, t.size(), "tile count = sum − 1 for " + java.util.Arrays.toString(cf));
+        long matchings = perfectMatchings(t);
+
+        // 3. THE ORACLE: matchings == numerator.
+        assertEquals(num, matchings,
+            "perfect-matching count of the emitted snake graph must equal the CF numerator for "
+                + java.util.Arrays.toString(cf) + " (got " + matchings + " matchings vs numerator " + num
+                + ") — a non-canonical tile model fails HERE");
+    }
+
+    /// The numerator of `[a_1,…,a_n]` via the continuant recurrence (independent of any geometry).
+    private static long numerator(int[] a) {
+        long pPrev2 = 0;   // p_{-1}
+        long pPrev1 = 1;   // p_0
+        for (int x : a) {
+            long p = (long) x * pPrev1 + pPrev2;
+            pPrev2 = pPrev1;
+            pPrev1 = p;
+        }
+        return pPrev1;
+    }
+
+    /// Count perfect matchings (dimer coverings) of the snake graph formed by the emitted tiles, by
+    /// brute-force enumeration over the grid graph — the union of every tile's 4 corner vertices and 4
+    /// boundary edges. Deliberately implemented over the RAW EMITTED GEOMETRY and with ZERO reference
+    /// to the continued fraction, so equality with the numerator is a genuine (non-circular) proof that
+    /// the emitted shape is the canonical Çanakçı–Schiffler snake.
+    private static long perfectMatchings(List<Rect> tiles) {
+        // Recover integer grid cells (col,row) from the emitted rects (screen coords / UNIT).
+        Map<Long, Integer> vid = new HashMap<>();
+        List<Set<Integer>> adjTmp = new ArrayList<>();
+        Set<Long> edgeKeys = new HashSet<>();
+        for (Rect r : tiles) {
+            int c = (int) Math.round((r.x() - MARGIN) / UNIT);
+            int rw = (int) Math.round((r.y() - MARGIN) / UNIT);
+            int[][] corners = {{c, rw}, {c + 1, rw}, {c, rw + 1}, {c + 1, rw + 1}};
+            int[] id = new int[4];
+            for (int i = 0; i < 4; i++) {
+                long key = ((long) corners[i][0] << 20) ^ (corners[i][1] & 0xFFFFF);
+                Integer got = vid.get(key);
+                if (got == null) {
+                    got = vid.size();
+                    vid.put(key, got);
+                    adjTmp.add(new HashSet<>());
+                }
+                id[i] = got;
+            }
+            // tile boundary edges: bottom (0-1), left (0-2), right (1-3), top (2-3)
+            addEdge(adjTmp, edgeKeys, id[0], id[1]);
+            addEdge(adjTmp, edgeKeys, id[0], id[2]);
+            addEdge(adjTmp, edgeKeys, id[1], id[3]);
+            addEdge(adjTmp, edgeKeys, id[2], id[3]);
+        }
+        int n = vid.size();
+        if (n % 2 != 0) {
+            return 0;
+        }
+        int[][] adj = new int[n][];
+        for (int i = 0; i < n; i++) {
+            int[] a = new int[adjTmp.get(i).size()];
+            int k = 0;
+            for (int v : adjTmp.get(i)) {
+                a[k++] = v;
+            }
+            adj[i] = a;
+        }
+        return countMatchings(0, adj, new HashMap<>(), (1 << n) - 1);
+    }
+
+    private static void addEdge(List<Set<Integer>> adj, Set<Long> seen, int u, int v) {
+        long key = u < v ? ((long) u << 32) | v : ((long) v << 32) | u;
+        if (seen.add(key)) {
+            adj.get(u).add(v);
+            adj.get(v).add(u);
+        }
+    }
+
+    /// Bitmask DP: match the lowest still-free vertex to each free neighbour and recurse. Memoized on
+    /// the covered-vertex mask. Only reachable (sparse) masks are visited, so this is fast for the
+    /// small test snakes.
+    private static long countMatchings(int mask, int[][] adj, Map<Integer, Long> memo, int full) {
+        if (mask == full) {
+            return 1;
+        }
+        Long cached = memo.get(mask);
+        if (cached != null) {
+            return cached;
+        }
+        int i = 0;
+        while ((mask & (1 << i)) != 0) {
+            i++;
+        }
+        long total = 0;
+        for (int j : adj[i]) {
+            if ((mask & (1 << j)) == 0) {
+                total += countMatchings(mask | (1 << i) | (1 << j), adj, memo, full);
+            }
+        }
+        memo.put(mask, total);
+        return total;
     }
 
     // ------------------------------------------------------------- containment ----
@@ -102,8 +239,11 @@ class SnakeGraphLayoutTest {
     void everyCanonicalFixtureStaysInsideItsCanvas() {
         // The GeometryEscapeTest discipline for the new type: no drawn x/y escapes the declared canvas.
         for (String dsl : List.of(
+                "snake\ncf: 1\n",
                 "snake\ncf: 1, 1, 1, 1, 1\n",
                 "snake\ncf: 1, 2, 2, 2\n",
+                "snake\ncf: 3, 3\n",
+                "snake\ncf: 2, 3, 1, 2, 3\n",
                 "snake\ncf: 2, 1, 2, 1, 1, 4\n")) {
             assertContained(Sirentide.render(dsl));
         }
@@ -113,7 +253,7 @@ class SnakeGraphLayoutTest {
 
     @Test
     void parsesQuotientsAndToleratesBracketAndSemicolonNotation() {
-        // The classic `[a0; a1, …]` spelling parses identically to the comma list.
+        // The classic `[a1; a2, …]` spelling parses identically to the comma list.
         assertEquals(List.of(1, 2, 2, 2), parse("snake\ncf: [1; 2, 2, 2]\n").quotients());
         assertEquals(List.of(1, 2, 2, 2), parse("snake\ncf: 1, 2, 2, 2\n").quotients());
         // A bare list line (no `cf:` prefix) is accepted too.
@@ -136,22 +276,21 @@ class SnakeGraphLayoutTest {
     }
 
     @Test
-    void clampsEachQuotientAndBoundsTheSquareTotal() {
-        // Each quotient is clamped to MAX_SNAKE_QUOTIENT (1000); a value past it saturates, it is not
-        // dropped.
+    void clampsEachQuotientAndBoundsTheQuotientSum() {
+        // Each quotient is clamped to MAX_SNAKE_QUOTIENT (1000); a value past it saturates, not dropped.
         assertEquals(1000, parse("snake\ncf: 999999\n").quotients().get(0));
-        // The running square total is bounded by MAX_DATA_ROWS (10000): a second 1000-run fits (2000),
+        // The running quotient sum is bounded by MAX_DATA_ROWS (10000): a second 1000-run fits (2000),
         // but once the sum would exceed 10000 the overflowing quotient (and the rest) is dropped.
         List<Integer> qs = parse("snake\ncf: 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, "
             + "1000, 1000\n").quotients();
         int total = qs.stream().mapToInt(Integer::intValue).sum();
-        assertTrue(total <= 10000, "square total bounded by MAX_DATA_ROWS, was " + total);
+        assertTrue(total <= 10000, "quotient sum bounded by MAX_DATA_ROWS, was " + total);
         assertFalse(qs.size() > 10, "the 11th 1000-run would overflow 10000 and is dropped");
     }
 
     // ---------------------------------------------------------------- helpers ----
 
-    /// Every consecutive pair of squares differs by EXACTLY one UNIT step, along EXACTLY one axis
+    /// Every consecutive pair of tiles differs by EXACTLY one UNIT step, along EXACTLY one axis
     /// (a horizontal step keeps y and moves x by +UNIT; a vertical step keeps x and moves y by ±UNIT).
     /// This is the "connected strip of unit squares" invariant — no gaps, no diagonal jumps.
     private static void assertStrictStaircase(List<Rect> sq) {
@@ -161,48 +300,8 @@ class SnakeGraphLayoutTest {
             boolean horizontal = Math.abs(dy) < EPS && Math.abs(Math.abs(dx) - UNIT) < EPS;
             boolean vertical = Math.abs(dx) < EPS && Math.abs(Math.abs(dy) - UNIT) < EPS;
             assertTrue(horizontal ^ vertical,
-                "square " + i + " must be exactly one UNIT step along one axis from its predecessor; "
+                "tile " + i + " must be exactly one UNIT step along one axis from its predecessor; "
                     + "dx=" + dx + " dy=" + dy);
-        }
-    }
-
-    /// The step BETWEEN square i-1 and i must be HORIZONTAL when both squares belong to an even-index
-    /// run, VERTICAL when both belong to an odd-index run, and (at a run boundary) match the NEW run's
-    /// parity — i.e. the direction is fixed purely by which run the later square is in. Derives each
-    /// square's run from the quotient lengths and checks the step axis against that run's parity.
-    /// A horizontal run advances +x (right); a vertical run advances up (SVG y DECREASES).
-    private static void assertRunDirections(List<Rect> sq, int[] cf) {
-        int[] runOf = new int[sq.size()];
-        int idx = 0;
-        for (int run = 0; run < cf.length; run++) {
-            for (int j = 0; j < cf[run]; j++) {
-                runOf[idx++] = run;
-            }
-        }
-        for (int i = 1; i < sq.size(); i++) {
-            int run = runOf[i];
-            double dx = sq.get(i).x() - sq.get(i - 1).x();
-            double dy = sq.get(i).y() - sq.get(i - 1).y();
-            if (run % 2 == 0) {
-                assertTrue(Math.abs(dy) < EPS && Math.abs(dx - UNIT) < EPS,
-                    "even run " + run + " must step RIGHT (+x) at square " + i + "; dx=" + dx + " dy=" + dy);
-            } else {
-                assertTrue(Math.abs(dx) < EPS && Math.abs(dy + UNIT) < EPS,
-                    "odd run " + run + " must step UP (SVG y-UNIT) at square " + i + "; dx=" + dx + " dy=" + dy);
-            }
-        }
-    }
-
-    /// The canvas is `2*MARGIN + cols*UNIT` by `2*MARGIN + rows*UNIT`, and every square sits inside
-    /// `[MARGIN, canvas-MARGIN]` on both axes (the strip is inset by exactly one MARGIN).
-    private static void assertCanvas(LaidOut laid, int cols, int rows) {
-        assertEquals(2 * MARGIN + cols * UNIT, laid.width(), EPS, "canvas width == 2*MARGIN + cols*UNIT");
-        assertEquals(2 * MARGIN + rows * UNIT, laid.height(), EPS, "canvas height == 2*MARGIN + rows*UNIT");
-        for (Rect r : squares(laid)) {
-            assertTrue(r.x() >= MARGIN - EPS && r.x() + r.width() <= laid.width() - MARGIN + EPS,
-                "square x-range [" + r.x() + "," + (r.x() + r.width()) + "] inside the strip");
-            assertTrue(r.y() >= MARGIN - EPS && r.y() + r.height() <= laid.height() - MARGIN + EPS,
-                "square y-range [" + r.y() + "," + (r.y() + r.height()) + "] inside the strip");
         }
     }
 

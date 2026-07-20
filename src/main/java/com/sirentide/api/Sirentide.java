@@ -379,8 +379,8 @@ public final class Sirentide {
             // A sankey: weighted flows between nodes placed in depth columns, each flow a filled band
             // whose width tracks its value.
             case com.sirentide.ir.Sankey s -> com.sirentide.layout.SankeyLayout.layout(s, math);
-            // A continued-fraction snake graph: a connected strip of unit squares whose runs + turns
-            // encode the partial quotients (even runs go right, odd runs go up — a staircase strip).
+            // A continued-fraction snake graph: the canonical Çanakçı–Schiffler square snake — a strip
+            // of sum(a_i) − 1 unit tiles whose sign-sequence turns encode the partial quotients.
             case com.sirentide.ir.Snake sn -> com.sirentide.layout.SnakeGraphLayout.layout(sn, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };

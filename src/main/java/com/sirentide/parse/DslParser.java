@@ -105,10 +105,10 @@ public final class DslParser {
     // each). A fixed, documented width keeps depth deterministic when tabs + spaces mix.
     public static final int MINDMAP_TAB_WIDTH = 4;
     // Snake-graph continued-fraction caps (plan sirentide-snake-graph-primitive). The COUNT of partial
-    // quotients is bounded, each quotient VALUE is clamped, and the running TOTAL of unit squares
-    // (= sum of the kept quotients) is bounded by MAX_DATA_ROWS — so a huge CF (`cf: 1000000, …`)
-    // can't build a runaway square list before the output-cap degrade ever runs (mirrors the
-    // per-path cap discipline; total squares drive the emitted shape count).
+    // quotients is bounded, each quotient VALUE is clamped, and the running QUOTIENT SUM (which bounds
+    // the emitted tile count sum − 1) is bounded by MAX_DATA_ROWS — so a huge CF (`cf: 1000000, …`)
+    // can't build a runaway tile list before the output-cap degrade ever runs (mirrors the per-path
+    // cap discipline; the quotient sum drives the emitted shape count).
     public static final int MAX_SNAKE_QUOTIENTS = 500;
     public static final int MAX_SNAKE_QUOTIENT = 1000;
 
@@ -197,7 +197,7 @@ public final class DslParser {
             // the short alias.
             case "sankey", "sankey-beta" -> parseSankey(lines, textColor);
             // A continued-fraction snake graph — a `cf:` line of positive-integer partial quotients
-            // `[a0; a1, …]` renders as a connected strip of unit squares (runs + turns encode the CF).
+            // `[a1; a2, …]` renders as the canonical Çanakçı–Schiffler square snake (sum − 1 tiles).
             case "snake" -> parseSnake(lines, textColor);
             default -> new Empty();
         };
@@ -2080,9 +2080,9 @@ public final class DslParser {
     /// plus optional surrounding `[ ]` brackets are tolerated as separators/noise. Each token must parse
     /// to a POSITIVE integer — a non-positive or unparseable token is DROPPED (never fails the bake).
     /// The kept quotients are bounded: at most {@link #MAX_SNAKE_QUOTIENTS} of them, each CLAMPED to
-    /// {@link #MAX_SNAKE_QUOTIENT}, and the running SQUARE total (their sum, which drives the emitted
-    /// shape count) bounded by {@link #MAX_DATA_ROWS} — a quotient that would push the total past that
-    /// cap (and every one after it) is dropped. A bare `snake` (no quotients at all) round-trips to a
+    /// {@link #MAX_SNAKE_QUOTIENT}, and the running QUOTIENT SUM (which bounds the emitted tile count
+    /// `sum − 1`) bounded by {@link #MAX_DATA_ROWS} — a quotient that would push the sum past that cap
+    /// (and every one after it) is dropped. A bare `snake` (no quotients at all) round-trips to a
     /// {@link Snake} with an empty list, which bakes a valid empty canvas, never {@link Empty}.
     private static Diagram parseSnake(String[] lines, String textColor) {
         // Pass 1: collect the raw positive quotients, bounded by count + per-value clamp.
@@ -2105,15 +2105,16 @@ public final class DslParser {
                 }
             }
         }
-        // Pass 2: keep quotients while the running square total (their sum) stays within MAX_DATA_ROWS.
+        // Pass 2: keep quotients while the running quotient sum stays within MAX_DATA_ROWS (the sum
+        // bounds the tile count sum − 1).
         List<Integer> quotients = new ArrayList<>();
-        long totalSquares = 0;
+        long quotientSum = 0;
         for (int a : raw) {
-            if (totalSquares + a > MAX_DATA_ROWS) {
-                break;   // this quotient (and every one after it) would overflow the square cap → drop
+            if (quotientSum + a > MAX_DATA_ROWS) {
+                break;   // this quotient (and every one after it) would overflow the sum cap → drop
             }
             quotients.add(a);
-            totalSquares += a;
+            quotientSum += a;
         }
         return new Snake(quotients, textColor);
     }
