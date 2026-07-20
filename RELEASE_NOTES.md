@@ -11,17 +11,25 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 Version bump **0.1.0 → 0.2.0** (commit `829aba0`), vendored into stafficy `/docs` as
 `sirentide-0.2.0.jar`. Measured **artifact-to-artifact** against the vendored `0.1.0` jar (which
 already carried all fifteen pre-matrix types, `renderFrames`, the M1/M2 flowchart + sequence
-surfaces, dark theming, and semantic anchors), a `0.1.0` consumer gains exactly:
+surfaces, dark theming, and semantic anchors), notable `0.1.0 → 0.2.0` consumer-visible gains —
+**highlights, not a binary-delta census** — include:
 
 - the `matrix` comparison/verdict grid — the 16th type (see below; it degrades to the inert
   `0×0` shell on `0.1.0`),
 - the `%% direction:` directive,
 - semantic anchors on `matrix`,
-- the six per-path OOM caps (their own dated entry below).
+- the six per-path OOM caps (their own dated entry below),
+- the `%% caption:` band (a captioned diagram grows its canvas for the band; `0.1.0` renders
+  the same input uncaptioned at the bare canvas size),
+- `classDef` fills actually applied (a `classDef critical fill:#ff0000` node keeps the default
+  fill on `0.1.0`),
+- `renderFramesWithDiagnostics` overloads on the public `Sirentide` API,
+- further behavior fixes recorded in the dated entries below (label wrapping, self-relation
+  corrections, …).
 
 **Not in the shipped `0.2.0` jar:** subgraph-id edge routing merged to mainline *after* the
 `0.2.0` vendor (jar `11:25`, routing merge `13:39` the same day) and is unreleased until the next
-cut — its dated entry above describes mainline, not this artifact.
+cut — its dated entry **below** describes mainline, not this artifact.
 
 ### `matrix` — comparison / verdict grid (16th type)
 A `matrix` diagram renders a labelled comparison grid: row/column headers and cells, with a
