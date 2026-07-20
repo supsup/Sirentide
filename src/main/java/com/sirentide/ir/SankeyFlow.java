@@ -7,5 +7,6 @@ package com.sirentide.ir;
 ///
 /// The parser guarantees (docs/DESIGN.md §6, never fail the bake): `source`/`target` are non-empty,
 /// `value` is finite and strictly positive, and `source != target` (a self-flow is dropped). So a
-/// {@link SankeyLayout} can trust these without re-validating. `source`/`target` are `cap()`'d labels.
+/// {@link com.sirentide.layout.SankeyLayout} can trust these without re-validating. `source`/`target`
+/// are `cap()`'d labels.
 public record SankeyFlow(String source, String target, double value) {}
