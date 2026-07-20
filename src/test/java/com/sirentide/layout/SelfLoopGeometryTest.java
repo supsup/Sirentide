@@ -455,6 +455,94 @@ class SelfLoopGeometryTest {
     }
 
     /// EDGE-coloured legs of a loop group as coordinate signatures (dash segments included).
+
+    // -- 6) a self-loop's own two ends never intersect each other (Lattice seq 281 F1) -------------
+
+    /// The collision class every other test here is structurally BLIND to.
+    ///
+    /// The rest of this file compares markers across DIFFERENT groups and splits the top and bottom
+    /// bands by the table midpoint. That instrument cannot see two ends of the SAME relationship
+    /// colliding, and worse, it MIS-reports: a bottom crow-foot's upper prong reaches above the
+    /// midpoint, so the band split files part of the bottom marker under "top" and the comparison
+    /// becomes meaningless. My first attempt at this regression test used that instrument and passed
+    /// with the production fix disabled — vacuously green.
+    ///
+    /// So this asserts the property directly on painted geometry, with no bands and no bboxes: NO TWO
+    /// marker segments in the group may properly cross. Segments that share an endpoint are exempt —
+    /// a crow-foot's three prongs converge at a point and a hollow ring chains end-to-end, both legal.
+    /// A bbox oracle could not express this either: an exactly-one bar's bbox and a crow-foot's bbox
+    /// legitimately overlap in x while the strokes stay disjoint.
+    @Test
+    void aSelfLoopsOwnEndMarkersNeverCrossEachOther() {
+        // Every cardinality combo, so the invariant is proved for the whole marker menu rather than
+        // the one shape that regressed. `o--` aggregation repeated on one table is included: seq 275
+        // required it and it was still missing.
+        String[] cases = {
+            "erDiagram\n  A ||--o{ A\n",                       // the exact F1 repro
+            "erDiagram\n  A ||--|| A\n",                       // bar+bar at both ends
+            "erDiagram\n  A }o--o{ A\n",                       // crow+ring at both ends
+            "erDiagram\n  A |o--o| A\n",                       // bar+ring at both ends
+            "erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n", // two lanes
+            "erDiagram\n  A }o--o{ A : one\n  A }o--o{ A : two\n  A }o--o{ A : three\n",
+        };
+        for (String dsl : cases) {
+            LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(dsl));
+            List<Group> loops = edgeGroups(laid);
+            assertFalse(loops.isEmpty(), "the diagram rendered at least one self-loop: " + dsl);
+            for (Group g : loops) {
+                List<Line> marks = new ArrayList<>();
+                for (Shape s : g.members()) {
+                    if (s instanceof Line l && ER_MK.equals(l.stroke())) {
+                        marks.add(l);
+                    }
+                }
+                // NON-VACUITY: a self-loop emits BOTH ends' combos, so a real fixture always has
+                // several marker segments. Without this, deleting every marker would pass.
+                assertTrue(marks.size() >= 4,
+                    "both ends rendered their cardinality combos (got " + marks.size() + "): " + dsl);
+                for (int i = 0; i < marks.size(); i++) {
+                    for (int j = i + 1; j < marks.size(); j++) {
+                        Line a = marks.get(i);
+                        Line b = marks.get(j);
+                        if (sharesEndpoint(a, b)) {
+                            continue; // crow-foot prongs / ring chain — legal by construction
+                        }
+                        assertFalse(segmentsCross(a, b),
+                            "two marker segments of the same self-loop cross: ("
+                                + a.x1() + "," + a.y1() + ")-(" + a.x2() + "," + a.y2() + ") x ("
+                                + b.x1() + "," + b.y1() + ")-(" + b.x2() + "," + b.y2() + ")  in: " + dsl);
+                    }
+                }
+            }
+            assertAllGeometryInside(laid);
+        }
+    }
+
+    private static boolean sharesEndpoint(Line a, Line b) {
+        return samePoint(a.x1(), a.y1(), b.x1(), b.y1()) || samePoint(a.x1(), a.y1(), b.x2(), b.y2())
+            || samePoint(a.x2(), a.y2(), b.x1(), b.y1()) || samePoint(a.x2(), a.y2(), b.x2(), b.y2());
+    }
+
+    private static boolean samePoint(double ax, double ay, double bx, double by) {
+        return Math.abs(ax - bx) < 1e-6 && Math.abs(ay - by) < 1e-6;
+    }
+
+    /// True when the two segments PROPERLY cross (interiors intersect), by the standard orientation
+    /// test. Collinear touching is not a crossing; a shared endpoint is filtered by the caller.
+    private static boolean segmentsCross(Line a, Line b) {
+        double d1 = orient(a.x1(), a.y1(), a.x2(), a.y2(), b.x1(), b.y1());
+        double d2 = orient(a.x1(), a.y1(), a.x2(), a.y2(), b.x2(), b.y2());
+        double d3 = orient(b.x1(), b.y1(), b.x2(), b.y2(), a.x1(), a.y1());
+        double d4 = orient(b.x1(), b.y1(), b.x2(), b.y2(), a.x2(), a.y2());
+        return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+            && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+    }
+
+    private static double orient(double ax, double ay, double bx, double by, double cx, double cy) {
+        double v = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        return Math.abs(v) < 1e-9 ? 0 : v;
+    }
+
     private static Set<String> legSignatures(Group g, String edgeStroke) {
         Set<String> sigs = new HashSet<>();
         for (Shape s : g.members()) {
