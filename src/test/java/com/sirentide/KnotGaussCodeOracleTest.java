@@ -198,6 +198,28 @@ class KnotGaussCodeOracleTest {
             "the rejection names the relative/out-of-grammar cause: " + err.getMessage());
     }
 
+    /// Lattice sir388: insert a `Z` (closepath) before an interior `L` of a real trefoil arc. In SVG the
+    /// mid-arc close draws back to the subpath start and resets the current point, so the following line
+    /// sequence is materially different. RED-ON-OLD: the token-by-token parser skipped the mid-arc Z and
+    /// accepted the original vertex list. GREEN-ON-NEW: the strict grammar accepts `Z` ONLY as the
+    /// terminal token, so a mid-arc Z fails closed.
+    @Test
+    void aMidArcCloseCommandMustNotBeAcceptedAsTerminal() {
+        String arc = rawArcStrings(Knot.TREFOIL).stream()
+            .filter(s -> countCommand(s, 'L') >= 2).findFirst()
+            .orElseThrow(() -> new AssertionError("expected a trefoil arc with interior L commands"));
+        String midZ = insertMidArcZ(arc);
+        assertNotEquals(arc, midZ, "the mutation must insert a mid-arc Z");
+        // RED-ON-OLD: the retired lenient-Z parser skipped the mid-arc close and accepted the geometry.
+        assertDoesNotThrow(() -> legacyLenientZParse(midZ),
+            "the retired parser skipped the mid-arc Z and accepted the original vertices — the false-green");
+        // GREEN-ON-NEW: the strict grammar rejects a non-terminal Z.
+        AssertionError err = assertThrows(AssertionError.class, () -> parse(midZ),
+            "a mid-arc Z (closepath resets the current point) must fail closed, not be silently ignored");
+        assertTrue(err.getMessage().contains("Z") || err.getMessage().contains("final token"),
+            "the rejection names the mid-arc-Z cause: " + err.getMessage());
+    }
+
     // -- reconstruction (geometry only) ------------------------------------------------------------
 
     /// The reconstructed Gauss code string ("O1U2…") for a built-in knot, from its EMITTED geometry.
@@ -293,55 +315,56 @@ class KnotGaussCodeOracleTest {
         return arcs;
     }
 
-    /// Parse an absolute M/L (Z-terminated) path `d` into its vertex list, VALIDATING ARC STRUCTURE
-    /// (reviews 370 + 371). A well-formed strand arc is EXACTLY one leading `M` followed by only `L`
-    /// commands (Z-terminated): a single contiguous stroke. This parser FAILS CLOSED — throws — on any
-    /// structural break, rather than folding it into one undifferentiated vertex list:
-    ///   * a SECOND `M` anywhere means a pen-lift mid-arc (a visibly split strand, Lattice's 370
-    ///     discriminator) OR a detached stray subpath merged into this arc (a floating fragment,
-    ///     Confluence's 371 discriminator) — either way the emitted curve is broken/non-contiguous;
-    ///   * an `L` before the leading `M`, or no `M` at all, is not a valid stroke.
-    /// The retired parser (see {@link #legacyUndifferentiatedParse}) treated `M` and `L` identically,
-    /// so both of those broken shapes reconstructed a clean Gauss code — a false-green the oracle's
-    /// own contract forbids ("FAILS on … a non-closed curve").
+    /// Parse a path `d` into its vertex list by validating the EXACT EMITTED GRAMMAR strictly:
+    /// `M x y (L x y)* Z?` — one leading absolute `M` with two coordinates, then zero-or-more absolute
+    /// `L x y`, then AT MOST ONE `Z` and only as the FINAL token. Case-sensitive; every token is at a
+    /// fixed grammatical position, so ANY deviation fails closed. This is a MECHANISM (a whole-grammar
+    /// validator), not a token-by-token classifier — it closes the entire class of "the parser accepts a
+    /// malformed token/position and reconstructs a clean code" findings in ONE rule, instead of patching
+    /// them one edge case per round:
+    ///   * a SECOND `M`, an `L` before the `M`, or a detached stray subpath (reviews 370 + 371) →
+    ///     rejected: a non-`L` command appears where the grammar requires `L`.
+    ///   * a RELATIVE command (lowercase `m`/`l`) reinterpreting the coordinates (review sir381) →
+    ///     rejected: it is not the exact `L` the grammar requires (case-sensitive).
+    ///   * a MID-ARC `Z` (closepath resets the current point — a materially different browser render,
+    ///     review sir388) → rejected: `Z` is legal ONLY as the terminal token.
+    /// The browser draws exactly this grammar; anything outside it is a broken/altered curve.
     private static double[][] parse(String d) {
-        String[] tok = d.trim().split("\\s+");
-        List<double[]> pts = new ArrayList<>();
-        int i = 0;
-        boolean sawM = false;
-        while (i < tok.length) {
-            String t = tok[i];
-            if (t.isEmpty()) {
-                i += 1;
-                continue;
-            }
-            // CASE-SENSITIVE (review sir381): the emitted grammar is absolute `M x y (L x y)* Z` ONLY.
-            // A relative command (lowercase `m`/`l`) makes the browser reinterpret the SAME numbers
-            // relative to the current point — a materially different / broken curve — so it must FAIL
-            // CLOSED, never be uppercased back to absolute (the old `toUpperCase` read a relative `l` as
-            // absolute `L` and false-greened a browser-visible mutation). Only exactly `M`, `L`, and the
-            // legitimately-emitted terminal `Z` are accepted; every other token fails closed.
-            if (t.equals("M") || t.equals("L")) {
-                assertTrue(i + 2 < tok.length, "a " + t + " command needs two coordinates: " + d);
-                if (t.equals("M")) {
-                    assertTrue(!sawM, "a strand arc must be a SINGLE contiguous stroke — exactly one "
-                        + "leading M then only L commands; a second M (pen-lift / detached subpath) is a "
-                        + "broken curve: " + d);
-                    sawM = true;
-                } else {
-                    assertTrue(sawM, "an L command before the leading M (malformed arc): " + d);
-                }
-                pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
-                i += 3;
-            } else if (t.equals("Z")) {
-                i += 1;   // the emitted terminal close
-            } else {
-                assertTrue(false, "token '" + t + "' is outside the emitted absolute M/L/Z grammar — a "
-                    + "relative command (lowercase m/l) or stray token is rejected, never reinterpreted "
-                    + "as absolute geometry (review sir381): " + d);
+        String[] raw = d.trim().split("\\s+");
+        // Drop empty tokens (defensive; a trimmed non-empty d yields none).
+        List<String> tokList = new ArrayList<>();
+        for (String t : raw) {
+            if (!t.isEmpty()) {
+                tokList.add(t);
             }
         }
-        assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
+        String[] tok = tokList.toArray(new String[0]);
+        int n = tok.length;
+        // A single closepath `Z` is legal ONLY as the final token (sir388): a mid-arc Z resets the
+        // current point. Strip exactly one terminal Z; forbid Z anywhere else.
+        int end = (n > 0 && tok[n - 1].equals("Z")) ? n - 1 : n;
+        for (int k = 0; k < end; k++) {
+            assertTrue(!tok[k].equals("Z"),
+                "Z (closepath) is accepted ONLY as the final token — a mid-arc Z resets the current "
+                + "point (a materially different curve) and fails closed (review sir388): " + d);
+        }
+        // Body: M x y (L x y)* — one leading absolute M, then only absolute L commands, exact coords.
+        assertTrue(end >= 3 && tok[0].equals("M"),
+            "a strand arc must begin with an absolute `M x y` (grammar M x y (L x y)* Z?): " + d);
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean first = true;
+        while (i < end) {
+            String expected = first ? "M" : "L";
+            assertTrue(tok[i].equals(expected),
+                "expected an absolute '" + expected + "' at token " + i + " (grammar M x y (L x y)* Z?; "
+                + "case-sensitive — no relative command, second M, mid-arc Z, or stray token): got '"
+                + tok[i] + "' in: " + d);
+            assertTrue(i + 2 < end, "the '" + expected + "' command needs two coordinates: " + d);
+            pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+            i += 3;
+            first = false;
+        }
         return pts.toArray(new double[0][]);
     }
 
@@ -387,6 +410,42 @@ class KnotGaussCodeOracleTest {
                 i += 3;
             } else {
                 i += 1;
+            }
+        }
+        assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
+        return pts.toArray(new double[0][]);
+    }
+
+    /// Frozen pre-388 parser (review sir388 red-on-old reference): the token-by-token classifier that
+    /// accepted `Z` at ANY position and simply skipped it (`else if (t.equals("Z")) i += 1`), then
+    /// resumed parsing the following `L` commands. A mid-arc closepath (which a browser draws as a return
+    /// to the subpath start + current-point reset — a materially different curve) was silently ignored
+    /// and the original absolute vertex list accepted. The false-green the strict grammar now closes.
+    private static double[][] legacyLenientZParse(String d) {
+        String[] tok = d.trim().split("\\s+");
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean sawM = false;
+        while (i < tok.length) {
+            String t = tok[i];
+            if (t.isEmpty()) {
+                i += 1;
+                continue;
+            }
+            if (t.equals("M") || t.equals("L")) {
+                assertTrue(i + 2 < tok.length, "a " + t + " command needs two coordinates: " + d);
+                if (t.equals("M")) {
+                    assertTrue(!sawM, "single contiguous stroke: " + d);
+                    sawM = true;
+                } else {
+                    assertTrue(sawM, "L before M: " + d);
+                }
+                pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+                i += 3;
+            } else if (t.equals("Z")) {
+                i += 1;   // pre-388: accepted a Z anywhere and kept going
+            } else {
+                assertTrue(false, "outside M/L/Z grammar: " + d);
             }
         }
         assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
@@ -443,6 +502,23 @@ class KnotGaussCodeOracleTest {
             }
         }
         return String.join(" ", tok);
+    }
+
+    /// Insert a `Z` (closepath) immediately before the first interior `L` command — Lattice's sir388
+    /// discriminator: a mid-arc close resets the current point, so the following line sequence is a
+    /// materially different curve.
+    private static String insertMidArcZ(String d) {
+        String[] tok = d.trim().split("\\s+");
+        List<String> out = new ArrayList<>();
+        boolean inserted = false;
+        for (String t : tok) {
+            if (!inserted && t.equals("L")) {
+                out.add("Z");
+                inserted = true;
+            }
+            out.add(t);
+        }
+        return String.join(" ", out);
     }
 
     private static int nearestCross(double[] p, List<double[]> cross) {
