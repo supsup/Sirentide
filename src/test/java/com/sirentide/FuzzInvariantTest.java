@@ -14,6 +14,9 @@ import com.sirentide.contract.SirentideContract;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
@@ -29,7 +32,7 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/// FUZZ / PROPERTY-INVARIANT pass over ALL 15 diagram types (cycle-2 roadmap #4 — the trust floor).
+/// FUZZ / PROPERTY-INVARIANT pass over ALL 20 diagram types (cycle-2 roadmap #4 — the trust floor).
 ///
 /// "malformed → inert, never throws, never escapes the alphabet" was, before this pass, an
 /// ASSUMPTION backed by happy-path goldens + a curated containment corpus. This test turns it into a
@@ -75,10 +78,13 @@ class FuzzInvariantTest {
     private static final String INERT_SHELL =
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
-    /// The 15 diagram-type header keywords.
+    /// The diagram-type header keywords — EVERY type the parser accepts (kept exhaustive by the
+    /// {@link #everyParserTypeIsCoveredByTheFuzzCorpus} census, which fails if a new
+    /// {@link com.sirentide.ir.Diagram} permits-type is added without a fuzz seed here).
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
-        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix"
+        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix",
+        "snake", "tensornetwork", "young", "dynkin"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -104,7 +110,13 @@ class FuzzInvariantTest {
         "mindmap\n  root Root idea\n    Origins\n      Long history\n    Research\n    Tools\n",
         "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n",
         "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : match, match\n"
-            + "  \"PC1 soft-intent\" : partial, diverge\n"
+            + "  \"PC1 soft-intent\" : partial, diverge\n",
+        // the four post-2026-07-17 types (snake, tensornetwork, young, dynkin) — added so INV-4
+        // actually runs across EVERY parser type (review sir400 finding 1).
+        "snake\n  cf: 1, 2, 2, 2\n",
+        "tensornetwork\n  mps A B C D\n",
+        "young\n  rows: 3, 2, 1\n",
+        "dynkin\n  type: B4\n"
     };
 
     /// Per-type templates with a single `%LBL%` slot into which a hostile label is spliced. Exercises
@@ -125,6 +137,10 @@ class FuzzInvariantTest {
         "journey\n  title T\n  section S\n    %LBL%: 3: Me\n",
         "mindmap\n  root %LBL%\n",
         "sankey\n  %LBL%,B,10\n",
+        "snake\n  cf: %LBL%\n",
+        "tensornetwork\n  mps %LBL% B\n",
+        "young\n  rows: %LBL%\n",
+        "dynkin\n  type: %LBL%\n",
         // config-block title override — the OTHER a11y-text seam.
         "%% title: %LBL%\npie\n  \"A\" : 10\n"
     };
@@ -148,7 +164,7 @@ class FuzzInvariantTest {
         // Non-vacuity: the corpus must actually be large (guards against a generation regression that
         // silently empties it and makes the whole pass trivially "green").
         assertTrue(cases >= 3000, "fuzz corpus must exercise a few thousand cases, ran only " + cases);
-        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 15 types in " + ms + " ms");
+        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 20 types in " + ms + " ms");
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),
@@ -230,6 +246,51 @@ class FuzzInvariantTest {
         List<String> b = generateCorpus();
         assertEquals(a, b, "the fuzz corpus must be deterministic (seeded, no Math.random/time)");
         assertTrue(a.size() >= 3000, "corpus size floor");
+    }
+
+    /// CENSUS / non-vacuity (review sir400 finding 1): INV-4 claims to run across EVERY diagram type,
+    /// so the corpus must actually EXERCISE every type the parser accepts. The authoritative type set is
+    /// the {@link com.sirentide.ir.Diagram} sealed `permits` list minus the inert {@code Empty} shell —
+    /// read reflectively, so a NEW parser type (a new permits record) makes this FAIL until a fuzz seed
+    /// is added here. Guards against the exact gap Lattice found: snake/tensornetwork/young/dynkin
+    /// shipped in the parser but were absent from TYPES/SEEDS, so INV-4 silently never ran on them.
+    @Test
+    void everyParserTypeIsCoveredByTheFuzzCorpus() {
+        // The parser's real diagram types = the Diagram permits minus the Empty inert shell.
+        long realTypes = Arrays.stream(com.sirentide.ir.Diagram.class.getPermittedSubclasses())
+            .filter(c -> !c.getSimpleName().equals("Empty"))
+            .count();
+
+        // The distinct keywords this test declares it covers (the head token of each TYPES entry).
+        Set<String> declared = new LinkedHashSet<>();
+        for (String type : TYPES) {
+            declared.add(type.split(" ")[0]);
+        }
+
+        // Which of those keywords actually render a NON-inert diagram somewhere in the corpus — the
+        // proof INV-4's geometry walk has real geometry to check for that type, not just an inert shell.
+        Set<String> coveredNonInert = new HashSet<>();
+        for (String dsl : generateCorpus()) {
+            String type = diagramType(dsl);
+            if (type != null && !coveredNonInert.contains(type)
+                    && !Sirentide.render(dsl).equals(INERT_SHELL)) {
+                coveredNonInert.add(type);
+            }
+        }
+
+        // (a) the declared keyword set must exactly match the parser's real-type count — adding a new
+        //     Diagram permits record without a fuzz seed here fails HERE.
+        assertEquals(realTypes, (long) declared.size(),
+            "the fuzz TYPES list (" + declared.size() + " distinct keywords) must cover EVERY Diagram "
+            + "permits type (" + realTypes + " minus Empty); a new parser type must add a seed here. "
+            + "declared=" + declared);
+        // (b) every declared type must actually be exercised NON-inert (INV-4 really runs on it).
+        for (String kw : declared) {
+            assertTrue(coveredNonInert.contains(kw),
+                "the corpus never renders a NON-inert " + kw + " — INV-4 does not actually run on it");
+        }
+        assertEquals((long) declared.size(), (long) coveredNonInert.size(),
+            "every declared type must be exercised non-inert; covered=" + coveredNonInert);
     }
 
     /// Builds the full adversarial corpus. PURE + deterministic: a `java.util.Random` seeded with
@@ -546,6 +607,35 @@ class FuzzInvariantTest {
         }
     }
 
+    /// REVIEW sir400 finding 2 (red-on-old / green-on-new): an SVG arc whose ENDPOINTS sit inside the
+    /// canvas but whose elliptical INTERIOR bulges outside must be caught by INV-4. Lattice's Chrome-
+    /// confirmed discriminator — `M 10 50 A 200 200 0 1 0 90 50` in a 100×100 box — has both endpoints
+    /// at y=50 (inside) yet Chrome's path bbox escapes the root. The OLD pathPoints (endpoint-only for
+    /// A) returned NO escape (false-green); {@link #arcExtrema} now reaches the interior extrema.
+    @Test
+    void arcInteriorEscapeIsCaught() {
+        String svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 50 A 200 200 0 1 0 90 50\"/></svg>";
+        List<String> escapes = containmentEscapes(svg);
+        assertFalse(escapes.isEmpty(),
+            "INV-4 must catch an arc whose interior bulges outside the canvas though its endpoints are "
+            + "inside (both at y=50): " + escapes);
+
+        // The endpoint-only extraction (the retired behaviour) sees only in-canvas points — the proof
+        // this discriminator is RED-ON-OLD, not a tautology.
+        List<double[]> endpointOnly = List.of(new double[] {10, 50}, new double[] {90, 50});
+        for (double[] p : endpointOnly) {
+            assertTrue(p[0] >= 0 && p[0] <= 100 && p[1] >= 0 && p[1] <= 100,
+                "the arc endpoints are inside the canvas, so endpoint-only checking false-greens");
+        }
+
+        // A small, wholly-contained arc must NOT be flagged (the check is not trivially always-true).
+        String contained = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 40 50 A 10 10 0 0 0 60 50\"/></svg>";
+        assertTrue(containmentEscapes(contained).isEmpty(),
+            "a small contained arc must not be reported as an escape: " + containmentEscapes(contained));
+    }
+
     // ---- INV-4 geometry containment (generalizes GeometryEscapeTest to both axes, whole corpus) --
 
     /// Glyph ink can overhang the advance box by a hair — matched to {@link GeometryEscapeTest#TOL}
@@ -640,36 +730,64 @@ class FuzzInvariantTest {
         }
     }
 
-    /// Per-command (x,y) points from an absolute-only path `d` (M/L/Q/A/Z). Mirrors
-    /// {@link GeometryEscapeTest#pathXs} and extends it to emit the paired Y for every X:
-    /// M/L → (x,y); Q `cx cy x y` → (cx,cy)+(x,y); A `rx ry rot large sweep x y` → (x,y).
+    /// Per-command containment points from an absolute-only path `d` (M/L/Q/A/Z), tracking the current
+    /// point so an arc's TRUE extent is checked. Mirrors {@link GeometryEscapeTest#pathXs} and extends
+    /// it to Y and to arc interiors:
+    ///   * M/L `x y` → (x,y).
+    ///   * Q `cx cy x y` → control + endpoint; the quadratic lies inside the convex hull of those two
+    ///     plus the start point, so checking the endpoints + control over-approximates it (conservative).
+    ///   * A `rx ry rot large sweep x y` → the endpoint AND the arc's bounding-box extrema (review
+    ///     sir400 finding 2). An endpoint inside the canvas does NOT imply the arc is inside: the
+    ///     elliptical interior can bulge out (Lattice's `M 10 50 A 200 200 0 1 0 90 50` in a 100×100
+    ///     box). {@link #arcExtrema} computes the min/max x and y the curve actually reaches.
     private static List<double[]> pathPoints(String d) {
         List<double[]> pts = new ArrayList<>();
         String[] tok = d.trim().split("\\s+");
         int i = 0;
+        double curX = 0;
+        double curY = 0;                     // the current point (start of the next command's segment)
         while (i < tok.length) {
             String t = tok[i];
             if (t.length() == 1 && Character.isLetter(t.charAt(0))) {
                 char cmd = Character.toUpperCase(t.charAt(0));
                 switch (cmd) {
                     case 'M', 'L' -> {                     // x y
-                        if (i + 2 < tok.length) {
-                            addPoint(pts, tok[i + 1], tok[i + 2]);
+                        double[] p = numAt(tok, i + 1, i + 2);
+                        if (p != null) {
+                            pts.add(p);
+                            curX = p[0];
+                            curY = p[1];
                         }
                         i += 3;
                     }
                     case 'Q' -> {                          // cx cy x y  → control + endpoint
-                        if (i + 2 < tok.length) {
-                            addPoint(pts, tok[i + 1], tok[i + 2]);
+                        double[] ctrl = numAt(tok, i + 1, i + 2);
+                        double[] end = numAt(tok, i + 3, i + 4);
+                        if (ctrl != null) {
+                            pts.add(ctrl);
                         }
-                        if (i + 4 < tok.length) {
-                            addPoint(pts, tok[i + 3], tok[i + 4]);
+                        if (end != null) {
+                            pts.add(end);
+                            curX = end[0];
+                            curY = end[1];
                         }
                         i += 5;
                     }
-                    case 'A' -> {                          // rx ry rot large sweep x y  → endpoint only
-                        if (i + 7 < tok.length) {
-                            addPoint(pts, tok[i + 6], tok[i + 7]);
+                    case 'A' -> {                          // rx ry rot large sweep x y
+                        Double rx = num(tok, i + 1);
+                        Double ry = num(tok, i + 2);
+                        Double rot = num(tok, i + 3);
+                        Double fa = num(tok, i + 4);
+                        Double fs = num(tok, i + 5);
+                        double[] end = numAt(tok, i + 6, i + 7);
+                        if (rx != null && ry != null && rot != null && fa != null && fs != null
+                                && end != null) {
+                            pts.add(end);
+                            // the arc's true bounding-box extrema between the current point and end.
+                            pts.addAll(arcExtrema(curX, curY, rx, ry, rot, fa != 0, fs != 0,
+                                end[0], end[1]));
+                            curX = end[0];
+                            curY = end[1];
                         }
                         i += 8;
                     }
@@ -683,12 +801,107 @@ class FuzzInvariantTest {
         return pts;
     }
 
-    private static void addPoint(List<double[]> pts, String sx, String sy) {
-        try {
-            pts.add(new double[] {Double.parseDouble(sx), Double.parseDouble(sy)});
-        } catch (NumberFormatException ignored) {
-            // a non-numeric token where a coordinate was expected — skip rather than misread it.
+    /// The bounding-box extrema POINTS of an SVG elliptical-arc command (endpoint parameterization,
+    /// SVG 1.1 §F.6.5). Converts (x0,y0)→(x1,y1) with (rx,ry,phi,largeArc,sweep) to centre form, then
+    /// evaluates the arc at the (up to four) angles where the ellipse's x or y is extremal AND that
+    /// angle lies within the swept range — those interior points, not just the endpoints, are where an
+    /// arc escapes its canvas. Degenerate arcs (zero radius, coincident endpoints) reduce to a line and
+    /// contribute no interior point. A pure oracle: no browser, deterministic. (review sir400 finding 2)
+    private static List<double[]> arcExtrema(double x0, double y0, double rx, double ry, double phiDeg,
+            boolean largeArc, boolean sweep, double x1, double y1) {
+        List<double[]> out = new ArrayList<>();
+        rx = Math.abs(rx);
+        ry = Math.abs(ry);
+        if (rx == 0 || ry == 0 || (x0 == x1 && y0 == y1)) {
+            return out;   // SVG: degenerate → straight line; endpoints already checked.
         }
+        double phi = Math.toRadians(phiDeg % 360.0);
+        double cosP = Math.cos(phi);
+        double sinP = Math.sin(phi);
+
+        // Step 1: (x0,y0)/(x1,y1) → primed coords.
+        double dx = (x0 - x1) / 2.0;
+        double dy = (y0 - y1) / 2.0;
+        double x0p = cosP * dx + sinP * dy;
+        double y0p = -sinP * dx + cosP * dy;
+
+        // Step 2: correct out-of-range radii (SVG F.6.6).
+        double lambda = (x0p * x0p) / (rx * rx) + (y0p * y0p) / (ry * ry);
+        if (lambda > 1) {
+            double s = Math.sqrt(lambda);
+            rx *= s;
+            ry *= s;
+        }
+
+        // Step 3: centre (cx',cy') then (cx,cy).
+        double rx2 = rx * rx;
+        double ry2 = ry * ry;
+        double num = rx2 * ry2 - rx2 * y0p * y0p - ry2 * x0p * x0p;
+        double den = rx2 * y0p * y0p + ry2 * x0p * x0p;
+        double coef = (largeArc != sweep ? 1.0 : -1.0) * Math.sqrt(Math.max(0.0, num / den));
+        double cxp = coef * (rx * y0p / ry);
+        double cyp = coef * (-ry * x0p / rx);
+        double cx = cosP * cxp - sinP * cyp + (x0 + x1) / 2.0;
+        double cy = sinP * cxp + cosP * cyp + (y0 + y1) / 2.0;
+
+        // Step 4: start angle theta1 and sweep delta.
+        double ux = (x0p - cxp) / rx;
+        double uy = (y0p - cyp) / ry;
+        double vx = (-x0p - cxp) / rx;
+        double vy = (-y0p - cyp) / ry;
+        double theta1 = Math.atan2(uy, ux);
+        double delta = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+        if (!sweep && delta > 0) {
+            delta -= 2 * Math.PI;
+        } else if (sweep && delta < 0) {
+            delta += 2 * Math.PI;
+        }
+
+        // Step 5: the ellipse's x- and y-extremal angles; add each that lies within the arc.
+        double tx = Math.atan2(-ry * sinP, rx * cosP);   // dx/dt = 0
+        double ty = Math.atan2(ry * cosP, rx * sinP);    // dy/dt = 0
+        for (double base : new double[] {tx, tx + Math.PI, ty, ty + Math.PI}) {
+            if (angleInArc(base, theta1, delta)) {
+                double ex = cx + rx * Math.cos(base) * cosP - ry * Math.sin(base) * sinP;
+                double ey = cy + rx * Math.cos(base) * sinP + ry * Math.sin(base) * cosP;
+                out.add(new double[] {ex, ey});
+            }
+        }
+        return out;
+    }
+
+    /// Whether angle {@code t} lies on the arc swept from {@code theta1} by {@code delta} (signed).
+    private static boolean angleInArc(double t, double theta1, double delta) {
+        double rel = (t - theta1) % (2 * Math.PI);
+        if (delta >= 0) {
+            if (rel < 0) {
+                rel += 2 * Math.PI;
+            }
+            return rel <= delta + 1e-9;
+        }
+        if (rel > 0) {
+            rel -= 2 * Math.PI;
+        }
+        return rel >= delta - 1e-9;
+    }
+
+    /// A single numeric token by index, or null if absent/non-numeric.
+    private static Double num(String[] tok, int idx) {
+        if (idx >= tok.length) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(tok[idx]);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /// A numeric (x,y) pair from two token indices, or null if either is absent/non-numeric.
+    private static double[] numAt(String[] tok, int xi, int yi) {
+        Double x = num(tok, xi);
+        Double y = num(tok, yi);
+        return (x == null || y == null) ? null : new double[] {x, y};
     }
 
     /// Reads a single numeric attribute by NAME out of an already-isolated element tag (order-
