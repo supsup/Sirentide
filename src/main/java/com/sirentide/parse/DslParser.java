@@ -2187,17 +2187,24 @@ public final class DslParser {
             String rankTok = body.substring(1).strip();
             Integer rank = parsePositiveInt(rankTok);
             if (rank == null) {
-                // A letter with no valid rank (e.g. a stray word) → the inert sentinel, not a re-scan:
-                // a Dynkin type line is a single token, so a malformed one degrades rather than throws.
-                return new Dynkin('?', 0, textColor);
+                // A letter with no valid rank (e.g. a stray word) → the UNIVERSAL inert shell (Empty),
+                // not a titled empty-Dynkin canvas: a Dynkin type line is a single token, so a
+                // malformed one degrades exactly like every other type's malformed input (review 368,
+                // DESIGN §6). Returning an invalid Dynkin('?',0) instead baked a 48x48 titled shell.
+                return new Empty();
             }
             if (rank > MAX_DYNKIN_RANK) {
-                return new Dynkin('?', 0, textColor);   // past the cap → inert shell (never OOM)
+                return new Empty();   // past the cap → universal inert shell (never OOM), review 368
             }
-            return new Dynkin(family, rank, textColor);
+            // Unknown family (e.g. Z9) or an out-of-range finite-type rank (e.g. B1, D3, E9) is not a
+            // real Dynkin diagram → degrade to the universal inert shell rather than a titled empty
+            // canvas (review 368). This leaves NO parser path that emits an invalid Dynkin.
+            Dynkin dynkin = new Dynkin(family, rank, textColor);
+            return dynkin.valid() ? dynkin : new Empty();
         }
-        // A bare `dynkin` with no type line → an inert (empty) but valid Dynkin shell, never Empty.
-        return new Dynkin('?', 0, textColor);
+        // A bare `dynkin` with no type line → the universal inert shell (Empty), consistent with every
+        // other empty/malformed degrade (review 368) — no invalid Dynkin sentinel is ever constructed.
+        return new Empty();
     }
 
     /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias
