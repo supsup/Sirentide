@@ -85,4 +85,4 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 Every row is a reviewed doc + test change, not a default.
 
 ## Relationship to LatteX
-Independent contract, same discipline. When a Sirentide label contains math, the renderer calls the injected `MathFragmentRenderer`'s `renderFragment` seam (LatteX 0.5.0 supplies the implementation; the core stays zero-runtime-dependency) and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)
+Independent contract, same discipline. When a Sirentide label contains math, the renderer calls the injected `MathFragmentRenderer`'s `renderFragment` seam (LatteX 0.6.0 supplies the implementation; the core stays zero-runtime-dependency) and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)
