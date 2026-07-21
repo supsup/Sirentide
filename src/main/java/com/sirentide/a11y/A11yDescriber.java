@@ -116,6 +116,8 @@ public final class A11yDescriber {
                 new A11y("Unknot", "Unknot (trivial knot): a plain closed loop with 0 crossings.");
             case com.sirentide.ir.Knot.TREFOIL ->
                 new A11y("Trefoil knot", "Trefoil knot (3₁): 3 crossings, alternating.");
+            case com.sirentide.ir.Knot.FIGURE8 ->
+                new A11y("Figure-eight knot", "Figure-eight knot (4₁): 4 crossings, alternating.");
             default -> new A11y("Knot diagram", "Knot diagram.");
         };
     }

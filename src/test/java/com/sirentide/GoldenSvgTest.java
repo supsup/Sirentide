@@ -210,6 +210,11 @@ class GoldenSvgTest {
         // triple-bond + arrow geometry byte-for-byte.
         FIXTURES.put("dynkin-g2",
             "dynkin\n  type: G2\n");
+        // The figure-eight (4₁) knot: a hand-built REDUCED ALTERNATING INTERLEAVED 4-crossing embedding
+        // (plan 5f48185e). Pins its sampled curve, the 4 gap breaks (→ 4 EDGE-anchored strand arcs), and
+        // the narrower FIGURE8_GAP_T. Its geometry reconstructs the canonical code O1U4O2U1O3U2O4U3.
+        FIXTURES.put("knot-figure8",
+            "knot\n  type: figure8\n");
     }
 
     @Test
