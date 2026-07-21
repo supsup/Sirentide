@@ -37,20 +37,22 @@ Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTM
 
 ## What the emitter emits TODAY (the current producer surface)
 
-All **six shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`) and asserted by the `ContainmentTest`:
+All **twenty-one shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `mathblock`, `gitGraph`, `journey`, `mindmap`, `sankey`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`). The `ContainmentTest` guards that alphabet: it renders a **curated seventeen-type corpus** (`pie` · `xychart` · `timeline` · `gantt` · `matrix` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `knot`) plus edge cases and fails the build on any element/attribute outside the allow-list — it pins the emitter's *alphabet*, distinct from a full per-type census (the four purely-additive types `snake`/`tensornetwork`/`young`/`dynkin` emit into the same `svg/g/path/rect/line` surface but are not in that corpus). The full allow-list:
 
 | Element | Attributes emitted today |
 | --- | --- |
-| `svg` (root) | `xmlns` (= `http://www.w3.org/2000/svg`), `width`, `height`, `viewBox` |
-| `path` | `d`, `fill`, `stroke`, `stroke-width` — labels (as glyph paths), pie wedges, flowchart arrowhead triangles; `stroke`/`stroke-width` are the OPTIONAL non-rect node border (`classDef` styling, node-styling milestone) |
+| `svg` (root) | `xmlns` (= `http://www.w3.org/2000/svg`), `width`, `height`, `viewBox`, `role` (fixed value `img`) |
+| `g` | `transform` (numeric only), `fill`, and the CLOSED semantic-anchor set `data-sirentide-role` / `data-sirentide-id` / `data-sirentide-seq` — wraps one logical element's shapes (a slice/node/edge/…) and places math fragments on the label baseline |
+| `path` | `d`, `fill`, `transform`, `stroke`, `stroke-width` — labels (as glyph paths), pie wedges, flowchart arrowhead triangles, math-fragment glyphs; `stroke`/`stroke-width` are the OPTIONAL non-rect node border (`classDef` styling, node-styling milestone) |
 | `rect` | `x`, `y`, `width`, `height`, `fill`, `stroke`, `stroke-width` — bars, boxes, node rectangles; `stroke`/`stroke-width` are the OPTIONAL node border set by a flowchart `classDef` (absent → no border, byte-identical to a pre-styling bake) |
 | `line` | `x1`, `y1`, `x2`, `y2`, `stroke`, `stroke-width` — axes, lifelines, edges (per-edge colour/width via `linkStyle`) |
+| `title`, `desc` | text-only children of the root `<svg>` (no attributes) — the baked `role="img"` + `<title>` + `<desc>` a11y triple |
 
-**No `<g>`, no `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, no `<marker>`/`<defs>`, no `stroke-dasharray`, no `transform`, no `class`, and no `data-*` anchors are emitted yet.** The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
+The emitter now emits `<g>` (math fragments + the closed `data-sirentide-role`/`-id`/`-seq` anchor set) and `<title>`/`<desc>` alongside the original `svg`/`path`/`rect`/`line` surface. **Still not emitted:** `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, `<marker>`/`<defs>`, `stroke-dasharray`, `class`, and the still-gated `data-sirentide-fx` effect anchor. The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
 
 ## The alphabet — GROWS PER MILESTONE
 
-The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all six diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). `<marker>`/`<defs>` are added at a later milestone (a fuller `sequence` with activation frames) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
+The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all twenty-one diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). Activation frames already ship on the current path/line surface; `<marker>`/`<defs>` are the genuinely-deferred part, added at a later milestone (denser `sequence` heads / effect markers) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
 
 ### M1 — allowed elements
 `svg`, `g`, `path`, `rect`, `line`, `polyline`, `polygon`, `circle`, `ellipse`.
@@ -74,11 +76,13 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 ## Milestone growth ledger
 | Milestone | Adds to the alphabet |
 | --- | --- |
-| Shipped — all six types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed — the graph and time-axis types landed on the current path/line surface. |
-| Future — fuller `sequence` (activation frames, denser heads) | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |
-| Future — the effect / anchor layer | `<g>` groups carrying the closed `data-sirentide-*` anchor vocabulary (see the container contract) |
+| Shipped — all twenty-one types (`pie` · `xychart` · `timeline` · `gantt` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `matrix` · `snake` · `tensornetwork` · `young` · `dynkin` · `knot`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed for the geometry — the graph, time-axis, and structured types all landed on the current path/line surface. |
+| Shipped — a11y baking | `<title>`, `<desc>` (text-only children of the root `<svg>`) + `role="img"` — the standard deterministic SVG a11y triple |
+| Shipped — math-in-labels + the semantic-anchor layer | `<g>` carrying a numeric `transform`, an optional `fill` (math fragments), and the closed `data-sirentide-role`/`-id`/`-seq` anchor vocabulary (see the container contract) |
+| Future — fuller `sequence` denser heads / effect markers | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |
+| Future — the effect layer | `data-sirentide-fx` on the `<g>` anchors (the one still-gated anchor — the effect-name enum, security-reviewed before it emits) |
 
 Every row is a reviewed doc + test change, not a default.
 
 ## Relationship to LatteX
-Independent contract, same discipline. When a Sirentide label contains math, the renderer calls `LatteX.render`/`renderInline` and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)
+Independent contract, same discipline. When a Sirentide label contains math, the renderer calls the injected `MathFragmentRenderer`'s `renderFragment` seam (LatteX 0.6.0 supplies the implementation; the core stays zero-runtime-dependency) and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)

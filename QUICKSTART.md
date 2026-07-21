@@ -4,9 +4,9 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 > **Status note.** Sirentide is early but real. What's **built**: the render pipeline
 > (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
-> glyphs, and **sixteen diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
+> glyphs, and **twenty-one diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
 > `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
-> `sankey`, `mathblock`, and `matrix`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
+> `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
 > `classDef`/`class` **semantic colour classes**, the `%% caption:` **annotation band**, and the
 > live **`/docs`** ```` ```sirentide ```` fence. Accuracy over hype: if it isn't built, this doc
@@ -19,13 +19,14 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 Sirentide is a clean-room, pure-**Java 25**, **zero-runtime-dependency** renderer that turns a
 small diagram DSL into **static SVG at build time** — no JavaScript, no headless browser, no
 runtime. Its emitter targets a deliberately tiny, sanitizer-safe SVG alphabet (`<svg>`, `<path>`,
-`<rect>`, `<line>` — labels are baked to `<path>` glyphs; never `<script>`, `<style>`,
-`<foreignObject>`, or external `href`s), so the output is safe to inline directly into HTML and
-already sits inside a standard sanitizer allow-list. Apache-2.0.
+`<rect>`, `<line>`, plus `<g>` for math fragments + semantic anchors and `<title>`/`<desc>` for
+a11y — labels are baked to `<path>` glyphs; never `<script>`, `<style>`, `<foreignObject>`, or
+external `href`s), so the output is safe to inline directly into HTML and already sits inside a
+standard sanitizer allow-list. Apache-2.0.
 
 It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTeX→SVG math
-renderer), and shares its discipline — and, soon, its font, so a diagram label can *contain* a
-real LaTeX formula.
+renderer), and shares its discipline — and its font, so a diagram label can *contain* a real
+LaTeX formula, rendered at bake.
 
 ## 2. Render a diagram
 
@@ -77,7 +78,7 @@ self-message; the `: label` after the arrow is optional. Actors register in firs
 
 Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
 page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
-bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for all six
+bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for the diagram
 types, `timeline` and `gantt` included, with real-browser renders.)
 
 ## 3. From the command line
@@ -85,11 +86,16 @@ types, `timeline` and `gantt` included, with real-browser renders.)
 ```bash
 echo 'pie
   "A" : 60
-  "B" : 40' | java -jar build/libs/sirentide-0.1.0.jar
+  "B" : 40' | java -jar build/libs/sirentide-0.2.0.jar
 ```
 
 Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
 invocation, one JVM.)*
+
+> **Note on math in labels from the CLI.** Math-in-labels needs a `MathFragmentRenderer` injected
+> at the API (`Sirentide.render(dsl, mathRenderer)`). The CLI path injects none, so a `$…$` label
+> bakes as its **raw LaTeX source text** rather than typeset glyphs — the documented per-fragment
+> fail-soft, not an error. To bake real math, call the two-arg API with a renderer.
 
 ## 4. Why it's safe to inline
 
@@ -101,8 +107,8 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **sixteen** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
-| *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2) and `sequence` activation bars. |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-one** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
+| *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2). |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for
 the why.
