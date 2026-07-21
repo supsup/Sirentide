@@ -84,7 +84,7 @@ class FuzzInvariantTest {
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
         "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix",
-        "snake", "tensornetwork", "young", "dynkin"
+        "snake", "tensornetwork", "young", "dynkin", "knot"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -116,7 +116,9 @@ class FuzzInvariantTest {
         "snake\n  cf: 1, 2, 2, 2\n",
         "tensornetwork\n  mps A B C D\n",
         "young\n  rows: 3, 2, 1\n",
-        "dynkin\n  type: B4\n"
+        "dynkin\n  type: B4\n",
+        // knot — the twenty-first type (landed after sir400; census kept us honest, review sir403 freshen).
+        "knot\n  type: trefoil\n"
     };
 
     /// Per-type templates with a single `%LBL%` slot into which a hostile label is spliced. Exercises
@@ -141,6 +143,7 @@ class FuzzInvariantTest {
         "tensornetwork\n  mps %LBL% B\n",
         "young\n  rows: %LBL%\n",
         "dynkin\n  type: %LBL%\n",
+        "knot\n  type: %LBL%\n",
         // config-block title override — the OTHER a11y-text seam.
         "%% title: %LBL%\npie\n  \"A\" : 10\n"
     };
