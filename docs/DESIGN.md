@@ -28,7 +28,7 @@ Mermaid has ~zero native animation (a single CSS marching-ants dash loop); all i
 
 ## 4. Architecture
 
-- **Separate project; thin one-way dependency** Sirentide → LatteX. Pinned immutable `com.lattex:lattex:0.5.0`; API surface = `render` / `renderInline` / **`renderFragment`** — the embedded-math API that shipped for math-in-labels (returns `{innerSvg, widthPx, heightPx, depthPx}`, left-end-of-baseline origin, FragmentGuard-clean; no internals). Confluence owns LatteX's public API. Contract, not coupling. **Hermetic:** in Sirentide's core the LatteX dep is *test-scope only* — a consumer injects a `MathFragmentRenderer`, so the core stays zero-runtime-dependency.
+- **Separate project; thin one-way dependency** Sirentide → LatteX. Pinned immutable `com.lattex:lattex:0.6.0`; API surface = `render` / `renderInline` / **`renderFragment`** — the embedded-math API that shipped for math-in-labels (returns `{innerSvg, widthPx, heightPx, depthPx}`, left-end-of-baseline origin, FragmentGuard-clean; no internals). Confluence owns LatteX's public API. Contract, not coupling. **Hermetic:** in Sirentide's core the LatteX dep is *test-scope only* — a consumer injects a `MathFragmentRenderer`, so the core stays zero-runtime-dependency.
 - **Separate pure LAYOUT (→ coordinates) from pure EMIT (coordinates → SVG string)**, over a single typed **immutable IR** all diagram types project into (the shared IR mermaid never built). Own **font-metrics oracle** — no DOM, deterministic, byte-identical caches.
 - **Two contracts** (Confluence authors; drift-guarded shared source): the emitter alphabet (`sirentide-output-contract`) and the per-element anchor security model (§5).
 
