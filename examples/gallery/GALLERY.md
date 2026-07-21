@@ -482,6 +482,51 @@ mpo A B C D
 
 ![Tensor network (MPO — second operator leg per core)](tensornetwork-mpo.png)
 
+## Dynkin — A₃ (a line, all single bonds)
+
+```
+dynkin
+type: A3
+```
+
+![Dynkin — A₃ (a line, all single bonds)](dynkin-a3.png)
+
+## Dynkin — B₃ (last bond double, arrow → short root)
+
+```
+dynkin
+type: B3
+```
+
+![Dynkin — B₃ (last bond double, arrow → short root)](dynkin-b3.png)
+
+## Dynkin — D₄ (a fork of two terminal nodes)
+
+```
+dynkin
+type: D4
+```
+
+![Dynkin — D₄ (a fork of two terminal nodes)](dynkin-d4.png)
+
+## Dynkin — E₈ (a line with a branch off the 3rd node)
+
+```
+dynkin
+type: E8
+```
+
+![Dynkin — E₈ (a line with a branch off the 3rd node)](dynkin-e8.png)
+
+## Dynkin — G₂ (a triple bond with an arrow)
+
+```
+dynkin
+type: G2
+```
+
+![Dynkin — G₂ (a triple bond with an arrow)](dynkin-g2.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```
