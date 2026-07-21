@@ -30,7 +30,8 @@ than shell out to a browser.
 1. **★ Math *in* diagram labels.** Because Sirentide and LatteX are minimal-alphabet siblings, a
    node label, axis tick, or bar can *be* a real LaTeX formula — rendered at bake, zero runtime.
    A flowchart node that is an equation. Mermaid's math is runtime KaTeX; impossible in a static
-   bake. *(planned)*
+   bake. ***(shipped)*** — real baked LaTeX renders in every label-bearing type (incl. braced
+   `\frac{a}{b}`/`\sqrt{x}`) and standalone `mathblock`, via the injected LatteX renderer.
 2. **Directable, playable flows.** Step through a sequence; reveals in reading order; the active
    step pulses. A process as a narrated slideshow, not a snapshot. *(planned)*
 3. **Effects bound to meaning.** "Glow the critical path", "flash the error edge" — keyed off the
@@ -43,10 +44,11 @@ than shell out to a browser.
 Dana writes internal docs on a static site whose sanitizer strips `<script>` and `<style>`. She
 wants a diagram, not a hand-placed SVG.
 
-Today she can already reach for sixteen diagram types — a `pie` of where the team's time goes, an
+Today she can already reach for twenty diagram types — a `pie` of where the team's time goes, an
 `xychart` of throughput, a `timeline` or `gantt` of the roadmap, a `flowchart` of the review
 gate, a `sequence` of the request path, plus `state`, `quadrant`, `classDiagram`, `erDiagram`,
-`gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, and `matrix`:
+`gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`,
+`young`, and `dynkin`:
 
 ```
 flowchart TD
@@ -79,7 +81,7 @@ deferred. What remains ahead is the *thesis* layer (play-through, effects, math)
 |---|---|---|
 | **M0** | scaffold, contracts, font-metrics oracle | **built** (font oracle ✓, scaffold ✓, contracts ✓) |
 | **M1** | `pie`, `xychart`, a minimal linear `sequence` (`->>` calls / `-->>` replies / self-messages) | **built** — the linear-sequence demonstrator ships; the play-through *effect* that rides it is *planned* |
-| **M2** | full `sequence` (alt/loop/par frames, activation bars, `marker`/`defs`) | *planned* — arrowheads today are inline `<path>` triangles |
+| **M2** | full `sequence` (alt/loop/par frames, activation bars) | **built** — alt/loop/par frames and activation bars both ship; `marker`/`defs` stay deferred, so arrowheads today are inline `<path>` triangles |
 | **M3** | `gantt`, `timeline` | **built** (proportional time axis; ISO dates shown as dates) |
 | **M-gate** | `flowchart` (`TD`/`LR`, rect/diamond nodes, edge labels, cycle-tolerant) | **built** — a layered, deterministic layout with visible back-edge lanes. Full graph auto-layout (crossing-minimization, dagre/ELK-class) is *not* attempted and stays a conscious re-decision. |
 
