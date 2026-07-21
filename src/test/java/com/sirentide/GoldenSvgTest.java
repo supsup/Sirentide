@@ -195,6 +195,21 @@ class GoldenSvgTest {
         // code O1U2O3U1O2U3 (see KnotGaussCodeOracleTest's semantic oracle).
         FIXTURES.put("knot",
             "knot\n  type: trefoil\n");
+        // A Dynkin diagram: B_4 — a line of 4 node discs whose LAST bond is a double bond with an
+        // arrow pointing to the last (short) node. Pins the baseline node-disc placement, the two
+        // parallel bond segments of the double bond, the arrow-triangle geometry + direction, and the
+        // grow-to-fit canvas byte-for-byte (the Cartan-matrix oracle in DynkinCartanOracleTest proves
+        // the bond count + arrow direction are CANONICAL; this pins them geometrically).
+        FIXTURES.put("dynkin-b4",
+            "dynkin\n  type: B4\n");
+        // D_4 — a fork: node 1 (trivalent) joins spine node 0 and the two terminal nodes 2, 3 (offset
+        // up + down). Pins the fork topology geometry byte-for-byte.
+        FIXTURES.put("dynkin-d4",
+            "dynkin\n  type: D4\n");
+        // G_2 — two nodes joined by a TRIPLE bond (three parallel segments) with an arrow. Pins the
+        // triple-bond + arrow geometry byte-for-byte.
+        FIXTURES.put("dynkin-g2",
+            "dynkin\n  type: G2\n");
     }
 
     @Test

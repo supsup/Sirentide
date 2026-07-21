@@ -391,6 +391,10 @@ public final class Sirentide {
             // A classical knot diagram: one closed smooth curve with transverse crossings (unknot /
             // trefoil; figure8 deferred), the under strand broken at each crossing. No `$…$` labels here.
             case com.sirentide.ir.Knot kn -> com.sirentide.layout.KnotDiagramLayout.layout(kn, math);
+            // A Dynkin diagram: the finite-type Lie-algebra classification — node discs on a baseline
+            // (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a multi-bond. No `$…$`
+            // labels in this slice, so `math` is unused here.
+            case com.sirentide.ir.Dynkin dk -> com.sirentide.layout.DynkinDiagramLayout.layout(dk);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

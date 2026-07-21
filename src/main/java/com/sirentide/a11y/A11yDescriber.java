@@ -100,6 +100,7 @@ public final class A11yDescriber {
             case com.sirentide.ir.TensorNetwork tn -> tensorNetwork(tn);
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case com.sirentide.ir.Knot kn -> knot(kn);
+            case com.sirentide.ir.Dynkin dk -> dynkin(dk);
             case Empty ignored -> A11y.NONE;
         };
     }
@@ -229,6 +230,35 @@ public final class A11yDescriber {
         }
         d.append(parts.size() > shown ? ", …." : ".");
         return new A11y("Young diagram", d.toString());
+    }
+
+    /// Dynkin diagram: "Dynkin diagram of type B4: 4 nodes in a line; the last bond is a double bond
+    /// with the arrow pointing to the last (short) node." The node count + the family-specific bond /
+    /// arrow / branch topology are paraphrased from `(family, rank)` — the same canonical structure the
+    /// layout draws (documented on {@link com.sirentide.layout.DynkinDiagramLayout}). Deterministic
+    /// (pure IR walk). An unknown/out-of-range type reads as an empty Dynkin diagram.
+    private static A11y dynkin(com.sirentide.ir.Dynkin d) {
+        if (!d.valid()) {
+            return new A11y("Dynkin diagram", "Empty Dynkin diagram.");
+        }
+        int n = d.rank();
+        StringBuilder s = new StringBuilder("Dynkin diagram of type ").append(d.typeLabel())
+            .append(": ").append(n).append(n == 1 ? " node" : " nodes");
+        switch (d.family()) {
+            case 'A' -> s.append(" in a line, all single bonds.");
+            case 'B' -> s.append(" in a line; the last bond is a double bond with the arrow pointing "
+                + "to the last (short) node.");
+            case 'C' -> s.append(" in a line; the last bond is a double bond with the arrow pointing "
+                + "away from the last (long) node.");
+            case 'D' -> s.append("; a line of ").append(n - 2)
+                .append(" nodes ending in a fork of two terminal nodes.");
+            case 'E' -> s.append("; a line with one extra node branching off the third node.");
+            case 'F' -> s.append(" in a line; the middle bond is a double bond with an arrow "
+                + "pointing to the shorter root.");
+            case 'G' -> s.append(" joined by a triple bond with an arrow pointing to the shorter root.");
+            default -> s.append('.');
+        }
+        return new A11y("Dynkin diagram", s.toString());
     }
 
     /// Comparison matrix: "Comparison matrix with 4 rows and 2 columns. Columns: snapshot, bare. Rows:

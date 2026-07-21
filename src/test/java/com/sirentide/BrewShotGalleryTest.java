@@ -185,6 +185,16 @@ class BrewShotGalleryTest {
             "tensornetwork\nmps A B C D"),
         new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
             "tensornetwork\nmpo A B C D"),
+        // Dynkin diagrams (finite-type semisimple-Lie-algebra classification, plan 8e13b196). Node
+        // discs on a baseline (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a
+        // multi-bond pointing from the longer to the shorter root. The Cartan-matrix oracle proves the
+        // bond counts + arrow directions are canonical; the containment audit proves the whole figure
+        // stays inside its grow-to-fit canvas.
+        new Case("dynkin-a3", "Dynkin — A₃ (a line, all single bonds)", "dynkin\ntype: A3"),
+        new Case("dynkin-b3", "Dynkin — B₃ (last bond double, arrow → short root)", "dynkin\ntype: B3"),
+        new Case("dynkin-d4", "Dynkin — D₄ (a fork of two terminal nodes)", "dynkin\ntype: D4"),
+        new Case("dynkin-e8", "Dynkin — E₈ (a line with a branch off the 3rd node)", "dynkin\ntype: E8"),
+        new Case("dynkin-g2", "Dynkin — G₂ (a triple bond with an arrow)", "dynkin\ntype: G2"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",

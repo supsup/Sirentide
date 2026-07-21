@@ -6,4 +6,4 @@ package com.sirentide.ir;
 public sealed interface Diagram
     permits Empty, Pie, XyChart, Timeline, Gantt, Flowchart, Sequence, StateDiagram, QuadrantChart,
         ClassDiagram, ErDiagram, MathBlock, GitGraph, Journey, Mindmap, Sankey, Matrix, Snake,
-        TensorNetwork, YoungDiagram, Knot {}
+        TensorNetwork, YoungDiagram, Knot, Dynkin {}
