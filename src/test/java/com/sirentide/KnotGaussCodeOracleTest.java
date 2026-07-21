@@ -1,7 +1,9 @@
 package com.sirentide;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.ir.Knot;
@@ -134,6 +136,46 @@ class KnotGaussCodeOracleTest {
                 + broken);
     }
 
+    // -- STRUCTURE discriminators (reviews 370 + 371): a broken/non-contiguous strand must fail -------
+
+    /// Lattice 370: change the first interior `L` of a real trefoil arc to a second `M` (a pen-lift
+    /// that visibly splits the strand). RED-ON-OLD: the folded parser merged the split into one vertex
+    /// list, so the whole diagram still reconstructed O1U2O3U1O2U3. GREEN-ON-NEW: the structure-
+    /// validating parser fails closed on the second M.
+    @Test
+    void anInteriorPenLiftSplittingAnArcIsRejected() {
+        String arc = rawArcStrings(Knot.TREFOIL).stream()
+            .filter(s -> countCommand(s, 'L') >= 2).findFirst()
+            .orElseThrow(() -> new AssertionError("expected a trefoil arc with interior L commands"));
+        String split = splitFirstInteriorL(arc);
+        assertNotEquals(arc, split, "the mutation must actually change the arc's d string");
+        assertEquals(2, countCommand(split, 'M'), "the split introduces exactly one extra M (pen-lift)");
+        // RED-ON-OLD: the retired parser folded the pen-lift into one contiguous vertex list (no throw).
+        assertDoesNotThrow(() -> legacyUndifferentiatedParse(split),
+            "the retired M/L-agnostic parser silently merged the split — the false-green");
+        // GREEN-ON-NEW: the structure-validating parser rejects the second M as a broken curve.
+        AssertionError err = assertThrows(AssertionError.class, () -> parse(split),
+            "a mid-arc pen-lift (second M) must be rejected, not folded into one arc");
+        assertTrue(err.getMessage().contains("single contiguous") || err.getMessage().contains("second M"),
+            "the rejection names the broken-curve cause: " + err.getMessage());
+    }
+
+    /// Confluence 371: append a DETACHED stray subpath (`M … L …` far from the curve) to a real trefoil
+    /// arc's d string — a floating fragment. RED-ON-OLD: the folded parser merged the fragment into the
+    /// arc's vertex list, so a visibly broken diagram reconstructed clean. GREEN-ON-NEW: rejected.
+    @Test
+    void aDetachedStraySubpathMergedIntoAnArcIsRejected() {
+        String arc = rawArcStrings(Knot.TREFOIL).get(0);
+        String withStray = arc + " M 9999 9999 L 9998 9998";   // a fragment far from the knot
+        assertEquals(2, countCommand(withStray, 'M'), "the stray subpath adds a second M");
+        // RED-ON-OLD: the retired parser folded the floating fragment into the containing arc (no throw).
+        assertDoesNotThrow(() -> legacyUndifferentiatedParse(withStray),
+            "the retired parser merged the detached fragment — the false-green");
+        // GREEN-ON-NEW: the structure-validating parser rejects the second M.
+        assertThrows(AssertionError.class, () -> parse(withStray),
+            "a detached stray subpath (second M) must be rejected, not merged into the containing arc");
+    }
+
     // -- reconstruction (geometry only) ------------------------------------------------------------
 
     /// The reconstructed Gauss code string ("O1U2…") for a built-in knot, from its EMITTED geometry.
@@ -229,8 +271,48 @@ class KnotGaussCodeOracleTest {
         return arcs;
     }
 
-    /// Parse an absolute M/L (Z-terminated) path `d` into its vertex list.
+    /// Parse an absolute M/L (Z-terminated) path `d` into its vertex list, VALIDATING ARC STRUCTURE
+    /// (reviews 370 + 371). A well-formed strand arc is EXACTLY one leading `M` followed by only `L`
+    /// commands (Z-terminated): a single contiguous stroke. This parser FAILS CLOSED — throws — on any
+    /// structural break, rather than folding it into one undifferentiated vertex list:
+    ///   * a SECOND `M` anywhere means a pen-lift mid-arc (a visibly split strand, Lattice's 370
+    ///     discriminator) OR a detached stray subpath merged into this arc (a floating fragment,
+    ///     Confluence's 371 discriminator) — either way the emitted curve is broken/non-contiguous;
+    ///   * an `L` before the leading `M`, or no `M` at all, is not a valid stroke.
+    /// The retired parser (see {@link #legacyUndifferentiatedParse}) treated `M` and `L` identically,
+    /// so both of those broken shapes reconstructed a clean Gauss code — a false-green the oracle's
+    /// own contract forbids ("FAILS on … a non-closed curve").
     private static double[][] parse(String d) {
+        String[] tok = d.trim().split("\\s+");
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean sawM = false;
+        while (i < tok.length) {
+            char c = tok[i].length() == 1 ? Character.toUpperCase(tok[i].charAt(0)) : ' ';
+            if (c == 'M' || c == 'L') {
+                assertTrue(i + 2 < tok.length, "a " + c + " command needs two coordinates: " + d);
+                if (c == 'M') {
+                    assertTrue(!sawM, "a strand arc must be a SINGLE contiguous stroke — exactly one "
+                        + "leading M then only L commands; a second M (pen-lift / detached subpath) is a "
+                        + "broken curve: " + d);
+                    sawM = true;
+                } else {
+                    assertTrue(sawM, "an L command before the leading M (malformed arc): " + d);
+                }
+                pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+                i += 3;
+            } else {
+                i += 1;   // Z or whitespace
+            }
+        }
+        assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
+        return pts.toArray(new double[0][]);
+    }
+
+    /// Frozen pre-370 parser (reviews 370 + 371 red-on-old reference): folded `M` and `L` into one
+    /// undifferentiated vertex list with NO structure check, so a mid-arc pen-lift or a detached stray
+    /// subpath silently merged into the containing arc and reconstructed a clean Gauss code.
+    private static double[][] legacyUndifferentiatedParse(String d) {
         String[] tok = d.trim().split("\\s+");
         List<double[]> pts = new ArrayList<>();
         int i = 0;
@@ -240,10 +322,48 @@ class KnotGaussCodeOracleTest {
                 pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
                 i += 3;
             } else {
-                i += 1;   // Z or stray
+                i += 1;
             }
         }
         return pts.toArray(new double[0][]);
+    }
+
+    /// The raw emitted Path `d` strings (one per strand arc, emit order) — the exact strings a browser
+    /// draws, before parsing. Used by the structure discriminators to mutate a real arc's d string.
+    private static List<String> rawArcStrings(String type) {
+        LaidOut laid = KnotDiagramLayout.layout(new Knot(type, null));
+        List<String> ds = new ArrayList<>();
+        for (Shape s : laid.shapes()) {
+            for (Shape leaf : (s instanceof Group g) ? g.members() : List.of(s)) {
+                if (leaf instanceof Path p) {
+                    ds.add(p.d());
+                }
+            }
+        }
+        return ds;
+    }
+
+    private static int countCommand(String d, char cmd) {
+        int n = 0;
+        for (String t : d.trim().split("\\s+")) {
+            if (t.length() == 1 && Character.toUpperCase(t.charAt(0)) == cmd) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /// Change the FIRST interior `L` command of `d` to an `M` — Lattice's 370 discriminator: a pen-lift
+    /// that visibly splits the arc, without moving any coordinate.
+    private static String splitFirstInteriorL(String d) {
+        String[] tok = d.trim().split("\\s+");
+        for (int i = 0; i < tok.length; i++) {
+            if (tok[i].equalsIgnoreCase("L")) {
+                tok[i] = "M";
+                break;
+            }
+        }
+        return String.join(" ", tok);
     }
 
     private static int nearestCross(double[] p, List<double[]> cross) {
