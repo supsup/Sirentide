@@ -172,6 +172,17 @@ class BrewShotGalleryTest {
             "snake\ncf: 1, 2, 2, 2\n"),
         new Case("snake-e", "Snake graph — e-start = [2,1,2,1,1,4]",
             "snake\ncf: 2, 1, 2, 1, 1, 4\n"),
+        // Classical knot diagrams (plan sirentide-knot-diagram-primitive): one closed smooth curve per
+        // knot with over/under crossings (the under strand broken by a gap). Both are alternating; the
+        // trefoil's emitted geometry reconstructs the known Gauss code (KnotGaussCodeOracleTest). The
+        // containment audit proves every strand arc stays inside its grow-to-fit canvas. The figure-8
+        // (4₁) is a hand-built reduced-alternating-interleaved 4-crossing embedding (plan 5f48185e).
+        new Case("knot-unknot", "Knot — unknot (trivial closed loop, 0 crossings)",
+            "knot\ntype: unknot"),
+        new Case("knot-trefoil", "Knot — trefoil (3₁, 3 crossings, alternating)",
+            "knot\ntype: trefoil"),
+        new Case("knot-figure8", "Knot — figure-eight (4₁, 4 crossings, alternating)",
+            "knot\ntype: figure8"),
         new Case("tensornetwork", "Tensor network (MPS chain — cores, bonds, physical legs)",
             "tensornetwork\nmps A B C D"),
         new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
