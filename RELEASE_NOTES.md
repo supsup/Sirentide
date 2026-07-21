@@ -6,6 +6,45 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-21 — Release **0.3.0**
+
+Version bump **0.2.0 → 0.3.0** (to be vendored into stafficy `/docs` as `sirentide-0.3.0.jar`). The
+headline is **five new diagram types** — the type count grows **16 → 21** — plus a semantic **oracle**
+for the knot family.
+All new types bake to the same minimal, sanitizer-safe `svg` / `g` / `path` / `rect` / `line` alphabet;
+no new element or attribute shape reaches the emitter, so each is contained by the same construction as
+the existing types.
+
+### Five new diagram types (16 → 21)
+- **`snake`** — the continued-fraction / square-snake graph (canonical Çanakçı–Schiffler construction),
+  with a dimer/perfect-matching count as its semantic oracle.
+- **`tensornetwork`** — Penrose MPS/MPO tensor-network diagrams (cores, bond edges, physical legs).
+- **`young`** — Young diagrams (a partition rendered as its row-of-boxes tableau).
+- **`dynkin`** — the finite Dynkin diagrams (A/B/C/D/E/F/G Cartan families), degrading malformed /
+  unknown / over-cap types to the universal inert shell.
+- **`knot`** — knot-projection diagrams (unknot, trefoil, and the figure-eight `4₁`), drawn as
+  crossing-gapped closed strands.
+
+### The knot Gauss-code oracle
+The `knot` type ships with a geometry-derived **Gauss-code oracle**: it reconstructs the knot's Gauss
+code from the *emitted* strand geometry (over/under derived from whether a strand reaches or gaps a
+crossing) and asserts it equals the canonical code — a real discriminator for a valid double-point
+projection, not a happy-path golden. Six review rounds hardened its path recognizer against the
+browser/oracle lexical-divergence class (structure, relative commands, mid-arc closepath, hexadecimal
+coordinates, and Java-only whitespace separators) so a mutation a browser renders differently can never
+false-green.
+
+### Also
+- Flowchart router node-collision avoidance; self-loop marker pitch; empty-node single-band rendering.
+- Documentation freshened to match (type counts, emitted-surface contract, the LatteX `0.6.0` math seam).
+
+Measured artifact-to-artifact, `0.2.0 → 0.3.0` is a **type-surface** release: five more diagram types,
+each contained by the same minimal-alphabet construction as the existing ones, and a semantic Gauss-code
+oracle for the knot family. (A fuzzed geometry-containment trust floor across all types is in review and
+will land in a following release.)
+
+---
+
 ## 2026-07-17 — Release **0.2.0**
 
 Version bump **0.1.0 → 0.2.0** (commit `829aba0`), vendored into stafficy `/docs` as

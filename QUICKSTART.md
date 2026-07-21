@@ -86,7 +86,7 @@ types, `timeline` and `gantt` included, with real-browser renders.)
 ```bash
 echo 'pie
   "A" : 60
-  "B" : 40' | java -jar build/libs/sirentide-0.2.0.jar
+  "B" : 40' | java -jar build/libs/sirentide-0.3.0.jar
 ```
 
 Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
