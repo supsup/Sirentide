@@ -171,7 +171,7 @@ class FuzzInvariantTest {
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),
-    /// INV-3 (diagnostics explain empty).
+    /// INV-3 (diagnostics explain empty), INV-4 (geometry stays inside the canvas on both axes).
     private void checkAllInvariants(String dsl, DocumentBuilder xml) throws Exception {
         // INV-1: render must never throw on ANY input.
         String svg;
