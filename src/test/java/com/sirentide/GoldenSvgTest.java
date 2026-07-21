@@ -188,6 +188,13 @@ class GoldenSvgTest {
         // grow-to-fit canvas (2*MARGIN + maxLen*UNIT by 2*MARGIN + numRows*UNIT) byte-for-byte.
         FIXTURES.put("young",
             "young\n  rows: 3, 2, 1\n");
+        // A classical knot diagram: the trefoil (3₁) — one closed smooth curve (dense M/L polyline
+        // strand arcs, fill=none) with 3 transverse crossings, each UNDER strand broken by a gap. Pins
+        // the sampled curve geometry, the 3 gap breaks (→ 3 EDGE-anchored strand arcs), the grow-to-fit
+        // canvas, and the y-flip byte-for-byte. Its emitted geometry reconstructs the canonical Gauss
+        // code O1U2O3U1O2U3 (see KnotGaussCodeOracleTest's semantic oracle).
+        FIXTURES.put("knot",
+            "knot\n  type: trefoil\n");
         // A Dynkin diagram: B_4 — a line of 4 node discs whose LAST bond is a double bond with an
         // arrow pointing to the last (short) node. Pins the baseline node-disc placement, the two
         // parallel bond segments of the double bond, the arrow-triangle geometry + direction, and the
@@ -203,6 +210,11 @@ class GoldenSvgTest {
         // triple-bond + arrow geometry byte-for-byte.
         FIXTURES.put("dynkin-g2",
             "dynkin\n  type: G2\n");
+        // The figure-eight (4₁) knot: a hand-built REDUCED ALTERNATING INTERLEAVED 4-crossing embedding
+        // (plan 5f48185e). Pins its sampled curve, the 4 gap breaks (→ 4 EDGE-anchored strand arcs), and
+        // the narrower FIGURE8_GAP_T. Its geometry reconstructs the canonical code O1U4O2U1O3U2O4U3.
+        FIXTURES.put("knot-figure8",
+            "knot\n  type: figure8\n");
     }
 
     @Test
