@@ -151,7 +151,7 @@ class FuzzInvariantTest {
     // ---- the four invariant checks, run over the whole corpus ---------------------------------
 
     @Test
-    void allThreeInvariantsHoldOnTheAdversarialCorpus() throws Exception {
+    void allFourInvariantsHoldOnTheAdversarialCorpus() throws Exception {
         List<String> corpus = generateCorpus();
         // a reused, hardened XML parser (created once — thousands of parses otherwise dominate runtime).
         DocumentBuilder xml = newHardenedParser();
@@ -670,6 +670,18 @@ class FuzzInvariantTest {
             "an unmodelled path command must fail closed (recorded as an escape), never silently skip");
         assertTrue(unkEsc.stream().anyMatch(s -> s.contains("does not model")),
             "the fail-closed escape must name the unmodelled command: " + unkEsc);
+
+        // review sir434: a RELATIVE (lowercase) command must FAIL CLOSED, not be case-folded to absolute.
+        // `M 90 50 h 20` reaches x=110 (escapes a 100-wide canvas); the retired Character.toUpperCase read
+        // `h` as absolute `H 20` (x=20, inside) — the false-green. Case-sensitive parse now fails it closed.
+        String relative = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 90 50 h 20\"/></svg>";
+        List<String> relEsc = containmentEscapes(relative);
+        assertFalse(relEsc.isEmpty(),
+            "a relative (lowercase) command a browser reads as an offset must fail closed, not be read as "
+            + "absolute: " + relEsc);
+        assertTrue(relEsc.stream().anyMatch(s -> s.contains("does not model")),
+            "the relative command must fail closed by name (not silently case-folded): " + relEsc);
     }
 
     // ---- INV-4 geometry containment (generalizes GeometryEscapeTest to both axes, whole corpus) --
@@ -790,7 +802,13 @@ class FuzzInvariantTest {
         while (i < tok.length) {
             String t = tok[i];
             if (t.length() == 1 && Character.isLetter(t.charAt(0))) {
-                char cmd = Character.toUpperCase(t.charAt(0));
+                // CASE-SENSITIVE (review sir434): the emitter is absolute-only (uppercase M/L/Q/A/Z/H/V).
+                // A lowercase letter is a RELATIVE command (h/l/v/… take offsets from the current point),
+                // which SVG permits but the emitter never emits — Character.toUpperCase would misread
+                // `M 90 50 h 20` as absolute (x=20, inside) while a browser reaches x=110 (escaping). So
+                // do NOT fold case: an unmodelled lowercase (or any non-uppercase-alphabet) command falls
+                // to the default and FAILS CLOSED.
+                char cmd = t.charAt(0);
                 switch (cmd) {
                     case 'M', 'L' -> {                     // x y
                         double[] p = numAt(tok, i + 1, i + 2);
