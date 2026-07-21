@@ -37,7 +37,7 @@ Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTM
 
 ## What the emitter emits TODAY (the current producer surface)
 
-All **twenty shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `mathblock`, `gitGraph`, `journey`, `mindmap`, `sankey`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`) and asserted by the `ContainmentTest`:
+All **twenty shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `mathblock`, `gitGraph`, `journey`, `mindmap`, `sankey`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`). The `ContainmentTest` guards that alphabet: it renders a **curated sixteen-type corpus** (`pie` · `xychart` · `timeline` · `gantt` · `matrix` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey`) plus edge cases and fails the build on any element/attribute outside the allow-list — it pins the emitter's *alphabet*, distinct from a full per-type census (the four purely-additive types `snake`/`tensornetwork`/`young`/`dynkin` emit into the same `svg/g/path/rect/line` surface but are not in that corpus). The full allow-list:
 
 | Element | Attributes emitted today |
 | --- | --- |
@@ -52,7 +52,7 @@ The emitter now emits `<g>` (math fragments + the closed `data-sirentide-role`/`
 
 ## The alphabet — GROWS PER MILESTONE
 
-The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all twenty diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). `<marker>`/`<defs>` are added at a later milestone (a fuller `sequence` with activation frames) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
+The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all twenty diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). Activation frames already ship on the current path/line surface; `<marker>`/`<defs>` are the genuinely-deferred part, added at a later milestone (denser `sequence` heads / effect markers) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
 
 ### M1 — allowed elements
 `svg`, `g`, `path`, `rect`, `line`, `polyline`, `polygon`, `circle`, `ellipse`.
@@ -85,4 +85,4 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 Every row is a reviewed doc + test change, not a default.
 
 ## Relationship to LatteX
-Independent contract, same discipline. When a Sirentide label contains math, the renderer calls `LatteX.render`/`renderInline` and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)
+Independent contract, same discipline. When a Sirentide label contains math, the renderer calls the injected `MathFragmentRenderer`'s `renderFragment` seam (LatteX 0.5.0 supplies the implementation; the core stays zero-runtime-dependency) and embeds the returned `<g>…</g>` fragment — which is already `svg/g/path/rect`, a **subset** of this alphabet — so the composition adds nothing to Sirentide's surface. (See the Sirentide↔LatteX dependency model, coordination seq 5495.)

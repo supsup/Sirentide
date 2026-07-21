@@ -62,10 +62,10 @@ Her build calls `Sirentide.render(...)`, gets back a self-contained `<svg>` of i
 and splices it into the page. No JavaScript ships; the sanitizer waves it through untouched; the
 reader sees a crisp diagram with the page.
 
-*Where it's going:* soon the reader can **play** her `sequence` step by step; a node label reads
-`latency = $\frac{n}{r}$` and the formula renders *in* the box; she tags the critical path
-`fx=glow` and it pulses. Same DSL, same hermetic bake, same no-runtime-JS guarantee — with
-presence.
+Already today a node label reads `latency = $\frac{n}{r}$` and the formula renders *in* the box.
+*Where it's going:* soon the reader can **play** her `sequence` step by step, and she tags the
+critical path `fx=glow` and it pulses. Same DSL, same hermetic bake, same no-runtime-JS guarantee
+— with presence.
 
 ---
 
@@ -74,8 +74,9 @@ presence.
 Sirentide scopes by **layout tractability**, not feature parity — it will never chase all of
 Mermaid. The ladder moved faster than first drawn: the graph and time-axis types landed on the
 current path/line alphabet, so `flowchart`, `gantt`, and `timeline` are built now rather than
-deferred. What remains ahead is the *thesis* layer (play-through, effects, math) and the denser
-`sequence` machinery.
+deferred. Math-in-labels and the full `sequence` (alt/loop/par frames + activation bars) also
+shipped. What remains ahead is the *thesis* layer (play-through, effects) and the
+`marker`/`defs`-backed denser `sequence` heads.
 
 | | Diagrams | Status |
 |---|---|---|

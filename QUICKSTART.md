@@ -19,13 +19,14 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 Sirentide is a clean-room, pure-**Java 25**, **zero-runtime-dependency** renderer that turns a
 small diagram DSL into **static SVG at build time** — no JavaScript, no headless browser, no
 runtime. Its emitter targets a deliberately tiny, sanitizer-safe SVG alphabet (`<svg>`, `<path>`,
-`<rect>`, `<line>` — labels are baked to `<path>` glyphs; never `<script>`, `<style>`,
-`<foreignObject>`, or external `href`s), so the output is safe to inline directly into HTML and
-already sits inside a standard sanitizer allow-list. Apache-2.0.
+`<rect>`, `<line>`, plus `<g>` for math fragments + semantic anchors and `<title>`/`<desc>` for
+a11y — labels are baked to `<path>` glyphs; never `<script>`, `<style>`, `<foreignObject>`, or
+external `href`s), so the output is safe to inline directly into HTML and already sits inside a
+standard sanitizer allow-list. Apache-2.0.
 
 It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTeX→SVG math
-renderer), and shares its discipline — and, soon, its font, so a diagram label can *contain* a
-real LaTeX formula.
+renderer), and shares its discipline — and its font, so a diagram label can *contain* a real
+LaTeX formula, rendered at bake.
 
 ## 2. Render a diagram
 
