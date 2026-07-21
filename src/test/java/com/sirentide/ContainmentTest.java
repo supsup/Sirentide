@@ -224,6 +224,16 @@ class ContainmentTest {
             + "  ,Homes,10\n  Loop,Loop,5\n",
         "sankey-beta\n  A,B,10\n  B,C,10\n",   // the `sankey-beta` alias + a 3-node chain
         "sankey\n",                            // empty body → minimal inert canvas (round-trips, never the shell)
+        // knot diagram (plan sirentide-knot-diagram-primitive): the built-in classical knots —
+        // one closed smooth curve of stroked M/L polyline strand arcs (fill=none) with over/under
+        // crossings, each under strand broken by a gap. Exercises the arc <path> geometry + the EDGE
+        // anchor groups through the allowlist (all in svg/path/g); plus an UNKNOWN type → inert shell.
+        // (figure8 is deferred to a follow-up — review round 2 — so it degrades to the inert shell.)
+        "knot\n  type: unknot\n",
+        "knot\n  type: trefoil\n",
+        "knot\n  type: figure8\n",       // DEFERRED type → inert empty shell (round-trips, never throws)
+        "knot\n  type: cinquefoil\n",   // unrecognized type → inert empty shell (round-trips, never throws)
+        "knot\n",                        // bare knot (no type) → inert empty shell
         // edge cases
         "",                                                       // empty diagram
         "anything",                                               // unknown → empty shell

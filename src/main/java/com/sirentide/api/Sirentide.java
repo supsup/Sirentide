@@ -388,6 +388,9 @@ public final class Sirentide {
                 com.sirentide.layout.TensorNetworkLayout.layout(tn);
             // A Young diagram: a partition drawn as left-justified rows of unit boxes (English convention).
             case com.sirentide.ir.YoungDiagram yd -> com.sirentide.layout.YoungDiagramLayout.layout(yd, math);
+            // A classical knot diagram: one closed smooth curve with transverse crossings (unknot /
+            // trefoil; figure8 deferred), the under strand broken at each crossing. No `$…$` labels here.
+            case com.sirentide.ir.Knot kn -> com.sirentide.layout.KnotDiagramLayout.layout(kn, math);
             // A Dynkin diagram: the finite-type Lie-algebra classification — node discs on a baseline
             // (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a multi-bond. No `$…$`
             // labels in this slice, so `math` is unused here.

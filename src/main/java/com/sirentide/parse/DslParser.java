@@ -22,6 +22,7 @@ import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
 import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Journey;
+import com.sirentide.ir.Knot;
 import com.sirentide.ir.JourneySection;
 import com.sirentide.ir.JourneyTask;
 import com.sirentide.ir.MathBlock;
@@ -223,6 +224,9 @@ public final class DslParser {
             // A Young diagram — a `rows:` line of positive-integer partition parts `[λ0, λ1, …]` renders
             // as left-justified rows of unit boxes (English convention: longest row on top, stacked down).
             case "young" -> parseYoung(lines, textColor);
+            // A classical knot diagram — a `type: trefoil` / `unknot` line selects a built-in
+            // alternating knot, drawn as one closed curve with over/under crossings (figure8 deferred).
+            case "knot" -> parseKnot(lines, textColor);
             // A Dynkin diagram — a `type: <X><rank>` line (e.g. `B4`, `E8`, `G2`) renders the named
             // finite-type semisimple-Lie-algebra classification; an unknown/out-of-range type degrades
             // to the inert shell (never throws).
@@ -3368,5 +3372,40 @@ public final class DslParser {
             totalBoxes += part;
         }
         return new YoungDiagram(rows, textColor);
+    }
+
+    /// Parses a knot diagram (plan sirentide-knot-diagram-primitive): a `type: <name>` line (or a bare
+    /// name line) selecting a built-in classical knot — `unknot` or `trefoil` (case-insensitive). The
+    /// FIRST recognized type wins; an UNKNOWN or MISSING type degrades to {@link Empty} (the inert
+    /// shell — never throws, DESIGN §6), exactly like an unknown diagram-type keyword. NOTE: `figure8`
+    /// (4₁) is DEFERRED to a follow-up (review round 2), so it is NOT recognized here and degrades to
+    /// the inert shell until its iconic diagram ships.
+    private static Diagram parseKnot(String[] lines, String textColor) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String body = line.regionMatches(true, 0, "type:", 0, 5) ? line.substring(5) : line;
+            String norm = normalizeKnotType(body.strip());
+            if (norm != null) {
+                return new Knot(norm, textColor);
+            }
+            // A non-blank, unrecognized line: stop scanning and degrade (an unknown type → inert shell).
+            break;
+        }
+        return new Empty();
+    }
+
+    /// Maps a raw knot-type token to its canonical name, or `null` if unrecognized. Case-insensitive.
+    /// `figure8` and its spellings are intentionally absent (deferred to a follow-up) → they normalize
+    /// to `null` and degrade to the inert shell.
+    private static String normalizeKnotType(String raw) {
+        String t = raw.toLowerCase(java.util.Locale.ROOT).replace("_", "").replace(" ", "");
+        return switch (t) {
+            case "unknot", "trivial", "01" -> Knot.UNKNOT;
+            case "trefoil", "31" -> Knot.TREFOIL;
+            default -> null;
+        };
     }
 }

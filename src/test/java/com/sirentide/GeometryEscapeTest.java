@@ -73,6 +73,14 @@ class GeometryEscapeTest {
     }
 
     @Test
+    void knotClosedCurvesStayInsideTheirCanvas() {
+        // Every knot's strand arcs (dense M/L polylines, fill=none) grow the canvas to fit + a uniform
+        // margin, so no vertex of the closed curve escapes — including the crossing-gapped arc ends.
+        assertContained("knot\ntype: unknot");
+        assertContained("knot\ntype: trefoil");
+    }
+
+    @Test
     void dynkinDiagramsStayInsideTheirCanvas() {
         // Every finite family: a line (A/B/C/F/G), a vertical FORK (D — terminals offset up/down), and
         // a below-baseline BRANCH (E) all exercise the grow-to-fit canvas + arrow-triangle geometry.

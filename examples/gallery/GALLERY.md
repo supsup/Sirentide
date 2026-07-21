@@ -464,6 +464,24 @@ cf: 2, 1, 2, 1, 1, 4
 
 ![Snake graph — e-start = [2,1,2,1,1,4]](snake-e.png)
 
+## Knot — unknot (trivial closed loop, 0 crossings)
+
+```
+knot
+type: unknot
+```
+
+![Knot — unknot (trivial closed loop, 0 crossings)](knot-unknot.png)
+
+## Knot — trefoil (3₁, 3 crossings, alternating)
+
+```
+knot
+type: trefoil
+```
+
+![Knot — trefoil (3₁, 3 crossings, alternating)](knot-trefoil.png)
+
 ## Tensor network (MPS chain — cores, bonds, physical legs)
 
 ```
