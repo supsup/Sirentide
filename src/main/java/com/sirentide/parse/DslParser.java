@@ -34,6 +34,7 @@ import com.sirentide.ir.Sankey;
 import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.TensorNetwork;
 import com.sirentide.ir.Divider;
+import com.sirentide.ir.Dynkin;
 import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqLifecycle;
 import com.sirentide.ir.SeqMessage;
@@ -123,6 +124,11 @@ public final class DslParser {
     // total is additionally bounded by MAX_DATA_ROWS (mirrors the snake square-total discipline).
     public static final int MAX_YOUNG_ROWS = 500;
     public static final int MAX_YOUNG_PART = 1000;
+    // Dynkin-diagram rank cap (plan 8e13b196). A_n has no mathematical upper bound, but the node/bond
+    // count grows linearly with the rank and a diagram wider than this is unreadable anyway; a `type:`
+    // whose rank exceeds this degrades to the inert shell (invalid family sentinel) rather than laying
+    // out a runaway strip — mirrors the per-type cap discipline, never OOMs, never throws.
+    public static final int MAX_DYNKIN_RANK = 200;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -217,6 +223,10 @@ public final class DslParser {
             // A Young diagram — a `rows:` line of positive-integer partition parts `[λ0, λ1, …]` renders
             // as left-justified rows of unit boxes (English convention: longest row on top, stacked down).
             case "young" -> parseYoung(lines, textColor);
+            // A Dynkin diagram — a `type: <X><rank>` line (e.g. `B4`, `E8`, `G2`) renders the named
+            // finite-type semisimple-Lie-algebra classification; an unknown/out-of-range type degrades
+            // to the inert shell (never throws).
+            case "dynkin" -> parseDynkin(lines, textColor);
             default -> new Empty();
         };
     }
@@ -2153,6 +2163,41 @@ public final class DslParser {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /// Parse a Dynkin diagram (plan 8e13b196). The body carries a single `type: <X><rank>` line — a
+    /// case-insensitive family letter `A`–`G` glued to a rank (e.g. `type: B4`, `E8`, `G2`); the bare
+    /// letter+digits form (no `type:` prefix, e.g. `B4`) is accepted too. The first well-formed type
+    /// line wins; later lines and junk are ignored. A rank beyond {@link #MAX_DYNKIN_RANK}, an
+    /// unparseable rank, or a non-letter family maps to an INVALID family sentinel (`?`) so the layout
+    /// bakes the inert shell — the finite-TYPE rank-range check (A n≥1, B/C n≥2, D n≥4, E∈{6,7,8},
+    /// F=4, G=2) then lives in {@link Dynkin#valid()}. Never throws (DESIGN §6).
+    private static Diagram parseDynkin(String[] lines, String textColor) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String body = line.regionMatches(true, 0, "type:", 0, 5)
+                ? line.substring(5).strip() : line;
+            if (body.isEmpty() || !Character.isLetter(body.charAt(0))) {
+                continue;   // not a type line — skip, keep scanning
+            }
+            char family = Character.toUpperCase(body.charAt(0));
+            String rankTok = body.substring(1).strip();
+            Integer rank = parsePositiveInt(rankTok);
+            if (rank == null) {
+                // A letter with no valid rank (e.g. a stray word) → the inert sentinel, not a re-scan:
+                // a Dynkin type line is a single token, so a malformed one degrades rather than throws.
+                return new Dynkin('?', 0, textColor);
+            }
+            if (rank > MAX_DYNKIN_RANK) {
+                return new Dynkin('?', 0, textColor);   // past the cap → inert shell (never OOM)
+            }
+            return new Dynkin(family, rank, textColor);
+        }
+        // A bare `dynkin` with no type line → an inert (empty) but valid Dynkin shell, never Empty.
+        return new Dynkin('?', 0, textColor);
     }
 
     /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias

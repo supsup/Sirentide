@@ -149,7 +149,10 @@ class SemanticAnchorTest {
             "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : pass, fail\n"
                 + "  \"PC1 soft-intent\" : partial, na\n",
             "tensornetwork\n  mps A B C D\n",
-            "tensornetwork\n  mpo A B C\n");
+            "tensornetwork\n  mpo A B C\n",
+            "dynkin\n  type: B4\n",
+            "dynkin\n  type: D4\n",
+            "dynkin\n  type: G2\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -538,6 +541,39 @@ class SemanticAnchorTest {
             assertTrue(List.of("node", "edge").contains(x.role()),
                 "tensornetwork emits only the closed node/edge roles, saw: " + x.role());
         }
+    }
+
+    /// dynkin (plan 8e13b196): every node disc wraps in ONE `<g role="node">` (id = `n<index>`) and
+    /// every bond in ONE `<g role="edge">` (id = `b<a>-<b>`). A B_4 line has 4 nodes + 3 bonds → 7
+    /// anchor groups, seq 0..6 contiguous; bonds emit before nodes (lower seq range), so
+    /// {@code renderFrames} plays the bonds in before the nodes rather than collapsing the multi-node
+    /// diagram to one static frame. DROP the `<g>` wrappers in DynkinDiagramLayout (emit the shapes
+    /// bare) and every count below falls to 0 → RED.
+    @Test
+    void dynkinEmitsNodeAndEdgeAnchorsAndPlaysThrough() {
+        String dsl = "dynkin\n  type: B4\n";
+        List<Anc> a = anchors(Sirentide.render(dsl));
+        assertWellFormed(a, 7);
+        assertEquals(4, countRole(a, "node"), "four node anchors (B4): " + a);
+        assertEquals(3, countRole(a, "edge"), "three bond edge anchors (B4): " + a);
+        // The role vocabulary is the CLOSED graph one — no new role for this type.
+        for (Anc x : a) {
+            assertTrue(List.of("node", "edge").contains(x.role()),
+                "dynkin emits only the closed node/edge roles, saw: " + x.role());
+        }
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("n0")),
+            "the first node anchors under n0: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("b2-3")),
+            "the last bond id is b2-3: " + a);
+        // Bonds emit before nodes → bonds carry the lower seq range.
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge")).mapToInt(Anc::seq).max().orElse(-1);
+        int minNodeSeq = a.stream().filter(x -> x.role().equals("node")).mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minNodeSeq, "bonds (edges) seq before nodes: " + a);
+        // PLAY-THROUGH: 7 distinct seq → renderFrames yields >1 frame (not a single static frame).
+        assertTrue(Sirentide.renderFrames(dsl).size() > 1,
+            "a multi-node dynkin plays through more than one frame");
+        assertEquals(7, Sirentide.renderFrames(dsl).size(),
+            "renderFrames returns one frame per distinct seq (7 groups)");
     }
 
     /// tensornetwork MPO: each core gains a SECOND (operator) UP leg, but that leg lives INSIDE the

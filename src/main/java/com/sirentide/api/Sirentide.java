@@ -388,6 +388,10 @@ public final class Sirentide {
                 com.sirentide.layout.TensorNetworkLayout.layout(tn);
             // A Young diagram: a partition drawn as left-justified rows of unit boxes (English convention).
             case com.sirentide.ir.YoungDiagram yd -> com.sirentide.layout.YoungDiagramLayout.layout(yd, math);
+            // A Dynkin diagram: the finite-type Lie-algebra classification — node discs on a baseline
+            // (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a multi-bond. No `$…$`
+            // labels in this slice, so `math` is unused here.
+            case com.sirentide.ir.Dynkin dk -> com.sirentide.layout.DynkinDiagramLayout.layout(dk);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

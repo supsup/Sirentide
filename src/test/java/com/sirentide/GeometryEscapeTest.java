@@ -72,6 +72,15 @@ class GeometryEscapeTest {
         assertContained("tensornetwork\nmps A B C ThisCoreLabelIsFarTooLongToFitInsideOneDisc");
     }
 
+    @Test
+    void dynkinDiagramsStayInsideTheirCanvas() {
+        // Every finite family: a line (A/B/C/F/G), a vertical FORK (D — terminals offset up/down), and
+        // a below-baseline BRANCH (E) all exercise the grow-to-fit canvas + arrow-triangle geometry.
+        for (String type : new String[] {"A5", "B4", "C4", "D5", "E8", "F4", "G2"}) {
+            assertContained("dynkin\ntype: " + type);
+        }
+    }
+
     private static void assertContained(String dsl) {
         String svg = Sirentide.render(dsl);
         Matcher wm = SVG_WIDTH.matcher(svg);
