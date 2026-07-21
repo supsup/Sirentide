@@ -2,20 +2,20 @@
 
 **Living, narratable diagrams — baked to static SVG, no runtime JS.**
 
-Sirentide is a clean-room, pure-Java, zero-dependency renderer that turns a small diagram DSL into inert static SVG *at build time* — with a **native effect/narrative layer**: diagrams you can *play through*, effects bound to the diagram's own meaning, and real **LaTeX math baked into labels** (via its sibling, [LatteX](https://github.com/supsup/LatteX)).
+Sirentide is a clean-room, pure-Java, zero-dependency renderer that turns a small diagram DSL into inert static SVG *at build time* — designed to carry a **native effect/narrative layer**: diagrams you'll be able to *play through*, effects bound to the diagram's own meaning. The foundation for that layer already ships — stable **semantic anchors** baked into the SVG plus a baked-frame `renderFrames` play-through API — alongside real **LaTeX math baked into labels** (via its sibling, [LatteX](https://github.com/supsup/LatteX)).
 
-It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the idea, drops the browser, and adds the thing no browser-JS diagram tool can put in a CSP-clean static bake: a controlled, sanitizer-safe effect layer that gives a diagram *presence*.
+It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the idea, drops the browser, and aims at the thing no browser-JS diagram tool can put in a CSP-clean static bake: a controlled, sanitizer-safe effect layer that will give a diagram *presence*.
 
 ## Why it exists
 
 - **Static-site / docs safe.** Output is inert `svg/path/rect/line` geometry (labels baked to `<path>` glyphs) — no `<script>`, no runtime JS, no external fonts. It survives a strict HTML sanitizer untouched.
 - **Hermetic build.** Pure JVM, zero runtime deps (no headless browser at bake). The one build-time asset is a bundled OFL/Apache font, rendered to paths.
-- **Native effects.** Because Sirentide emits the SVG with its own stable semantic anchors, effects ("glow the critical path", "pulse the active step", "play the flow in order") attach natively — not bolted onto a drifting class-soup.
+- **Native effects (by design).** Sirentide already emits the SVG with its own stable semantic anchors, so the coming effect layer ("glow the critical path", "pulse the active step", "play the flow in order") will attach natively — not bolted onto a drifting class-soup.
 - **Math composition.** A node label, axis tick, or bar can *be* a real LaTeX formula — its LatteX sibling renders it at bake, and the two minimal-alphabet emitters compose for free.
 
 ## Status
 
-Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md).
+Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-one diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md).
 
 The six flagship types, in detail:
 
@@ -28,7 +28,7 @@ The six flagship types, in detail:
 | **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
 | **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
 
-Plus fourteen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), and **`dynkin`** (semisimple Lie-algebra classification). The flowchart carries the full mermaid node-shape set, edge styles, and nested subgraphs; the sequence diagram carries `alt`/`loop`/`par` frames plus activation bars.
+Plus fifteen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), and **`knot`** (classical knots — trefoil/unknot/figure-eight). The flowchart carries the full mermaid node-shape set, edge styles, and nested subgraphs; the sequence diagram carries `alt`/`loop`/`par` frames plus activation bars.
 
 Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside any label typesets as real math via the LatteX bridge.
 

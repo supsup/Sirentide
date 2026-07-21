@@ -10,8 +10,8 @@ the five-minute version, see [QUICKSTART.md](QUICKSTART.md); for the full design
 **Living, narratable diagrams — baked to static SVG, no runtime JavaScript.** Sirentide takes
 the *idea* of a diagram-from-text tool (like Mermaid) and gives it a new spin based on
 [LatteX](https://github.com/supsup/LatteX): the diagram bakes to inert SVG at build time, and it
-carries a **native effect/narrative layer** — a flow you can *play through*, effects bound to the
-diagram's own meaning, and real LaTeX math *inside* labels.
+is **designed to carry a native effect/narrative layer** — a flow you'll be able to *play through*,
+effects bound to the diagram's own meaning — while real LaTeX math *inside* labels ships today.
 
 ## Why not just use Mermaid?
 
@@ -21,8 +21,8 @@ view time. That doesn't fit a docs site that bakes to static HTML and strips run
 Chromium into your build. Sirentide is the hermetic, zero-dependency answer: pure JVM, bakes to
 inert SVG, ships nothing to the reader.
 
-And it does one thing no browser-JS diagram tool can do in a CSP-clean static bake: a controlled,
-sanitizer-safe **effect layer** that gives a diagram presence — the reason to build it rather
+And it targets one thing no browser-JS diagram tool can do in a CSP-clean static bake: a controlled,
+sanitizer-safe **effect layer** that will give a diagram presence — the reason to build it rather
 than shell out to a browser.
 
 ## The three things only Sirentide will do
@@ -44,11 +44,11 @@ than shell out to a browser.
 Dana writes internal docs on a static site whose sanitizer strips `<script>` and `<style>`. She
 wants a diagram, not a hand-placed SVG.
 
-Today she can already reach for twenty diagram types — a `pie` of where the team's time goes, an
+Today she can already reach for twenty-one diagram types — a `pie` of where the team's time goes, an
 `xychart` of throughput, a `timeline` or `gantt` of the roadmap, a `flowchart` of the review
 gate, a `sequence` of the request path, plus `state`, `quadrant`, `classDiagram`, `erDiagram`,
 `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`,
-`young`, and `dynkin`:
+`young`, `dynkin`, and `knot`:
 
 ```
 flowchart TD
