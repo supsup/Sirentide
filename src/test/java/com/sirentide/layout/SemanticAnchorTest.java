@@ -149,7 +149,10 @@ class SemanticAnchorTest {
             "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : pass, fail\n"
                 + "  \"PC1 soft-intent\" : partial, na\n",
             "tensornetwork\n  mps A B C D\n",
-            "tensornetwork\n  mpo A B C\n");
+            "tensornetwork\n  mpo A B C\n",
+            "knot\n  type: trefoil\n",
+            "knot\n  type: figure8\n",
+            "knot\n  type: unknot\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
                 assertTrue(SirentideRole.isWire(a.role()),
@@ -595,6 +598,34 @@ class SemanticAnchorTest {
             "the <script> label survives XML-escaped (reached the sink, not dropped): " + svg);
         assertTrue(svg.contains("&lt;img") && svg.contains("onerror"),
             "the <img … onerror> label is present but inert-escaped, pinning parser-through-sink coverage: " + svg);
+    }
+
+    /// knot (plan sirentide-knot-diagram-primitive): the knot shadow is a 4-valent graph whose strand
+    /// ARCS (the maximal runs between under-gaps) are the {@link SirentideRole#EDGE} anchors; crossings
+    /// are its implicit, un-anchored nodes. A trefoil has 3 crossings → 3 gaps → exactly 3 strand arcs
+    /// → 3 `<g role="edge">` groups, seq 0..2 contiguous — so {@code renderFrames} plays it through in
+    /// >1 frame. DROP the `<g>` wrapper in KnotDiagramLayout (emit the arcs bare) and the count falls to
+    /// 0 → RED.
+    @Test
+    void knotEmitsAnEdgeAnchorPerStrandArcAndPlaysThroughMultipleFrames() {
+        List<Anc> a = anchors(Sirentide.render("knot\n  type: trefoil\n"));
+        assertWellFormed(a, 3);
+        assertEquals(3, countRole(a, "edge"), "one edge anchor per strand arc (trefoil: 3): " + a);
+        for (Anc x : a) {
+            assertTrue(List.of("edge").contains(x.role()),
+                "the knot emits only the closed edge role, saw: " + x.role());
+        }
+        // seq 0..2 → renderFrames yields 3 distinct play-through frames (>1) for a multi-crossing knot.
+        List<String> frames = Sirentide.renderFrames("knot\n  type: trefoil\n");
+        assertEquals(3, frames.size(), "trefoil plays through 3 frames (one per strand arc)");
+        // The figure-eight (4 crossings → 4 arcs) plays through 4 frames.
+        assertEquals(4, Sirentide.renderFrames("knot\n  type: figure8\n").size(),
+            "figure-eight plays through 4 frames");
+        // The unknot (0 crossings) is a single un-broken loop → exactly 1 anchor group, 1 frame.
+        List<Anc> u = anchors(Sirentide.render("knot\n  type: unknot\n"));
+        assertEquals(1, u.size(), "unknot: one edge anchor (the whole loop): " + u);
+        assertEquals(1, Sirentide.renderFrames("knot\n  type: unknot\n").size(),
+            "the unknot has no play-through steps → a single frame");
     }
 
     // -- seq WIRE value saturates at 4 digits to match the /docs contract bound ^[0-9]{1,4}$ ---------

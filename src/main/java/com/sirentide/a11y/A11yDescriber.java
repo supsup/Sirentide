@@ -99,7 +99,25 @@ public final class A11yDescriber {
             case com.sirentide.ir.Snake sn -> snake(sn);
             case com.sirentide.ir.TensorNetwork tn -> tensorNetwork(tn);
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
+            case com.sirentide.ir.Knot kn -> knot(kn);
             case Empty ignored -> A11y.NONE;
+        };
+    }
+
+    /// Knot diagram: "Trefoil knot: 3 crossings, alternating." The crossing NUMBER is a property of
+    /// the built-in knot type (0 / 3 / 4 for unknot / trefoil / figure8); all three built-ins are
+    /// alternating. Deterministic (pure type switch), bounded (a fixed phrase). A knot with an
+    /// unrecognized type never reaches here (the parser degrades it to {@link Empty}).
+    private static A11y knot(com.sirentide.ir.Knot k) {
+        String type = k.type() == null ? "" : k.type();
+        return switch (type) {
+            case com.sirentide.ir.Knot.UNKNOT ->
+                new A11y("Unknot", "Unknot (trivial knot): a plain closed loop with 0 crossings.");
+            case com.sirentide.ir.Knot.TREFOIL ->
+                new A11y("Trefoil knot", "Trefoil knot (3₁): 3 crossings, alternating.");
+            case com.sirentide.ir.Knot.FIGURE8 ->
+                new A11y("Figure-eight knot", "Figure-eight knot (4₁): 4 crossings, alternating.");
+            default -> new A11y("Knot diagram", "Knot diagram.");
         };
     }
 

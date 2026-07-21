@@ -72,6 +72,15 @@ class GeometryEscapeTest {
         assertContained("tensornetwork\nmps A B C ThisCoreLabelIsFarTooLongToFitInsideOneDisc");
     }
 
+    @Test
+    void knotClosedCurvesStayInsideTheirCanvas() {
+        // Every knot's strand arcs (dense M/L polylines, fill=none) grow the canvas to fit + a uniform
+        // margin, so no vertex of the closed curve escapes — including the crossing-gapped arc ends.
+        assertContained("knot\ntype: unknot");
+        assertContained("knot\ntype: trefoil");
+        assertContained("knot\ntype: figure8");
+    }
+
     private static void assertContained(String dsl) {
         String svg = Sirentide.render(dsl);
         Matcher wm = SVG_WIDTH.matcher(svg);

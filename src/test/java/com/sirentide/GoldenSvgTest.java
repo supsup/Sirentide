@@ -188,6 +188,13 @@ class GoldenSvgTest {
         // grow-to-fit canvas (2*MARGIN + maxLen*UNIT by 2*MARGIN + numRows*UNIT) byte-for-byte.
         FIXTURES.put("young",
             "young\n  rows: 3, 2, 1\n");
+        // A classical knot diagram: the trefoil (3₁) — one closed smooth curve (dense M/L polyline
+        // strand arcs, fill=none) with 3 transverse crossings, each UNDER strand broken by a gap. Pins
+        // the sampled curve geometry, the 3 gap breaks (→ 3 EDGE-anchored strand arcs), the grow-to-fit
+        // canvas, and the y-flip byte-for-byte. Its emitted geometry reconstructs the canonical Gauss
+        // code O1U2O3U1O2U3 (see KnotGaussCodeOracleTest's semantic oracle).
+        FIXTURES.put("knot",
+            "knot\n  type: trefoil\n");
     }
 
     @Test
