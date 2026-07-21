@@ -176,6 +176,28 @@ class KnotGaussCodeOracleTest {
             "a detached stray subpath (second M) must be rejected, not merged into the containing arc");
     }
 
+    /// Lattice sir381: change the first interior absolute `L` of a real trefoil arc to relative `l`. A
+    /// browser reads the SAME numbers relative to the current point — a materially different / broken
+    /// strand. RED-ON-OLD: the case-insensitive parser uppercased `l` back to `L` and accepted the
+    /// original absolute geometry (a browser-visible mutation false-greened). GREEN-ON-NEW: the
+    /// case-sensitive parser rejects the relative command, never reinterpreting it as absolute.
+    @Test
+    void aRelativeLineCommandMustNotBeReinterpretedAsAbsolute() {
+        String arc = rawArcStrings(Knot.TREFOIL).stream()
+            .filter(s -> countCommand(s, 'L') >= 2).findFirst()
+            .orElseThrow(() -> new AssertionError("expected a trefoil arc with interior L commands"));
+        String relative = relativizeFirstInteriorL(arc);
+        assertNotEquals(arc, relative, "the mutation must change an interior L to l");
+        // RED-ON-OLD: the retired case-insensitive parser folded relative l back to absolute L (no throw).
+        assertDoesNotThrow(() -> legacyCaseInsensitiveParse(relative),
+            "the retired case-insensitive parser read relative l as absolute L — the false-green");
+        // GREEN-ON-NEW: case-sensitive parse rejects the relative command.
+        AssertionError err = assertThrows(AssertionError.class, () -> parse(relative),
+            "a relative line command (lowercase l) must be rejected, not read as absolute geometry");
+        assertTrue(err.getMessage().contains("relative") || err.getMessage().contains("outside the emitted"),
+            "the rejection names the relative/out-of-grammar cause: " + err.getMessage());
+    }
+
     // -- reconstruction (geometry only) ------------------------------------------------------------
 
     /// The reconstructed Gauss code string ("O1U2…") for a built-in knot, from its EMITTED geometry.
@@ -288,10 +310,20 @@ class KnotGaussCodeOracleTest {
         int i = 0;
         boolean sawM = false;
         while (i < tok.length) {
-            char c = tok[i].length() == 1 ? Character.toUpperCase(tok[i].charAt(0)) : ' ';
-            if (c == 'M' || c == 'L') {
-                assertTrue(i + 2 < tok.length, "a " + c + " command needs two coordinates: " + d);
-                if (c == 'M') {
+            String t = tok[i];
+            if (t.isEmpty()) {
+                i += 1;
+                continue;
+            }
+            // CASE-SENSITIVE (review sir381): the emitted grammar is absolute `M x y (L x y)* Z` ONLY.
+            // A relative command (lowercase `m`/`l`) makes the browser reinterpret the SAME numbers
+            // relative to the current point — a materially different / broken curve — so it must FAIL
+            // CLOSED, never be uppercased back to absolute (the old `toUpperCase` read a relative `l` as
+            // absolute `L` and false-greened a browser-visible mutation). Only exactly `M`, `L`, and the
+            // legitimately-emitted terminal `Z` are accepted; every other token fails closed.
+            if (t.equals("M") || t.equals("L")) {
+                assertTrue(i + 2 < tok.length, "a " + t + " command needs two coordinates: " + d);
+                if (t.equals("M")) {
                     assertTrue(!sawM, "a strand arc must be a SINGLE contiguous stroke — exactly one "
                         + "leading M then only L commands; a second M (pen-lift / detached subpath) is a "
                         + "broken curve: " + d);
@@ -301,8 +333,12 @@ class KnotGaussCodeOracleTest {
                 }
                 pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
                 i += 3;
+            } else if (t.equals("Z")) {
+                i += 1;   // the emitted terminal close
             } else {
-                i += 1;   // Z or whitespace
+                assertTrue(false, "token '" + t + "' is outside the emitted absolute M/L/Z grammar — a "
+                    + "relative command (lowercase m/l) or stray token is rejected, never reinterpreted "
+                    + "as absolute geometry (review sir381): " + d);
             }
         }
         assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
@@ -325,6 +361,35 @@ class KnotGaussCodeOracleTest {
                 i += 1;
             }
         }
+        return pts.toArray(new double[0][]);
+    }
+
+    /// Frozen pre-381 parser (review sir381 red-on-old reference): uppercased each command token before
+    /// interpreting it, so a relative `l` — which a browser reads as a coordinate offset from the
+    /// current point (a materially different / broken strand) — was folded back to absolute `L` and its
+    /// numbers accepted as absolute geometry. The false-green.
+    private static double[][] legacyCaseInsensitiveParse(String d) {
+        String[] tok = d.trim().split("\\s+");
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean sawM = false;
+        while (i < tok.length) {
+            char c = tok[i].length() == 1 ? Character.toUpperCase(tok[i].charAt(0)) : ' ';
+            if (c == 'M' || c == 'L') {
+                assertTrue(i + 2 < tok.length, "a " + c + " command needs two coordinates: " + d);
+                if (c == 'M') {
+                    assertTrue(!sawM, "single contiguous stroke: " + d);
+                    sawM = true;
+                } else {
+                    assertTrue(sawM, "L before M: " + d);
+                }
+                pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+                i += 3;
+            } else {
+                i += 1;
+            }
+        }
+        assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
         return pts.toArray(new double[0][]);
     }
 
@@ -360,6 +425,20 @@ class KnotGaussCodeOracleTest {
         for (int i = 0; i < tok.length; i++) {
             if (tok[i].equalsIgnoreCase("L")) {
                 tok[i] = "M";
+                break;
+            }
+        }
+        return String.join(" ", tok);
+    }
+
+    /// Change the first interior absolute `L` command of `d` to a RELATIVE `l` — Lattice's sir381
+    /// discriminator: same numbers, but a browser now reads them relative to the current point (a
+    /// materially different / broken strand).
+    private static String relativizeFirstInteriorL(String d) {
+        String[] tok = d.trim().split("\\s+");
+        for (int i = 0; i < tok.length; i++) {
+            if (tok[i].equals("L")) {
+                tok[i] = "l";
                 break;
             }
         }
