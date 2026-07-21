@@ -36,8 +36,7 @@ import org.junit.jupiter.api.Test;
 /// (positions, no over/under), exactly as the snake oracle recomputes matchings from raw tile geometry.
 ///
 /// The KNOWN codes are the canonical alternating Gauss codes these built-in traversals realize:
-/// trefoil O1U2O3U1O2U3; unknot the empty code. (The figure-eight (4₁) is deferred to a follow-up —
-/// review round 2 — so it is not exercised here.)
+/// trefoil O1U2O3U1O2U3; figure-eight (4₁) O1U4O2U1O3U2O4U3; unknot the empty code.
 class KnotGaussCodeOracleTest {
 
     /// A strand vertex within this many px of a crossing centre counts as passing THROUGH it (OVER).
@@ -47,10 +46,11 @@ class KnotGaussCodeOracleTest {
     /// a pass-through. The gap is ~15–22px; the over pass is ~1px — a wide, unambiguous separation.
     private static final double GAP_MIN = 6.0;
 
-    // -- the KNOWN Gauss code (canonical, alternating) ---------------------------------------------
-    //    (figure8 (4₁) is deferred to a follow-up — review round 2 — so only the trefoil is asserted.)
+    // -- the KNOWN Gauss codes (canonical, alternating) --------------------------------------------
 
     private static final String TREFOIL_CODE = "O1U2O3U1O2U3";
+    /// The figure-eight (4₁) canonical alternating Gauss code its hand-built embedding realizes.
+    private static final String FIGURE8_CODE = "O1U4O2U1O3U2O4U3";
 
     // -- THE ORACLE --------------------------------------------------------------------------------
 
@@ -65,17 +65,26 @@ class KnotGaussCodeOracleTest {
         assertEquals("", reconstruct(Knot.UNKNOT), "the unknot (0 crossings) reconstructs the empty code");
     }
 
+    @Test
+    void figure8ReconstructsItsCanonicalGaussCode() {
+        assertEquals(FIGURE8_CODE, reconstruct(Knot.FIGURE8),
+            "the figure-eight's emitted geometry must reconstruct the canonical Gauss code "
+                + "O1U4O2U1O3U2O4U3 (a valid alternating 4₁ realization) — proving the hand-built "
+                + "embedding is a genuine 4-crossing figure-eight, not a 4-kink unknot");
+    }
+
     // -- independent cross-checks (count / double-visit / alternating) -----------------------------
 
     @Test
-    void crossingCountIsZeroOrThree() {
+    void crossingCountMatchesTheKnotType() {
         assertEquals(0, KnotDiagramLayout.crossingCentresPx(Knot.UNKNOT).size(), "unknot: 0 crossings");
         assertEquals(3, KnotDiagramLayout.crossingCentresPx(Knot.TREFOIL).size(), "trefoil: 3 crossings");
+        assertEquals(4, KnotDiagramLayout.crossingCentresPx(Knot.FIGURE8).size(), "figure-eight: 4 crossings");
     }
 
     @Test
     void everyCrossingIdIsVisitedExactlyTwice() {
-        for (String type : List.of(Knot.TREFOIL)) {
+        for (String type : List.of(Knot.TREFOIL, Knot.FIGURE8)) {
             List<int[]> visits = visits(type);   // {id, over?1:0} in traversal order
             int n = KnotDiagramLayout.crossingCentresPx(type).size();
             int[] count = new int[n + 1];
@@ -91,7 +100,7 @@ class KnotGaussCodeOracleTest {
 
     @Test
     void overUnderStrictlyAlternatesAlongTheTraversal() {
-        for (String type : List.of(Knot.TREFOIL)) {
+        for (String type : List.of(Knot.TREFOIL, Knot.FIGURE8)) {
             List<int[]> visits = visits(type);
             for (int i = 0; i < visits.size(); i++) {
                 assertNotEquals(visits.get(i)[1], visits.get((i + 1) % visits.size())[1],

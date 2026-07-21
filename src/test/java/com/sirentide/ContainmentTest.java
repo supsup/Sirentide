@@ -228,10 +228,9 @@ class ContainmentTest {
         // one closed smooth curve of stroked M/L polyline strand arcs (fill=none) with over/under
         // crossings, each under strand broken by a gap. Exercises the arc <path> geometry + the EDGE
         // anchor groups through the allowlist (all in svg/path/g); plus an UNKNOWN type → inert shell.
-        // (figure8 is deferred to a follow-up — review round 2 — so it degrades to the inert shell.)
         "knot\n  type: unknot\n",
         "knot\n  type: trefoil\n",
-        "knot\n  type: figure8\n",       // DEFERRED type → inert empty shell (round-trips, never throws)
+        "knot\n  type: figure8\n",       // the 4₁ figure-eight (plan 5f48185e) — renders + must stay contained
         "knot\n  type: cinquefoil\n",   // unrecognized type → inert empty shell (round-trips, never throws)
         "knot\n",                        // bare knot (no type) → inert empty shell
         // edge cases

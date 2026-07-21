@@ -482,6 +482,15 @@ type: trefoil
 
 ![Knot — trefoil (3₁, 3 crossings, alternating)](knot-trefoil.png)
 
+## Knot — figure-eight (4₁, 4 crossings, alternating)
+
+```
+knot
+type: figure8
+```
+
+![Knot — figure-eight (4₁, 4 crossings, alternating)](knot-figure8.png)
+
 ## Tensor network (MPS chain — cores, bonds, physical legs)
 
 ```
