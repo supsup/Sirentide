@@ -151,7 +151,6 @@ class SemanticAnchorTest {
             "tensornetwork\n  mps A B C D\n",
             "tensornetwork\n  mpo A B C\n",
             "knot\n  type: trefoil\n",
-            "knot\n  type: figure8\n",
             "knot\n  type: unknot\n");
         for (String dsl : corpus) {
             for (Anc a : anchors(Sirentide.render(dsl))) {
@@ -618,9 +617,6 @@ class SemanticAnchorTest {
         // seq 0..2 → renderFrames yields 3 distinct play-through frames (>1) for a multi-crossing knot.
         List<String> frames = Sirentide.renderFrames("knot\n  type: trefoil\n");
         assertEquals(3, frames.size(), "trefoil plays through 3 frames (one per strand arc)");
-        // The figure-eight (4 crossings → 4 arcs) plays through 4 frames.
-        assertEquals(4, Sirentide.renderFrames("knot\n  type: figure8\n").size(),
-            "figure-eight plays through 4 frames");
         // The unknot (0 crossings) is a single un-broken loop → exactly 1 anchor group, 1 frame.
         List<Anc> u = anchors(Sirentide.render("knot\n  type: unknot\n"));
         assertEquals(1, u.size(), "unknot: one edge anchor (the whole loop): " + u);

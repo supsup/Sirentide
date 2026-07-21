@@ -389,7 +389,7 @@ public final class Sirentide {
             // A Young diagram: a partition drawn as left-justified rows of unit boxes (English convention).
             case com.sirentide.ir.YoungDiagram yd -> com.sirentide.layout.YoungDiagramLayout.layout(yd, math);
             // A classical knot diagram: one closed smooth curve with transverse crossings (unknot /
-            // trefoil / figure8), the under strand broken at each crossing. No `$…$` labels this slice.
+            // trefoil; figure8 deferred), the under strand broken at each crossing. No `$…$` labels here.
             case com.sirentide.ir.Knot kn -> com.sirentide.layout.KnotDiagramLayout.layout(kn, math);
             case Empty ignored -> LaidOut.of(0, 0);
         };

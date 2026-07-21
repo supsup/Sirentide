@@ -78,7 +78,6 @@ class GeometryEscapeTest {
         // margin, so no vertex of the closed curve escapes — including the crossing-gapped arc ends.
         assertContained("knot\ntype: unknot");
         assertContained("knot\ntype: trefoil");
-        assertContained("knot\ntype: figure8");
     }
 
     private static void assertContained(String dsl) {

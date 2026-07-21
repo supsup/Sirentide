@@ -12,9 +12,14 @@ import java.util.Locale;
 /// over/under reads unambiguously. Deterministic arithmetic, zero graph optimization
 /// (docs/DESIGN.md §6) — a hard-coded LOOKUP, not a solver.
 ///
+/// SCOPE (review round 2). This slice ships the `unknot` (0 crossings) and `trefoil` (3 crossings,
+/// both textbook-quality). The `figure8` (4₁) is DEFERRED to a follow-up: its smooth parametrization
+/// projects only to the "loop-and-weave / rosette" shadow family, not the iconic two-lobe "pretzel",
+/// and a clean 4-crossing pretzel needs a hand-built planar embedding out of scope here.
+///
 /// MODEL. Each built-in knot is a deterministic PARAMETRIC curve `(x(t), y(t))`, `t ∈ [0, 2π)`, whose
-/// planar projection has a fixed set of double-point CROSSINGS (0 / 3 / 4 for unknot / trefoil /
-/// figure8). A companion `z(t)` decides over/under at each crossing (the higher-z pass is OVER); the
+/// planar projection has a fixed set of double-point CROSSINGS (0 for the unknot, 3 for the trefoil).
+/// A companion `z(t)` decides over/under at each crossing (the higher-z pass is OVER); the
 /// crossing table below is the OFFLINE-COMPUTED result (crossing `(x,y)` in curve space + the two
 /// `t`-parameters of its passes + which pass is under) — verified once, then frozen. The curve is
 /// SAMPLED into a dense polyline; sampling STARTS at an OVER pass so every maximal run between gaps
@@ -53,11 +58,17 @@ public final class KnotDiagramLayout {
     /// Half-width (in `t`) of the SKIP window at an under crossing — the visible strand break.
     private static final double GAP_T = 0.17;
 
-    // ---- the frozen crossing tables (offline-computed from z(t); see class javadoc) --------------
+    // ---- the frozen crossing table (offline-computed from z(t); see class javadoc) ---------------
     // Each row: {crossingId, underT}. The crossing id order + labels are chosen so the emit-order
-    // traversal reconstructs the canonical Gauss code (trefoil O1U2O3U1O2U3; figure8 O1U4O2U1O3U2O4U3).
-    // `underT` is the parameter of that crossing's UNDER pass (where the gap goes). SAMPLING_START is
-    // an OVER pass, so every arc between two under-gaps holds exactly one over-crossing.
+    // traversal reconstructs the canonical Gauss code (trefoil O1U2O3U1O2U3). `underT` is the parameter
+    // of that crossing's UNDER pass (where the gap goes). SAMPLING_START is an OVER pass, so every arc
+    // between two under-gaps holds exactly one over-crossing.
+    //
+    // NOTE (plan sirentide-knot-diagram-primitive, review round 2): the figure-eight (4₁) is
+    // DEFERRED to a follow-up. Its standard smooth parametrization projects only to the "rosette /
+    // loop-and-weave" family of shadows, not the iconic two-lobe "pretzel" the review asked for, and a
+    // clean 4-crossing pretzel needs a hand-built planar embedding that is out of scope for this slice.
+    // The unknot + trefoil ship now (both textbook-quality); figure8 returns with the correct diagram.
 
     /// Trefoil: x = sin t + 2 sin 2t, y = cos t − 2 cos 2t, z = −sin 3t. Under passes (curve space):
     /// c1 @ (0,1.5) t≈4.460, c2 @ (−1.299,−0.75) t≈2.365, c3 @ (1.299,−0.75) t≈0.271. Sampling starts
@@ -65,12 +76,6 @@ public final class KnotDiagramLayout {
     private static final double TREFOIL_START = 1.8230;
     private static final int[] TREFOIL_IDS = {1, 2, 3};
     private static final double[] TREFOIL_UNDER_T = {4.4601, 2.3649, 0.2712};
-
-    /// Figure-eight: x = (2 + cos 2t) cos 3t, y = (2 + cos 2t) sin 3t, z = sin 4t. Under passes:
-    /// c1 @ t≈2.618, c2 @ t≈4.189, c3 @ t≈5.760, c4 @ t≈1.047. Sampling starts at c1's OVER (t≈0.524).
-    private static final double FIGURE8_START = 0.5236;
-    private static final int[] FIGURE8_IDS = {1, 2, 3, 4};
-    private static final double[] FIGURE8_UNDER_T = {2.6180, 4.1888, 5.7596, 1.0472};
 
     public static LaidOut layout(Knot knot) {
         return layout(knot, null);
@@ -308,12 +313,11 @@ public final class KnotDiagramLayout {
         return switch (type) {
             case Knot.UNKNOT -> new Spec(Kind.UNKNOT, 0, new int[0], new double[0]);
             case Knot.TREFOIL -> new Spec(Kind.TREFOIL, TREFOIL_START, TREFOIL_IDS, TREFOIL_UNDER_T);
-            case Knot.FIGURE8 -> new Spec(Kind.FIGURE8, FIGURE8_START, FIGURE8_IDS, FIGURE8_UNDER_T);
             default -> null;
         };
     }
 
-    private enum Kind { UNKNOT, TREFOIL, FIGURE8 }
+    private enum Kind { UNKNOT, TREFOIL }
 
     /// A frozen knot spec: its parametric curve (via {@link #x}/{@link #y}), sampling start (an over
     /// pass), crossing ids, and each crossing's under-pass `t`.
@@ -322,7 +326,6 @@ public final class KnotDiagramLayout {
             return switch (kind) {
                 case UNKNOT -> Math.cos(t);
                 case TREFOIL -> Math.sin(t) + 2 * Math.sin(2 * t);
-                case FIGURE8 -> (2 + Math.cos(2 * t)) * Math.cos(3 * t);
             };
         }
 
@@ -330,7 +333,6 @@ public final class KnotDiagramLayout {
             return switch (kind) {
                 case UNKNOT -> Math.sin(t);
                 case TREFOIL -> Math.cos(t) - 2 * Math.cos(2 * t);
-                case FIGURE8 -> (2 + Math.cos(2 * t)) * Math.sin(3 * t);
             };
         }
     }
