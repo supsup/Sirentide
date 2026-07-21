@@ -32,14 +32,14 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/// FUZZ / PROPERTY-INVARIANT pass over ALL 20 diagram types (cycle-2 roadmap #4 — the trust floor).
+/// FUZZ / PROPERTY-INVARIANT pass over ALL 21 diagram types (cycle-2 roadmap #4 — the trust floor).
 ///
 /// "malformed → inert, never throws, never escapes the alphabet" was, before this pass, an
 /// ASSUMPTION backed by happy-path goldens + a curated containment corpus. This test turns it into a
 /// FUZZED contract: it generates a deterministic, adversarial corpus (a few thousand cases — type
 /// headers + every truncated prefix, random ASCII/bytes/Unicode incl. control chars/surrogates/NUL,
 /// injection payloads in every label position, structural abuse, and bit-flip/char-drop/delimiter-
-/// swap mutations of the golden seeds) and asserts three UNIVERSAL invariants on each case:
+/// swap mutations of the golden seeds) and asserts four UNIVERSAL invariants on each case:
 ///
 ///   - INV-1 (never throws): `render` AND `renderWithDiagnostics` return normally on ANY input. The
 ///     harness catches Throwable and FAILS with the offending input if anything escapes.
@@ -148,7 +148,7 @@ class FuzzInvariantTest {
         "%% title: %LBL%\npie\n  \"A\" : 10\n"
     };
 
-    // ---- the three invariant checks, run over the whole corpus ---------------------------------
+    // ---- the four invariant checks, run over the whole corpus ---------------------------------
 
     @Test
     void allThreeInvariantsHoldOnTheAdversarialCorpus() throws Exception {
@@ -167,7 +167,7 @@ class FuzzInvariantTest {
         // Non-vacuity: the corpus must actually be large (guards against a generation regression that
         // silently empties it and makes the whole pass trivially "green").
         assertTrue(cases >= 3000, "fuzz corpus must exercise a few thousand cases, ran only " + cases);
-        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 20 types in " + ms + " ms");
+        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 21 types in " + ms + " ms");
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),
@@ -639,6 +639,39 @@ class FuzzInvariantTest {
             "a small contained arc must not be reported as an escape: " + containmentEscapes(contained));
     }
 
+    /// REVIEW sir430: `state` emits rounded-rect node paths with H (horizontal) / V (vertical) lineto
+    /// commands (`M x y H x2 Q … V y2 …`). The retired pathPoints `default -> i+=1` SILENTLY SKIPPED
+    /// H/V, so a coordinate escaping via one false-greened INV-4 (Lattice's 100×100 probe escaping to
+    /// 200,200 returned no escapes). H/V are now modelled against the tracked current point, and any
+    /// UNMODELLED command fails CLOSED (recorded as an escape) so INV-4 can never silently skip again.
+    @Test
+    void horizontalVerticalAndUnknownPathCommandsAreNotSilentlySkipped() {
+        // H escaping right (x=200 in a 100-wide canvas) — the y rides the current point (50, inside).
+        String hEsc = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 50 H 200\"/></svg>";
+        assertFalse(containmentEscapes(hEsc).isEmpty(),
+            "an H lineto escaping the canvas must be caught (was silently skipped): " + containmentEscapes(hEsc));
+        // V escaping down (y=200), x rides the current point (50, inside).
+        String vEsc = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 50 10 V 200\"/></svg>";
+        assertFalse(containmentEscapes(vEsc).isEmpty(),
+            "a V lineto escaping the canvas must be caught (was silently skipped): " + containmentEscapes(vEsc));
+        // A real state-shaped H/V/Q rounded rect wholly inside must NOT be flagged (not trivially true).
+        String contained = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 20 20 H 80 Q 84 20 84 24 V 76 Q 84 80 80 80 "
+            + "H 20 Q 16 80 16 76 V 24 Q 16 20 20 20 Z\"/></svg>";
+        assertTrue(containmentEscapes(contained).isEmpty(),
+            "a contained H/V/Q rounded rect must not be flagged: " + containmentEscapes(contained));
+        // An UNMODELLED command (C cubic bézier) must FAIL CLOSED, not be silently skipped.
+        String unknown = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 10 C 20 20 30 30 200 200\"/></svg>";
+        List<String> unkEsc = containmentEscapes(unknown);
+        assertFalse(unkEsc.isEmpty(),
+            "an unmodelled path command must fail closed (recorded as an escape), never silently skip");
+        assertTrue(unkEsc.stream().anyMatch(s -> s.contains("does not model")),
+            "the fail-closed escape must name the unmodelled command: " + unkEsc);
+    }
+
     // ---- INV-4 geometry containment (generalizes GeometryEscapeTest to both axes, whole corpus) --
 
     /// Glyph ink can overhang the advance box by a hair — matched to {@link GeometryEscapeTest#TOL}
@@ -690,8 +723,13 @@ class FuzzInvariantTest {
         // arc's radii/flags and every command's paired coordinate correctly assigned to x vs y.
         Matcher pm = PATH_D.matcher(svg);
         while (pm.find()) {
-            for (double[] pt : pathPoints(pm.group(1))) {
-                checkPoint(esc, "path", pt[0], pt[1], loX, hiX, loY, hiY);
+            try {
+                for (double[] pt : pathPoints(pm.group(1))) {
+                    checkPoint(esc, "path", pt[0], pt[1], loX, hiX, loY, hiY);
+                }
+            } catch (UnknownPathCommand u) {
+                esc.add("path uses command '" + u.cmd + "' that INV-4 does not model — failing closed "
+                    + "(add its handling to pathPoints before trusting containment): " + pm.group(1));
             }
         }
         // <rect x y width height> — check both corners (covers the x- and y-extents).
@@ -794,14 +832,45 @@ class FuzzInvariantTest {
                         }
                         i += 8;
                     }
+                    case 'H' -> {                          // H x  → horizontal lineto (y unchanged)
+                        Double x = num(tok, i + 1);
+                        if (x != null) {
+                            pts.add(new double[] {x, curY});
+                            curX = x;
+                        }
+                        i += 2;
+                    }
+                    case 'V' -> {                          // V y  → vertical lineto (x unchanged)
+                        Double y = num(tok, i + 1);
+                        if (y != null) {
+                            pts.add(new double[] {curX, y});
+                            curY = y;
+                        }
+                        i += 2;
+                    }
                     case 'Z' -> i += 1;
-                    default -> i += 1;                     // unknown command — skip, don't guess coords
+                    // FAIL CLOSED (review sir430): the emitter's alphabet is M/L/Q/A/Z/H/V — `state`
+                    // emits H/V rounded-rect edges. A silent skip of an unmodelled command let INV-4
+                    // false-green a path escaping via that command. Any command not modelled above
+                    // throws, and containmentEscapes records it as an escape — INV-4 can never again
+                    // silently skip a coordinate-bearing command.
+                    default -> throw new UnknownPathCommand(cmd);
                 }
             } else {
                 i += 1;   // stray token (shouldn't happen with this emitter) — skip
             }
         }
         return pts;
+    }
+
+    /// A path command INV-4 does not model — thrown so {@link #containmentEscapes} fails CLOSED rather
+    /// than silently skipping a coordinate-bearing command (review sir430).
+    private static final class UnknownPathCommand extends RuntimeException {
+        final char cmd;
+        UnknownPathCommand(char cmd) {
+            super(null, null, false, false);
+            this.cmd = cmd;
+        }
     }
 
     /// The bounding-box extrema POINTS of an SVG elliptical-arc command (endpoint parameterization,
