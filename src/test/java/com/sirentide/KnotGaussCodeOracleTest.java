@@ -14,6 +14,7 @@ import com.sirentide.layout.Path;
 import com.sirentide.layout.Shape;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /// The KNOT semantic ORACLE (the snake matching-count / dynkin Cartan analogue): reconstruct the GAUSS
@@ -220,6 +221,32 @@ class KnotGaussCodeOracleTest {
             "the rejection names the mid-arc-Z cause: " + err.getMessage());
     }
 
+    /// Lattice sir393: replace a real trefoil arc's first decimal coordinate with its Java HEXADECIMAL-
+    /// float spelling ({@link Double#toHexString}). {@code Double.parseDouble} round-trips it to the
+    /// EXACT same double, so a raw-parseDouble oracle reconstructs the unchanged vertices and preserves
+    /// the canonical Gauss code — a false-green. But SVG path-number syntax has no hex float, so a real
+    /// browser draws that path with total length 0 (verified by Lattice's BrewShot probe). RED-ON-OLD:
+    /// the retired raw-coordinate parser accepts the hex token. GREEN-ON-NEW: the SVG-number-validating
+    /// parser rejects it before conversion.
+    @Test
+    void aHexadecimalCoordinateMustNotBeAcceptedAsDecimal() {
+        String arc = rawArcStrings(Knot.TREFOIL).get(0);
+        String hex = hexifyFirstCoordinate(arc);
+        assertNotEquals(arc, hex, "the mutation must change the first coordinate to a hex-float spelling");
+        assertTrue(hex.contains("0x"), "the mutated coordinate is a Java hexadecimal-float literal: " + hex);
+        // The hex spelling parses to the SAME double a browser-invalid string maps to under parseDouble.
+        assertEquals(firstCoordinate(arc), Double.parseDouble(firstHexToken(hex)),
+            "Double.parseDouble round-trips the hex spelling to the exact original coordinate");
+        // RED-ON-OLD: the retired raw-coordinate parser accepts the hex token (Double.parseDouble reads it).
+        assertDoesNotThrow(() -> legacyRawCoordinateParse(hex),
+            "the retired raw-coordinate parser accepted the Java hex float — the false-green");
+        // GREEN-ON-NEW: the SVG-number-validating parser rejects a non-decimal coordinate.
+        AssertionError err = assertThrows(AssertionError.class, () -> parse(hex),
+            "a Java hexadecimal-float coordinate (0x…p…) a browser cannot draw must fail closed");
+        assertTrue(err.getMessage().contains("SVG decimal") || err.getMessage().contains("hexadecimal"),
+            "the rejection names the SVG-number cause: " + err.getMessage());
+    }
+
     // -- reconstruction (geometry only) ------------------------------------------------------------
 
     /// The reconstructed Gauss code string ("O1U2…") for a built-in knot, from its EMITTED geometry.
@@ -328,6 +355,11 @@ class KnotGaussCodeOracleTest {
     ///     rejected: it is not the exact `L` the grammar requires (case-sensitive).
     ///   * a MID-ARC `Z` (closepath resets the current point — a materially different browser render,
     ///     review sir388) → rejected: `Z` is legal ONLY as the terminal token.
+    ///   * a coordinate in Java-only number syntax a browser cannot draw — a HEXADECIMAL float
+    ///     (`0x1.4p3`), a type suffix, or a non-finite `NaN`/`Infinity` (review sir393) → rejected:
+    ///     each coordinate must match the SVG decimal/exponent number grammar AND be finite before
+    ///     conversion, so a hex spelling that `Double.parseDouble` round-trips to the exact double
+    ///     (but Chrome renders as a zero-length path) fails closed instead of false-greening.
     /// The browser draws exactly this grammar; anything outside it is a broken/altered curve.
     private static double[][] parse(String d) {
         String[] raw = d.trim().split("\\s+");
@@ -361,11 +393,37 @@ class KnotGaussCodeOracleTest {
                 + "case-sensitive — no relative command, second M, mid-arc Z, or stray token): got '"
                 + tok[i] + "' in: " + d);
             assertTrue(i + 2 < end, "the '" + expected + "' command needs two coordinates: " + d);
-            pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+            pts.add(new double[] {svgNumber(tok[i + 1], d), svgNumber(tok[i + 2], d)});
             i += 3;
             first = false;
         }
         return pts.toArray(new double[0][]);
+    }
+
+    /// The SVG path-number grammar (SVG 1.1 §8.3.1 `number`): an optional sign, then a decimal
+    /// (`123`, `1.5`, `.5`, `1.`) with an optional `e`/`E` exponent. Deliberately has NO hexadecimal
+    /// float (`0x1.4p3`), NO type suffix (`1.5f`), and NO `NaN`/`Infinity` — all of which
+    /// {@link Double#parseDouble} accepts but a browser's SVG path parser rejects.
+    private static final Pattern SVG_NUMBER =
+        Pattern.compile("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?");
+
+    /// Parse ONE coordinate token, validating it against the SVG number grammar (not Java's) before
+    /// conversion, and rejecting non-finite results (review sir393). {@code Double.parseDouble} would
+    /// silently accept a Java hexadecimal-float spelling like {@code 0x1.4p3} and return the EXACT
+    /// original double, so a raw-parseDouble oracle reconstructs the unchanged vertices and preserves
+    /// the canonical Gauss code — yet Chrome draws that path with length 0. Validating the SPELLING (a
+    /// browser sees the string, not the double) closes that browser/oracle divergence.
+    private static double svgNumber(String tok, String d) {
+        assertTrue(SVG_NUMBER.matcher(tok).matches(),
+            "a coordinate must match the SVG decimal/exponent number grammar — a browser sees the "
+            + "SPELLING, so Java-only syntax (hexadecimal float 0x…p…, type suffix, NaN/Infinity) is "
+            + "rejected even when Double.parseDouble would read it (review sir393): got '" + tok
+            + "' in: " + d);
+        double v = Double.parseDouble(tok);
+        assertTrue(Double.isFinite(v),
+            "a coordinate must be finite — NaN/±Infinity, including overflow of a well-formed spelling "
+            + "like 1e400, fails closed (review sir393): got '" + tok + "' in: " + d);
+        return v;
     }
 
     /// Frozen pre-370 parser (reviews 370 + 371 red-on-old reference): folded `M` and `L` into one
@@ -450,6 +508,77 @@ class KnotGaussCodeOracleTest {
         }
         assertTrue(sawM, "a strand arc must contain a leading M command: " + d);
         return pts.toArray(new double[0][]);
+    }
+
+    /// Frozen pre-393 parser (review sir393 red-on-old reference): the strict whole-grammar validator
+    /// with coordinates read by RAW {@link Double#parseDouble}. Java's parseDouble accepts a hexadecimal-
+    /// float spelling (`0x1.4p3`) — and returns the EXACT original double — so a browser-invalid hex
+    /// coordinate reconstructed the unchanged vertices and preserved the canonical Gauss code. The
+    /// false-green the SVG-number validation now closes. (Grammar is otherwise identical to {@link #parse}.)
+    private static double[][] legacyRawCoordinateParse(String d) {
+        String[] raw = d.trim().split("\\s+");
+        List<String> tokList = new ArrayList<>();
+        for (String t : raw) {
+            if (!t.isEmpty()) {
+                tokList.add(t);
+            }
+        }
+        String[] tok = tokList.toArray(new String[0]);
+        int n = tok.length;
+        int end = (n > 0 && tok[n - 1].equals("Z")) ? n - 1 : n;
+        for (int k = 0; k < end; k++) {
+            assertTrue(!tok[k].equals("Z"), "Z only as final token: " + d);
+        }
+        assertTrue(end >= 3 && tok[0].equals("M"), "must begin with absolute M x y: " + d);
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean first = true;
+        while (i < end) {
+            String expected = first ? "M" : "L";
+            assertTrue(tok[i].equals(expected), "expected " + expected + ": " + d);
+            assertTrue(i + 2 < end, "the " + expected + " command needs two coordinates: " + d);
+            pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+            i += 3;
+            first = false;
+        }
+        return pts.toArray(new double[0][]);
+    }
+
+    /// Replace the first coordinate token (the x after the leading `M`) of `d` with its Java hexadecimal-
+    /// float spelling — Lattice's sir393 discriminator: {@link Double#parseDouble} round-trips it to the
+    /// EXACT same double, but SVG path-number syntax has no hex float, so a browser draws nothing.
+    private static String hexifyFirstCoordinate(String d) {
+        String[] tok = d.trim().split("\\s+");
+        for (int i = 0; i < tok.length; i++) {
+            if (tok[i].equals("M") && i + 1 < tok.length) {
+                tok[i + 1] = Double.toHexString(Double.parseDouble(tok[i + 1]));
+                break;
+            }
+        }
+        return String.join(" ", tok);
+    }
+
+    /// The first coordinate (x after the leading M) of a decimal-spelled arc `d`.
+    private static double firstCoordinate(String d) {
+        String[] tok = d.trim().split("\\s+");
+        for (int i = 0; i < tok.length; i++) {
+            if (tok[i].equals("M") && i + 1 < tok.length) {
+                return Double.parseDouble(tok[i + 1]);
+            }
+        }
+        throw new AssertionError("no leading M coordinate in: " + d);
+    }
+
+    /// The first coordinate token (the x after the leading M) as a raw string — the hex spelling in a
+    /// hexified arc.
+    private static String firstHexToken(String d) {
+        String[] tok = d.trim().split("\\s+");
+        for (int i = 0; i < tok.length; i++) {
+            if (tok[i].equals("M") && i + 1 < tok.length) {
+                return tok[i + 1];
+            }
+        }
+        throw new AssertionError("no leading M coordinate in: " + d);
     }
 
     /// The raw emitted Path `d` strings (one per strand arc, emit order) — the exact strings a browser
