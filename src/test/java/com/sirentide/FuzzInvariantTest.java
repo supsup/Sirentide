@@ -14,9 +14,15 @@ import com.sirentide.contract.SirentideContract;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.junit.jupiter.api.Test;
@@ -26,14 +32,14 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/// FUZZ / PROPERTY-INVARIANT pass over ALL 15 diagram types (cycle-2 roadmap #4 — the trust floor).
+/// FUZZ / PROPERTY-INVARIANT pass over ALL 21 diagram types (cycle-2 roadmap #4 — the trust floor).
 ///
 /// "malformed → inert, never throws, never escapes the alphabet" was, before this pass, an
 /// ASSUMPTION backed by happy-path goldens + a curated containment corpus. This test turns it into a
 /// FUZZED contract: it generates a deterministic, adversarial corpus (a few thousand cases — type
 /// headers + every truncated prefix, random ASCII/bytes/Unicode incl. control chars/surrogates/NUL,
 /// injection payloads in every label position, structural abuse, and bit-flip/char-drop/delimiter-
-/// swap mutations of the golden seeds) and asserts three UNIVERSAL invariants on each case:
+/// swap mutations of the golden seeds) and asserts four UNIVERSAL invariants on each case:
 ///
 ///   - INV-1 (never throws): `render` AND `renderWithDiagnostics` return normally on ANY input. The
 ///     harness catches Throwable and FAILS with the offending input if anything escapes.
@@ -46,6 +52,14 @@ import org.w3c.dom.NodeList;
 ///     byte-identical to `render`, its {@link Diagnostics} is well-formed (non-null outcome/stage,
 ///     non-blank message), and when a NON-BLANK input degrades to the inert shell the diagnostics
 ///     carry a REASON (outcome != OK).
+///   - INV-4 (geometry containment): EVERY emitted geometry element (`<path>` per command, `<rect>`,
+///     `<line>`) sits — on BOTH the x AND the y axis — inside the declared canvas (parsed off the
+///     root `<svg>` `viewBox`) ± a small ink tolerance ({@link #CONTAINMENT_TOL}, matched to
+///     {@link GeometryEscapeTest}). This generalizes {@link GeometryEscapeTest} (X-axis only, 3
+///     curated DSLs) to both axes across the whole ~3000-case adversarial corpus. Types that are
+///     KNOWN to overflow today are listed in {@link #INV4_KNOWN_OVERFLOW} — an explicit, documented
+///     allowlist so the invariant lands green now and TIGHTENS (delete an entry) as each is fixed;
+///     the assertion is NOT weakened and still BITES on every non-allowlisted type.
 ///
 /// Determinism: the corpus is built purely from fixed seeds indexed into `java.util.Random` with
 /// FIXED longs + a fixed seed list — NO `Math.random`, NO clock — so the same run reproduces the
@@ -64,10 +78,13 @@ class FuzzInvariantTest {
     private static final String INERT_SHELL =
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
-    /// The 15 diagram-type header keywords.
+    /// The diagram-type header keywords — EVERY type the parser accepts (kept exhaustive by the
+    /// {@link #everyParserTypeIsCoveredByTheFuzzCorpus} census, which fails if a new
+    /// {@link com.sirentide.ir.Diagram} permits-type is added without a fuzz seed here).
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
-        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix"
+        "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix",
+        "snake", "tensornetwork", "young", "dynkin", "knot"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -93,7 +110,15 @@ class FuzzInvariantTest {
         "mindmap\n  root Root idea\n    Origins\n      Long history\n    Research\n    Tools\n",
         "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n",
         "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : match, match\n"
-            + "  \"PC1 soft-intent\" : partial, diverge\n"
+            + "  \"PC1 soft-intent\" : partial, diverge\n",
+        // the four post-2026-07-17 types (snake, tensornetwork, young, dynkin) — added so INV-4
+        // actually runs across EVERY parser type (review sir400 finding 1).
+        "snake\n  cf: 1, 2, 2, 2\n",
+        "tensornetwork\n  mps A B C D\n",
+        "young\n  rows: 3, 2, 1\n",
+        "dynkin\n  type: B4\n",
+        // knot — the twenty-first type (landed after sir400; census kept us honest, review sir403 freshen).
+        "knot\n  type: trefoil\n"
     };
 
     /// Per-type templates with a single `%LBL%` slot into which a hostile label is spliced. Exercises
@@ -114,14 +139,19 @@ class FuzzInvariantTest {
         "journey\n  title T\n  section S\n    %LBL%: 3: Me\n",
         "mindmap\n  root %LBL%\n",
         "sankey\n  %LBL%,B,10\n",
+        "snake\n  cf: %LBL%\n",
+        "tensornetwork\n  mps %LBL% B\n",
+        "young\n  rows: %LBL%\n",
+        "dynkin\n  type: %LBL%\n",
+        "knot\n  type: %LBL%\n",
         // config-block title override — the OTHER a11y-text seam.
         "%% title: %LBL%\npie\n  \"A\" : 10\n"
     };
 
-    // ---- the three invariant checks, run over the whole corpus ---------------------------------
+    // ---- the four invariant checks, run over the whole corpus ---------------------------------
 
     @Test
-    void allThreeInvariantsHoldOnTheAdversarialCorpus() throws Exception {
+    void allFourInvariantsHoldOnTheAdversarialCorpus() throws Exception {
         List<String> corpus = generateCorpus();
         // a reused, hardened XML parser (created once — thousands of parses otherwise dominate runtime).
         DocumentBuilder xml = newHardenedParser();
@@ -137,11 +167,11 @@ class FuzzInvariantTest {
         // Non-vacuity: the corpus must actually be large (guards against a generation regression that
         // silently empties it and makes the whole pass trivially "green").
         assertTrue(cases >= 3000, "fuzz corpus must exercise a few thousand cases, ran only " + cases);
-        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 15 types in " + ms + " ms");
+        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 21 types in " + ms + " ms");
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),
-    /// INV-3 (diagnostics explain empty).
+    /// INV-3 (diagnostics explain empty), INV-4 (geometry stays inside the canvas on both axes).
     private void checkAllInvariants(String dsl, DocumentBuilder xml) throws Exception {
         // INV-1: render must never throw on ANY input.
         String svg;
@@ -199,6 +229,15 @@ class FuzzInvariantTest {
                 "INV-3 inert shell on non-blank input must carry a reason (outcome != OK) for "
                     + describe(dsl) + " : outcome=" + d.outcome());
         }
+
+        // INV-4: every emitted geometry element sits inside the declared canvas on BOTH axes.
+        // Types on the KNOWN-overflow allowlist are exempt (see INV4_KNOWN_OVERFLOW) — a documented,
+        // explicit escape hatch that keeps the invariant green today and biting on everything else.
+        List<String> escapes = containmentEscapes(svg);
+        if (!escapes.isEmpty() && !INV4_KNOWN_OVERFLOW.contains(diagramType(dsl))) {
+            fail("INV-4 geometry escapes the canvas for " + describe(dsl)
+                + " [type=" + diagramType(dsl) + "] : " + escapes);
+        }
     }
 
     // ---- deterministic corpus generation -------------------------------------------------------
@@ -210,6 +249,51 @@ class FuzzInvariantTest {
         List<String> b = generateCorpus();
         assertEquals(a, b, "the fuzz corpus must be deterministic (seeded, no Math.random/time)");
         assertTrue(a.size() >= 3000, "corpus size floor");
+    }
+
+    /// CENSUS / non-vacuity (review sir400 finding 1): INV-4 claims to run across EVERY diagram type,
+    /// so the corpus must actually EXERCISE every type the parser accepts. The authoritative type set is
+    /// the {@link com.sirentide.ir.Diagram} sealed `permits` list minus the inert {@code Empty} shell —
+    /// read reflectively, so a NEW parser type (a new permits record) makes this FAIL until a fuzz seed
+    /// is added here. Guards against the exact gap Lattice found: snake/tensornetwork/young/dynkin
+    /// shipped in the parser but were absent from TYPES/SEEDS, so INV-4 silently never ran on them.
+    @Test
+    void everyParserTypeIsCoveredByTheFuzzCorpus() {
+        // The parser's real diagram types = the Diagram permits minus the Empty inert shell.
+        long realTypes = Arrays.stream(com.sirentide.ir.Diagram.class.getPermittedSubclasses())
+            .filter(c -> !c.getSimpleName().equals("Empty"))
+            .count();
+
+        // The distinct keywords this test declares it covers (the head token of each TYPES entry).
+        Set<String> declared = new LinkedHashSet<>();
+        for (String type : TYPES) {
+            declared.add(type.split(" ")[0]);
+        }
+
+        // Which of those keywords actually render a NON-inert diagram somewhere in the corpus — the
+        // proof INV-4's geometry walk has real geometry to check for that type, not just an inert shell.
+        Set<String> coveredNonInert = new HashSet<>();
+        for (String dsl : generateCorpus()) {
+            String type = diagramType(dsl);
+            if (type != null && !coveredNonInert.contains(type)
+                    && !Sirentide.render(dsl).equals(INERT_SHELL)) {
+                coveredNonInert.add(type);
+            }
+        }
+
+        // (a) the declared keyword set must exactly match the parser's real-type count — adding a new
+        //     Diagram permits record without a fuzz seed here fails HERE.
+        assertEquals(realTypes, (long) declared.size(),
+            "the fuzz TYPES list (" + declared.size() + " distinct keywords) must cover EVERY Diagram "
+            + "permits type (" + realTypes + " minus Empty); a new parser type must add a seed here. "
+            + "declared=" + declared);
+        // (b) every declared type must actually be exercised NON-inert (INV-4 really runs on it).
+        for (String kw : declared) {
+            assertTrue(coveredNonInert.contains(kw),
+                "the corpus never renders a NON-inert " + kw + " — INV-4 does not actually run on it");
+        }
+        assertEquals((long) declared.size(), (long) coveredNonInert.size(),
+            "every declared type must be exercised non-inert; covered=" + coveredNonInert);
     }
 
     /// Builds the full adversarial corpus. PURE + deterministic: a `java.util.Random` seeded with
@@ -524,6 +608,431 @@ class FuzzInvariantTest {
                     "no live <script> tag for label " + h + " : " + svg);
             }
         }
+    }
+
+    /// REVIEW sir400 finding 2 (red-on-old / green-on-new): an SVG arc whose ENDPOINTS sit inside the
+    /// canvas but whose elliptical INTERIOR bulges outside must be caught by INV-4. Lattice's Chrome-
+    /// confirmed discriminator — `M 10 50 A 200 200 0 1 0 90 50` in a 100×100 box — has both endpoints
+    /// at y=50 (inside) yet Chrome's path bbox escapes the root. The OLD pathPoints (endpoint-only for
+    /// A) returned NO escape (false-green); {@link #arcExtrema} now reaches the interior extrema.
+    @Test
+    void arcInteriorEscapeIsCaught() {
+        String svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 50 A 200 200 0 1 0 90 50\"/></svg>";
+        List<String> escapes = containmentEscapes(svg);
+        assertFalse(escapes.isEmpty(),
+            "INV-4 must catch an arc whose interior bulges outside the canvas though its endpoints are "
+            + "inside (both at y=50): " + escapes);
+
+        // The endpoint-only extraction (the retired behaviour) sees only in-canvas points — the proof
+        // this discriminator is RED-ON-OLD, not a tautology.
+        List<double[]> endpointOnly = List.of(new double[] {10, 50}, new double[] {90, 50});
+        for (double[] p : endpointOnly) {
+            assertTrue(p[0] >= 0 && p[0] <= 100 && p[1] >= 0 && p[1] <= 100,
+                "the arc endpoints are inside the canvas, so endpoint-only checking false-greens");
+        }
+
+        // A small, wholly-contained arc must NOT be flagged (the check is not trivially always-true).
+        String contained = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 40 50 A 10 10 0 0 0 60 50\"/></svg>";
+        assertTrue(containmentEscapes(contained).isEmpty(),
+            "a small contained arc must not be reported as an escape: " + containmentEscapes(contained));
+    }
+
+    /// REVIEW sir430: `state` emits rounded-rect node paths with H (horizontal) / V (vertical) lineto
+    /// commands (`M x y H x2 Q … V y2 …`). The retired pathPoints `default -> i+=1` SILENTLY SKIPPED
+    /// H/V, so a coordinate escaping via one false-greened INV-4 (Lattice's 100×100 probe escaping to
+    /// 200,200 returned no escapes). H/V are now modelled against the tracked current point, and any
+    /// UNMODELLED command fails CLOSED (recorded as an escape) so INV-4 can never silently skip again.
+    @Test
+    void horizontalVerticalAndUnknownPathCommandsAreNotSilentlySkipped() {
+        // H escaping right (x=200 in a 100-wide canvas) — the y rides the current point (50, inside).
+        String hEsc = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 50 H 200\"/></svg>";
+        assertFalse(containmentEscapes(hEsc).isEmpty(),
+            "an H lineto escaping the canvas must be caught (was silently skipped): " + containmentEscapes(hEsc));
+        // V escaping down (y=200), x rides the current point (50, inside).
+        String vEsc = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 50 10 V 200\"/></svg>";
+        assertFalse(containmentEscapes(vEsc).isEmpty(),
+            "a V lineto escaping the canvas must be caught (was silently skipped): " + containmentEscapes(vEsc));
+        // A real state-shaped H/V/Q rounded rect wholly inside must NOT be flagged (not trivially true).
+        String contained = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 20 20 H 80 Q 84 20 84 24 V 76 Q 84 80 80 80 "
+            + "H 20 Q 16 80 16 76 V 24 Q 16 20 20 20 Z\"/></svg>";
+        assertTrue(containmentEscapes(contained).isEmpty(),
+            "a contained H/V/Q rounded rect must not be flagged: " + containmentEscapes(contained));
+        // An UNMODELLED command (C cubic bézier) must FAIL CLOSED, not be silently skipped.
+        String unknown = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 10 10 C 20 20 30 30 200 200\"/></svg>";
+        List<String> unkEsc = containmentEscapes(unknown);
+        assertFalse(unkEsc.isEmpty(),
+            "an unmodelled path command must fail closed (recorded as an escape), never silently skip");
+        assertTrue(unkEsc.stream().anyMatch(s -> s.contains("does not model")),
+            "the fail-closed escape must name the unmodelled command: " + unkEsc);
+
+        // review sir434: a RELATIVE (lowercase) command must FAIL CLOSED, not be case-folded to absolute.
+        // `M 90 50 h 20` reaches x=110 (escapes a 100-wide canvas); the retired Character.toUpperCase read
+        // `h` as absolute `H 20` (x=20, inside) — the false-green. Case-sensitive parse now fails it closed.
+        String relative = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+            + "viewBox=\"0 0 100 100\"><path d=\"M 90 50 h 20\"/></svg>";
+        List<String> relEsc = containmentEscapes(relative);
+        assertFalse(relEsc.isEmpty(),
+            "a relative (lowercase) command a browser reads as an offset must fail closed, not be read as "
+            + "absolute: " + relEsc);
+        assertTrue(relEsc.stream().anyMatch(s -> s.contains("does not model")),
+            "the relative command must fail closed by name (not silently case-folded): " + relEsc);
+    }
+
+    // ---- INV-4 geometry containment (generalizes GeometryEscapeTest to both axes, whole corpus) --
+
+    /// Glyph ink can overhang the advance box by a hair — matched to {@link GeometryEscapeTest#TOL}
+    /// so the two containment audits share one tolerance. The real escapes overran by &gt;10px, so
+    /// this cannot mask a genuine overflow (the invariant still bites — see the prove-it probe in the
+    /// review notes / commit message).
+    private static final double CONTAINMENT_TOL = 3.0;
+
+    /// Diagram TYPES that are KNOWN to overflow their declared canvas TODAY. Each entry would be an
+    /// explicit, documented admission that INV-4 fails for that type on the current corpus — NOT a way
+    /// to make the assertion vacuous — and the list would TIGHTEN as each is fixed (delete its entry).
+    ///
+    /// EMPTY today: the first-run census of INV-4 over the whole corpus (5525 canvases, ~4.18M path
+    /// points checked) found ZERO escapes at {@link #CONTAINMENT_TOL}=3.0 — the recent geometry work
+    /// (canvas-relative ellipsize, the flowchart/pie/timeline clamp fixes, tensornetwork + dynkin
+    /// grow-to-fit) already contains every corpus case on BOTH axes. INV-4 therefore guards ALL types
+    /// with no exemptions; the assertion was proven to still BITE via a forced-wide probe (see commit
+    /// message). Add a type here only if a future corpus/type surfaces a genuine, documented overflow.
+    private static final Set<String> INV4_KNOWN_OVERFLOW = Set.of();
+
+    // root <svg viewBox="minX minY W H"> — the declared canvas; minX/minY are 0 in practice but we
+    // read them so the bound is correct if that ever changes.
+    private static final Pattern SVG_VIEWBOX = Pattern.compile(
+        "<svg\\b[^>]*\\bviewBox=\"\\s*([0-9.eE+-]+)\\s+([0-9.eE+-]+)\\s+([0-9.eE+-]+)\\s+([0-9.eE+-]+)\\s*\"");
+    private static final Pattern PATH_D = Pattern.compile("<path\\b[^>]*\\bd=\"([^\"]*)\"");
+    private static final Pattern RECT_TAG = Pattern.compile("<rect\\b[^>]*?/?>");
+    private static final Pattern LINE_TAG = Pattern.compile("<line\\b[^>]*?/?>");
+
+    /// Every geometry escape (element + axis + coordinate + violated bound) in the emitted SVG. Empty
+    /// list ⇒ fully contained. Walks `<path>` per-command (mirrors {@link GeometryEscapeTest} and
+    /// extends it to Y), plus `<rect>` (both corners) and `<line>` (both endpoints), and checks BOTH
+    /// the x and y extents of each against the canvas ± {@link #CONTAINMENT_TOL}.
+    private static List<String> containmentEscapes(String svg) {
+        Matcher vb = SVG_VIEWBOX.matcher(svg);
+        if (!vb.find()) {
+            return List.of();   // no declared canvas (e.g. the inert shell has no geometry to escape).
+        }
+        double minX = Double.parseDouble(vb.group(1));
+        double minY = Double.parseDouble(vb.group(2));
+        double w = Double.parseDouble(vb.group(3));
+        double h = Double.parseDouble(vb.group(4));
+        double loX = minX - CONTAINMENT_TOL;
+        double hiX = minX + w + CONTAINMENT_TOL;
+        double loY = minY - CONTAINMENT_TOL;
+        double hiY = minY + h + CONTAINMENT_TOL;
+        List<String> esc = new ArrayList<>();
+
+        // <path d="..."> — absolute M/L/Q/A/Z, space-separated. Per-command point extraction keeps an
+        // arc's radii/flags and every command's paired coordinate correctly assigned to x vs y.
+        Matcher pm = PATH_D.matcher(svg);
+        while (pm.find()) {
+            try {
+                for (double[] pt : pathPoints(pm.group(1))) {
+                    checkPoint(esc, "path", pt[0], pt[1], loX, hiX, loY, hiY);
+                }
+            } catch (UnknownPathCommand u) {
+                esc.add("path uses command '" + u.cmd + "' that INV-4 does not model — failing closed "
+                    + "(add its handling to pathPoints before trusting containment): " + pm.group(1));
+            }
+        }
+        // <rect x y width height> — check both corners (covers the x- and y-extents).
+        Matcher rm = RECT_TAG.matcher(svg);
+        while (rm.find()) {
+            String t = rm.group();
+            Double x = attr(t, "x");
+            Double y = attr(t, "y");
+            Double rw = attr(t, "width");
+            Double rh = attr(t, "height");
+            if (x != null && y != null && rw != null && rh != null) {
+                checkPoint(esc, "rect", x, y, loX, hiX, loY, hiY);
+                checkPoint(esc, "rect", x + rw, y + rh, loX, hiX, loY, hiY);
+            }
+        }
+        // <line x1 y1 x2 y2> — check both endpoints.
+        Matcher lm = LINE_TAG.matcher(svg);
+        while (lm.find()) {
+            String t = lm.group();
+            Double x1 = attr(t, "x1");
+            Double y1 = attr(t, "y1");
+            Double x2 = attr(t, "x2");
+            Double y2 = attr(t, "y2");
+            if (x1 != null && y1 != null && x2 != null && y2 != null) {
+                checkPoint(esc, "line", x1, y1, loX, hiX, loY, hiY);
+                checkPoint(esc, "line", x2, y2, loX, hiX, loY, hiY);
+            }
+        }
+        return esc;
+    }
+
+    private static void checkPoint(List<String> esc, String kind, double x, double y,
+            double loX, double hiX, double loY, double hiY) {
+        if (x < loX || x > hiX) {
+            esc.add(kind + " x=" + fmt(x) + " outside x-canvas [" + fmt(loX) + ", " + fmt(hiX) + "]");
+        }
+        if (y < loY || y > hiY) {
+            esc.add(kind + " y=" + fmt(y) + " outside y-canvas [" + fmt(loY) + ", " + fmt(hiY) + "]");
+        }
+    }
+
+    /// Per-command containment points from an absolute-only path `d` (M/L/Q/A/Z), tracking the current
+    /// point so an arc's TRUE extent is checked. Mirrors {@link GeometryEscapeTest#pathXs} and extends
+    /// it to Y and to arc interiors:
+    ///   * M/L `x y` → (x,y).
+    ///   * Q `cx cy x y` → control + endpoint; the quadratic lies inside the convex hull of those two
+    ///     plus the start point, so checking the endpoints + control over-approximates it (conservative).
+    ///   * A `rx ry rot large sweep x y` → the endpoint AND the arc's bounding-box extrema (review
+    ///     sir400 finding 2). An endpoint inside the canvas does NOT imply the arc is inside: the
+    ///     elliptical interior can bulge out (Lattice's `M 10 50 A 200 200 0 1 0 90 50` in a 100×100
+    ///     box). {@link #arcExtrema} computes the min/max x and y the curve actually reaches.
+    private static List<double[]> pathPoints(String d) {
+        List<double[]> pts = new ArrayList<>();
+        String[] tok = d.trim().split("\\s+");
+        int i = 0;
+        double curX = 0;
+        double curY = 0;                     // the current point (start of the next command's segment)
+        while (i < tok.length) {
+            String t = tok[i];
+            if (t.length() == 1 && Character.isLetter(t.charAt(0))) {
+                // CASE-SENSITIVE (review sir434): the emitter is absolute-only (uppercase M/L/Q/A/Z/H/V).
+                // A lowercase letter is a RELATIVE command (h/l/v/… take offsets from the current point),
+                // which SVG permits but the emitter never emits — Character.toUpperCase would misread
+                // `M 90 50 h 20` as absolute (x=20, inside) while a browser reaches x=110 (escaping). So
+                // do NOT fold case: an unmodelled lowercase (or any non-uppercase-alphabet) command falls
+                // to the default and FAILS CLOSED.
+                char cmd = t.charAt(0);
+                switch (cmd) {
+                    case 'M', 'L' -> {                     // x y
+                        double[] p = numAt(tok, i + 1, i + 2);
+                        if (p != null) {
+                            pts.add(p);
+                            curX = p[0];
+                            curY = p[1];
+                        }
+                        i += 3;
+                    }
+                    case 'Q' -> {                          // cx cy x y  → control + endpoint
+                        double[] ctrl = numAt(tok, i + 1, i + 2);
+                        double[] end = numAt(tok, i + 3, i + 4);
+                        if (ctrl != null) {
+                            pts.add(ctrl);
+                        }
+                        if (end != null) {
+                            pts.add(end);
+                            curX = end[0];
+                            curY = end[1];
+                        }
+                        i += 5;
+                    }
+                    case 'A' -> {                          // rx ry rot large sweep x y
+                        Double rx = num(tok, i + 1);
+                        Double ry = num(tok, i + 2);
+                        Double rot = num(tok, i + 3);
+                        Double fa = num(tok, i + 4);
+                        Double fs = num(tok, i + 5);
+                        double[] end = numAt(tok, i + 6, i + 7);
+                        if (rx != null && ry != null && rot != null && fa != null && fs != null
+                                && end != null) {
+                            pts.add(end);
+                            // the arc's true bounding-box extrema between the current point and end.
+                            pts.addAll(arcExtrema(curX, curY, rx, ry, rot, fa != 0, fs != 0,
+                                end[0], end[1]));
+                            curX = end[0];
+                            curY = end[1];
+                        }
+                        i += 8;
+                    }
+                    case 'H' -> {                          // H x  → horizontal lineto (y unchanged)
+                        Double x = num(tok, i + 1);
+                        if (x != null) {
+                            pts.add(new double[] {x, curY});
+                            curX = x;
+                        }
+                        i += 2;
+                    }
+                    case 'V' -> {                          // V y  → vertical lineto (x unchanged)
+                        Double y = num(tok, i + 1);
+                        if (y != null) {
+                            pts.add(new double[] {curX, y});
+                            curY = y;
+                        }
+                        i += 2;
+                    }
+                    case 'Z' -> i += 1;
+                    // FAIL CLOSED (review sir430): the emitter's alphabet is M/L/Q/A/Z/H/V — `state`
+                    // emits H/V rounded-rect edges. A silent skip of an unmodelled command let INV-4
+                    // false-green a path escaping via that command. Any command not modelled above
+                    // throws, and containmentEscapes records it as an escape — INV-4 can never again
+                    // silently skip a coordinate-bearing command.
+                    default -> throw new UnknownPathCommand(cmd);
+                }
+            } else {
+                i += 1;   // stray token (shouldn't happen with this emitter) — skip
+            }
+        }
+        return pts;
+    }
+
+    /// A path command INV-4 does not model — thrown so {@link #containmentEscapes} fails CLOSED rather
+    /// than silently skipping a coordinate-bearing command (review sir430).
+    private static final class UnknownPathCommand extends RuntimeException {
+        final char cmd;
+        UnknownPathCommand(char cmd) {
+            super(null, null, false, false);
+            this.cmd = cmd;
+        }
+    }
+
+    /// The bounding-box extrema POINTS of an SVG elliptical-arc command (endpoint parameterization,
+    /// SVG 1.1 §F.6.5). Converts (x0,y0)→(x1,y1) with (rx,ry,phi,largeArc,sweep) to centre form, then
+    /// evaluates the arc at the (up to four) angles where the ellipse's x or y is extremal AND that
+    /// angle lies within the swept range — those interior points, not just the endpoints, are where an
+    /// arc escapes its canvas. Degenerate arcs (zero radius, coincident endpoints) reduce to a line and
+    /// contribute no interior point. A pure oracle: no browser, deterministic. (review sir400 finding 2)
+    private static List<double[]> arcExtrema(double x0, double y0, double rx, double ry, double phiDeg,
+            boolean largeArc, boolean sweep, double x1, double y1) {
+        List<double[]> out = new ArrayList<>();
+        rx = Math.abs(rx);
+        ry = Math.abs(ry);
+        if (rx == 0 || ry == 0 || (x0 == x1 && y0 == y1)) {
+            return out;   // SVG: degenerate → straight line; endpoints already checked.
+        }
+        double phi = Math.toRadians(phiDeg % 360.0);
+        double cosP = Math.cos(phi);
+        double sinP = Math.sin(phi);
+
+        // Step 1: (x0,y0)/(x1,y1) → primed coords.
+        double dx = (x0 - x1) / 2.0;
+        double dy = (y0 - y1) / 2.0;
+        double x0p = cosP * dx + sinP * dy;
+        double y0p = -sinP * dx + cosP * dy;
+
+        // Step 2: correct out-of-range radii (SVG F.6.6).
+        double lambda = (x0p * x0p) / (rx * rx) + (y0p * y0p) / (ry * ry);
+        if (lambda > 1) {
+            double s = Math.sqrt(lambda);
+            rx *= s;
+            ry *= s;
+        }
+
+        // Step 3: centre (cx',cy') then (cx,cy).
+        double rx2 = rx * rx;
+        double ry2 = ry * ry;
+        double num = rx2 * ry2 - rx2 * y0p * y0p - ry2 * x0p * x0p;
+        double den = rx2 * y0p * y0p + ry2 * x0p * x0p;
+        double coef = (largeArc != sweep ? 1.0 : -1.0) * Math.sqrt(Math.max(0.0, num / den));
+        double cxp = coef * (rx * y0p / ry);
+        double cyp = coef * (-ry * x0p / rx);
+        double cx = cosP * cxp - sinP * cyp + (x0 + x1) / 2.0;
+        double cy = sinP * cxp + cosP * cyp + (y0 + y1) / 2.0;
+
+        // Step 4: start angle theta1 and sweep delta.
+        double ux = (x0p - cxp) / rx;
+        double uy = (y0p - cyp) / ry;
+        double vx = (-x0p - cxp) / rx;
+        double vy = (-y0p - cyp) / ry;
+        double theta1 = Math.atan2(uy, ux);
+        double delta = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+        if (!sweep && delta > 0) {
+            delta -= 2 * Math.PI;
+        } else if (sweep && delta < 0) {
+            delta += 2 * Math.PI;
+        }
+
+        // Step 5: the ellipse's x- and y-extremal angles; add each that lies within the arc.
+        double tx = Math.atan2(-ry * sinP, rx * cosP);   // dx/dt = 0
+        double ty = Math.atan2(ry * cosP, rx * sinP);    // dy/dt = 0
+        for (double base : new double[] {tx, tx + Math.PI, ty, ty + Math.PI}) {
+            if (angleInArc(base, theta1, delta)) {
+                double ex = cx + rx * Math.cos(base) * cosP - ry * Math.sin(base) * sinP;
+                double ey = cy + rx * Math.cos(base) * sinP + ry * Math.sin(base) * cosP;
+                out.add(new double[] {ex, ey});
+            }
+        }
+        return out;
+    }
+
+    /// Whether angle {@code t} lies on the arc swept from {@code theta1} by {@code delta} (signed).
+    private static boolean angleInArc(double t, double theta1, double delta) {
+        double rel = (t - theta1) % (2 * Math.PI);
+        if (delta >= 0) {
+            if (rel < 0) {
+                rel += 2 * Math.PI;
+            }
+            return rel <= delta + 1e-9;
+        }
+        if (rel > 0) {
+            rel -= 2 * Math.PI;
+        }
+        return rel >= delta - 1e-9;
+    }
+
+    /// A single numeric token by index, or null if absent/non-numeric.
+    private static Double num(String[] tok, int idx) {
+        if (idx >= tok.length) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(tok[idx]);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /// A numeric (x,y) pair from two token indices, or null if either is absent/non-numeric.
+    private static double[] numAt(String[] tok, int xi, int yi) {
+        Double x = num(tok, xi);
+        Double y = num(tok, yi);
+        return (x == null || y == null) ? null : new double[] {x, y};
+    }
+
+    /// Reads a single numeric attribute by NAME out of an already-isolated element tag (order-
+    /// independent), or null if absent/non-numeric.
+    private static Double attr(String tag, String name) {
+        Matcher m = Pattern.compile("\\b" + name + "=\"([0-9.eE+-]+)\"").matcher(tag);
+        if (!m.find()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(m.group(1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /// The diagram type of a DSL = the keyword of the FIRST non-blank, non-comment line (exactly how
+    /// the parser decides type), or null when that line is not a known header (garbage → inert shell,
+    /// no geometry). Used only to consult {@link #INV4_KNOWN_OVERFLOW}.
+    private static String diagramType(String dsl) {
+        if (dsl == null) {
+            return null;
+        }
+        for (String raw : dsl.split("\n", -1)) {
+            String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("%%")) {
+                continue;
+            }
+            for (String type : TYPES) {
+                String kw = type.split(" ")[0];
+                if (line.equals(kw) || line.startsWith(kw + " ") || line.startsWith(kw + "\t")) {
+                    return kw;
+                }
+            }
+            return null;   // first content line isn't a known header → untyped
+        }
+        return null;
+    }
+
+    private static String fmt(double v) {
+        return String.format(Locale.ROOT, "%.3f", v);
     }
 
     // ---- shared allowlist walk (mirrors ContainmentTest, over the SirentideContract source) ------
