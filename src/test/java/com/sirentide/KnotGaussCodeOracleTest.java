@@ -247,6 +247,31 @@ class KnotGaussCodeOracleTest {
             "the rejection names the SVG-number cause: " + err.getMessage());
     }
 
+    /// Lattice sir401: replace the space before an interior `L` with a U+000B VERTICAL TAB. Java's `\s`
+    /// (the retired `split("\\s+")` tokenizer) SPLITS on U+000B, so the path tokenizes cleanly and the
+    /// oracle accepts it — but SVG path whitespace is only U+0020/09/0A/0D, so a real browser does NOT
+    /// split on VT and renders the path zero-length (Lattice's Chrome `getTotalLength()==0` discriminator).
+    /// RED-ON-OLD: the Java-whitespace tokenizer accepts it. GREEN-ON-NEW: the SVG-path-alphabet guard
+    /// rejects U+000B before tokenizing.
+    @Test
+    void aVerticalTabSeparatorMustNotBeAcceptedAsWhitespace() {
+        String vt = "M 0 0" + '\u000B' + "L 100 0";
+        // Sanity: Java's \s+ tokenizer really does split on U+000B (yields a clean 6-token M/L path).
+        assertEquals(6, vt.trim().split("\\s+").length,
+            "Java \\s splits on U+000B, so the retired tokenizer read it as a separator");
+        // RED-ON-OLD: the retired Java-whitespace tokenizer accepted the VT-separated path (no throw).
+        assertDoesNotThrow(() -> legacyJavaWhitespaceParse(vt),
+            "the retired Java-whitespace tokenizer accepted the U+000B separator — the false-green");
+        // GREEN-ON-NEW: the SVG-path-alphabet guard rejects U+000B (not SVG whitespace).
+        AssertionError err = assertThrows(AssertionError.class, () -> parse(vt),
+            "a U+000B separator a browser will not split on must fail closed");
+        assertTrue(err.getMessage().contains("whitespace") || err.getMessage().contains("000B"),
+            "the rejection names the SVG-whitespace cause: " + err.getMessage());
+        // A U+000C FORM FEED separator is the same class and likewise rejected.
+        assertThrows(AssertionError.class, () -> parse("M 0 0" + '\u000C' + "L 100 0"),
+            "a U+000C form-feed separator must also fail closed");
+    }
+
     // -- reconstruction (geometry only) ------------------------------------------------------------
 
     /// The reconstructed Gauss code string ("O1U2…") for a built-in knot, from its EMITTED geometry.
@@ -360,9 +385,32 @@ class KnotGaussCodeOracleTest {
     ///     each coordinate must match the SVG decimal/exponent number grammar AND be finite before
     ///     conversion, so a hex spelling that `Double.parseDouble` round-trips to the exact double
     ///     (but Chrome renders as a zero-length path) fails closed instead of false-greening.
+    ///   * a Java-only WHITESPACE separator a browser does not split on — U+000B VERTICAL TAB or
+    ///     U+000C FORM FEED (both matched by Java's `\s` but NOT SVG path whitespace, review sir401) →
+    ///     rejected by the SVG-whitespace guard below, which also tokenizes on SVG whitespace only, so
+    ///     such a separator can neither be split on nor glued silently into a coordinate.
     /// The browser draws exactly this grammar; anything outside it is a broken/altered curve.
     private static double[][] parse(String d) {
-        String[] raw = d.trim().split("\\s+");
+        // SVG-path-WHITESPACE guard (review sir401): SVG path whitespace is ONLY U+0020 space,
+        // U+0009 tab, U+000A LF, U+000D CR. Java's `\s` (the retired `split("\\s+")`) ALSO matches
+        // U+000B VERTICAL TAB and U+000C FORM FEED, and Character.isWhitespace is broader still — none
+        // of which the SVG path grammar treats as a separator, so a browser renders a path "separated"
+        // by one as zero-length. Reject any whitespace char that is not SVG path whitespace BEFORE
+        // tokenizing, so a Java-only separator fails closed with a clear cause instead of gluing tokens.
+        // (Non-whitespace lexical divergences — a hex coordinate, a relative command — fall through to
+        // svgNumber / the case-sensitive position checks below; this guard is only the separator class.)
+        for (int ci = 0; ci < d.length(); ci++) {
+            char c = d.charAt(ci);
+            boolean svgWs = c == ' ' || c == '\t' || c == '\n' || c == '\r';
+            boolean javaWs = Character.isWhitespace(c) || c == '\u000B' || c == '\u000C';
+            assertTrue(!(javaWs && !svgWs),
+                "the path `d` uses a Java-only whitespace separator (U+000B VERTICAL TAB / U+000C FORM "
+                + "FEED / other non-SVG whitespace) that SVG path syntax does not split on — a browser "
+                + "renders it zero-length (review sir401): U+" + String.format("%04X", (int) c)
+                + " in: " + d);
+        }
+        // Tokenize on SVG path WHITESPACE ONLY (not Java `\s`, which would eat U+000B/U+000C).
+        String[] raw = d.trim().split("[ \\t\\n\\r]+");
         // Drop empty tokens (defensive; a trimmed non-empty d yields none).
         List<String> tokList = new ArrayList<>();
         for (String t : raw) {
@@ -538,6 +586,40 @@ class KnotGaussCodeOracleTest {
             assertTrue(tok[i].equals(expected), "expected " + expected + ": " + d);
             assertTrue(i + 2 < end, "the " + expected + " command needs two coordinates: " + d);
             pts.add(new double[] {Double.parseDouble(tok[i + 1]), Double.parseDouble(tok[i + 2])});
+            i += 3;
+            first = false;
+        }
+        return pts.toArray(new double[0][]);
+    }
+
+    /// Frozen pre-401 parser (review sir401 red-on-old reference): the round-5 grammar (SVG-number
+    /// coordinates) but with Java `\s+` tokenization and NO whole-string alphabet guard. Java's `\s`
+    /// matches U+000B/U+000C, so a path whose separator is a VERTICAL TAB tokenizes cleanly and is
+    /// accepted — while a browser, which splits only on SVG whitespace (U+0020/09/0A/0D), renders it
+    /// zero-length. The false-green the SVG-path-alphabet guard now closes.
+    private static double[][] legacyJavaWhitespaceParse(String d) {
+        String[] raw = d.trim().split("\\s+");   // pre-401: Java \s eats U+000B/U+000C too
+        List<String> tokList = new ArrayList<>();
+        for (String t : raw) {
+            if (!t.isEmpty()) {
+                tokList.add(t);
+            }
+        }
+        String[] tok = tokList.toArray(new String[0]);
+        int n = tok.length;
+        int end = (n > 0 && tok[n - 1].equals("Z")) ? n - 1 : n;
+        for (int k = 0; k < end; k++) {
+            assertTrue(!tok[k].equals("Z"), "Z only as final token: " + d);
+        }
+        assertTrue(end >= 3 && tok[0].equals("M"), "must begin with absolute M x y: " + d);
+        List<double[]> pts = new ArrayList<>();
+        int i = 0;
+        boolean first = true;
+        while (i < end) {
+            String expected = first ? "M" : "L";
+            assertTrue(tok[i].equals(expected), "expected " + expected + ": " + d);
+            assertTrue(i + 2 < end, "the " + expected + " command needs two coordinates: " + d);
+            pts.add(new double[] {svgNumber(tok[i + 1], d), svgNumber(tok[i + 2], d)});
             i += 3;
             first = false;
         }
