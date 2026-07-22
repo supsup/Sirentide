@@ -116,6 +116,14 @@ public final class FlowchartLayout {
     private static final double CLUSTER_TITLE_SIZE = 10;   // title glyph size
     private static final double CLUSTER_TITLE_PAD = 5;      // horizontal padding inside the band
     private static final double CLUSTER_MAX_TITLE_W = 220;  // titles ellipsize past this (before band-fit)
+    // Gap between two DISCONNECTED layout components' frame-inclusive bounding boxes when they are
+    // packed apart (plan ffee1a55). The layered engine assigns ranks GLOBALLY, so two components that
+    // share no edge still land in the same layers and stack with only NODE_GAP between rows — less than
+    // a cluster frame's title band (CLUSTER_BAND_H) + padding (CLUSTER_PAD), so the second subgraph's
+    // frame draws INSIDE the first's. Packing separates each component along the cross-flow axis by this
+    // gap. Matched to NODE_GAP so an already-separated free-node component (which sits exactly NODE_GAP
+    // apart with no frame) never moves — that case stays byte-identical.
+    private static final double COMPONENT_GAP = NODE_GAP;
 
     /// A Sugiyama VIRTUAL waypoint's slot width — a thin, invisible placeholder (no box, no label)
     /// that a long edge routes THROUGH and that occupies an ordering slot in barycenter sweeps.
@@ -665,6 +673,13 @@ public final class FlowchartLayout {
             }
         }
 
+        // -- pack DISCONNECTED components apart (plan ffee1a55) BEFORE building frames: components that
+        // share no edge are stacked in the same layers with only NODE_GAP between them, so their cluster
+        // frames overlap. TD separates them along X (side by side). A single-component / already-clear
+        // chart offsets nothing → byte-identical.
+        double packedRight = packDisconnectedComponents(false, n, index, fc.clusters(), edges, rt,
+            vx, vy, boxW, boxH);
+
         // -- subgraph cluster frames (drawn UNDER everything). Empty for a cluster-free chart, so the
         // shift is 0 and the canvas is unchanged (byte-identical bake). A frame that would escape ABOVE
         // or LEFT of the canvas shifts EVERY vertex (real + virtual) right/down by the deficit so the
@@ -691,6 +706,12 @@ public final class FlowchartLayout {
         }
         canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
         canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
+        // Grow to contain a component packed past the natural content (a free-node component has no
+        // frame, so maxFrameRight would miss it). packedRight is pre-escape-shift, so add offX. No-ops
+        // (NEGATIVE_INFINITY) when nothing was packed → byte-identical.
+        if (packedRight > Double.NEGATIVE_INFINITY) {
+            canvasW = Math.max(canvasW, packedRight + offX + MARGIN);
+        }
 
         // -- emit order matters (readability + the containment audit): cluster frames UNDER edges,
         // edges UNDER nodes, then boxes, then labels on top.
@@ -1074,6 +1095,10 @@ public final class FlowchartLayout {
         for (int i = 0; i < n; i++) {
             lrIndex.put(nodes.get(i).id(), i);
         }
+        // Pack DISCONNECTED components apart (plan ffee1a55) BEFORE frames: LR separates them along Y
+        // (components stack vertically). Single-component / already-clear → byte-identical.
+        double packedBottom = packDisconnectedComponents(true, n, lrIndex, fc.clusters(), edges, rt,
+            vx, vy, boxW, boxH);
         List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW, boxH);
         double offX = 0;
         double offY = 0;
@@ -1112,6 +1137,12 @@ public final class FlowchartLayout {
         double canvasH = contentH + backCount * BACK_LANE_GAP + maxBackLabelH;
         canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
         canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
+        // Grow to contain a component packed past the natural content DOWNWARD (a free-node component
+        // has no frame, so maxFrameBottom would miss it). packedBottom is pre-escape-shift, so add offY.
+        // No-ops (NEGATIVE_INFINITY) when nothing was packed → byte-identical.
+        if (packedBottom > Double.NEGATIVE_INFINITY) {
+            canvasH = Math.max(canvasH, packedBottom + offY + MARGIN);
+        }
 
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1), coordinates final here.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
@@ -1684,35 +1715,214 @@ public final class FlowchartLayout {
         ordered.sort((a, b) -> Integer.compare(a.depth(), b.depth()));   // stable: outer under inner
         List<ClusterFrame> out = new ArrayList<>();
         for (FlowCluster c : ordered) {
-            double minX = Double.MAX_VALUE;
-            double minY = Double.MAX_VALUE;
-            double maxX = -Double.MAX_VALUE;
-            double maxY = -Double.MAX_VALUE;
-            boolean any = false;
-            for (String id : c.memberNodeIds()) {
-                Integer i = index.get(id);
-                if (i == null) {
-                    continue;   // a member that never placed (defensive) — never throw
-                }
-                any = true;
-                minX = Math.min(minX, vx[i]);
-                minY = Math.min(minY, vy[i]);
-                maxX = Math.max(maxX, vx[i] + boxW[i]);
-                maxY = Math.max(maxY, vy[i] + boxH[i]);
-            }
-            if (!any) {
+            double[] b = frameBox(c, index, vx, vy, boxW, boxH);
+            if (b == null) {
                 continue;   // empty cluster → no frame (inert)
             }
-            double pad = Math.max(CLUSTER_MIN_PAD, CLUSTER_PAD - c.depth() * CLUSTER_INSET);
-            double left = minX - pad;
-            double right = maxX + pad;
-            double bottom = maxY + pad;
-            double top = minY - pad - CLUSTER_BAND_H;
+            double left = b[0];
+            double top = b[1];
+            double right = b[2];
+            double bottom = b[3];
             String title = FONT.ellipsize(c.title(),
                 Math.min(CLUSTER_MAX_TITLE_W, right - left - 2 * CLUSTER_TITLE_PAD), CLUSTER_TITLE_SIZE);
             out.add(new ClusterFrame(title, left, top, right, bottom));
         }
         return out;
+    }
+
+    /// The pixel bounding box `[left, top, right, bottom]` of one cluster's frame — the union of its
+    /// placed member node rects, grown by the depth-tightened padding, with the title band reserved
+    /// ABOVE (so `top` already includes {@link #CLUSTER_BAND_H}). Returns {@code null} for a cluster
+    /// with NO placed member (empty subgraph or every member filtered) — degenerate → inert. The single
+    /// source of truth for the frame geometry, shared by {@link #buildClusterFrames} (which draws it)
+    /// and {@link #packDisconnectedComponents} (which reads its extent to separate components), so the
+    /// two can never drift.
+    private static double[] frameBox(FlowCluster c, Map<String, Integer> index,
+                                     double[] vx, double[] vy, double[] boxW, double[] boxH) {
+        double minX = Double.MAX_VALUE;
+        double minY = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE;
+        double maxY = -Double.MAX_VALUE;
+        boolean any = false;
+        for (String id : c.memberNodeIds()) {
+            Integer i = index.get(id);
+            if (i == null) {
+                continue;   // a member that never placed (defensive) — never throw
+            }
+            any = true;
+            minX = Math.min(minX, vx[i]);
+            minY = Math.min(minY, vy[i]);
+            maxX = Math.max(maxX, vx[i] + boxW[i]);
+            maxY = Math.max(maxY, vy[i] + boxH[i]);
+        }
+        if (!any) {
+            return null;
+        }
+        double pad = Math.max(CLUSTER_MIN_PAD, CLUSTER_PAD - c.depth() * CLUSTER_INSET);
+        return new double[] {minX - pad, minY - pad - CLUSTER_BAND_H, maxX + pad, maxY + pad};
+    }
+
+    /// Pack DISCONNECTED layout components apart so their frame-inclusive bounding boxes never overlap
+    /// (plan ffee1a55 — the disconnected-subgraph-overlap defect). The layered engine assigns ranks
+    /// GLOBALLY (longest-path over the whole node set), so two components sharing NO edge still land in
+    /// the same layers and get stacked (LR) / columned (TD) with only NODE_GAP between them — less than
+    /// a cluster frame's chrome, so two disconnected subgraphs' frames collide (the second's title band
+    /// renders inside the first's box). A COMPONENT is a connected component of the UNDIRECTED graph
+    /// (edges) UNIONED with same-cluster membership (a subgraph whose members carry no internal edge is
+    /// still one component). Each component is a rigid body: translating ALL its vertices (real nodes +
+    /// its forward edges' virtual waypoints) along the cross-flow axis — Y for LR (components stack
+    /// vertically), X for TD (side by side) — preserves every internal edge and frame. Components are
+    /// ordered by their natural min along the axis and packed forward from the first component's natural
+    /// position; a component moves ONLY when its natural min would fall inside the prior component's
+    /// extent + {@link #COMPONENT_GAP}. So a single-component chart, and any component the layered pass
+    /// already separated by ≥ the gap (every existing golden), is byte-identical (offset 0). The
+    /// downstream shift+grow-to-fit pass contains the now-taller/wider packed content on the canvas.
+    ///
+    /// Returns the maximum PACKED coordinate along the packing axis (the far edge of the most-pushed
+    /// component, node AND frame inclusive) so the caller can GROW the canvas to contain a component
+    /// pushed past the natural content extent — a FREE-node component carries no frame, so the frame-
+    /// based canvas grow would miss it and its geometry would escape (INV-4). Returns
+    /// {@link Double#NEGATIVE_INFINITY} when nothing was packed, so the caller's {@code Math.max}
+    /// no-ops and the bake is byte-identical.
+    private static double packDisconnectedComponents(boolean lr, int n, Map<String, Integer> index,
+                                                     List<FlowCluster> clusters, List<Edge> edges,
+                                                     Routing rt, double[] vx, double[] vy,
+                                                     double[] boxW, double[] boxH) {
+        if (n <= 1) {
+            return Double.NEGATIVE_INFINITY;   // 0/1 node → at most one component, nothing to separate
+        }
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) {
+            parent[i] = i;
+        }
+        for (Edge e : edges) {
+            union(parent, e.u(), e.v());   // an edge joins its endpoints (undirected connectivity)
+        }
+        for (FlowCluster c : clusters) {
+            int first = -1;
+            for (String id : c.memberNodeIds()) {
+                Integer i = index.get(id);
+                if (i == null) {
+                    continue;
+                }
+                if (first < 0) {
+                    first = i;
+                } else {
+                    union(parent, first, i);   // every member of one subgraph shares a component
+                }
+            }
+        }
+        // Per-component extent [min,max] along the packing axis — from node boxes AND cluster frames
+        // (the frame chrome, not just the nodes, is what overlaps, so it must drive the separation).
+        Map<Integer, double[]> ext = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            double lo = lr ? vy[i] : vx[i];
+            double hi = lr ? vy[i] + boxH[i] : vx[i] + boxW[i];
+            mergeExtent(ext, find(parent, i), lo, hi);
+        }
+        for (FlowCluster c : clusters) {
+            double[] b = frameBox(c, index, vx, vy, boxW, boxH);
+            if (b == null) {
+                continue;   // empty/unplaced cluster → no frame extent
+            }
+            int r = clusterComponentRoot(c, index, parent);
+            if (r < 0) {
+                continue;
+            }
+            // b = [left, top, right, bottom]; the packing axis reads top/bottom (LR) or left/right (TD).
+            mergeExtent(ext, r, lr ? b[1] : b[0], lr ? b[3] : b[2]);
+        }
+        if (ext.size() <= 1) {
+            return Double.NEGATIVE_INFINITY;   // a single component → no packing, byte-identical bake
+        }
+        List<Integer> roots = new ArrayList<>(ext.keySet());
+        roots.sort((a, b) -> {
+            int byMin = Double.compare(ext.get(a)[0], ext.get(b)[0]);
+            return byMin != 0 ? byMin : Integer.compare(a, b);   // deterministic tie-break by root id
+        });
+        Map<Integer, Double> off = new HashMap<>();
+        double cursor = -Double.MAX_VALUE;
+        for (int r : roots) {
+            double[] mm = ext.get(r);
+            double desiredMin = Math.max(mm[0], cursor);
+            off.put(r, desiredMin - mm[0]);   // ≥ 0; 0 when this component was already clear
+            cursor = desiredMin + (mm[1] - mm[0]) + COMPONENT_GAP;
+        }
+        // Apply each component's offset to its REAL nodes...
+        for (int i = 0; i < n; i++) {
+            double o = off.get(find(parent, i));
+            if (lr) {
+                vy[i] += o;
+            } else {
+                vx[i] += o;
+            }
+        }
+        // ...and to the VIRTUAL waypoints of its forward edges. A chain's endpoints are real nodes in
+        // one component, so every interior waypoint inherits that component's offset — the routed
+        // polyline shifts rigidly with the boxes it threads between.
+        for (int ei = 0; ei < edges.size(); ei++) {
+            int[] ch = rt.chain().get(ei);
+            if (ch.length <= 2) {
+                continue;   // straight span-1 or back edge → no interior waypoint to move
+            }
+            double o = off.get(find(parent, ch[0]));
+            for (int j = 1; j < ch.length - 1; j++) {
+                int vid = ch[j];
+                if (lr) {
+                    vy[vid] += o;
+                } else {
+                    vx[vid] += o;
+                }
+            }
+        }
+        // The far edge of the packed content along the axis (each component's shifted max). The caller
+        // grows the canvas to this so a pushed FREE-node component (no frame) stays contained (INV-4).
+        double packedMax = Double.NEGATIVE_INFINITY;
+        for (int r : roots) {
+            packedMax = Math.max(packedMax, off.get(r) + ext.get(r)[1]);
+        }
+        return packedMax;
+    }
+
+    /// The union-find ROOT of the component a cluster belongs to — the root of its first placed member
+    /// (all members were unioned together above). {@code -1} when the cluster placed no member.
+    private static int clusterComponentRoot(FlowCluster c, Map<String, Integer> index, int[] parent) {
+        for (String id : c.memberNodeIds()) {
+            Integer i = index.get(id);
+            if (i != null) {
+                return find(parent, i);
+            }
+        }
+        return -1;
+    }
+
+    /// Fold `[lo,hi]` into the running [min,max] extent for `root` (creating it on first sight).
+    private static void mergeExtent(Map<Integer, double[]> ext, int root, double lo, double hi) {
+        double[] cur = ext.get(root);
+        if (cur == null) {
+            ext.put(root, new double[] {lo, hi});
+        } else {
+            cur[0] = Math.min(cur[0], lo);
+            cur[1] = Math.max(cur[1], hi);
+        }
+    }
+
+    /// Union-find find with path-halving (bounded, deterministic — DESIGN §6).
+    private static int find(int[] parent, int x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    }
+
+    /// Union-find union (attach a's root under b's root).
+    private static void union(int[] parent, int a, int b) {
+        int ra = find(parent, a);
+        int rb = find(parent, b);
+        if (ra != rb) {
+            parent[ra] = rb;
+        }
     }
 
     /// Emits one cluster {@link ClusterFrame}: a STROKE-ONLY border (four {@link Line}s — a
