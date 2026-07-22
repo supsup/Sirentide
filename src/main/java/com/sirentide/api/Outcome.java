@@ -11,10 +11,13 @@ package com.sirentide.api;
 /// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the baked SVG passed the
 ///   {@link Sirentide#MAX_OUTPUT_BYTES} cap (the emitter's incremental guard or the post-emit
 ///   check), so it degraded to the inert shell rather than emit a runaway document.
-/// - {@link #UNSUPPORTED_CONSTRUCT} — reserved for a construct the parser recognizes-but-cannot-yet
-///   render. v1 CANNOT distinguish this from {@link #PARSE_ERROR} without deeper parser annotation
-///   (the parser degrades an unknown type to the same Empty target), so it is folded into
-///   PARSE_ERROR for now and kept here as the taxonomy slot the follow-up will populate.
+/// - {@link #UNSUPPORTED_CONSTRUCT} — a construct the parser recognizes-but-cannot render. Populated
+///   (plan 933eed50 F2) for FLOWCHART sources carrying an unsupported Mermaid token at a statement-
+///   level position — a top-level `&` edge fan-out, a `~~~` invisible link, a `<br/>` in a label, or a
+///   `style`/`click` directive. Such a source degrades to the SAME Empty inert-shell target as an
+///   unknown type, but {@link com.sirentide.parse.DslParser#detectUnsupportedConstruct} splits it out
+///   of {@link #PARSE_ERROR} by NAMING the offending token — with a real 1-based
+///   {@link Diagnostics#line()}. (An unknown diagram TYPE still folds into PARSE_ERROR.)
 /// - {@link #RENDER_BUG} — an UNEXPECTED throwable escaped layout or emit and was caught by the
 ///   last-resort bake guard. This is a renderer defect, not an author mistake — the very class of
 ///   failure this channel exists to stop converting into an indistinguishable blank.

@@ -191,6 +191,16 @@ public final class Sirentide {
             // degrade target means the type keyword was never understood — a parse-level signal,
             // with the frames unchanged (== renderFrames' output for Empty: the single base frame).
             if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                // Mirror renderWithDiagnostics: an unsupported flowchart construct degrades to the
+                // same Empty target — name the token on the UNSUPPORTED_CONSTRUCT channel (plan
+                // 933eed50 F2) rather than folding it into the generic PARSE_ERROR.
+                com.sirentide.parse.DslParser.UnsupportedConstruct unsupported =
+                    com.sirentide.parse.DslParser.detectUnsupportedConstruct(dsl);
+                if (unsupported != null) {
+                    return new FramesResult(java.util.List.of(base), new Diagnostics(
+                        Outcome.UNSUPPORTED_CONSTRUCT, STAGE_PARSE, unsupported.message(),
+                        unsupported.line(), "unsupported flowchart token: " + unsupported.token()));
+                }
                 return new FramesResult(java.util.List.of(base), new Diagnostics(
                     Outcome.PARSE_ERROR, STAGE_PARSE,
                     "The diagram source was not recognized: line 1's diagram-type keyword is unknown "
@@ -304,6 +314,18 @@ public final class Sirentide {
             // an intentional-looking empty shell but their DSL was never understood. Surface that as a
             // parse-level signal. `svg` is still returned unchanged (== render's output for Empty).
             if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                // A KNOWN flowchart construct the DSL does not support (a top-level `&` fan-out, `~~~`
+                // invisible link, `<br/>` in a label, or a `style`/`click` directive) degrades the
+                // whole flowchart to the SAME Empty target as an unknown type. Split it out of the
+                // generic PARSE_ERROR by NAMING the offending token (plan 933eed50 F2) — this
+                // populates the reserved UNSUPPORTED_CONSTRUCT slot, with a real 1-based line.
+                com.sirentide.parse.DslParser.UnsupportedConstruct unsupported =
+                    com.sirentide.parse.DslParser.detectUnsupportedConstruct(dsl);
+                if (unsupported != null) {
+                    return new RenderResult(svg, new Diagnostics(
+                        Outcome.UNSUPPORTED_CONSTRUCT, STAGE_PARSE, unsupported.message(),
+                        unsupported.line(), "unsupported flowchart token: " + unsupported.token()));
+                }
                 return new RenderResult(svg, new Diagnostics(
                     Outcome.PARSE_ERROR, STAGE_PARSE,
                     "The diagram source was not recognized: line 1's diagram-type keyword is unknown "

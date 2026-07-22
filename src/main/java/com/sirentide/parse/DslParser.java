@@ -586,6 +586,17 @@ public final class DslParser {
     /// round-trips — NOT degraded to Empty).
     private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
             String configDirection) {
+        // An unsupported Mermaid construct anywhere in the body (a top-level `&` fan-out, a `~~~`
+        // invisible link, a `<br/>` in a label, or a `style`/`click` directive) makes the whole bake
+        // untrustworthy: `A & B --> C` used to mint ONE literal node named `A & B`, a `<br/>` baked as
+        // literal glyphs, a `style`/`click` directive silently vanished. Degrade the WHOLE diagram to
+        // the inert shell rather than render a misleading partial — the theme: silent-WRONG becomes a
+        // LOUD signal (the diagnostic channel names the token via {@link #detectUnsupportedConstruct}).
+        // Never throws (DESIGN §6). Detection keys on statement-level positions only, so a sigil inside
+        // a quoted/bracketed label (`A[Tom & Jerry]`) is legal content and does NOT trip this.
+        if (firstUnsupportedFlowToken(lines) != null) {
+            return new Empty();
+        }
         // An explicit header token (`flowchart LR`) always wins; leave direction null until one is
         // seen so a defaulted header is distinguishable from an explicit `TD`.
         String direction = null;
@@ -902,6 +913,161 @@ public final class DslParser {
             }
         }
         return false;
+    }
+
+    /// A recognized-but-UNSUPPORTED Mermaid construct found at a STATEMENT-LEVEL syntax position in a
+    /// flowchart body (plan 933eed50 F2). `token` is the offending sigil/keyword (`&`, `~~~`, `<br/>`,
+    /// `style`, `click`); `line` is its 1-based line in the preamble-stripped source (best-effort —
+    /// `src.strip()` drops leading blanks); `message` is the author-facing sentence. It exists so the
+    /// diagnostic render entry can turn the silent inert-shell degrade — which used to mint a literal
+    /// WRONG node (`A & B --> C` → one node named `A & B`) — into a NAMED signal on the
+    /// {@link com.sirentide.api.Outcome#UNSUPPORTED_CONSTRUCT} channel.
+    public record UnsupportedConstruct(String token, int line, String message) {}
+
+    /// Detect the FIRST recognized-but-unsupported Mermaid construct in a FLOWCHART source, or `null`
+    /// when the source is not a flowchart / uses no such construct (plan 933eed50 F2). PURE + separate
+    /// from {@link #parse} (mirrors {@link #parseConfig}): the diagnostic render entry calls it to NAME
+    /// the offending token, while {@link #parseFlowchart} calls the shared {@link
+    /// #firstUnsupportedFlowToken} scanner to route the WHOLE diagram to the inert shell rather than
+    /// render a misleading partial. Detection keys ONLY on statement-level positions — a sigil INSIDE a
+    /// quoted/bracketed label (`A[Tom & Jerry]`, `A[x ~~~ y]`) is legal content and never trips it.
+    /// Never throws (DESIGN §6).
+    public static UnsupportedConstruct detectUnsupportedConstruct(String src) {
+        if (src == null || src.isBlank() || src.length() > MAX_SOURCE_BYTES) {
+            return null;
+        }
+        String[] rawLines = src.strip().split("\\R");
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return null;
+        }
+        String[] lines = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        if (!lines[0].strip().split("\\s+")[0].equals("flowchart")) {
+            return null;   // only the flowchart parse path is in scope for this detector
+        }
+        UnsupportedConstruct u = firstUnsupportedFlowToken(lines);
+        if (u == null) {
+            return null;
+        }
+        // The scanner reports a 0-based index into `lines`; re-base it onto the preamble-stripped
+        // source (1-based) so the number the author sees counts from the top of their source.
+        return new UnsupportedConstruct(u.token(), bodyStart + u.line() + 1, u.message());
+    }
+
+    /// Scan a FLOWCHART body for the first statement-level unsupported construct (plan 933eed50 F2),
+    /// returning its {@link UnsupportedConstruct} (with a 0-BASED `line` index into `lines`) or `null`.
+    /// Shared by {@link #detectUnsupportedConstruct} (which names it) and {@link #parseFlowchart}
+    /// (which degrades on it). `lines[0]` is the header; the body is `lines[1..]`. Two position
+    /// classes:
+    ///   - a leading `style`/`click` DIRECTIVE on an arrowless line (its very presence means the
+    ///     author's styling/interaction silently vanished) — matched via {@link #splitKeyword}. A BARE
+    ///     `style`/`click` with no rest stays a legal node (only the two-token directive SHAPE trips),
+    ///     mirroring {@link #isReservedDirectiveLine}.
+    ///   - an in-line sigil scanned OUTSIDE every `[]`/`{}`/`()`/`||` span ({@link
+    ///     #firstUnsupportedSigil}): a top-level `&` (edge fan-out) or `~~~` (invisible link), or a
+    ///     `<br…>` line-break tag INSIDE a label span (baked as literal glyphs today).
+    private static UnsupportedConstruct firstUnsupportedFlowToken(String[] lines) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (topLevelEdges(line).isEmpty()) {
+                String[] kw = splitKeyword(line);
+                if ((kw[0].equals("style") || kw[0].equals("click")) && !kw[1].isEmpty()) {
+                    return new UnsupportedConstruct(kw[0], i, unsupportedMessage(kw[0]));
+                }
+            }
+            String sigil = firstUnsupportedSigil(line);
+            if (sigil != null) {
+                return new UnsupportedConstruct(sigil, i, unsupportedMessage(sigil));
+            }
+        }
+        return null;
+    }
+
+    /// Walk a flowchart body line tracking `[]`/`{}`/`()` bracket spans and `||` pipe spans (the same
+    /// span notion {@link #topLevelEdges} uses, widened to the `()` shape delimiters), returning the
+    /// first unsupported in-line sigil — a TOP-LEVEL `&` (fan-out) or `~~~` (invisible link), or a
+    /// `<br…>` tag INSIDE a label span — or `null`. Statement-level only: a sigil inside a span is
+    /// legal label content and never trips. Non-nesting by design (a label holds an operator, not a
+    /// nested span), mirroring {@link #topLevelEdges}.
+    private static String firstUnsupportedSigil(String line) {
+        char bracketClose = 0;   // 0 = outside a []/{}/() span, else the awaited ']' '}' or ')'
+        boolean inPipe = false;
+        int n = line.length();
+        int i = 0;
+        while (i < n) {
+            char c = line.charAt(i);
+            boolean inSpan = bracketClose != 0 || inPipe;
+            if (bracketClose != 0) {
+                if (c == bracketClose) {
+                    bracketClose = 0;
+                }
+            } else if (inPipe) {
+                if (c == '|') {
+                    inPipe = false;
+                }
+            } else if (c == '[') {
+                bracketClose = ']';
+            } else if (c == '{') {
+                bracketClose = '}';
+            } else if (c == '(') {
+                bracketClose = ')';
+            } else if (c == '|') {
+                inPipe = true;
+            } else if (c == '&') {
+                return "&";                        // a top-level `&` — edge fan-out
+            } else if (c == '~' && i + 2 < n && line.charAt(i + 1) == '~' && line.charAt(i + 2) == '~') {
+                return "~~~";                       // a top-level `~~~` — invisible link
+            }
+            // A `<br…>` line-break tag INSIDE a label span bakes as literal glyphs today.
+            if (inSpan && matchesBrTag(line, i)) {
+                return "<br/>";
+            }
+            i++;
+        }
+        return null;
+    }
+
+    /// True iff `line` at `i` begins a Mermaid `<br>` line-break tag: `<br`, optional whitespace, an
+    /// optional `/`, optional whitespace, then `>` — i.e. `<br>`, `<br/>`, `<br />`, `<br >` (case-
+    /// insensitive). Precise so a label word like `<brave>` (no `/`/`>` right after `br`) never trips.
+    private static boolean matchesBrTag(String line, int i) {
+        int n = line.length();
+        if (!line.regionMatches(true, i, "<br", 0, 3)) {
+            return false;
+        }
+        int j = i + 3;
+        while (j < n && Character.isWhitespace(line.charAt(j))) {
+            j++;
+        }
+        if (j < n && line.charAt(j) == '/') {
+            j++;
+            while (j < n && Character.isWhitespace(line.charAt(j))) {
+                j++;
+            }
+        }
+        return j < n && line.charAt(j) == '>';
+    }
+
+    /// The author-facing sentence for an unsupported flowchart token (plan 933eed50 F2) — names the
+    /// construct and states WHY the diagram degraded to the inert shell (so the signal is actionable,
+    /// not a silently-wrong render).
+    private static String unsupportedMessage(String token) {
+        String what = switch (token) {
+            case "&" -> "an `&` edge fan-out (e.g. `A & B --> C`)";
+            case "~~~" -> "a `~~~` invisible link";
+            case "<br/>" -> "a `<br/>` line break inside a label";
+            case "style" -> "a `style` directive";
+            case "click" -> "a `click` directive";
+            default -> "the `" + token + "` construct";
+        };
+        return "This flowchart uses " + what + ", which the Sirentide DSL does not support. Rather "
+            + "than silently render a misleading diagram, it degraded to the inert shell. Rewrite it "
+            + "with supported syntax (see the flowchart reference).";
     }
 
     /// The reserved leading COLOR-CLASS keywords (plan sirentide-semantic-color-classes): `classDef`
