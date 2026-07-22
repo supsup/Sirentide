@@ -107,6 +107,134 @@ class FlowchartSubgraphOverlapTest {
         assertNoNodeStraddlesFrame(svg, frames);
     }
 
+    // ---- BACK-EDGE lanes must translate with a packed component (the follow-up defect) ------------
+
+    /// FlowchartLayout.BACK_LANE_GAP — a component's first lane sits exactly this far past its far edge.
+    private static final double BACK_LANE_GAP = 18.0;
+
+    @Test
+    void packedComponentBackEdgeRoutesInItsOwnBand_lr() {
+        // Charles's verification repro: the cycle is the SECOND of two disconnected components, so the
+        // packer translates it down — pre-fix the back-edge lane stayed at the GLOBAL pre-pack content
+        // bottom, which lands inside the packed component's own boxes: the back edge collapsed onto the
+        // forward edge, label clipped. The lane must sit in the SECOND component's band, below ITS nodes
+        // (the single-component control rendering, translated).
+        String dsl = "flowchart LR\n"
+            + "  subgraph A1 [First component]\n    A[start] --> B[finish]\n  end\n"
+            + "  subgraph C1 [Second with cycle]\n    C[work] --> D[review]\n    D -->|redo| C\n  end\n";
+        String svg = Sirentide.render(dsl);
+        List<Box> frames = clusterFrames(svg);
+        assertEquals(2, frames.size(), "two disconnected subgraphs, two frames");
+        frames.sort((a, b) -> Double.compare(a.top(), b.top()));
+        Box first = frames.get(0);
+        Box second = frames.get(1);
+        double secondNodesBottom = maxBottomOfNodesIn(svg, second);
+        List<double[]> back = edgeLines(svg, "D-C");
+        assertFalse(back.isEmpty(), "no <line> geometry parsed for the D-C back edge");
+        // 1) the whole back-edge polyline stays in the second component's band: nothing routes back up
+        //    into (or above) the first component's frame.
+        double backMinY = back.stream().mapToDouble(s -> Math.min(s[1], s[3])).min().orElseThrow();
+        assertTrue(backMinY > first.bottom(),
+            "the packed component's back edge escaped its band — min y " + backMinY
+                + " is not below the FIRST component's frame bottom " + first.bottom()
+                + " (back-edge lines=" + dump(back) + ")");
+        // 2) the LANE (the lowest horizontal run) sits BELOW the second component's node boxes, in its
+        //    own lane slot — not collapsed onto the forward edge at node mid-height.
+        double laneY = maxHorizontalRunY(back);
+        assertTrue(laneY > secondNodesBottom + BACK_LANE_GAP - 0.5,
+            "back-edge lane y=" + laneY + " does not sit a full lane gap below the second component's "
+                + "nodes (bottom=" + secondNodesBottom + ") — the lane did not translate with the "
+                + "packed component (back-edge lines=" + dump(back) + ")");
+        // 3) …and therefore never overlaps the forward edge's y (C->D runs at node mid-height).
+        for (double[] fwd : edgeLines(svg, "C-D")) {
+            assertTrue(laneY > Math.max(fwd[1], fwd[3]) + BACK_LANE_GAP - 0.5,
+                "back-edge lane y=" + laneY + " hugs the forward C-D edge (y=" + fwd[1] + ".." + fwd[3]
+                    + ") instead of routing in its own lane below the boxes");
+        }
+    }
+
+    @Test
+    void twoComponentsBothWithCycles_lanesDisjointFromEachOtherAndFrames_lr() {
+        // BOTH components carry a back edge: each component's lane must sit in ITS OWN band — below its
+        // own nodes, clear of the other component's frame and of the other lane. Pre-fix both lanes
+        // stacked below the GLOBAL content bottom, cutting through the packed second component.
+        String dsl = "flowchart LR\n"
+            + "  subgraph A1 [First with cycle]\n    A[start] --> B[finish]\n    B -->|again| A\n  end\n"
+            + "  subgraph C1 [Second with cycle]\n    C[work] --> D[review]\n    D -->|redo| C\n  end\n";
+        String svg = Sirentide.render(dsl);
+        List<Box> frames = clusterFrames(svg);
+        assertEquals(2, frames.size(), "two disconnected subgraphs, two frames");
+        frames.sort((a, b) -> Double.compare(a.top(), b.top()));
+        Box first = frames.get(0);
+        Box second = frames.get(1);
+        double lane1 = maxHorizontalRunY(edgeLines(svg, "B-A"));
+        double lane2 = maxHorizontalRunY(edgeLines(svg, "D-C"));
+        // Each lane below its OWN component's nodes.
+        double firstNodesBottom = maxBottomOfNodesIn(svg, first);
+        double secondNodesBottom = maxBottomOfNodesIn(svg, second);
+        assertTrue(lane1 > firstNodesBottom + BACK_LANE_GAP - 0.5,
+            "first component's lane y=" + lane1 + " is not a lane gap below its nodes (bottom="
+                + firstNodesBottom + ")");
+        assertTrue(lane2 > secondNodesBottom + BACK_LANE_GAP - 0.5,
+            "second component's lane y=" + lane2 + " is not a lane gap below its nodes (bottom="
+                + secondNodesBottom + ")");
+        // Lanes clear of BOTH frames' boxes (a lane inside a frame band is the defect).
+        for (double lane : new double[] {lane1, lane2}) {
+            for (Box f : frames) {
+                assertFalse(lane >= f.top() && lane <= f.bottom(),
+                    "back-edge lane y=" + lane + " runs INSIDE cluster frame " + f
+                        + " — lanes must stay outside every component frame");
+            }
+        }
+        // The first component's lane stays ABOVE the second component's frame (its own band), and the
+        // second's below that frame — so the two lanes are provably disjoint.
+        assertTrue(lane1 < second.top(),
+            "first component's lane y=" + lane1 + " reaches into the second component's band (frame top="
+                + second.top() + ") — it must stay local to its component");
+        assertTrue(lane2 > second.bottom(),
+            "second component's lane y=" + lane2 + " is not below its own frame (bottom="
+                + second.bottom() + ")");
+    }
+
+    @Test
+    void twoComponentsBothWithCycles_lanesDisjointFromEachOtherAndFrames_td() {
+        // The TD transpose: components pack side by side, lanes are VERTICAL runs to the RIGHT of each
+        // component. Each lane must sit right of ITS component's nodes, clear of both frames, and the
+        // first component's lane must not reach into the second component's band.
+        String dsl = "flowchart TD\n"
+            + "  subgraph A1 [First with cycle]\n    A[start] --> B[finish]\n    B -->|again| A\n  end\n"
+            + "  subgraph C1 [Second with cycle]\n    C[work] --> D[review]\n    D -->|redo| C\n  end\n";
+        String svg = Sirentide.render(dsl);
+        List<Box> frames = clusterFrames(svg);
+        assertEquals(2, frames.size(), "two disconnected subgraphs, two frames (TD)");
+        frames.sort((a, b) -> Double.compare(a.left(), b.left()));
+        Box first = frames.get(0);
+        Box second = frames.get(1);
+        double lane1 = maxVerticalRunX(edgeLines(svg, "B-A"));
+        double lane2 = maxVerticalRunX(edgeLines(svg, "D-C"));
+        double firstNodesRight = maxRightOfNodesIn(svg, first);
+        double secondNodesRight = maxRightOfNodesIn(svg, second);
+        assertTrue(lane1 > firstNodesRight + BACK_LANE_GAP - 0.5,
+            "first component's lane x=" + lane1 + " is not a lane gap right of its nodes (right="
+                + firstNodesRight + ")");
+        assertTrue(lane2 > secondNodesRight + BACK_LANE_GAP - 0.5,
+            "second component's lane x=" + lane2 + " is not a lane gap right of its nodes (right="
+                + secondNodesRight + ")");
+        for (double lane : new double[] {lane1, lane2}) {
+            for (Box f : frames) {
+                assertFalse(lane >= f.left() && lane <= f.right(),
+                    "back-edge lane x=" + lane + " runs INSIDE cluster frame " + f
+                        + " — lanes must stay outside every component frame (TD)");
+            }
+        }
+        assertTrue(lane1 < second.left(),
+            "first component's lane x=" + lane1 + " reaches into the second component's band (frame left="
+                + second.left() + ") — it must stay local to its component (TD)");
+        assertTrue(lane2 > second.right(),
+            "second component's lane x=" + lane2 + " is not right of its own frame (right="
+                + second.right() + ") (TD)");
+    }
+
     // ---- the CONNECTED regression: two subgraphs WITH a connecting edge stay ONE component --------
 
     @Test
@@ -271,6 +399,84 @@ class FlowchartSubgraphOverlapTest {
             }
         }
         return out;
+    }
+
+    /// The `<line>` segments `[x1,y1,x2,y2]` of ONE edge's `<g role="edge" id=…>` group (the exact
+    /// emitted polyline of that edge — connectors, lane runs; the arrowhead is a `<path>`, excluded).
+    private static List<double[]> edgeLines(String svg, String edgeId) {
+        Pattern grp = Pattern.compile(
+            "<g data-sirentide-role=\"edge\" data-sirentide-id=\"" + Pattern.quote(edgeId)
+                + "\"[^>]*>(.*?)</g>", Pattern.DOTALL);
+        List<double[]> out = new ArrayList<>();
+        Matcher g = grp.matcher(svg);
+        if (g.find()) {
+            Matcher l = LINE.matcher(g.group(1));
+            while (l.find()) {
+                out.add(new double[] {num(l, 1), num(l, 2), num(l, 3), num(l, 4)});
+            }
+        }
+        return out;
+    }
+
+    /// The LANE of an LR back edge: the y of its lowest HORIZONTAL run (the along-the-lane segment —
+    /// always the polyline's max-y horizontal line). Fails loud when the edge has no horizontal run.
+    private static double maxHorizontalRunY(List<double[]> lines) {
+        double y = Double.NEGATIVE_INFINITY;
+        for (double[] s : lines) {
+            if (Math.abs(s[1] - s[3]) < 0.01) {
+                y = Math.max(y, s[1]);
+            }
+        }
+        assertTrue(y > Double.NEGATIVE_INFINITY,
+            "no horizontal lane run found in back-edge lines " + dump(lines));
+        return y;
+    }
+
+    /// The LANE of a TD back edge: the x of its rightmost VERTICAL run (transpose of
+    /// {@link #maxHorizontalRunY}).
+    private static double maxVerticalRunX(List<double[]> lines) {
+        double x = Double.NEGATIVE_INFINITY;
+        for (double[] s : lines) {
+            if (Math.abs(s[0] - s[2]) < 0.01) {
+                x = Math.max(x, s[0]);
+            }
+        }
+        assertTrue(x > Double.NEGATIVE_INFINITY,
+            "no vertical lane run found in back-edge lines " + dump(lines));
+        return x;
+    }
+
+    /// Max BOTTOM of the node boxes inside `frame` — the "below its nodes" datum for an LR lane.
+    private static double maxBottomOfNodesIn(String svg, Box frame) {
+        double bottom = Double.NEGATIVE_INFINITY;
+        for (Box nodeBox : nodeBoxes(svg)) {
+            if (contains(frame, nodeBox)) {
+                bottom = Math.max(bottom, nodeBox.bottom());
+            }
+        }
+        assertTrue(bottom > Double.NEGATIVE_INFINITY, "no node boxes found inside frame " + frame);
+        return bottom;
+    }
+
+    /// Max RIGHT of the node boxes inside `frame` — the "right of its nodes" datum for a TD lane.
+    private static double maxRightOfNodesIn(String svg, Box frame) {
+        double right = Double.NEGATIVE_INFINITY;
+        for (Box nodeBox : nodeBoxes(svg)) {
+            if (contains(frame, nodeBox)) {
+                right = Math.max(right, nodeBox.right());
+            }
+        }
+        assertTrue(right > Double.NEGATIVE_INFINITY, "no node boxes found inside frame " + frame);
+        return right;
+    }
+
+    private static String dump(List<double[]> lines) {
+        StringBuilder sb = new StringBuilder("[");
+        for (double[] s : lines) {
+            sb.append('(').append(s[0]).append(',').append(s[1]).append(")-(")
+                .append(s[2]).append(',').append(s[3]).append(") ");
+        }
+        return sb.append(']').toString();
     }
 
     private static double num(Matcher m, int g) {

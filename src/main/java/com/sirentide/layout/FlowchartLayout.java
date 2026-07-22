@@ -627,22 +627,6 @@ public final class FlowchartLayout {
             maxLayerWidth = Math.max(maxLayerWidth, rowWidth(row, rt.vWidth));
         }
         double contentW = maxLayerWidth + 2 * MARGIN;
-        // Back-edges route through vertical LANES reserved to the RIGHT of the content (M1.1):
-        // the straight up-line overlapped the forward chain, so a cycle looked like a plain chain.
-        // One lane per back-edge, so multiple cycles don't overdraw each other.
-        int backCount = 0;
-        double maxBackLabelW = 0;   // a labeled back-edge's label sits RIGHT of its lane — widen for it
-        for (int ei = 0; ei < isBack.length; ei++) {
-            if (isBack[ei]) {
-                backCount++;
-                String bl = edges.get(ei).label();
-                if (bl != null) {
-                    maxBackLabelW = Math.max(maxBackLabelW,
-                        FONT.runWidth(bl, EDGE_LABEL_SIZE) + EDGE_LABEL_GAP);
-                }
-            }
-        }
-        double canvasW = contentW + backCount * BACK_LANE_GAP + maxBackLabelW;
         // Each layer band is as tall as its tallest member (NODE_H for an all-fixed layer). The band
         // tops march down cumulatively — for an all-NODE_H chart this reduces to the old
         // `MARGIN + L*(NODE_H+LAYER_GAP)`, so every existing golden is byte-identical.
@@ -677,8 +661,18 @@ public final class FlowchartLayout {
         // share no edge are stacked in the same layers with only NODE_GAP between them, so their cluster
         // frames overlap. TD separates them along X (side by side). A single-component / already-clear
         // chart offsets nothing → byte-identical.
-        double packedRight = packDisconnectedComponents(false, n, index, fc.clusters(), edges, rt,
-            vx, vy, boxW, boxH);
+        double packedRight = packDisconnectedComponents(false, n, index, fc.clusters(), edges, isBack,
+            rt, vx, vy, boxW, boxH);
+
+        // Back-edges route through vertical LANES reserved to the RIGHT of their component (M1.1):
+        // the straight up-line overlapped the forward chain, so a cycle looked like a plain chain.
+        // One lane per back-edge, so multiple cycles don't overdraw each other. The lane base is
+        // COMPONENT-LOCAL ({@link #backEdgeLanes} — must read the PACKED coordinates, so this sits
+        // after the packer): a packed component's lanes translate with it instead of staying where the
+        // component USED to be. Single component → the exact pre-fix global-base math (bit-identical).
+        BackLanes lanes = backEdgeLanes(false, n, index, fc.clusters(), edges, isBack, rt,
+            vx, vy, boxW, boxH, contentW);
+        double canvasW = lanes.canvasReach();
 
         // -- subgraph cluster frames (drawn UNDER everything). Empty for a cluster-free chart, so the
         // shift is 0 and the canvas is unchanged (byte-identical bake). A frame that would escape ABOVE
@@ -739,7 +733,6 @@ public final class FlowchartLayout {
         // values. railMaxY stays 0 for a chart with no detour (no back-edge crosses a box), so canvasH
         // and every existing golden are unchanged.
         double railMaxY = 0;
-        int lanePeek = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             if (!isBack[ei]) {
                 continue;
@@ -747,7 +740,7 @@ public final class FlowchartLayout {
             Edge e = edges.get(ei);
             int u = e.u();
             int v = e.v();
-            double laneX = contentW - MARGIN + offX + BACK_LANE_GAP * (++lanePeek);
+            double laneX = lanes.base()[ei] + offX + BACK_LANE_GAP * lanes.k()[ei];
             double approachX = e.arrow() ? vx[v] + boxW[v] + ARROW_LEN : vx[v] + boxW[v];
             railMaxY = Math.max(railMaxY,
                 clearRailY(vx[u] + boxW[u], vy[u] + boxH[u] / 2, laneX, obstacles, u, v));
@@ -755,7 +748,6 @@ public final class FlowchartLayout {
                 clearRailY(approachX, vy[v] + boxH[v] / 2, laneX, obstacles, u, v));
         }
         canvasH = Math.max(canvasH, railMaxY + MARGIN);
-        int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -764,9 +756,10 @@ public final class FlowchartLayout {
             // not, `tgt` IS the flat list, so the emission order/bytes are exactly the pre-anchor path.
             List<Shape> tgt = anchored ? new ArrayList<>() : shapes;
             if (isBack[ei]) {
-                // The lane base tracks the (possibly cluster-shifted) content, so a back-edge lane
-                // still clears the nodes after a subgraph shift (offX is 0 for a cluster-free chart).
-                double laneX = contentW - MARGIN + offX + BACK_LANE_GAP * (++laneIdx);
+                // The lane base tracks the (possibly cluster-shifted, packed) COMPONENT, so a back-edge
+                // lane still clears its own nodes after a subgraph shift or a component pack (offX is 0
+                // for a cluster-free chart; the base equals contentW - MARGIN for a single component).
+                double laneX = lanes.base()[ei] + offX + BACK_LANE_GAP * lanes.k()[ei];
                 double sy = vy[u] + boxH[u] / 2;        // source right-middle
                 double sx = vx[u] + boxW[u];
                 double ty = vy[v] + boxH[v] / 2;        // target right-middle
@@ -1097,8 +1090,15 @@ public final class FlowchartLayout {
         }
         // Pack DISCONNECTED components apart (plan ffee1a55) BEFORE frames: LR separates them along Y
         // (components stack vertically). Single-component / already-clear → byte-identical.
-        double packedBottom = packDisconnectedComponents(true, n, lrIndex, fc.clusters(), edges, rt,
-            vx, vy, boxW, boxH);
+        double packedBottom = packDisconnectedComponents(true, n, lrIndex, fc.clusters(), edges, isBack,
+            rt, vx, vy, boxW, boxH);
+        // Back-edge lane placement is COMPONENT-LOCAL ({@link #backEdgeLanes}) and reads the PACKED
+        // coordinates, so it must sit after the packer: a packed component's below-content lanes
+        // translate with it (pre-fix the global `contentH - MARGIN` base left them where the component
+        // USED to be — the packed cycle's back edge collapsed onto its forward edge). Single component
+        // → the exact pre-fix global-base math (bit-identical).
+        BackLanes lanes = backEdgeLanes(true, n, lrIndex, fc.clusters(), edges, isBack, rt,
+            vx, vy, boxW, boxH, contentH);
         List<ClusterFrame> frames = buildClusterFrames(fc.clusters(), lrIndex, vx, vy, boxW, boxH);
         double offX = 0;
         double offY = 0;
@@ -1120,21 +1120,12 @@ public final class FlowchartLayout {
             maxFrameBottom = Math.max(maxFrameBottom, f.bottom());
         }
 
-        // Back-edges route through horizontal LANES reserved BELOW the content (mirror of TD's
+        // Back-edges route through horizontal LANES reserved BELOW their component (mirror of TD's
         // right-side vertical lanes); a labeled back-edge's label sits just below its lane, so the
-        // canvas grows DOWNWARD to fit the tallest such label.
-        int backCount = 0;
-        double maxBackLabelH = 0;
-        for (int ei = 0; ei < isBack.length; ei++) {
-            if (isBack[ei]) {
-                backCount++;
-                if (edges.get(ei).label() != null) {
-                    maxBackLabelH = Math.max(maxBackLabelH, EDGE_LABEL_GAP + EDGE_LABEL_SIZE);
-                }
-            }
-        }
+        // canvas grows DOWNWARD to fit the deepest component-local lane stack + label (canvasReach ==
+        // the pre-fix `contentH + backCount·BACK_LANE_GAP + maxLabel` for a single component).
         double canvasW = contentW;
-        double canvasH = contentH + backCount * BACK_LANE_GAP + maxBackLabelH;
+        double canvasH = lanes.canvasReach();
         canvasW = Math.max(canvasW + offX, maxFrameRight + MARGIN);
         canvasH = Math.max(canvasH + offY, maxFrameBottom + MARGIN);
         // Grow to contain a component packed past the natural content DOWNWARD (a free-node component
@@ -1152,7 +1143,6 @@ public final class FlowchartLayout {
         // read canvasW. clearRailX is a pure function of the attach point + obstacles, so the emit pass
         // recomputes identical values. railMaxX stays 0 for a chart with no detour → byte-identical.
         double railMaxX = 0;
-        int lanePeek = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             if (!isBack[ei]) {
                 continue;
@@ -1160,7 +1150,7 @@ public final class FlowchartLayout {
             Edge e = edges.get(ei);
             int u = e.u();
             int v = e.v();
-            double laneY = contentH - MARGIN + offY + BACK_LANE_GAP * (++lanePeek);
+            double laneY = lanes.base()[ei] + offY + BACK_LANE_GAP * lanes.k()[ei];
             double approachY = e.arrow() ? vy[v] + boxH[v] + ARROW_LEN : vy[v] + boxH[v];
             railMaxX = Math.max(railMaxX,
                 clearRailX(vx[u] + boxW[u] / 2, vy[u] + boxH[u], laneY, obstacles, u, v));
@@ -1182,7 +1172,6 @@ public final class FlowchartLayout {
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
         // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
         AnchorAssigner assigner = new AnchorAssigner();
-        int laneIdx = 0;
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -1190,9 +1179,10 @@ public final class FlowchartLayout {
             // Anchored → collect into `tgt`, wrap in one `<g>`; else `tgt` IS the flat list (byte-identical).
             List<Shape> tgt = anchored ? new ArrayList<>() : shapes;
             if (isBack[ei]) {
-                // The lane base tracks the (possibly cluster-shifted) content (offY is 0 for a
-                // cluster-free chart, so the byte-identical bake holds).
-                double laneY = contentH - MARGIN + offY + BACK_LANE_GAP * (++laneIdx);
+                // The lane base tracks the (possibly cluster-shifted, packed) COMPONENT (offY is 0 for
+                // a cluster-free chart and the base equals contentH - MARGIN for a single component, so
+                // the byte-identical bake holds).
+                double laneY = lanes.base()[ei] + offY + BACK_LANE_GAP * lanes.k()[ei];
                 double sx = vx[u] + boxW[u] / 2;       // source bottom-middle
                 double sy = vy[u] + boxH[u];
                 double tx = vx[v] + boxW[v] / 2;        // target bottom-middle
@@ -1779,39 +1769,22 @@ public final class FlowchartLayout {
     /// downstream shift+grow-to-fit pass contains the now-taller/wider packed content on the canvas.
     ///
     /// Returns the maximum PACKED coordinate along the packing axis (the far edge of the most-pushed
-    /// component, node AND frame inclusive) so the caller can GROW the canvas to contain a component
-    /// pushed past the natural content extent — a FREE-node component carries no frame, so the frame-
-    /// based canvas grow would miss it and its geometry would escape (INV-4). Returns
-    /// {@link Double#NEGATIVE_INFINITY} when nothing was packed, so the caller's {@code Math.max}
-    /// no-ops and the bake is byte-identical.
+    /// component, node, frame AND back-edge-lane inclusive) so the caller can GROW the canvas to
+    /// contain a component pushed past the natural content extent — a FREE-node component carries no
+    /// frame, so the frame-based canvas grow would miss it and its geometry would escape (INV-4).
+    /// Returns {@link Double#NEGATIVE_INFINITY} when nothing was packed, so the caller's
+    /// {@code Math.max} no-ops and the bake is byte-identical. A component's BACK-EDGE lane region
+    /// ({@link #backEdgeLanes} — component-local when 2+ components exist) counts into its extent, so
+    /// the next component packs past the lanes, not just past the frame.
     private static double packDisconnectedComponents(boolean lr, int n, Map<String, Integer> index,
                                                      List<FlowCluster> clusters, List<Edge> edges,
-                                                     Routing rt, double[] vx, double[] vy,
+                                                     boolean[] isBack, Routing rt,
+                                                     double[] vx, double[] vy,
                                                      double[] boxW, double[] boxH) {
         if (n <= 1) {
             return Double.NEGATIVE_INFINITY;   // 0/1 node → at most one component, nothing to separate
         }
-        int[] parent = new int[n];
-        for (int i = 0; i < n; i++) {
-            parent[i] = i;
-        }
-        for (Edge e : edges) {
-            union(parent, e.u(), e.v());   // an edge joins its endpoints (undirected connectivity)
-        }
-        for (FlowCluster c : clusters) {
-            int first = -1;
-            for (String id : c.memberNodeIds()) {
-                Integer i = index.get(id);
-                if (i == null) {
-                    continue;
-                }
-                if (first < 0) {
-                    first = i;
-                } else {
-                    union(parent, first, i);   // every member of one subgraph shares a component
-                }
-            }
-        }
+        int[] parent = unionComponents(n, index, clusters, edges);
         // Per-component extent [min,max] along the packing axis — from node boxes AND cluster frames
         // (the frame chrome, not just the nodes, is what overlaps, so it must drive the separation).
         Map<Integer, double[]> ext = new HashMap<>();
@@ -1834,6 +1807,19 @@ public final class FlowchartLayout {
         }
         if (ext.size() <= 1) {
             return Double.NEGATIVE_INFINITY;   // a single component → no packing, byte-identical bake
+        }
+        // Reserve each component's BACK-EDGE LANE region past its far edge: with 2+ components the
+        // lanes are COMPONENT-LOCAL ({@link #backEdgeLanes}), stacking `count·BACK_LANE_GAP` (+ the
+        // label extent) beyond the component's outermost vertex along the SAME axis packing separates
+        // on. Without this the next component packs to node/frame clearance only and its frame lands
+        // ON the prior component's lanes. Components without a back-edge reserve nothing (unchanged).
+        Map<Integer, Double> laneDepth = backLaneDepths(lr, edges, isBack, parent);
+        if (!laneDepth.isEmpty()) {
+            Map<Integer, Double> far = componentFarEdge(lr, n, parent, edges, rt, vx, vy, boxW, boxH);
+            for (Map.Entry<Integer, Double> en : laneDepth.entrySet()) {
+                int r = en.getKey();
+                mergeExtent(ext, r, far.get(r), far.get(r) + en.getValue());
+            }
         }
         List<Integer> roots = new ArrayList<>(ext.keySet());
         roots.sort((a, b) -> {
@@ -1882,6 +1868,164 @@ public final class FlowchartLayout {
             packedMax = Math.max(packedMax, off.get(r) + ext.get(r)[1]);
         }
         return packedMax;
+    }
+
+    /// Build the union-find PARENT array joining the `n` real nodes into disconnected-layout
+    /// components: an edge joins its endpoints (undirected connectivity — back-edges included), and
+    /// every member of one subgraph cluster shares a component. Shared by
+    /// {@link #packDisconnectedComponents} (which separates the components) and
+    /// {@link #backEdgeLanes} (which places each component's lanes locally), so the two can never
+    /// disagree about what a component is.
+    private static int[] unionComponents(int n, Map<String, Integer> index,
+                                         List<FlowCluster> clusters, List<Edge> edges) {
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) {
+            parent[i] = i;
+        }
+        for (Edge e : edges) {
+            union(parent, e.u(), e.v());   // an edge joins its endpoints (undirected connectivity)
+        }
+        for (FlowCluster c : clusters) {
+            int first = -1;
+            for (String id : c.memberNodeIds()) {
+                Integer i = index.get(id);
+                if (i == null) {
+                    continue;
+                }
+                if (first < 0) {
+                    first = i;
+                } else {
+                    union(parent, first, i);   // every member of one subgraph shares a component
+                }
+            }
+        }
+        return parent;
+    }
+
+    /// Per-component FAR edge along the cross-flow axis (max box BOTTOM for LR, max box RIGHT for TD)
+    /// — the coordinate a component-local back-edge lane stack grows out from. Reads the REAL node
+    /// boxes AND the forward edges' VIRTUAL waypoints (a waypoint can be the outermost vertex of its
+    /// component; each inherits the component of its chain's endpoints), at the coordinates currently
+    /// in `vx`/`vy` — call it post-pack so the base rides the packed position.
+    private static Map<Integer, Double> componentFarEdge(boolean lr, int n, int[] parent,
+                                                         List<Edge> edges, Routing rt,
+                                                         double[] vx, double[] vy,
+                                                         double[] boxW, double[] boxH) {
+        Map<Integer, Double> far = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            double f = lr ? vy[i] + boxH[i] : vx[i] + boxW[i];
+            far.merge(find(parent, i), f, Math::max);
+        }
+        for (int ei = 0; ei < edges.size(); ei++) {
+            int[] ch = rt.chain.get(ei);
+            if (ch.length <= 2) {
+                continue;   // straight span-1 or back edge → no interior waypoint
+            }
+            int r = find(parent, ch[0]);
+            for (int j = 1; j < ch.length - 1; j++) {
+                int vid = ch[j];
+                double f = lr ? vy[vid] + NODE_H : vx[vid] + rt.vWidth[vid];
+                far.merge(r, f, Math::max);
+            }
+        }
+        return far;
+    }
+
+    /// Per-component back-edge lane DEPTH past the component's far edge: `count·BACK_LANE_GAP` of
+    /// stacked lanes plus the label extent (LR: a label sits BELOW its lane → EDGE_LABEL_GAP + font
+    /// size; TD: RIGHT of it → run width + EDGE_LABEL_GAP) — the per-component mirror of the pre-fix
+    /// global canvas grow. Empty when the chart has no back-edge; components without one carry no key.
+    private static Map<Integer, Double> backLaneDepths(boolean lr, List<Edge> edges, boolean[] isBack,
+                                                       int[] parent) {
+        Map<Integer, Integer> count = new HashMap<>();
+        Map<Integer, Double> label = new HashMap<>();
+        for (int ei = 0; ei < edges.size(); ei++) {
+            if (!isBack[ei]) {
+                continue;
+            }
+            Edge e = edges.get(ei);
+            int r = find(parent, e.u());
+            count.merge(r, 1, Integer::sum);
+            String bl = e.label();
+            if (bl != null) {
+                double lext = lr ? EDGE_LABEL_GAP + EDGE_LABEL_SIZE
+                    : FONT.runWidth(bl, EDGE_LABEL_SIZE) + EDGE_LABEL_GAP;
+                label.merge(r, lext, Double::max);
+            }
+        }
+        Map<Integer, Double> depth = new HashMap<>();
+        for (Map.Entry<Integer, Integer> en : count.entrySet()) {
+            depth.put(en.getKey(),
+                en.getValue() * BACK_LANE_GAP + label.getOrDefault(en.getKey(), 0.0));
+        }
+        return depth;
+    }
+
+    /// Per-back-edge LANE placement: back-edge ei's lane coordinate is
+    /// `base[ei] + off + BACK_LANE_GAP · k[ei]` (y for LR, x for TD; `off` = the caller's frame-escape
+    /// shift, added at emit exactly as pre-fix). `canvasReach` is the coordinate the canvas must
+    /// extend to along the lane axis (content, lanes and labels inclusive; pre-shift).
+    ///
+    /// <p>The packed-component back-edge defect (plan ffee1a55 follow-up): the base used to be GLOBAL
+    /// (`content - MARGIN`, below/right of the WHOLE chart) with one global lane index, so when
+    /// {@link #packDisconnectedComponents} translated a component, its back edges kept routing where
+    /// the component USED to be — the packed cycle's back edge collapsed onto its forward edge, and an
+    /// earlier component's "global" lane cut through the packed component's band. With 2+ components
+    /// each component's lanes now stack out from ITS OWN far edge ({@link #componentFarEdge}, read
+    /// POST-pack so the base rides the packed position) with a per-component 1-based lane index — the
+    /// single-component rendering, rigidly translated. A SINGLE-component chart takes the EXACT
+    /// pre-fix arithmetic (base = `naturalContent - MARGIN`, global index, the old canvas expression
+    /// `content + backCount·BACK_LANE_GAP + maxLabel`) — same operations in the same order, no float
+    /// reassociation — so every existing golden is bit-identical. No back-edges → `canvasReach ==
+    /// naturalContent` exactly (adding zero terms), also bit-identical.
+    private record BackLanes(double[] base, int[] k, double canvasReach) {}
+
+    private static BackLanes backEdgeLanes(boolean lr, int n, Map<String, Integer> index,
+                                           List<FlowCluster> clusters, List<Edge> edges,
+                                           boolean[] isBack, Routing rt, double[] vx, double[] vy,
+                                           double[] boxW, double[] boxH, double naturalContent) {
+        double[] base = new double[edges.size()];
+        int[] k = new int[edges.size()];
+        int[] parent = unionComponents(n, index, clusters, edges);
+        int components = 0;
+        for (int i = 0; i < n; i++) {
+            if (find(parent, i) == i) {
+                components++;
+            }
+        }
+        if (components <= 1) {
+            // Single component → the pre-fix global math, bit-for-bit (see the record doc).
+            int idx = 0;
+            double maxLabel = 0;
+            for (int ei = 0; ei < edges.size(); ei++) {
+                if (!isBack[ei]) {
+                    continue;
+                }
+                base[ei] = naturalContent - MARGIN;
+                k[ei] = ++idx;
+                String bl = edges.get(ei).label();
+                if (bl != null) {
+                    maxLabel = Math.max(maxLabel, lr ? EDGE_LABEL_GAP + EDGE_LABEL_SIZE
+                        : FONT.runWidth(bl, EDGE_LABEL_SIZE) + EDGE_LABEL_GAP);
+                }
+            }
+            return new BackLanes(base, k, naturalContent + idx * BACK_LANE_GAP + maxLabel);
+        }
+        Map<Integer, Double> far = componentFarEdge(lr, n, parent, edges, rt, vx, vy, boxW, boxH);
+        Map<Integer, Integer> cnt = new HashMap<>();
+        for (int ei = 0; ei < edges.size(); ei++) {
+            if (!isBack[ei]) {
+                continue;
+            }
+            int r = find(parent, edges.get(ei).u());
+            k[ei] = cnt.merge(r, 1, Integer::sum);   // 1-based lane index WITHIN the component
+            base[ei] = far.get(r);
+        }
+        double reach = naturalContent;
+        for (Map.Entry<Integer, Double> en : backLaneDepths(lr, edges, isBack, parent).entrySet()) {
+            reach = Math.max(reach, far.get(en.getKey()) + en.getValue() + MARGIN);
+        }
+        return new BackLanes(base, k, reach);
     }
 
     /// The union-find ROOT of the component a cluster belongs to — the root of its first placed member
