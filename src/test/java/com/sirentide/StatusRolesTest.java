@@ -22,6 +22,15 @@ import org.junit.jupiter.api.Test;
 /// is INDEX-based, not the `statusEdge <from> <to>` from/to shape the plan sketched — so a from/to
 /// edge-status directive would be an INVENTED grammar. Per the design pin ("a clean smaller slice
 /// beats an invented grammar"), this slice ships NODE statuses only.
+///
+/// THEME claim (review sirentide/482 F1): the palette is theme-DURABLE — ONE fill/stroke set chosen
+/// to stay readable on both the light and the dark canvas (`%% theme:` never remaps a shape fill) —
+/// NOT theme-adaptive. A renderer-owned light/dark status pair is a named FUTURE slice; the
+/// theme-durable pin below keeps the claim and the behavior from drifting apart.
+///
+/// OVERRIDE contract (review sirentide/482 F2): a `classDef status-*` on a BUILT-IN name FACET-MERGES
+/// (author-supplied props only), so a fill-only override keeps the canonical severity border; every
+/// NON-built-in classDef keeps the pre-existing full-replace semantics — both pinned below.
 class StatusRolesTest {
 
     private static int count(String haystack, String needle) {
@@ -155,6 +164,68 @@ class StatusRolesTest {
             "a dark status fill flips the label to white: " + dark);
         assertTrue(between(dark, "<desc>", "</desc>").contains("(danger)"),
             "the spoken status word survives a fill override (bound to the class name): " + dark);
+    }
+
+    // -- THEME (review sirentide/482 F1): theme-DURABLE, not theme-adaptive — the pin ----------------
+
+    @Test
+    void themeDarkEmitsTheSameStatusFillAndStrokeSetBecauseThePaletteIsThemeDurableNotThemeAdaptive() {
+        // INTENDED-behavior pin (Lattice's discriminator, sirentide/482): `%% theme:` flips only the
+        // page-level canvas (background rect + `currentColor` text — Theme's contract) and NEVER remaps
+        // a status fill/stroke. ONE palette is chosen to stay readable on both canvases: theme-DURABLE.
+        // A renderer-owned light/dark status PAIR is a named FUTURE slice — shipping it must rewrite
+        // this pin consciously, so the claim and the behavior can never drift apart silently again.
+        String light = Sirentide.render("flowchart TD\n  X[x]\n  class X status-danger\n");
+        String dark = Sirentide.render(
+            "%% theme: dark\nflowchart TD\n  X[x]\n  class X status-danger\n");
+        String dangerSet = "fill=\"#fecaca\" stroke=\"#dc2626\" stroke-width=\"3\"";
+        assertTrue(light.contains(dangerSet),
+            "default theme: the danger fill/stroke/width set: " + light);
+        assertTrue(dark.contains(dangerSet),
+            "dark theme: the SAME danger fill/stroke/width set (theme-durable, not adaptive): " + dark);
+        assertTrue(dark.contains("#1e1e1e"),
+            "the dark canvas itself IS applied — the theme took effect around the durable palette: "
+                + dark);
+        assertFalse(light.contains("#1e1e1e"), "the default render has no dark canvas: " + light);
+    }
+
+    // -- OVERRIDE CONTRACT (review sirentide/482 F2): built-in status classDefs FACET-MERGE ----------
+
+    @Test
+    void fillOnlyOverrideOfABuiltinStatusClassKeepsTheCanonicalSeverityBorder() {
+        // Lattice's requested discriminator: the documented fill-only override must NOT delete the
+        // non-color severity channel. Facet-merge keeps the canonical danger stroke + thickest width
+        // under an author dark fill. Mutant (revert parseClassDef to a full-replace put) → RED.
+        String svg = Sirentide.render(
+            "flowchart TD\n  X[x]\n  classDef status-danger fill:#450a0a\n  class X status-danger\n");
+        assertTrue(svg.contains("fill=\"#450a0a\" stroke=\"#dc2626\" stroke-width=\"3\""),
+            "a fill-only override keeps the canonical danger border + severity width: " + svg);
+    }
+
+    @Test
+    void strokeOnlyOverrideOfABuiltinStatusClassKeepsTheFillAndSeverityWidth() {
+        // The mirror facet-merge case: an author restyles ONLY the border colour — the built-in warn
+        // fill and the severity stroke-width both survive.
+        String svg = Sirentide.render(
+            "flowchart TD\n  X[x]\n  classDef status-warn stroke:#000000\n  class X status-warn\n");
+        assertTrue(svg.contains("fill=\"#fef9c3\" stroke=\"#000000\" stroke-width=\"2\""),
+            "a stroke-only override keeps the built-in warn fill + severity width: " + svg);
+    }
+
+    @Test
+    void nonBuiltinClassDefRedefinitionKeepsFullReplaceSemantics() {
+        // PIN: facet-merge applies to BUILT-IN status-* names ONLY. An ordinary classDef redefinition
+        // REPLACES wholesale (the pre-existing mermaid last-wins put): the second, fill-only `mine`
+        // drops the first definition's stroke + width entirely. Mutant (merge every classDef) → RED.
+        String svg = Sirentide.render(
+            "flowchart TD\n  X[x]\n"
+                + "  classDef mine fill:#abcdef,stroke:#123456,stroke-width:5\n"
+                + "  classDef mine fill:#450a0a\n  class X mine\n");
+        assertTrue(svg.contains("fill=\"#450a0a\""), "the last classDef's fill wins: " + svg);
+        assertFalse(svg.contains("fill=\"#450a0a\" stroke="),
+            "a non-built-in redefinition replaces: the box carries NO stroke from the first: " + svg);
+        assertFalse(svg.contains("#123456"),
+            "the first definition's stroke colour is gone entirely: " + svg);
     }
 
     // -- END-TO-END: the plan's origin-shaped security diagram (a HOST-ROOT danger node) -------------

@@ -9,7 +9,10 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 > `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
 > `classDef`/`class` **semantic colour classes** (incl. built-in `status-danger`/`-warn`/`-ok`/`-neutral`
-> **status roles** — a closed palette + a border-severity channel + a spoken a11y word), the `%% caption:` **annotation band**, and the
+> **status roles** — a closed **theme-durable** palette (one fill/stroke set chosen to read on both the
+> light and dark canvases; a renderer-owned light/dark status pair is a named future slice) + a
+> border-severity channel + a spoken a11y word; a `classDef` on a `status-*` name merges facets, so a
+> fill-only override keeps the severity border), the `%% caption:` **annotation band**, and the
 > live **`/docs`** ```` ```sirentide ```` fence. Accuracy over hype: if it isn't built, this doc
 > says so.
 

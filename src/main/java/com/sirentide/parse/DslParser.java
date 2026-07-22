@@ -620,7 +620,9 @@ public final class DslParser {
         Map<String, ClassStyle> classStyles = new java.util.HashMap<>();
         // Seed the four BUILT-IN semantic status classes (plan fa3ccf16 wish A) so `class X status-danger`
         // resolves without a hand-written classDef. Additive: a chart that assigns none is byte-identical.
-        // An explicit `classDef status-danger …` later in the body still overrides (last-wins put).
+        // An explicit `classDef status-danger …` later in the body restyles it by FACET-MERGE — only the
+        // author-supplied props override (see parseClassDef), so a fill-only override KEEPS the canonical
+        // severity border (review sirentide/482 F2).
         classStyles.putAll(STATUS_CLASSES);
         Map<String, String> nodeClass = new java.util.HashMap<>();
         // Per-edge styling (plan sirentide-node-edge-styling): a `linkStyle <index[,index…]> …` maps a
@@ -931,7 +933,12 @@ public final class DslParser {
 
     /// The FOUR BUILT-IN semantic status classes (plan fa3ccf16 wish A). An author assigns one with the
     /// EXISTING `class <id> status-danger` assignment shape — no new grammar — and the node picks up a
-    /// CLOSED, theme-durable status vocabulary instead of a hand-picked hex. The FILLS mirror
+    /// CLOSED, theme-DURABLE status vocabulary instead of a hand-picked hex. Theme-DURABLE means ONE
+    /// palette chosen to stay readable on both the light and the dark canvas — `%% theme:` flips only
+    /// the page-level background/`currentColor` text and NEVER remaps a shape fill ({@link Theme}'s
+    /// contract), so `%% theme: dark` emits the SAME status fill/stroke set. This is deliberately NOT
+    /// theme-ADAPTIVE: a renderer-owned light/dark status pair is a named FUTURE slice (plan fa3ccf16).
+    /// The FILLS mirror
     /// {@code MatrixLayout}'s verdict palette (the house comparison-status vocabulary): danger=#fecaca
     /// (FAIL red), warn=#fef9c3 (PARTIAL amber), ok=#dcfce7 (PASS green), neutral=#f1f5f9 (NA slate).
     /// The SECONDARY, NON-COLOR channel is the border STROKE-WIDTH severity ramp (drawn on the box's
@@ -939,9 +946,10 @@ public final class DslParser {
     /// four stay distinguishable in grayscale / under CVD when the pastel fills flatten. The stroke
     /// COLOUR is a same-family darker border (a redundant colour cue, never the sole channel). Every
     /// value is a canonical `#rrggbb` / bounded width — the SAME contract a hand-written classDef must
-    /// pass. Seeded into a chart's `classStyles` before parsing, so an author MAY still override one
-    /// with an explicit `classDef status-danger …` (last-wins); the spoken status WORD stays bound to
-    /// the class NAME regardless (see {@link #STATUS_WORDS}).
+    /// pass. Seeded into a chart's `classStyles` before parsing, so an author MAY still restyle one with
+    /// an explicit `classDef status-danger …` — which FACET-MERGES (only the author-supplied props
+    /// override; a fill-only override keeps the canonical severity border, review sirentide/482 F2);
+    /// the spoken status WORD stays bound to the class NAME regardless (see {@link #STATUS_WORDS}).
     private static final Map<String, ClassStyle> STATUS_CLASSES = Map.of(
         "status-danger",  new ClassStyle("#fecaca", "#dc2626", 3.0,  null),
         "status-warn",    new ClassStyle("#fef9c3", "#ca8a04", 2.0,  null),
@@ -976,6 +984,14 @@ public final class DslParser {
     /// through {@link #parseStrokeWidth} (bounded finite non-negative). A classDef with no valid prop
     /// still registers (all-null style) so an assigned node simply falls through to the defaults.
     /// Malformed never throws (DESIGN §6). LAST occurrence of a prop wins (mermaid).
+    ///
+    /// REGISTRATION contract (review sirentide/482 F2): a NON-built-in name REPLACES wholesale (the
+    /// pre-existing last-wins-put semantics — a second `classDef mine …` drops every prop of the
+    /// first). A BUILT-IN `status-*` name instead FACET-MERGES: only the author-supplied props override
+    /// the currently registered style (initially the {@link #STATUS_CLASSES} seed), so a fill-only
+    /// `classDef status-danger fill:#450a0a` keeps the canonical danger stroke + severity stroke-width
+    /// — the "never color-only" API promise survives the supported override. Successive built-in-name
+    /// classDefs accumulate facets (each merges over the current style, per-prop last-wins).
     private static void parseClassDef(String body, Map<String, ClassStyle> classStyles) {
         String[] kv = splitKeyword(body);   // <name> | <props>
         String name = kv[0].strip();
@@ -1012,6 +1028,19 @@ public final class DslParser {
                     textColor = SirentideContract.normalizeColor(val);
                 }
             }
+        }
+        if (STATUS_CLASSES.containsKey(name)) {
+            // FACET-MERGE for a built-in status class (review sirentide/482 F2): a facet the author did
+            // not (validly) supply keeps its currently registered value — initially the built-in seed —
+            // so a fill-only override preserves the canonical severity border. Delete-mutant (drop this
+            // branch → plain put) is RED via the fill-only/stroke-only override discriminators.
+            ClassStyle base = classStyles.getOrDefault(name, STATUS_CLASSES.get(name));
+            classStyles.put(name, new ClassStyle(
+                fill != null ? fill : base.fill(),
+                stroke != null ? stroke : base.stroke(),
+                strokeWidth != null ? strokeWidth : base.strokeWidth(),
+                textColor != null ? textColor : base.textColor()));
+            return;
         }
         classStyles.put(name, new ClassStyle(fill, stroke, strokeWidth, textColor));
     }
