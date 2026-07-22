@@ -76,7 +76,7 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 ## Milestone growth ledger
 | Milestone | Adds to the alphabet |
 | --- | --- |
-| Shipped — all twenty-one types (`pie` · `xychart` · `timeline` · `gantt` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `matrix` · `snake` · `tensornetwork` · `young` · `dynkin` · `knot`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed for the geometry — the graph, time-axis, and structured types all landed on the current path/line surface. |
+| Shipped — all twenty-two types (`pie` · `xychart` · `timeline` · `gantt` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `matrix` · `heatmap` · `snake` · `tensornetwork` · `young` · `dynkin` · `knot`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed for the geometry — the graph, time-axis, and structured types all landed on the current path/line surface. |
 | Shipped — a11y baking | `<title>`, `<desc>` (text-only children of the root `<svg>`) + `role="img"` — the standard deterministic SVG a11y triple |
 | Shipped — math-in-labels + the semantic-anchor layer | `<g>` carrying a numeric `transform`, an optional `fill` (math fragments), and the closed `data-sirentide-role`/`-id`/`-seq` anchor vocabulary (see the container contract) |
 | Future — fuller `sequence` denser heads / effect markers | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |

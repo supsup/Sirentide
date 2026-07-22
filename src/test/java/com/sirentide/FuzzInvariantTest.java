@@ -84,7 +84,7 @@ class FuzzInvariantTest {
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
         "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix",
-        "snake", "tensornetwork", "young", "dynkin", "knot"
+        "heatmap", "snake", "tensornetwork", "young", "dynkin", "knot"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -111,6 +111,10 @@ class FuzzInvariantTest {
         "sankey\n  Coal,Electricity,25\n  Gas,Electricity,15\n  Electricity,Homes,20\n",
         "matrix\n  cols: snapshot, bare\n  \"ID1 claim-on-no-signal\" : match, match\n"
             + "  \"PC1 soft-intent\" : partial, diverge\n",
+        // heatmap — matrix's grammar with continuous cells + the scale directive, so the seed
+        // exercises the ramp lerp, the percent/override/NA token shapes, AND the legend path.
+        "heatmap\n  cols: bare, snapshot, card\n  scale: \"diverged\" --> \"reproduced\"\n"
+            + "  \"values-boundary\" : 0.60, 75%, warm:0.9\n  \"caution\" : 1, -, 0\n",
         // the four post-2026-07-17 types (snake, tensornetwork, young, dynkin) — added so INV-4
         // actually runs across EVERY parser type (review sir400 finding 1).
         "snake\n  cf: 1, 2, 2, 2\n",
@@ -139,6 +143,8 @@ class FuzzInvariantTest {
         "journey\n  title T\n  section S\n    %LBL%: 3: Me\n",
         "mindmap\n  root %LBL%\n",
         "sankey\n  %LBL%,B,10\n",
+        // heatmap: the hostile label lands in a ROW LABEL and a SCALE END (both glyph+a11y seams).
+        "heatmap\n  cols: a\n  scale: \"%LBL%\" --> \"hi\"\n  \"%LBL%\" : 0.5\n",
         "snake\n  cf: %LBL%\n",
         "tensornetwork\n  mps %LBL% B\n",
         "young\n  rows: %LBL%\n",
@@ -167,7 +173,7 @@ class FuzzInvariantTest {
         // Non-vacuity: the corpus must actually be large (guards against a generation regression that
         // silently empties it and makes the whole pass trivially "green").
         assertTrue(cases >= 3000, "fuzz corpus must exercise a few thousand cases, ran only " + cases);
-        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 21 types in " + ms + " ms");
+        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 22 types in " + ms + " ms");
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),

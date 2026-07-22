@@ -420,6 +420,20 @@ cols: snapshot, bare
 
 ![Comparison / verdict matrix (rows × columns × verdict palette)](matrix.png)
 
+## Heatmap (continuous 0..1 cells on a sequential ramp + legend)
+
+```
+heatmap
+cols: bare, snapshot, card
+scale: "diverged" --> "reproduced"
+"values-boundary" : 0.60, 0.72, 0.95
+"card-discriminators" : 1.00, 1.00, 1.00
+"decision-replay v2" : 0.86, 0.90, 0.93
+"technique naming" : -, 40%, 100%
+```
+
+![Heatmap (continuous 0..1 cells on a sequential ramp + legend)](heatmap.png)
+
 ## Sankey (weighted flows in depth columns)
 
 ```

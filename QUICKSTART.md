@@ -4,9 +4,9 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 > **Status note.** Sirentide is early but real. What's **built**: the render pipeline
 > (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
-> glyphs, and **twenty-one diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
+> glyphs, and **twenty-two diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
 > `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
-> `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
+> `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
 > `classDef`/`class` **semantic colour classes**, the `%% caption:` **annotation band**, and the
 > live **`/docs`** ```` ```sirentide ```` fence. Accuracy over hype: if it isn't built, this doc
@@ -107,7 +107,7 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-one** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-two** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
 | *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2). |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for

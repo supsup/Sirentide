@@ -20,6 +20,7 @@ import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
+import com.sirentide.ir.Heatmap;
 import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Journey;
 import com.sirentide.ir.Knot;
@@ -194,6 +195,9 @@ public final class DslParser {
             // fixed-vocabulary verdict cells (plan sirentide-comparison-matrix-type). `comparison`
             // is an accepted alias.
             case "matrix", "comparison" -> parseMatrix(lines, textColor);
+            // A continuous-score grid — matrix's grammar with 0..1 magnitude cells on a sequential
+            // ramp, plus a `scale:` legend-ends directive (plan sirentide-heatmap-type).
+            case "heatmap" -> parseHeatmap(lines, textColor);
             // A mermaid-style UML class diagram — `class X { members }` blocks + typed relationships.
             case "classDiagram" -> parseClassDiagram(lines, textColor);
             // A mermaid-style entity-relationship diagram — `ENTITY { rows }` tables + crow-foot
@@ -2299,6 +2303,121 @@ public final class DslParser {
             case "partial", "part", "mixed", "~", "◑" -> Matrix.Verdict.PARTIAL;
             default -> Matrix.Verdict.NA;
         };
+    }
+
+    /// Parse a continuous-score heatmap (plan sirentide-heatmap-type) — matrix's grammar with two
+    /// differences: a cell token is a 0..1 MAGNITUDE (decimal or `NN%`; `text:value` display
+    /// override; blank/`-`/`na`/non-numeric → NA), and an optional `scale:` line names the ramp
+    /// legend's low/high ends via the quadrant `-->` axis-end grammar. Rows are padded/truncated to
+    /// exactly M cells so the grid is rectangular; a line with no colon is skipped — never fails
+    /// the bake.
+    private static Diagram parseHeatmap(String[] lines, String textColor) {
+        List<String> columns = new ArrayList<>();
+        List<Heatmap.Row> rows = new ArrayList<>();
+        String[] scaleEnds = new String[2];
+        for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.regionMatches(true, 0, "cols:", 0, 5)
+                || line.regionMatches(true, 0, "columns:", 0, 8)) {
+                for (String tok : line.substring(line.indexOf(':') + 1).split(",")) {
+                    if (columns.size() >= MAX_COLUMNS) {
+                        break;   // same bound as matrix: drop columns past the cap, never OOM
+                    }
+                    String header = cap(unquote(tok.strip()));
+                    if (!header.isEmpty()) {
+                        columns.add(header);
+                    }
+                }
+                continue;
+            }
+            if (line.regionMatches(true, 0, "scale:", 0, 6)) {
+                axisEnds(scaleEnds, line.substring(line.indexOf(':') + 1));
+                continue;
+            }
+            // Split label : cells. A quoted label may itself contain a colon, so find the closing
+            // quote first, then the separator colon after it (matrix's exact rule).
+            int sep;
+            if (line.startsWith("\"")) {
+                int close = line.indexOf('"', 1);
+                sep = close < 0 ? -1 : line.indexOf(':', close + 1);
+            } else {
+                sep = line.indexOf(':');
+            }
+            if (sep < 0) {
+                continue;   // not a row (no cells) → skip, never throw
+            }
+            String label = cap(unquote(line.substring(0, sep).strip()));
+            List<Heatmap.Cell> cells = new ArrayList<>();
+            for (String tok : line.substring(sep + 1).split(",", -1)) {
+                if (cells.size() >= MAX_COLUMNS) {
+                    break;   // bound rows exactly like the header (matrix cap discipline)
+                }
+                cells.add(heatCell(tok));
+            }
+            rows.add(new Heatmap.Row(label, cells));
+        }
+        int m = columns.isEmpty()
+            ? rows.stream().mapToInt(r -> r.cells().size()).max().orElse(0)
+            : columns.size();
+        List<Heatmap.Row> normalized = new ArrayList<>();
+        for (Heatmap.Row r : rows) {
+            List<Heatmap.Cell> cs = new ArrayList<>(r.cells());
+            while (cs.size() < m) {
+                cs.add(new Heatmap.Cell("", 0, true));
+            }
+            normalized.add(new Heatmap.Row(r.label(), cs.size() > m ? new ArrayList<>(cs.subList(0, m)) : cs));
+        }
+        return new Heatmap(columns, normalized, textColor, scaleEnds[0], scaleEnds[1]);
+    }
+
+    /// Parse one heatmap cell. Two shapes, mirroring matrix's: a bare magnitude token (`0.6`,
+    /// `86%`) where the token is BOTH the shown text and the value source; or `display text:value`
+    /// where the part before the LAST colon is shown verbatim on the value's fill (e.g.
+    /// `warm:0.8`). A token whose value part doesn't parse is NA — neutral fill, never a colour,
+    /// never throws.
+    private static Heatmap.Cell heatCell(String token) {
+        String tok = token.strip();
+        int c = tok.lastIndexOf(':');
+        if (c >= 0) {
+            String text = cap(tok.substring(0, c).strip());
+            Double v = heatValue(tok.substring(c + 1));
+            return v == null ? new Heatmap.Cell(text, 0, true) : new Heatmap.Cell(text, v, false);
+        }
+        Double v = heatValue(tok);
+        return v == null
+            ? new Heatmap.Cell(cap(tok), 0, true)
+            : new Heatmap.Cell(cap(tok), v, false);
+    }
+
+    /// A cell magnitude: a decimal (`0.6`, `.6`, `1`) or a percent (`86%` → 0.86), CLAMPED to
+    /// [0,1]; null when blank / `-` / `na` / non-numeric / non-finite (→ NA, per §6 never-throw).
+    /// Clamping (not refusing) keeps an out-of-range-but-honest `1.2` visible at the ramp's end
+    /// rather than silently neutral.
+    private static Double heatValue(String raw) {
+        String t = raw.strip();
+        if (t.isEmpty() || t.equals("-") || t.equalsIgnoreCase("na")) {
+            return null;
+        }
+        boolean pct = t.endsWith("%");
+        if (pct) {
+            t = t.substring(0, t.length() - 1).strip();
+        }
+        double v;
+        try {
+            v = Double.parseDouble(t);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (!Double.isFinite(v)) {
+            return null;
+        }
+        if (pct) {
+            v /= 100.0;
+        }
+        return Math.max(0.0, Math.min(1.0, v));
     }
 
     /// Fills `{lo, hi}` from an axis-end directive's tail (`"Low" --> "High"`). The `-->` splits the
