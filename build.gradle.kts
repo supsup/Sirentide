@@ -8,7 +8,9 @@ group = "com.sirentide"
 // A real, immutable release version — NOT a rolling SNAPSHOT. Same discipline as LatteX:
 // a consumer pins the exact version; a change requires an explicit bump + republish, so a
 // pinned consumer can never silently go stale. Bump on each downstream-relevant release.
-version = "0.3.0"
+// 0.4.0: the heatmap type (21 → 22) — continuous-score grid on a single-hue sequential
+// ramp + legend; to be vendored into stafficy /docs as sirentide-0.4.0.jar (part B).
+version = "0.4.0"
 
 java {
     toolchain {
