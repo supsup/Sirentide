@@ -618,6 +618,10 @@ public final class DslParser {
         // gate as a per-node colour and each stroke-width through a bounded-numeric gate, so no
         // unvalidated value ever reaches the emitter (the security-first #rrggbb-only invariant holds).
         Map<String, ClassStyle> classStyles = new java.util.HashMap<>();
+        // Seed the four BUILT-IN semantic status classes (plan fa3ccf16 wish A) so `class X status-danger`
+        // resolves without a hand-written classDef. Additive: a chart that assigns none is byte-identical.
+        // An explicit `classDef status-danger …` later in the body still overrides (last-wins put).
+        classStyles.putAll(STATUS_CLASSES);
         Map<String, String> nodeClass = new java.util.HashMap<>();
         // Per-edge styling (plan sirentide-node-edge-styling): a `linkStyle <index[,index…]> …` maps a
         // drawn-edge index to a stroke override; `linkStyle default …` applies to every edge without an
@@ -850,8 +854,12 @@ public final class DslParser {
             String stroke = style != null ? style.stroke() : null;
             Double strokeWidth = style != null ? style.strokeWidth() : null;
             String nodeText = style != null ? style.textColor() : null;
+            // Semantic status role (plan fa3ccf16 wish A): the spoken word for a built-in status-* class,
+            // bound to the class NAME (not the fill) so a fill-override still speaks the status. null for
+            // every non-status class → the a11y desc is byte-identical to before.
+            String status = cls != null ? STATUS_WORDS.get(cls) : null;
             nodes.add(new FlowNode(e.getKey(), e.getValue(),
-                nodeShapes.getOrDefault(e.getKey(), "rect"), color, stroke, strokeWidth, nodeText));
+                nodeShapes.getOrDefault(e.getKey(), "rect"), color, stroke, strokeWidth, nodeText, status));
         }
         return new Flowchart(nodes, edges, direction, textColor, nodeColor, clusters);
     }
@@ -920,6 +928,35 @@ public final class DslParser {
     /// `null` when the classDef omitted / malformed that property — so the IR/emitter never sees an
     /// unvalidated value. `textColor` is the label (`color:`) override.
     private record ClassStyle(String fill, String stroke, Double strokeWidth, String textColor) {}
+
+    /// The FOUR BUILT-IN semantic status classes (plan fa3ccf16 wish A). An author assigns one with the
+    /// EXISTING `class <id> status-danger` assignment shape — no new grammar — and the node picks up a
+    /// CLOSED, theme-durable status vocabulary instead of a hand-picked hex. The FILLS mirror
+    /// {@code MatrixLayout}'s verdict palette (the house comparison-status vocabulary): danger=#fecaca
+    /// (FAIL red), warn=#fef9c3 (PARTIAL amber), ok=#dcfce7 (PASS green), neutral=#f1f5f9 (NA slate).
+    /// The SECONDARY, NON-COLOR channel is the border STROKE-WIDTH severity ramp (drawn on the box's
+    /// existing rect/path border — no new SVG attribute): danger thickest → neutral thinnest, so the
+    /// four stay distinguishable in grayscale / under CVD when the pastel fills flatten. The stroke
+    /// COLOUR is a same-family darker border (a redundant colour cue, never the sole channel). Every
+    /// value is a canonical `#rrggbb` / bounded width — the SAME contract a hand-written classDef must
+    /// pass. Seeded into a chart's `classStyles` before parsing, so an author MAY still override one
+    /// with an explicit `classDef status-danger …` (last-wins); the spoken status WORD stays bound to
+    /// the class NAME regardless (see {@link #STATUS_WORDS}).
+    private static final Map<String, ClassStyle> STATUS_CLASSES = Map.of(
+        "status-danger",  new ClassStyle("#fecaca", "#dc2626", 3.0,  null),
+        "status-warn",    new ClassStyle("#fef9c3", "#ca8a04", 2.0,  null),
+        "status-ok",      new ClassStyle("#dcfce7", "#16a34a", 1.25, null),
+        "status-neutral", new ClassStyle("#f1f5f9", "#64748b", 0.75, null));
+
+    /// The status WORD each built-in `status-*` class speaks in the a11y `<desc>` ("HOSTROOT (danger)")
+    /// — the non-color a11y channel. Keyed by the class NAME (not the fill), so the spoken semantic
+    /// survives an author overriding the visual fill of a `status-*` classDef. A node whose assigned
+    /// class is not one of these stamps a `null` status → the desc is byte-identical to before.
+    private static final Map<String, String> STATUS_WORDS = Map.of(
+        "status-danger", "danger",
+        "status-warn", "warn",
+        "status-ok", "ok",
+        "status-neutral", "neutral");
 
     /// A resolved stroke override for a `linkStyle` edge (plan sirentide-node-edge-styling): a
     /// parse-validated `stroke` colour and/or a bounded `width`; either may be `null` (that facet keeps

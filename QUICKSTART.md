@@ -8,7 +8,8 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 > `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
 > `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
-> `classDef`/`class` **semantic colour classes**, the `%% caption:` **annotation band**, and the
+> `classDef`/`class` **semantic colour classes** (incl. built-in `status-danger`/`-warn`/`-ok`/`-neutral`
+> **status roles** — a closed palette + a border-severity channel + a spoken a11y word), the `%% caption:` **annotation band**, and the
 > live **`/docs`** ```` ```sirentide ```` fence. Accuracy over hype: if it isn't built, this doc
 > says so.
 

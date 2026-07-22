@@ -700,7 +700,14 @@ public final class A11yDescriber {
                 if (i > 0) {
                     d.append(", ");
                 }
-                d.append(label(nodeLabel(labels, fc.nodes().get(i).id(), fc.nodes().get(i).label())));
+                FlowNode node = fc.nodes().get(i);
+                d.append(label(nodeLabel(labels, node.id(), node.label())));
+                // Semantic status role (plan fa3ccf16 wish A): the NON-COLOR a11y channel — a status
+                // node speaks its word ("HOSTROOT (danger)") so status is never conveyed by fill alone.
+                // null for every non-status node → the desc is byte-identical to before.
+                if (node.status() != null) {
+                    d.append(" (").append(node.status()).append(')');
+                }
             }
             d.append(nodeCount > shown ? ", …." : ".");
         }
