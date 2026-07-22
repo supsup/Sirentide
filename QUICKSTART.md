@@ -97,6 +97,19 @@ invocation, one JVM.)*
 > bakes as its **raw LaTeX source text** rather than typeset glyphs — the documented per-fragment
 > fail-soft, not an error. To bake real math, call the two-arg API with a renderer.
 
+**Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
+extracts the first top-level ```` ```sirentide ```` fence from a markdown file and bakes it —
+```bash
+sirentide render notes/some-page.md          # SVG to stdout
+sirentide render notes/some-page.md -o out.svg   # SVG to a file
+```
+A fence that fails to parse degrades to the inert shell (exit 0, one-line diagnostic on stderr) —
+the same degrade `/docs` bakes for a bad fence, not a stricter local failure mode. A file with no
+`sirentide` fence, or a file that can't be read, is a loud error (exit 2, nothing written). This is
+a local **render-check**, not the `/docs` pipeline itself — the real `/docs` fence bake runs
+`SirentideDiagramConverter` (a separate Stafficy-repo pass over a real markdown parse); see the
+divergence-risk note on `FenceExtractor` for what this CLI's simpler line-scan does not model.
+
 ## 4. Why it's safe to inline
 
 Sirentide emits only inert geometry — filled `<path>`s, no script, no style, no runtime. So the
