@@ -6,6 +6,34 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## 2026-07-22 — Release **0.4.0**
+
+Version bump **0.3.0 → 0.4.0** (to be vendored into stafficy `/docs` as `sirentide-0.4.0.jar`,
+part B). One new diagram type — the type count grows **21 → 22** — plus a release-hygiene guard.
+
+### The `heatmap` type (21 → 22)
+A continuous-score grid: the comparison matrix's exact frame (grammar, caps, rectangularization,
+coordinate-anchored cells, single-backing-rect gridlines) where each cell carries a **0..1
+magnitude** — decimal, `NN%`, or `text:value` display override — filled by piecewise-linear
+interpolation along a **single-hue sequential blue ramp** (`#eff6ff → #93c5fd → #1e40af`;
+sequential-not-rainbow by design, disjoint from the matrix verdict palette). Non-numeric cells
+fail closed to the neutral fill; dark-end cells flip their label to white via the shared
+contrast rule; a sampled-step **ramp legend** (`scale: "low" --> "high"` names its ends) sits
+under the grid as plain rects — **no new SVG element or attribute**, the output-contract
+alphabet is unchanged. Fuzz census covers the type with a seed + a hostile-label template
+(row label AND scale end); per-cell semantic anchors follow matrix's exact rule, so the FX
+layer works unchanged. Reviewed at sir454/455 (adversarial ramp-lerp read, INV-4 legend
+containment, artifact-provenance check); landed as `b39581f4` with 732/0/0/0 required-Chrome
+plus a CI-scope `gradle build` at the tip.
+
+### Release-hygiene guard
+A new `ReleaseDocVersionPinTest` asserts QUICKSTART's build-recipe jar pin equals the gradle
+project version, so a cut can no longer ship a stale recipe (the class of drift the 0.3.0
+review found by hand across 7 doc sites). `docs/DESIGN.md:72` is deliberately excluded — it
+names the *vendored* (stafficy-side) jar and lags by design until each part-B re-vendor lands.
+
+---
+
 ## 2026-07-21 — Release **0.3.0**
 
 Version bump **0.2.0 → 0.3.0** (to be vendored into stafficy `/docs` as `sirentide-0.3.0.jar`). The
