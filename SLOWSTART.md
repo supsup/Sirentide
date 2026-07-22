@@ -44,11 +44,11 @@ than shell out to a browser.
 Dana writes internal docs on a static site whose sanitizer strips `<script>` and `<style>`. She
 wants a diagram, not a hand-placed SVG.
 
-Today she can already reach for twenty-one diagram types — a `pie` of where the team's time goes, an
+Today she can already reach for twenty-two diagram types — a `pie` of where the team's time goes, an
 `xychart` of throughput, a `timeline` or `gantt` of the roadmap, a `flowchart` of the review
 gate, a `sequence` of the request path, plus `state`, `quadrant`, `classDiagram`, `erDiagram`,
-`gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `snake`, `tensornetwork`,
-`young`, `dynkin`, and `knot`:
+`gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`,
+`tensornetwork`, `young`, `dynkin`, and `knot`:
 
 ```
 flowchart TD

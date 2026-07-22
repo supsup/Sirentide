@@ -89,6 +89,7 @@ public final class A11yDescriber {
             case Gantt gantt -> gantt(gantt);
             case QuadrantChart q -> quadrant(q);
             case com.sirentide.ir.Matrix mx -> matrix(mx);
+            case com.sirentide.ir.Heatmap hm -> heatmap(hm);
             case ClassDiagram cd -> classDiagram(cd);
             case ErDiagram er -> erDiagram(er);
             case com.sirentide.ir.MathBlock mb -> mathBlock(mb);
@@ -298,6 +299,51 @@ public final class A11yDescriber {
             d.append(rowCount > shown ? "; …." : ".");
         }
         return new A11y("Comparison matrix", d.toString());
+    }
+
+    /// Heatmap: "Heatmap with 2 rows and 3 columns, scale diverged to reproduced. Columns: bare,
+    /// snapshot, card. Rows: values-boundary: 0.60, 0.75, 0.95; …". Columns (when named) and then
+    /// each row's label + its per-column AUTHORED value tokens (an empty/NA cell reads "n/a") in
+    /// declaration order — the token, not the clamped number, is what the author wrote and what a
+    /// sighted reader sees in the cell. Bounded (rows capped at {@link #ITEM_CAP}, labels capped) +
+    /// deterministic (pure IR walk).
+    private static A11y heatmap(com.sirentide.ir.Heatmap m) {
+        int rowCount = m.rows().size();
+        int colCount = m.columns().isEmpty() && !m.rows().isEmpty()
+            ? m.rows().get(0).cells().size() : m.columns().size();
+        StringBuilder d = new StringBuilder("Heatmap with ")
+            .append(rowCount).append(rowCount == 1 ? " row" : " rows")
+            .append(" and ").append(colCount).append(colCount == 1 ? " column" : " columns");
+        if (m.lowLabel() != null || m.highLabel() != null) {
+            d.append(", scale ").append(label(m.lowLabel() != null ? m.lowLabel() : "0"))
+                .append(" to ").append(label(m.highLabel() != null ? m.highLabel() : "1"));
+        }
+        d.append('.');
+        if (!m.columns().isEmpty()) {
+            d.append(" Columns: ");
+            for (int j = 0; j < m.columns().size(); j++) {
+                d.append(j > 0 ? ", " : "").append(label(m.columns().get(j)));
+            }
+            d.append('.');
+        }
+        if (rowCount > 0) {
+            d.append(" Rows: ");
+            int shown = Math.min(rowCount, ITEM_CAP);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) {
+                    d.append("; ");
+                }
+                com.sirentide.ir.Heatmap.Row row = m.rows().get(i);
+                d.append(label(row.label())).append(": ");
+                for (int j = 0; j < row.cells().size(); j++) {
+                    com.sirentide.ir.Heatmap.Cell c = row.cells().get(j);
+                    String spoken = c.text().isEmpty() ? "n/a" : label(c.text());
+                    d.append(j > 0 ? ", " : "").append(spoken);
+                }
+            }
+            d.append(rowCount > shown ? "; …." : ".");
+        }
+        return new A11y("Heatmap", d.toString());
     }
 
     /// Mindmap: "Mindmap \"Root idea\" with 7 nodes. Root idea has children Origins, Tools. Origins has

@@ -100,6 +100,16 @@ class ShowcaseGenTest {
             "matrix\ncols: snapshot, bare\n\"ID1 claim-on-no-signal\" : match, match\n"
                 + "\"PC2 peer-over-flagship\" : match, match\n\"PC1 soft-intent threshold\" : partial, diverge\n"
                 + "\"PC5 boundary-holds-vs-Charles\" : match, diverge"),
+        new Card("Heatmap", "heatmap",
+            "A continuous-score grid: the comparison matrix's frame, but each cell carries a 0..1 "
+                + "magnitude (decimal, <code>NN%</code>, or <code>text:value</code>) filled from a "
+                + "single-hue sequential ramp — light→dark blue, so magnitude reads as depth, never "
+                + "as a verdict colour. Dark cells flip their label to white, a non-numeric cell "
+                + "stays neutral, and a sampled ramp legend (<code>scale:</code> names its ends) "
+                + "sits under the grid.",
+            "heatmap\ncols: bare, snapshot, card\nscale: \"diverged\" --> \"reproduced\"\n"
+                + "\"values-boundary\" : 0.60, 0.72, 0.95\n\"card-discriminators\" : 1.00, 1.00, 1.00\n"
+                + "\"decision-replay v2\" : 0.86, 0.90, 0.93\n\"technique naming\" : -, 40%, 100%"),
         new Card("Class diagram", "classDiagram",
             "UML classes with stacked attribute + method compartments, grid-placed, wired by all "
                 + "five relationship markers — inheritance (hollow triangle), composition (filled "
@@ -466,7 +476,7 @@ class ShowcaseGenTest {
             <p class="sub">Live renderer output — the SVG below was produced by Sirentide from the DSL beside it.</p>
             <div class="card"><div class="duo"><pre>%DSL%</pre><div class="render">%SVG%</div></div></div>
             <p class="note">%NOTE%</p>
-            <p class="note">All sixteen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
+            <p class="note">All seventeen types on one page: <a href="showcase.html">showcase.html</a> · browser-audited renders: <a href="gallery/GALLERY.md">gallery</a></p>
             </body>
             </html>
             """
@@ -531,7 +541,7 @@ class ShowcaseGenTest {
             <header>
               <h1>Sirentide 🌊</h1>
               <p class="tag"><strong>Living, narratable diagrams — baked to static SVG, no runtime JS.</strong></p>
-              <p class="sub">Sixteen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
+              <p class="sub">Seventeen diagram types · pure-Java bake · inert <code>svg/path/rect/line</code> output · every label a real glyph path · real LaTeX in any label.<br>
               Every image below is live renderer output, baked by Sirentide from the DSL beside it.</p>
             </header>
             <div class="wrap"><div class="grid">

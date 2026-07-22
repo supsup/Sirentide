@@ -159,6 +159,10 @@ class BrewShotGalleryTest {
             "matrix\ncols: snapshot, bare\n\"ID1 claim-on-no-signal\" : match, match\n"
                 + "\"PC2 peer-over-flagship\" : match, match\n\"PC1 soft-intent threshold\" : partial, diverge\n"
                 + "\"PC5 boundary-holds-vs-Charles\" : match, diverge"),
+        new Case("heatmap", "Heatmap (continuous 0..1 cells on a sequential ramp + legend)",
+            "heatmap\ncols: bare, snapshot, card\nscale: \"diverged\" --> \"reproduced\"\n"
+                + "\"values-boundary\" : 0.60, 0.72, 0.95\n\"card-discriminators\" : 1.00, 1.00, 1.00\n"
+                + "\"decision-replay v2\" : 0.86, 0.90, 0.93\n\"technique naming\" : -, 40%, 100%"),
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
