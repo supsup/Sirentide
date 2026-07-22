@@ -12,6 +12,6 @@ package com.sirentide.api;
 ///   deferred), EXCEPT {@link Outcome#UNSUPPORTED_CONSTRUCT}, which carries the real 1-based line of
 ///   the offending flowchart token (plan 933eed50 F2).
 /// - `detail` — a lower-level diagnostic crumb (the caught throwable's type+message, the branch that
-///   fired, or the unsupported token); "" when there is nothing to add. For logs/bug reports, not
-///   end-user prose.
+///   fired, the unsupported token, or the out-of-coverage `U+XXXX` code points on an OK caveat);
+///   "" when there is nothing to add. For logs/bug reports, not end-user prose.
 public record Diagnostics(Outcome outcome, String stage, String message, int line, String detail) {}

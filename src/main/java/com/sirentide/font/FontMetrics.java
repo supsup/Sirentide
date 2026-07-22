@@ -34,6 +34,39 @@ public final class FontMetrics {
         return sfnt.advanceWidth(sfnt.glyphId(codePoint)) * fontSizePx / unitsPerEm;
     }
 
+    /// True iff the bundled label font has a REAL (non-.notdef) glyph for this code point (plan
+    /// 933eed50 F1). A code point the `cmap` does not map resolves to glyph 0 (.notdef) and bakes as a
+    /// tofu box; this is the coverage predicate that turns that silent fallback into a nameable signal.
+    /// The bundled STIX Two Math font covers Latin + mathematical symbols; non-Latin scripts and emoji
+    /// are NOT covered.
+    public boolean covers(int codePoint) {
+        return sfnt.glyphId(codePoint) != 0;
+    }
+
+    /// The DISTINCT code points in `text` that the bundled font cannot render (they bake as .notdef
+    /// tofu boxes), in first-seen order, at most `max` of them (plan 933eed50 F1). ASCII C0 controls
+    /// and DEL (`\n`, `\t`, …) are SKIPPED — they are structural, never emitted as a glyph, so they
+    /// must not be reported as "uncovered". Iterates by code point so an astral char (emoji, surrogate
+    /// pair) counts once. Read-only: it measures coverage, it never alters any geometry or output.
+    public java.util.List<Integer> uncoveredCodePoints(String text, int max) {
+        if (text == null || text.isEmpty() || max <= 0) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<Integer> out = new java.util.LinkedHashSet<>();
+        int i = 0;
+        while (i < text.length() && out.size() < max) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (cp < 0x20 || cp == 0x7F) {
+                continue;   // ASCII control / DEL — structural, never a rendered glyph
+            }
+            if (!covers(cp)) {
+                out.add(cp);
+            }
+        }
+        return List.copyOf(out);
+    }
+
     /// Width of a single (unwrapped) run of text at the given pixel size. Iterates by code
     /// point so astral characters (surrogate pairs) count once.
     public double runWidth(String text, double fontSizePx) {

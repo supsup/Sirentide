@@ -212,10 +212,8 @@ public final class Sirentide {
             java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
             collectSeqs(laid.shapes(), seqs);
             if (seqs.size() <= 1) {
-                return new FramesResult(java.util.List.of(base), new Diagnostics(
-                    Outcome.OK, STAGE_EMIT,
-                    "Rendered successfully (single frame — the diagram has no play-through steps).",
-                    -1, ""));
+                return new FramesResult(java.util.List.of(base), okDiagnostics(dsl, STAGE_EMIT,
+                    "Rendered successfully (single frame — the diagram has no play-through steps)."));
             }
 
             java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
@@ -230,8 +228,8 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            return new FramesResult(java.util.List.copyOf(frames), new Diagnostics(
-                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+            return new FramesResult(java.util.List.copyOf(frames),
+                okDiagnostics(dsl, STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -333,13 +331,50 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
-            return new RenderResult(svg, new Diagnostics(
-                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+            return new RenderResult(svg, okDiagnostics(dsl, STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
             return new RenderResult(INERT_SHELL, classifyFailure(stage, e));
         }
+    }
+
+    /// The cap on how many distinct out-of-coverage code points a coverage caveat names (plan
+    /// 933eed50 F1) — bounds the diagnostic message on a label full of unsupported glyphs, mirroring
+    /// the parser's cap discipline. Ten is plenty to make the boundary concrete without a runaway note.
+    private static final int MAX_UNCOVERED_REPORTED = 10;
+
+    /// Build the OK-outcome {@link Diagnostics} for a successful bake, RIDING a non-fatal COVERAGE
+    /// caveat when the source contains code points the bundled label font cannot render (plan 933eed50
+    /// F1). The bake itself is UNCHANGED — geometry, byte output, the OK classification all hold; an
+    /// out-of-coverage code point still bakes exactly as today (a .notdef tofu box). This only turns
+    /// that previously-SILENT fallback into a nameable signal: the caveat is appended to the
+    /// author-facing `message` and the offending `U+XXXX` code points listed in `detail`. When every
+    /// rendered code point is in coverage the result is byte-for-byte the old
+    /// {@code Diagnostics(OK, stage, baseMessage, -1, "")} — a pure-Latin label produces NO signal.
+    /// The outcome stays {@link Outcome#OK} because the render genuinely succeeded (real content); the
+    /// caveat is additive, consistent with {@link Diagnostics}'s "author-facing report that never
+    /// alters the SVG" contract. `line` stays -1 (a coverage caveat spans the whole label set, not one
+    /// line). Never throws.
+    private static Diagnostics okDiagnostics(String dsl, String stage, String baseMessage) {
+        java.util.List<Integer> uncovered = dsl == null ? java.util.List.of()
+            : com.sirentide.font.FontMetrics.bundled().uncoveredCodePoints(dsl, MAX_UNCOVERED_REPORTED);
+        if (uncovered.isEmpty()) {
+            return new Diagnostics(Outcome.OK, stage, baseMessage, -1, "");
+        }
+        StringBuilder points = new StringBuilder();
+        for (int cp : uncovered) {
+            if (points.length() > 0) {
+                points.append(", ");
+            }
+            points.append(String.format("U+%04X", cp));
+        }
+        String caveat = " Note: " + uncovered.size() + " code point"
+            + (uncovered.size() == 1 ? "" : "s")
+            + " in the source fall outside the bundled STIX Two Math font (Latin + math) and bake as "
+            + "boxes: " + points + ". Non-Latin scripts and emoji are not covered.";
+        return new Diagnostics(Outcome.OK, stage, baseMessage + caveat, -1,
+            "out-of-coverage code points: " + points);
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a

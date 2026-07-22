@@ -28,6 +28,13 @@ It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTe
 renderer), and shares its discipline — and its font, so a diagram label can *contain* a real
 LaTeX formula, rendered at bake.
 
+> **Label font coverage.** Labels bake to `<path>` glyphs from the bundled **STIX Two Math** font,
+> which covers **Latin text and mathematical symbols**. Code points outside that coverage —
+> non-Latin scripts (CJK, Arabic, …) and emoji — have no glyph and bake today as empty `.notdef`
+> boxes. The bake never fails on them; it stays inert and deterministic. `renderWithDiagnostics`
+> surfaces the boundary as an `OK` result whose message/detail **names the out-of-coverage
+> `U+XXXX` code points**, so an unexplained box is a nameable signal rather than a silent surprise.
+
 ## 2. Render a diagram
 
 The whole pipeline is one call. Give it a Sirentide DSL source, get back a self-contained SVG
