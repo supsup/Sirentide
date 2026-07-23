@@ -20,6 +20,24 @@ final class AnchorAssigner {
     /// stamp the next emit-order `seq`. Every returned id is charset-legal, length-bounded, and unique
     /// within this diagram.
     Anchor assign(SirentideRole role, String rawBase) {
+        return new Anchor(role, mintId(role, rawBase), seq++);
+    }
+
+    /// Mint the next anchor with an EXPLICIT play-through `seq` supplied by the caller rather than the
+    /// internal emit-order counter (plan sirentide-play-through-reading-order). The id is still minted +
+    /// uniquified in CALL order — so id bytes are INDEPENDENT of the seq the caller picks — and only the
+    /// `seq` stamped on the returned {@link Anchor} comes from `explicitSeq`. FlowchartLayout uses this
+    /// so its groups can be EMITTED in z-order (edges under nodes) while their play order follows a
+    /// READING-order traversal (a source node, then its out-edges, then their targets). The internal
+    /// counter is untouched, so a diagram mixing the two overloads is not a supported use.
+    Anchor assign(SirentideRole role, String rawBase, int explicitSeq) {
+        return new Anchor(role, mintId(role, rawBase), explicitSeq);
+    }
+
+    /// Sanitize + fall-back + uniquify a raw base into a charset-legal, length-bounded, per-diagram
+    /// UNIQUE id. Deterministic in CALL order: identical call sequence → identical ids (the `used` set
+    /// resolves a collision by appending `-<k>`, re-truncated to stay within the 32-char bound).
+    private String mintId(SirentideRole role, String rawBase) {
         String base = Anchor.sanitizeId(rawBase);
         if (base.isEmpty()) {
             base = role.wire();   // always charset-legal (lowercase ascii), keeps the id non-empty
@@ -33,6 +51,6 @@ final class AnchorAssigner {
                 : base;
             id = head + suffix;
         }
-        return new Anchor(role, id, seq++);
+        return id;
     }
 }

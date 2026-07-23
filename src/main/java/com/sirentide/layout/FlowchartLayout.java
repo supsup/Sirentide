@@ -723,6 +723,12 @@ public final class FlowchartLayout {
         // 0..E-1 over edges then E..E+N-1 over nodes — the element's emit-order index. Unused when
         // !anchored (state diagram): the shapes go straight onto the flat list, byte-identical.
         AnchorAssigner assigner = new AnchorAssigner();
+        // Play-through seq follows READING order, not this emit order (plan sirentide-play-through-
+        // reading-order): a source node, then its out-edges, then their targets. Ids are still minted in
+        // emit order (edges here, nodes below) so id bytes are unchanged — only the seq attribute moves.
+        int[][] ord = readingOrderSeq(n, edges);
+        int[] nodeSeq = ord[0];
+        int[] edgeSeq = ord[1];
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1) — coordinates are
         // final here (post cluster-shift), so the rects match what draws.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
@@ -861,7 +867,8 @@ public final class FlowchartLayout {
                 }
             }
             if (anchored) {
-                shapes.add(new Group(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e)), tgt));
+                shapes.add(new Group(
+                    assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]), tgt));
             }
         }
 
@@ -879,7 +886,8 @@ public final class FlowchartLayout {
                 emitNodeLabel(ng, vx[i] + boxW[i] / 2,
                     labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
                     measures[i], wrapped[i], nodeFill[i], nodeText[i]);
-                shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
+                shapes.add(new Group(
+                    assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i)), nodeSeq[i]), ng));
             }
         } else {
             for (int i = 0; i < n; i++) {
@@ -1172,6 +1180,11 @@ public final class FlowchartLayout {
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
         // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
         AnchorAssigner assigner = new AnchorAssigner();
+        // Play-through seq follows READING order, not this emit order (plan sirentide-play-through-
+        // reading-order) — same decoupling as the TD path; ids stay in emit order, only seq moves.
+        int[][] ord = readingOrderSeq(n, edges);
+        int[] nodeSeq = ord[0];
+        int[] edgeSeq = ord[1];
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -1284,7 +1297,8 @@ public final class FlowchartLayout {
                 }
             }
             if (anchored) {
-                shapes.add(new Group(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e)), tgt));
+                shapes.add(new Group(
+                    assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]), tgt));
             }
         }
 
@@ -1299,7 +1313,8 @@ public final class FlowchartLayout {
                 emitNodeLabel(ng, vx[i] + boxW[i] / 2,
                     labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
                     measures[i], wrapped[i], nodeFill[i], nodeText[i]);
-                shapes.add(new Group(assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i))), ng));
+                shapes.add(new Group(
+                    assigner.assign(SirentideRole.NODE, nodeBaseId(nodes.get(i)), nodeSeq[i]), ng));
             }
         } else {
             for (int i = 0; i < n; i++) {
@@ -1665,6 +1680,67 @@ public final class FlowchartLayout {
             // state[v] == 2 (black): a forward/cross edge — kept for layering, not a back-edge.
         }
         state[u] = 2;   // black
+    }
+
+    /// READING-ORDER play-through seq for the graph engine (plan sirentide-play-through-reading-order).
+    /// The `data-sirentide-seq` a flowchart/state element carries drives the play-through (the sole
+    /// anchor consumer: {@code Sirentide.renderFrames} narrates groups in ascending seq). It must follow
+    /// how a reader WALKS THE FLOW — a source NODE, then each edge LEAVING it, then that edge's target —
+    /// NOT the emit/z-order. Groups are still EMITTED edges-under-nodes (correct layering), which alone
+    /// would number every edge before its endpoints and make the first frame accent a dangling edge
+    /// while both its endpoints are still dimmed. This decouples the two: a DFS from the in-degree-0
+    /// SOURCES (node-index order; then any remaining cycle-only / back-edge-only reached node in index
+    /// order) assigns a single 0..(n+E-1) numbering — visit a node (stamp its seq), then for each of its
+    /// out-edges in DECLARATION order stamp the edge's seq and descend into the target. Component-by-
+    /// component reveal falls out of the DFS exhausting each reachable set before the next source seeds.
+    /// Returns {@code {nodeSeq[0..n-1], edgeSeq[0..E-1]}}. Pure + deterministic (same graph → same seqs).
+    static int[][] readingOrderSeq(int n, List<Edge> edges) {
+        List<List<Integer>> adj = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            adj.add(new ArrayList<>());
+        }
+        int[] indeg = new int[n];
+        for (int ei = 0; ei < edges.size(); ei++) {
+            adj.get(edges.get(ei).u()).add(ei);
+            indeg[edges.get(ei).v()]++;
+        }
+        int[] nodeSeq = new int[n];
+        int[] edgeSeq = new int[edges.size()];
+        Arrays.fill(nodeSeq, -1);
+        Arrays.fill(edgeSeq, -1);
+        boolean[] visited = new boolean[n];
+        int[] counter = {0};
+        // Pass 1: DFS from every in-degree-0 SOURCE (the flow's entry points), in node-index order.
+        for (int i = 0; i < n; i++) {
+            if (indeg[i] == 0) {
+                visitReading(i, adj, edges, visited, nodeSeq, edgeSeq, counter);
+            }
+        }
+        // Pass 2: any node not reachable from a source — a pure cycle, or a node reachable ONLY via a
+        // back-edge — seeds from its lowest index, so every node (and thus every out-edge) is numbered.
+        for (int i = 0; i < n; i++) {
+            visitReading(i, adj, edges, visited, nodeSeq, edgeSeq, counter);
+        }
+        return new int[][] {nodeSeq, edgeSeq};
+    }
+
+    /// One DFS step of {@link #readingOrderSeq}: stamp `u`'s node seq, then for each out-edge (in
+    /// declaration order) stamp the edge seq (once) and descend into its target. Recursive, mirroring
+    /// {@link #dfsClassify} over the same adjacency — so the depth profile matches the already-shipped
+    /// back-edge/layering traversals (the never-throw bake guard degrades a pathological depth anyway).
+    private static void visitReading(int u, List<List<Integer>> adj, List<Edge> edges, boolean[] visited,
+                                     int[] nodeSeq, int[] edgeSeq, int[] counter) {
+        if (visited[u]) {
+            return;
+        }
+        visited[u] = true;
+        nodeSeq[u] = counter[0]++;
+        for (int ei : adj.get(u)) {
+            if (edgeSeq[ei] < 0) {
+                edgeSeq[ei] = counter[0]++;
+            }
+            visitReading(edges.get(ei).v(), adj, edges, visited, nodeSeq, edgeSeq, counter);
+        }
     }
 
     /// Longest-path layer of `v`: 0 with no forward predecessor, else max(layer(pred)+1). Memoized;

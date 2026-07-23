@@ -167,8 +167,10 @@ class SemanticAnchorTest {
 
     /// MUTANT SENTINEL (receipt #4): a flowchart with 2 nodes + 1 edge must emit exactly 3 anchored
     /// `<g>`s — one per edge, one per node — with role ∈ {node,edge}, ids matching the id pattern, and
-    /// seq 0..N contiguous in emit order (edge first, then nodes). DROP the `<g>` wrapper in
-    /// FlowchartLayout (emit the shapes bare) and this assertion falls to 0 groups → RED.
+    /// seq 0..N contiguous. The seq follows READING order (plan sirentide-play-through-reading-order):
+    /// the source NODE, then the edge LEAVING it, then the target node — so the FIRST play-through frame
+    /// accents a source node, not a dangling edge. DROP the `<g>` wrapper in FlowchartLayout (emit the
+    /// shapes bare) and this assertion falls to 0 groups → RED.
     @Test
     void flowchartEmitsThreeAnchorGroupsForTwoNodesAndOneEdge() {
         List<Anc> a = anchors(Sirentide.render("flowchart TD\n  A[Start] --> B[End]\n"));
@@ -185,11 +187,51 @@ class SemanticAnchorTest {
         // seq is 0..2 contiguous.
         List<Integer> seqs = a.stream().map(Anc::seq).sorted().toList();
         assertEquals(List.of(0, 1, 2), seqs, "seq is 0..N contiguous, got " + seqs);
-        // the edge is emitted first (seq 0), the human ids are the labels / from-to.
+        // the human ids are the labels / from-to.
         assertTrue(a.stream().anyMatch(x -> x.role().equals("edge") && x.id().equals("A-B")),
             "edge id is from-to (A-B): " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("Start")), "node Start: " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("node") && x.id().equals("End")), "node End: " + a);
+        // READING-ORDER pin (plan sirentide-play-through-reading-order): a simple flow narrates the
+        // source NODE (seq 0), then the edge LEAVING it (seq 1), then the target NODE (seq 2) — NOT the
+        // old emit order (edge first). This is what makes the first frame accent a source node.
+        assertEquals(0, seqOf(a, "Start"), "source node plays first (seq 0): " + a);
+        assertEquals(1, seqOf(a, "A-B"), "its out-edge plays next (seq 1): " + a);
+        assertEquals(2, seqOf(a, "End"), "the target node plays last (seq 2): " + a);
+    }
+
+    /// READING-ORDER pin, MULTI-COMPONENT (plan sirentide-play-through-reading-order): two DISCONNECTED
+    /// chains A→B and C→D must narrate one whole component before the next — A, A→B, B, then C, C→D, D
+    /// — never interleaved and never edges-then-nodes. The DFS from each in-degree-0 source exhausts its
+    /// reachable set before the next source seeds, so component 1 owns seq 0..2 and component 2 seq 3..5.
+    @Test
+    void flowchartMultiComponentNarratesComponentByComponentInReadingOrder() {
+        List<Anc> a = anchors(Sirentide.render("flowchart TD\n  A --> B\n  C --> D\n"));
+        assertEquals(6, a.size(), "2 chains × (2 nodes + 1 edge) → 6 anchor groups, got " + a);
+        // First component (A→B) plays entirely before the second (C→D): a source, its edge, its target.
+        assertEquals(0, seqOf(a, "A"), "component-1 source first: " + a);
+        assertEquals(1, seqOf(a, "A-B"), "component-1 edge next: " + a);
+        assertEquals(2, seqOf(a, "B"), "component-1 target: " + a);
+        assertEquals(3, seqOf(a, "C"), "component-2 source only after component-1 is done: " + a);
+        assertEquals(4, seqOf(a, "C-D"), "component-2 edge: " + a);
+        assertEquals(5, seqOf(a, "D"), "component-2 target last: " + a);
+    }
+
+    /// READING-ORDER with a CYCLE + a real entry point (plan sirentide-play-through-reading-order, the
+    /// pinned design call for cyclic graphs): C is the sole in-degree-0 SOURCE, so the walk STARTS at C
+    /// and follows the flow C → A → B, then the back-edge B→A closes the loop — the play never opens on a
+    /// mid-cycle node or a dangling edge. Pins that in-degree-0 sources seed the DFS ahead of cycle
+    /// members reachable only through them.
+    @Test
+    void flowchartCyclePlaysFromTheEntrySourceNotMidCycle() {
+        // C is the only source; A and B form a cycle (B --> A is the back-edge) fed from C.
+        List<Anc> a = anchors(Sirentide.render(
+            "flowchart TD\n  A --> B\n  B --> A\n  C --> A\n"));
+        // The play opens on the true entry point C (seq 0), not on a mid-cycle node or an edge.
+        assertEquals(0, seqOf(a, "C"), "the play opens on the in-degree-0 source C: " + a);
+        // C's out-edge to A plays before A's own out-edges — flow order from the entry.
+        assertTrue(seqOf(a, "C-A") < seqOf(a, "A"), "C→A precedes A: " + a);
+        assertTrue(seqOf(a, "A") < seqOf(a, "B"), "A precedes B (forward flow): " + a);
     }
 
     @Test

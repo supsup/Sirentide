@@ -201,28 +201,30 @@ class NodeEdgeStylingTest {
         //
         // Assertions are bound to DETERMINISTIC frames (Lattice re-review, seq 220 — an anyMatch
         // over all frames can't prove WHICH state produced a style, so a mutant swapping ACTIVE and
-        // FUTURE presentation still passed): flowchart seq order is edges first then nodes, so for
-        // `A --> B` frame 0 plays the edge (A is FUTURE) and frame 1 plays node A (ACTIVE).
+        // FUTURE presentation still passed): flowchart seq now follows READING order (plan
+        // sirentide-play-through-reading-order) — a source node, then its out-edge, then the target —
+        // so for `A --> B` frame 0 plays node A, frame 1 the edge, frame 2 node B. We style the TARGET
+        // B (seq 2, the last step) so it is FUTURE in frame 0 (dimmed) and ACTIVE in frame 2.
         String dsl = "flowchart TD\n"
             + "  classDef hot stroke:#ff0000,stroke-width:2px\n"
-            + "  A[a] --> B[b]\n  class A hot\n";
+            + "  A[a] --> B[b]\n  class B hot\n";
         // Static render carries the exact authored border, UN-emphasized (byte-identical baseline).
         assertTrue(Sirentide.render(dsl).contains("stroke=\"#ff0000\" stroke-width=\"2\""),
             "the static render carries the exact authored border");
         java.util.List<String> frames = Sirentide.renderFrames(dsl);
-        assertEquals(3, frames.size(), "one frame per seq: edge, A, B");
-        // Frame 0 (edge active): node A is FUTURE — its group carries the exact dimmed tint
+        assertEquals(3, frames.size(), "one frame per seq: A, edge, B");
+        // Frame 0 (node A active): node B is FUTURE — its group carries the exact dimmed tint
         // (#ff0000 lightened = #ff9e9e) at the authored 2px, and NEITHER the bright authored red
-        // NOR the accent appears ANYWHERE in A's group (fill, label, or border).
-        String futureA = nodeGroup(frames.get(0), "a");
-        assertTrue(futureA.contains("stroke=\"#ff9e9e\" stroke-width=\"2\""),
-            "frame 0 dims node A's border to the exact FUTURE tint #ff9e9e/2px: " + frames.get(0));
-        assertTrue(!futureA.contains("#ff0000") && !futureA.contains("#e8590c"),
-            "A's FUTURE group carries neither the authored bright red nor the accent anywhere: "
-                + futureA);
-        // Frame 1 (node A active): border promoted to the accent AND thickened 2x, IN A's OWN group.
-        assertTrue(nodeGroup(frames.get(1), "a").contains("stroke=\"#e8590c\" stroke-width=\"4\""),
-            "frame 1 accents + thickens node A's border in A's own group: " + frames.get(1));
+        // NOR the accent appears ANYWHERE in B's group (fill, label, or border).
+        String futureB = nodeGroup(frames.get(0), "b");
+        assertTrue(futureB.contains("stroke=\"#ff9e9e\" stroke-width=\"2\""),
+            "frame 0 dims node B's border to the exact FUTURE tint #ff9e9e/2px: " + frames.get(0));
+        assertTrue(!futureB.contains("#ff0000") && !futureB.contains("#e8590c"),
+            "B's FUTURE group carries neither the authored bright red nor the accent anywhere: "
+                + futureB);
+        // Frame 2 (node B active): border promoted to the accent AND thickened 2x, IN B's OWN group.
+        assertTrue(nodeGroup(frames.get(2), "b").contains("stroke=\"#e8590c\" stroke-width=\"4\""),
+            "frame 2 accents + thickens node B's border in B's own group: " + frames.get(2));
     }
 
     /// A node's own anchor group within one frame — the semantic-anchor contract
@@ -241,8 +243,9 @@ class NodeEdgeStylingTest {
         // decision node must dim to the exact FUTURE tint and accent+thicken when active
         // — the original review asked for frame regressions on BOTH rect and path frames
         // (Lattice re-review, seq 216: the branch had only a static diamond assertion).
-        // Frame binding (Lattice seq 220): edges seq first, so for `A --> D` the diamond D
-        // is FUTURE in frame 0 (edge active) and ACTIVE in frame 2 (frame 1 plays node A).
+        // Frame binding (plan sirentide-play-through-reading-order): seq follows READING order — for
+        // `A --> D` frame 0 plays the SOURCE node A, frame 1 the edge, frame 2 the target diamond D. So
+        // D is FUTURE in frame 0 (dimmed) and ACTIVE in frame 2; the edge is active in frame 1.
         String dsl = "flowchart TD\n"
             + "  classDef hot stroke:#ff0000,stroke-width:2px\n"
             + "  A[a] --> D{d}\n  class D hot\n";
@@ -271,11 +274,11 @@ class NodeEdgeStylingTest {
                 + activeD);
         assertEquals(0, count(activeD, "fill=\"#e8590c\" stroke"),
             "the accent fill belongs to the LABEL only, never to the bordered silhouette path");
-        // Arrowheads keep the ACCENTABLE fill (the box() treatment is silhouette-only): frame 0's
-        // active EDGE group carries the accented arrowhead.
-        assertTrue(edgeGroup(frames.get(0)).contains("fill=\"#e8590c\""),
-            "frame 0's active edge still accents its arrowhead (accent() preserved for arrowheads): "
-                + frames.get(0));
+        // Arrowheads keep the ACCENTABLE fill (the box() treatment is silhouette-only): the edge's
+        // active frame (now frame 1 under reading order) carries the accented arrowhead.
+        assertTrue(edgeGroup(frames.get(1)).contains("fill=\"#e8590c\""),
+            "frame 1's active edge still accents its arrowhead (accent() preserved for arrowheads): "
+                + frames.get(1));
     }
 
     /// The first edge anchor group within one frame (`data-sirentide-role="edge"`), for
