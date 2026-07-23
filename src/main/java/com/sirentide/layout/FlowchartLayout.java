@@ -96,6 +96,16 @@ public final class FlowchartLayout {
     private static final double EDGE_LABEL_SIZE = 10;   // edge-label font size (M1.2, `-->|yes|`)
     private static final double MAX_EDGE_LABEL_W = 120; // edge labels ellipsize past this width
     private static final double EDGE_LABEL_GAP = 5;     // gap between an edge line and its label
+    // Convergent-edge label de-collision (label-legibility plan ea20153b part 2; guard-measured by
+    // confluence/flowchart-label-guard @ 277f3f1c, withdrawal premise retracted at sirentide/514).
+    // Two labeled edges reaching the same TARGET from nearby sources place their labels at nearly the
+    // same midpoint, so their RENDERED BOXES overprint in BOTH axes (a label is a box around its
+    // midpoint — anchor-x separation is NOT rendered-box-x separation; that conflation was the
+    // withdrawal's error). When the later label's actual glyph box overlaps an already-placed
+    // same-target box, it is STACKED one line below — this is the minimal vertical offset.
+    private static final double EDGE_LABEL_STACK = EDGE_LABEL_SIZE * 1.5;
+    private static final int MAX_LABEL_STACK = 16;      // bound the greedy fan-down (deterministic, no runaway)
+    private static final java.util.regex.Pattern LABEL_NUM = java.util.regex.Pattern.compile("[-0-9.]+");
     private static final double CLAMP_MARGIN = 2;       // min gap kept between a glyph box and the canvas edge
 
     // -- subgraph CLUSTER frames. A titled bounding box (a stroke-only rectangle = four Lines, so no
@@ -177,7 +187,8 @@ public final class FlowchartLayout {
     /// A math label SKIPS the canvas ellipsize (a formula must not be cut mid-run) and is measured on
     /// its composite width, then clamped in-frame the same way.
     private static void emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
-                                      boolean subtractWidth, double gap, double canvasW, String color,
+                                      boolean subtractWidth, double gap, double canvasW,
+                                      LabelDecollider dec, int target, String color,
                                       MathFragmentRenderer math) {
         if (raw == null) {
             return;
@@ -187,7 +198,11 @@ public final class FlowchartLayout {
             double w = mm.width();
             double lblX = subtractWidth ? anchorX - gap - w : anchorX + gap;
             lblX = clampLabelX(lblX, w, canvasW);
-            MathLabel.emit(mm, lblX, baselineY, color, EDGE_LABEL_SIZE, FONT, shapes);
+            // Nominal box for a composite math run (glyphs sit above the baseline); de-collide against
+            // same-target labels, then emit at the resolved baseline (dy==0 => byte-identical).
+            double dy = dec.resolve(target,
+                new double[] {lblX, baselineY - EDGE_LABEL_SIZE, lblX + w, baselineY});
+            MathLabel.emit(mm, lblX, baselineY + dy, color, EDGE_LABEL_SIZE, FONT, shapes);
             return;
         }
         String fl = boundLabelToCanvas(raw, canvasW);
@@ -198,8 +213,111 @@ public final class FlowchartLayout {
         double lblX = subtractWidth ? anchorX - gap - w : anchorX + gap;
         lblX = clampLabelX(lblX, w, canvasW);
         String ld = FONT.textPathD(fl, lblX, baselineY, EDGE_LABEL_SIZE);
+        if (ld.isBlank()) {
+            return;
+        }
+        // Rendered-box de-collision (plan ea20153b part 2): use the ACTUAL emitted glyph bbox — a
+        // label is a box around its midpoint, so two convergent same-target labels can share a
+        // rectangle even when their anchor x's differ (the sirentide/514 finding). A same-target
+        // both-axes overlap stacks this label a line down; NO overlap leaves dy==0 and the emission
+        // byte-identical to the pre-fix path.
+        double dy = dec.resolve(target, pathBBox(ld));
+        if (dy != 0) {
+            ld = FONT.textPathD(fl, lblX, baselineY + dy, EDGE_LABEL_SIZE);
+        }
         if (!ld.isBlank()) {
             shapes.add(new GlyphRun(ld, color));
+        }
+    }
+
+    /// Axis-aligned bounding box [minX, minY, maxX, maxY] of an SVG path `d` string. Glyph-outline
+    /// and textPath `d`s carry only coordinate PAIRS (M/L/C/Q/Z), so every number is an x or y in
+    /// sequence — the same pairwise read the convergent-label guard uses on the emitted SVG, so the
+    /// de-collision measures exactly the geometry the guard checks.
+    private static double[] pathBBox(String d) {
+        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE;
+        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
+        java.util.List<Double> nums = new ArrayList<>();
+        java.util.regex.Matcher m = LABEL_NUM.matcher(d);
+        while (m.find()) {
+            nums.add(Double.parseDouble(m.group()));
+        }
+        for (int i = 0; i + 1 < nums.size(); i += 2) {
+            double x = nums.get(i), y = nums.get(i + 1);
+            minX = Math.min(minX, x);   maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);   maxY = Math.max(maxY, y);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    /// Convergent-edge label de-collision (label-legibility plan ea20153b part 2). Keyed by shared
+    /// TARGET (v2 design, re-derived on today's FlowchartLayout): labels reaching DIFFERENT targets
+    /// never interact, so at most the convergent fan into one node can move. For each label it takes
+    /// the ACTUAL rendered box and, if that box overprints a same-target box already placed (overlap
+    /// in BOTH axes — the property the withdrawal wrongly assumed was impossible), returns the minimal
+    /// vertical offset that clears every same-target box AND every NODE box (so stacking never shoves
+    /// a label into a node — it takes the next slot instead). A non-colliding label returns dy==0 and
+    /// emits byte-identically. Greedy single pass, order-stable: the same edge set yields the same
+    /// offsets regardless of nothing but authored order (which the guard's reordered variant pins).
+    static final class LabelDecollider {
+        private final Map<Integer, List<double[]>> byTarget = new HashMap<>();
+        private final List<double[]> nodeBoxes;   // [x0, y0, x1, y1]
+        // Lowest box-bottom of any label this pass actually MOVED (dy > 0). Natural (dy == 0) label
+        // extents are already inside canvasH by the pre-emit sizing, so only a STACKED label can push
+        // past the bottom (the sirentide/523 B1 mode); the caller grows canvasH to this. Stays
+        // NEGATIVE_INFINITY when nothing stacked, so a non-colliding diagram's canvasH is untouched.
+        private double stackedBottom = Double.NEGATIVE_INFINITY;
+
+        LabelDecollider(List<double[]> obstacles) {
+            this.nodeBoxes = new ArrayList<>(obstacles.size());
+            for (double[] o : obstacles) {
+                // nodeObstacles yields [x, y, w, h]; normalize to [x0, y0, x1, y1].
+                nodeBoxes.add(new double[] {o[0], o[1], o[0] + o[2], o[1] + o[3]});
+            }
+        }
+
+        /// Resolve the vertical offset (>= 0) for a label whose natural rendered box is {@code box}
+        /// ([x0, y0, x1, y1]) and that reaches {@code target}. Records the placed (shifted) box so the
+        /// next same-target label stacks below it. dy==0 whenever the natural box is already clear —
+        /// the byte-identity guarantee for non-colliding diagrams.
+        double resolve(int target, double[] box) {
+            List<double[]> placed = byTarget.computeIfAbsent(target, k -> new ArrayList<>());
+            double dy = 0;
+            if (overlapsAny(box, placed, 0)) {
+                // Greedy fan-down: first slot clear of BOTH same-target labels and node boxes. Node
+                // avoidance applies ONLY here (while moving) — the natural position is never rejected
+                // for grazing a node, so untouched labels stay byte-identical.
+                for (int k = 1; k <= MAX_LABEL_STACK; k++) {
+                    dy = k * EDGE_LABEL_STACK;
+                    if (!overlapsAny(box, placed, dy) && !overlapsAny(box, nodeBoxes, dy)) {
+                        break;
+                    }
+                }
+            }
+            placed.add(new double[] {box[0], box[1] + dy, box[2], box[3] + dy});
+            if (dy > 0) {
+                stackedBottom = Math.max(stackedBottom, box[3] + dy);
+            }
+            return dy;
+        }
+
+        /// The lowest box-bottom of any STACKED label (dy > 0), or {@link Double#NEGATIVE_INFINITY} if
+        /// none stacked. The caller grows canvasH to `stackedBottom() + MARGIN` after the emit pass so a
+        /// deep convergent fan (sirentide/523) cannot push a stacked label off the bottom of the canvas.
+        double stackedBottom() {
+            return stackedBottom;
+        }
+
+        /// True iff {@code box} (shifted down by {@code dy}) overlaps any box in {@code others} in BOTH
+        /// axes. Edge-touching (<=) counts as disjoint — a label abutting another does not overprint.
+        private static boolean overlapsAny(double[] box, List<double[]> others, double dy) {
+            double y0 = box[1] + dy, y1 = box[3] + dy;
+            for (double[] o : others) {
+                if (box[0] < o[2] && o[0] < box[2] && y0 < o[3] && o[1] < y1) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -726,6 +844,9 @@ public final class FlowchartLayout {
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1) — coordinates are
         // final here (post cluster-shift), so the rects match what draws.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
+        // Per-diagram convergent-edge label de-collision (plan ea20153b part 2). Node boxes double as
+        // no-stack zones so a de-collided label never lands on a node.
+        LabelDecollider labelDecollider = new LabelDecollider(obstacles);
         // Pre-pass (review sir297): derive every back-edge's detour rail y FIRST and GROW the canvas
         // DOWN so a rail forced past the current content bottom stays contained (mirror of the lane
         // grow above; a rail is never routed above MARGIN). clearRailY is a pure function of the attach
@@ -788,7 +909,7 @@ public final class FlowchartLayout {
                 }
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
                 emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
-                    false, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
+                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double scx = vx[u] + boxW[u] / 2;
@@ -831,7 +952,7 @@ public final class FlowchartLayout {
                         // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going
                         // edge's label sits right of the line, a left-going one's left of it.
                         emitEdgeLabel(tgt, e.label(), lblAx, lblAy + EDGE_LABEL_SIZE * 0.35,
-                            dx < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
+                            dx < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
                     }
                     // else: degenerate anchor pair — skip (never emit NaN geometry). The (possibly
                     // empty) edge group is still emitted below so seq stays aligned with the edge set.
@@ -857,7 +978,7 @@ public final class FlowchartLayout {
                     // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
                     emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2,
                         (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
-                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, fc.textColor(), math);
+                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
                 }
             }
             if (anchored) {
@@ -891,6 +1012,17 @@ public final class FlowchartLayout {
                     labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
                     measures[i], wrapped[i], nodeFill[i], nodeText[i]);
             }
+        }
+
+        // Contain a deep convergent fan (sirentide/523 B1 mode): a STACKED edge label (dy > 0) can be
+        // pushed PAST the pre-emit canvasH — nothing bounded the stack against canvas HEIGHT. ONLY when
+        // the lowest stacked label actually exceeds the canvas do we grow DOWN to fit it + MARGIN,
+        // mirroring the frame/rail grows above (a Math.max to a content bottom). Firing only on genuine
+        // overflow is deliberate: a diagram whose stacked labels already fit inside canvasH — and every
+        // non-stacking diagram (stackedBottom == NEGATIVE_INFINITY) — keeps its EXACT canvasH, so no
+        // non-overflowing diagram moves and every existing golden stays byte-identical.
+        if (labelDecollider.stackedBottom() > canvasH) {
+            canvasH = labelDecollider.stackedBottom() + MARGIN;
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
@@ -1137,6 +1269,8 @@ public final class FlowchartLayout {
 
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1), coordinates final here.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
+        // Per-diagram convergent-edge label de-collision (plan ea20153b part 2; LR transpose of TD).
+        LabelDecollider labelDecollider = new LabelDecollider(obstacles);
         // Pre-pass (review sir297): derive every back-edge's detour rail x FIRST and GROW the canvas
         // RIGHT so a rail forced past the current content edge stays contained (LR transpose of the TD
         // grow; a rail is never routed left of MARGIN). Done BEFORE the cluster frames emit because they
@@ -1213,7 +1347,7 @@ public final class FlowchartLayout {
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
                 emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
                     laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
-                    false, EDGE_LABEL_GAP, canvasW, textColor, math);
+                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double sx = vx[u] + boxW[u];             // source right-middle
@@ -1257,7 +1391,7 @@ public final class FlowchartLayout {
                             ? (sy + endY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                             : (sy + endY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
                         emitEdgeLabel(tgt, e.label(), (sx + endX) / 2, lblY,
-                            false, EDGE_LABEL_GAP, canvasW, textColor, math);
+                            false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
                     }
                     // else degenerate — skip; the (possibly empty) group still emits so seq stays aligned.
                 } else {
@@ -1280,7 +1414,7 @@ public final class FlowchartLayout {
                         ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                         : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
                     emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2, lblY,
-                        false, EDGE_LABEL_GAP, canvasW, textColor, math);
+                        false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
                 }
             }
             if (anchored) {
@@ -1311,6 +1445,17 @@ public final class FlowchartLayout {
                     labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
                     measures[i], wrapped[i], nodeFill[i], nodeText[i]);
             }
+        }
+
+        // Contain a deep convergent fan (sirentide/523 B1 mode): a STACKED edge label (dy > 0) can be
+        // pushed PAST the pre-emit canvasH — nothing bounded the stack against canvas HEIGHT. ONLY when
+        // the lowest stacked label actually exceeds the canvas do we grow DOWN to fit it + MARGIN,
+        // mirroring the frame/rail grows above (a Math.max to a content bottom). Firing only on genuine
+        // overflow is deliberate: a diagram whose stacked labels already fit inside canvasH — and every
+        // non-stacking diagram (stackedBottom == NEGATIVE_INFINITY) — keeps its EXACT canvasH, so no
+        // non-overflowing diagram moves and every existing golden stays byte-identical.
+        if (labelDecollider.stackedBottom() > canvasH) {
+            canvasH = labelDecollider.stackedBottom() + MARGIN;
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
