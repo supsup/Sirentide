@@ -87,10 +87,21 @@ types, `timeline` and `gantt` included, with real-browser renders.)
 
 ## 3. From the command line
 
+**Getting the CLI from a source checkout** — build the executable jar once, then (optionally)
+alias it:
+
+```bash
+./gradlew jar                # produces build/libs/sirentide-0.5.0.jar (Main-Class is set)
+# The double quotes are load-bearing: $PWD expands NOW, while you are still in the checkout,
+# baking the absolute jar path into the alias — so it keeps working after you cd anywhere else.
+# (Single-quoting the alias would defer $PWD to each invocation and break outside the checkout.)
+alias sirentide="java -jar '$PWD/build/libs/sirentide-0.5.0.jar'"
+```
+
 ```bash
 echo 'pie
   "A" : 60
-  "B" : 40' | java -jar build/libs/sirentide-0.4.0.jar
+  "B" : 40' | sirentide
 ```
 
 Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
@@ -100,6 +111,33 @@ invocation, one JVM.)*
 > at the API (`Sirentide.render(dsl, mathRenderer)`). The CLI path injects none, so a `$…$` label
 > bakes as its **raw LaTeX source text** rather than typeset glyphs — the documented per-fragment
 > fail-soft, not an error. To bake real math, call the two-arg API with a renderer.
+
+**Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
+extracts the first ```` ```sirentide ```` fence **the Stafficy `/docs` bake would capture** from a
+markdown file and bakes it —
+```bash
+sirentide render notes/some-page.md          # SVG to stdout
+sirentide render notes/some-page.md -o out.svg   # SVG to a file (atomic write)
+```
+The exit code tells you what `/docs` would do with the page:
+
+- **`0`** — the fence renders; the SVG you got is what the page will embed.
+- **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
+  on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
+  is on stderr.
+- **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
+  the bake leaves those literal), unreadable input, or an unwritable `-o` destination. Nothing
+  is written.
+
+`-o` writes are **atomic — unconditionally**: the SVG is fully written to a temp sibling and then
+*atomically* moved onto the destination, so a failed run never truncates or corrupts an existing
+file. On a filesystem that cannot replace atomically, the CLI **refuses with exit 2** and leaves
+the destination untouched — there is no non-atomic fallback. (A destination that is a directory
+is refused; a symlink destination — even one pointing at a directory — is replaced as a path
+entry, not written through, its target untouched; `-o` naming the input file is a safe full
+replace.) Fence **extraction is scanner-parity** with
+the `/docs` bake's `SirentideDiagramConverter` (the Stafficy-repo pre-flexmark pass) — see the
+contract note on `FenceExtractor` and its cross-repository fixture test.
 
 ## 4. Why it's safe to inline
 
