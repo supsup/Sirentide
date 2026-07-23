@@ -18,23 +18,38 @@ package com.sirentide.ir;
 /// `strokeWidth` is a finite non-negative border width (`null` → the layout's default when a stroke is
 /// set); `textColor` overrides the auto-contrast label colour with an author `#hex`. Every value is
 /// validated at the parse boundary and fails closed (a bad value drops to `null` → the default).
+///
+/// `status` is the OPTIONAL SEMANTIC status ROLE (plan fa3ccf16 wish A): one of `"danger"`, `"warn"`,
+/// `"ok"`, `"neutral"` when the node was assigned a built-in `status-*` class, else `null`. It is a
+/// PRESENTATION-INDEPENDENT token: the fill/stroke/width above carry the *visual* status encoding (a
+/// closed pastel palette + a stroke-width severity channel), while `status` is the word the a11y
+/// describer speaks ("HOSTROOT (danger)") so status is NEVER color-only. It is tied to the class NAME,
+/// not the resolved fill — an author who overrides a `status-*` classDef's fill still gets the spoken
+/// word. `null` for every unclassed / non-status node → the desc is byte-identical to before.
 public record FlowNode(String id, String label, String shape, String color,
-                       String stroke, Double strokeWidth, String textColor) {
+                       String stroke, Double strokeWidth, String textColor, String status) {
 
-    /// Fill-only construction (no stroke/textColor styling) — keeps every colour-carrying caller
+    /// Presentation-only construction (no semantic status) — keeps every classDef-styling caller
+    /// (and the parser's node-styling path before status roles) byte-for-byte unchanged.
+    public FlowNode(String id, String label, String shape, String color,
+                    String stroke, Double strokeWidth, String textColor) {
+        this(id, label, shape, color, stroke, strokeWidth, textColor, null);
+    }
+
+    /// Fill-only construction (no stroke/textColor/status styling) — keeps every colour-carrying caller
     /// (the state-diagram wrapper, the a11y describer's rebuild) byte-for-byte unchanged.
     public FlowNode(String id, String label, String shape, String color) {
-        this(id, label, shape, color, null, null, null);
+        this(id, label, shape, color, null, null, null, null);
     }
 
     /// Colourless construction (default box fill) — keeps every existing shape-carrying caller/test
     /// byte-for-byte unchanged.
     public FlowNode(String id, String label, String shape) {
-        this(id, label, shape, null, null, null, null);
+        this(id, label, shape, null, null, null, null, null);
     }
 
     /// Rect-shaped, colourless construction — keeps every existing caller/test byte-for-byte unchanged.
     public FlowNode(String id, String label) {
-        this(id, label, "rect", null, null, null, null);
+        this(id, label, "rect", null, null, null, null, null);
     }
 }

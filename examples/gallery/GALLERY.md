@@ -216,6 +216,23 @@ class D deny
 
 ![Flowchart semantic colour classes (classDef · class)](flowchart-classdef.png)
 
+## Flowchart semantic STATUS roles (built-in status-* classes)
+
+```
+flowchart TD
+NET[Untrusted network] --> FW{Firewall rule}
+FW -->|admitted| APP[App service]
+FW -->|refused| HOSTROOT[Host root]
+APP --> DATA[(User records)]
+class NET status-warn
+class FW status-neutral
+class APP status-ok
+class HOSTROOT status-danger
+class DATA status-ok
+```
+
+![Flowchart semantic STATUS roles (built-in status-* classes)](flowchart-status-roles.png)
+
 ## Caption / note directive (annotation band below any diagram)
 
 ```
