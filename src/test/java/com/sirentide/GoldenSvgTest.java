@@ -82,6 +82,17 @@ class GoldenSvgTest {
         // identical (its labels reach distinct targets, or are already x-separated so dy==0).
         FIXTURES.put("flowchart-convergent",
             "flowchart TD\n  A[a] -->|resume| X[x]\n  B[b] -->|exit| X\n");
+        // Deep convergent fan + canvas-height grow (plan ea20153b part 2, review sir/523). FIVE labeled
+        // edges into one sink chain-stack far enough that, before the grow, the lowest stacked label
+        // fell OFF the bottom (pre-fix canvasH 168, lowest label bottom 178.3). The de-collision now
+        // grows canvasH DOWN to contain the stack + MARGIN (canvasH 168 -> 202), so every stacked label
+        // is inside the canvas. This golden pins that GROWN output byte-for-byte — the deterministic
+        // machine proof of "no off-canvas clip" (the deep-fan legibility is BrewShot-reviewed at judge
+        // time). The grow fires ONLY on genuine overflow, so no non-overflowing diagram's canvasH moves.
+        FIXTURES.put("flowchart-convergent-fan",
+            "flowchart TD\n  A[A] -->|provisioning| S[Sink]\n  B[B] -->|invalidating| S\n"
+                + "  C[C] -->|transitioning| S\n  D[D] -->|reactivating| S\n"
+                + "  E[E] -->|deprovisioning| S\n");
         // A 3-actor sequence with ACTIVATION bars (M2): Client→Gateway opens Gateway's bar,
         // Gateway→Auth opens Auth's, Auth-->>Gateway closes Auth's, a NESTED self-call on Gateway
         // stacks an offset bar, and the final reply closes it — pinning the activation-rect geometry
