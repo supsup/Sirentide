@@ -335,7 +335,8 @@ public final class ErDiagramLayout {
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
-            double baseline = Math.max(asc + 2, loopLabelBaseline(py[li], boxH[li], selfLane[e]));
+            double baseline = Math.max(asc + 2,
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]));
             canvasH = Math.max(canvasH, baseline + desc + 2);
         }
 
@@ -633,15 +634,16 @@ public final class ErDiagramLayout {
         // Both cardinality combos, each at its own border attach, pointing OUTWARD (+x, away from table).
         shapes.addAll(cardinalityMarker(r.leftCard(), x1, ay, 1, 0, MARKER));
         shapes.addAll(cardinalityMarker(r.rightCard(), x1, by, 1, 0, MARKER));
-        // Optional `: label` — beside the table's OUTERMOST lane leg (never crossing an outer lane's
-        // vertical leg: every leg ends at x ≤ that leg, and the label starts past it), lane-STACKED
-        // upward from just above the lane-0 exit leg via {@link #loopLabelBaseline}. Above-the-legs
-        // keeps the label out of the TABLE-CENTER band, where a straight edge to a right neighbor
-        // (and that edge's own midpoint label) lives — at center height a loop label runs into the
-        // neighbor edge's label (caught by eye on the BrewShot capture). Attach-independent, so a
-        // short table clamping the attach nudges together can never collapse stacked labels. The
-        // canvas clamps are belts: layout already reserved the width and grew the height with the
-        // same baseline formula.
+        // Optional `: label` — each loop's label RIDES ITS OWN LANE (Charles-flagged gallery review):
+        // x-STAGGERED one lane-pitch per lane past the OUTERMOST vertical leg, so no two lanes share a
+        // detached column and every label's x-band echoes the depth of its own leg. Vertically the set
+        // SPREADS symmetrically about the table CENTRE (the middle of the nested runs) via
+        // {@link #loopLabelBaseline}: a lone loop's label lands at mid-height — clear of a right-
+        // neighbour edge's own centre-band midpoint label (the manages/uses overlap) — while stacked
+        // loops fan one line-slot apart. Every label sits at x ≥ the outermost leg, so it never crosses
+        // a lane line or a cardinality marker. The baseline is attach-INDEPENDENT (keyed off the table
+        // rect, not the clamped attach nudges) so a short table can never collapse two labels onto the
+        // same y. The canvas clamps are belts: layout reserved the staircase width and grew the height.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -654,19 +656,24 @@ public final class ErDiagramLayout {
                 w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
             }
-            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE + SELF_LOOP_LABEL_GAP;
+            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP + lane * SELF_LOOP_LANE;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
-            double baseline = Math.max(asc + 2, loopLabelBaseline(table.y(), table.h(), lane));
+            double baseline = Math.max(asc + 2, loopLabelBaseline(table.y(), table.h(), lane, laneCount));
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, textColor, math);
         }
     }
 
-    /// Lane k's label BASELINE: just above the lane-0 EXIT leg (0.3·h), one line-slot further up per
-    /// lane. Above-the-legs keeps every label clear of the table-center band (a crossing edge to a
-    /// right neighbor + its midpoint label live there), and the formula is deliberately independent
-    /// of the attach-point CLAMPS so stacked labels stay ≥ one line apart on ANY table height.
-    private static double loopLabelBaseline(double boxY, double boxH, int lane) {
-        return boxY + boxH * 0.3 - 3 - lane * (EDGE_LABEL_SIZE + 2);
+    /// Lane k's label BASELINE: the whole set of a table's self-loop labels rides a stack CENTRED on
+    /// the table's vertical middle (the centre of the symmetric nested runs), one line-slot ({@code
+    /// EDGE_LABEL_SIZE + 2}) per lane. A single loop (laneCount 1) therefore lands at mid-height —
+    /// below a right-neighbour edge's own centre-band midpoint label, not stacked into it — and stacked
+    /// loops stay ≥ one line apart. Deliberately independent of the attach-point CLAMPS so a SHORT
+    /// table clamping the attach nudges together can never collapse two labels onto the same y.
+    private static double loopLabelBaseline(double boxY, double boxH, int lane, int laneCount) {
+        double pitch = EDGE_LABEL_SIZE + 2;
+        double centre = boxY + boxH * 0.5 + EDGE_LABEL_SIZE * 0.35;   // text-centre on the table middle
+        return centre + (lane - (laneCount - 1) / 2.0) * pitch;
     }
 
     /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
@@ -691,7 +698,7 @@ public final class ErDiagramLayout {
             return 0;
         }
         return SELF_LOOP_OUT + (loops - 1) * SELF_LOOP_LANE
-            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + labelW : 0);
+            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + (loops - 1) * SELF_LOOP_LANE + labelW : 0);
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,

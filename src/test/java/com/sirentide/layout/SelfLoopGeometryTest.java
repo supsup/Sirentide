@@ -231,6 +231,152 @@ class SelfLoopGeometryTest {
         assertAllGeometryInside(laid);
     }
 
+    // -- 3c) each self-loop label RIDES ITS OWN LANE (Charles-flagged gallery review, plan 64cf1bae) --
+    // The five defect properties, each a receipt. On the OLD placement every loop label stacked into
+    // ONE detached column at the outermost leg's top-right: the ER two-label case OVERLAPPED, the
+    // marker-stack case collided with the marker column, and 3-nested-lane association was ambiguous.
+
+    /// PROPERTY 1 — per-lane x-band association: labels no longer share a column. Each loop label is
+    /// x-staggered one lane-pitch past the OUTERMOST vertical leg, so the labels' x-bands are STRICTLY
+    /// increasing by lane and every one starts past every leg. On the old code all three shared one
+    /// minX (the single outermost-lane column) → this fails RED there.
+    @Test
+    void eachSelfLoopLabelRidesItsOwnLaneXBandNotAColumn() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A --> A : first\n  A --> A : second\n  A --> A : third\n"));
+        List<Group> loops = edgeGroups(laid);   // group i == lane i (relations emit in order)
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        double outermostLeg = loops.stream()
+            .mapToDouble(g -> verticalLegX(g, EDGE)).max().orElseThrow();
+        double prevMinX = Double.NEGATIVE_INFINITY;
+        for (int k = 0; k < loops.size(); k++) {
+            double[] b = labelBbox(loops.get(k));   // positive control: throws if no glyphs
+            assertTrue(b[0] > outermostLeg + 1e-6,
+                "lane " + k + " label starts past the outermost leg (minX=" + b[0]
+                    + " > " + outermostLeg + ")");
+            assertTrue(b[0] > prevMinX + 1.0,
+                "lane " + k + " label rides its OWN x-band, not a shared column: minX " + b[0]
+                    + " must strictly exceed lane " + (k - 1) + "'s " + prevMinX);
+            prevMinX = b[0];
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 2 — pairwise label disjointness, the ER manages/uses RED: a self-loop label and a
+    /// right-NEIGHBOUR edge's own midpoint label used to physically overlap at the top-right. Centring
+    /// the loop label on the table's vertical middle drops it clear below the neighbour's centre-band
+    /// label. Both labels render (glyph boxes exist) — the disjointness is the load-bearing half.
+    @Test
+    void erSelfLoopLabelDoesNotCollideWithANeighborEdgeLabel() {
+        LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  EMPLOYEE ||--o{ EMPLOYEE : manages\n  EMPLOYEE ||--|| DESK : uses\n"));
+        List<Group> edges = edgeGroups(laid);   // group 0 = self-loop (manages), 1 = neighbour (uses)
+        assertEquals(2, edges.size(), "two relationships → two edge groups");
+        double[] manages = labelBbox(edges.get(0));
+        double[] uses = labelBbox(edges.get(1));
+        assertTrue(footprintsDisjoint(manages, uses),
+            "the self-loop label and the neighbour edge label overlap: "
+                + java.util.Arrays.toString(manages) + " vs " + java.util.Arrays.toString(uses));
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 3 — labels disjoint from every MARKER footprint. The marker-stack case (diamond + two
+    /// triangles stacked on A's border) with three labels: each label's glyph box clears every marker
+    /// footprint (marker lines + filled diamond paths), because the labels ride lanes OUT past the
+    /// markers (which cap at x1 + markerLength ≤ x1 + SELF_LOOP_OUT).
+    @Test
+    void selfLoopLabelsNeverTouchAMarkerFootprint() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A <|-- A : inherits\n  A <|-- A : also\n  A *-- A : owns\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        List<double[]> markers = new ArrayList<>();
+        for (Group g : loops) {
+            double[] mf = markerFootprint(g, MK);   // positive control: each marker rendered
+            assertTrue(mf != null, "each loop rendered its marker footprint");
+            markers.add(mf);
+        }
+        for (int k = 0; k < loops.size(); k++) {
+            double[] lab = labelBbox(loops.get(k));
+            for (int m = 0; m < markers.size(); m++) {
+                assertTrue(footprintsDisjoint(lab, markers.get(m)),
+                    "lane " + k + " label overlaps marker " + m + ": "
+                        + java.util.Arrays.toString(lab) + " vs "
+                        + java.util.Arrays.toString(markers.get(m)));
+            }
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 4 — labels disjoint from every LANE LINE and every BOX, with canvas GROWTH. A labeled
+    /// multi-lane loop WITH a right neighbour: every label glyph sits past all legs (min label x >
+    /// every lane-line x — legs all live at x ≤ the outermost leg), no glyph lands inside the loop's
+    /// own box or the neighbour box, and every coordinate stays inside the grown viewBox.
+    @Test
+    void selfLoopLabelsClearLaneLinesAndEveryBoxWithinTheGrownCanvas() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  class B\n  A --> A : alpha\n  A --> A : beta\n  A --> B\n"));
+        List<Group> loops = edgeGroups(laid);
+        List<Rect> boxes = boxRects(laid, SirentideRole.CLASS);
+        assertEquals(2, boxes.size(), "both class boxes placed");
+        List<double[]> labelPts = new ArrayList<>();
+        for (Group g : loops) {
+            g.members().stream().filter(s -> s instanceof GlyphRun)
+                .forEach(s -> pathPoints(((GlyphRun) s).pathD(), labelPts));
+        }
+        assertFalse(labelPts.isEmpty(), "loop labels rendered glyphs");   // positive control
+        // No label glyph falls inside ANY box (own node or the neighbour).
+        for (double[] p : labelPts) {
+            for (Rect b : boxes) {
+                assertFalse(inside(b, p[0], p[1]),
+                    "a loop label glyph at " + p[0] + "," + p[1] + " falls inside a box at x="
+                        + b.x() + ".." + (b.x() + b.width()));
+            }
+        }
+        // Every label glyph sits strictly past EVERY self-loop LANE line. A rectilinear loop's lane
+        // is bounded on the right by its VERTICAL leg (x1 == x2), and every horizontal leg ends at
+        // x ≤ that vertical leg — so the outermost vertical leg is the rightmost lane coordinate. (The
+        // A→B neighbour edge is a straight, non-vertical line and carries no lane leg, so it is
+        // correctly excluded.) Labels stagger beyond it, so none can cross or sit on a loop leg.
+        double maxLaneX = Double.NEGATIVE_INFINITY;
+        for (Group g : loops) {
+            for (Shape s : g.members()) {
+                if (s instanceof Line l && EDGE.equals(l.stroke()) && Math.abs(l.x1() - l.x2()) < 1e-6) {
+                    maxLaneX = Math.max(maxLaneX, l.x1());
+                }
+            }
+        }
+        double minLabelX = labelPts.stream().mapToDouble(p -> p[0]).min().orElseThrow();
+        assertTrue(minLabelX > maxLaneX + 1e-6,
+            "every loop label clears every self-loop lane leg: min label x " + minLabelX
+                + " must exceed the outermost vertical leg x " + maxLaneX);
+        assertAllGeometryInside(laid);   // the canvas grew to hold the offset staircase
+    }
+
+    /// The bounding box {minX, minY, maxX, maxY} of a loop group's LABEL glyphs (a positive control in
+    /// itself — throws if the group rendered no glyphs).
+    private static double[] labelBbox(Group g) {
+        List<double[]> pts = new ArrayList<>();
+        g.members().stream().filter(s -> s instanceof GlyphRun)
+            .forEach(s -> pathPoints(((GlyphRun) s).pathD(), pts));
+        assertFalse(pts.isEmpty(), "the loop group rendered label glyphs");
+        double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
+        for (double[] p : pts) {
+            minX = Math.min(minX, p[0]);
+            minY = Math.min(minY, p[1]);
+            maxX = Math.max(maxX, p[0]);
+            maxY = Math.max(maxY, p[1]);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    /// Two bboxes are DISJOINT when they share no interior (a shared edge at the touch tolerance is not
+    /// an overlap) — the negation of {@link #footprintsOverlap}.
+    private static boolean footprintsDisjoint(double[] a, double[] b) {
+        return !footprintsOverlap(a, b, 1e-6);
+    }
+
     /// Rejects any POSITIVE-LENGTH collinear intersection between edge-coloured legs of DIFFERENT
     /// groups (axis-aligned segments — the only leg shapes a rectilinear loop emits). Two legs on
     /// the same horizontal/vertical line (within 1px — legs are 1.5px-wide strokes) must not share

@@ -337,7 +337,8 @@ public final class ClassDiagramLayout {
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
-            double baseline = Math.max(asc + 2, loopLabelBaseline(py[li], boxH[li], selfLane[e]));
+            double baseline = Math.max(asc + 2,
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]));
             canvasH = Math.max(canvasH, baseline + desc + 2);
         }
 
@@ -654,15 +655,17 @@ public final class ClassDiagramLayout {
         emitEdgeLine(shapes, out, ay, out, by, dashed);
         emitEdgeLine(shapes, out, by, markTop ? x1 : x1 + markLen, by, dashed);
         shapes.addAll(mk);
-        // Optional `: label` — beside the node's OUTERMOST lane leg (never crossing an outer lane's
-        // vertical leg: every leg ends at x ≤ that leg, and the label starts past it), lane-STACKED
-        // upward from just above the lane-0 exit leg via {@link #loopLabelBaseline}. Above-the-legs
-        // keeps the label out of the BOX-CENTER band, where a straight edge to a right neighbor (and
-        // that edge's own midpoint label) lives — at center height a loop label reads struck-through
-        // by the crossing edge and runs into the neighbor edge's label (caught by eye on the BrewShot
-        // capture). Attach-independent, so a short box clamping the attach nudges together can never
-        // collapse stacked labels. The canvas clamps are belts: layout already reserved the width and
-        // grew the height with the same baseline formula.
+        // Optional `: label` — each loop's label RIDES ITS OWN LANE (Charles-flagged gallery review):
+        // x-STAGGERED one lane-pitch per lane past the OUTERMOST vertical leg, so no two lanes share a
+        // detached column and every label's x-band echoes the depth of its own leg. Vertically the set
+        // SPREADS symmetrically about the box CENTRE (the middle of the nested runs) via
+        // {@link #loopLabelBaseline}: a lone loop's label lands at mid-height — clear of a right-
+        // neighbour edge's own centre-band midpoint label (the ER manages/uses overlap) — while stacked
+        // loops fan one line-slot apart. Every label sits at x ≥ the outermost leg, so it never crosses
+        // a lane line or a border marker (markers cap at x1 + markerLength ≤ x1 + SELF_LOOP_OUT). The
+        // baseline is attach-INDEPENDENT (keyed off the box rect, not the clamped attach nudges) so a
+        // short box can never collapse two labels onto the same y. The canvas clamps are belts: layout
+        // reserved the staircase width and grew the height with the same baseline formula.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -675,19 +678,24 @@ public final class ClassDiagramLayout {
                 w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
             }
-            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE + SELF_LOOP_LABEL_GAP;
+            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP + lane * SELF_LOOP_LANE;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
-            double baseline = Math.max(asc + 2, loopLabelBaseline(box.y(), box.h(), lane));
+            double baseline = Math.max(asc + 2, loopLabelBaseline(box.y(), box.h(), lane, laneCount));
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
     }
 
-    /// Lane k's label BASELINE: just above the lane-0 EXIT leg (0.3·h), one line-slot further up per
-    /// lane. Above-the-legs keeps every label clear of the box-center band (a crossing edge to a
-    /// right neighbor + its midpoint label live there), and the formula is deliberately independent
-    /// of the attach-point CLAMPS so stacked labels stay ≥ one line apart on ANY box height.
-    private static double loopLabelBaseline(double boxY, double boxH, int lane) {
-        return boxY + boxH * 0.3 - 3 - lane * (EDGE_LABEL_SIZE + 2);
+    /// Lane k's label BASELINE: the whole set of a box's self-loop labels rides a stack CENTRED on the
+    /// box's vertical middle (the centre of the symmetric nested runs), one line-slot ({@code
+    /// EDGE_LABEL_SIZE + 2}) per lane. A single loop (laneCount 1) therefore lands at mid-height —
+    /// below a right-neighbour edge's own centre-band midpoint label, not stacked into it — and stacked
+    /// loops stay ≥ one line apart. Deliberately independent of the attach-point CLAMPS so a SHORT box
+    /// clamping the attach nudges together can never collapse two labels onto the same y.
+    private static double loopLabelBaseline(double boxY, double boxH, int lane, int laneCount) {
+        double pitch = EDGE_LABEL_SIZE + 2;
+        double centre = boxY + boxH * 0.5 + EDGE_LABEL_SIZE * 0.35;   // text-centre on the box middle
+        return centre + (lane - (laneCount - 1) / 2.0) * pitch;
     }
 
     /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
@@ -705,14 +713,15 @@ public final class ClassDiagramLayout {
     }
 
     /// Horizontal extent a node's self-loop lane adds past its right border: the outermost vertical
-    /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
-    /// self-loops. The row cursor reserves exactly this, and emitSelfLoop stays within it.
+    /// leg plus (when any of its loops is labeled) the label gap + the per-lane label STAIRCASE offset
+    /// + the widest label. Zero without self-loops. The row cursor reserves exactly this, and
+    /// emitSelfLoop stays within it (the widest label rides at most the outermost lane's stagger).
     private static double selfLaneExtent(int loops, double labelW) {
         if (loops == 0) {
             return 0;
         }
         return SELF_LOOP_OUT + (loops - 1) * SELF_LOOP_LANE
-            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + labelW : 0);
+            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + (loops - 1) * SELF_LOOP_LANE + labelW : 0);
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,
