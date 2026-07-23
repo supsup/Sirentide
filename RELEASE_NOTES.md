@@ -16,6 +16,23 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Flowchart convergent-edge label de-collision (plan ea20153b part 2)
+Two labeled edges reaching the **same target** from nearby sources used to place their labels at
+nearly the same spot, so their rendered glyph **boxes overprinted in both axes** into an
+unreadable mush — the plan's real info-loss case (two transitions into one state had to *drop* a
+label to stay legible). The label pass now de-collides on the **actual rendered box** (not the
+anchor point): keyed by shared target, when a label's box overlaps one already placed for that
+target it is **stacked one line (`EDGE_LABEL_SIZE * 1.5`) below**, greedily fanning further
+convergent labels down, and skipping any slot that would drop a label onto a **node box**. Labels
+to different targets — or already separated in x or y — are untouched, so every non-colliding
+diagram stays **byte-for-byte identical** (all pre-existing flowchart goldens unchanged; one new
+`flowchart-convergent` golden pins the stacked output). This revives the de-collision that was
+withdrawn on the "x-separated by construction" argument: that premise was **measured false**
+(guard `convergentLabelsArePairwiseXDisjoint` at confluence/flowchart-label-guard @ 277f3f1c —
+two convergent labels overprinted ~14px in x AND ~5px in y) and **retracted at sirentide/514**
+(anchor-x separation is not rendered-box-x separation). The ported guard now passes green,
+order-independently.
+
 ---
 
 ## 2026-07-22 — Release **0.4.0**
