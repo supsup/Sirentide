@@ -36,6 +36,18 @@ class FlowchartConvergentLabelGuardTest {
         "flowchart TD\nB[b] -->|exit| X[x]\nA[a] -->|resume| X\n";
     private static final String CONVERGENT_LR =
         "flowchart LR\nA[a] -->|resume| X[x]\nB[b] -->|exit| X\n";
+    // A convergent pair reaching the SAME target at the BOTTOM of a multi-row chart — the stack must
+    // stay inside the canvas even when the labels start low (sirentide/523 item 2a).
+    private static final String CONVERGENT_NEAR_BOTTOM =
+        "flowchart TD\nOpen[Open] --> Review[Review]\nReview -->|approved| Merged[Merged]\n"
+            + "Rework[Rework] -->|reinstated| Merged\n";
+    // A DEEP convergent fan — five labeled edges into one sink (a realistic error/dead state). Their
+    // wide labels overprint and chain-stack far enough that, BEFORE the canvas-height grow, the lowest
+    // stacked label fell OFF the bottom of the canvas (measured pre-fix: canvasH 168, lowest label
+    // bottom 178.3 — a ~10px clip = invisible = silent corruption, the v2 B1 mode). sirentide/523 2b.
+    private static final String CONVERGENT_FAN_5 =
+        "flowchart TD\nA[A] -->|provisioning| S[Sink]\nB[B] -->|invalidating| S\n"
+            + "C[C] -->|transitioning| S\nD[D] -->|reactivating| S\nE[E] -->|deprovisioning| S\n";
 
     @Test
     void convergentLabelsArePairwiseXDisjointTD() {
@@ -64,6 +76,35 @@ class FlowchartConvergentLabelGuardTest {
             for (double[] b : edgeLabelBboxes(svg)) {
                 assertInCanvas(b, canvas, "frame " + i);
             }
+        }
+    }
+
+    @Test
+    void aConvergentPairNearTheCanvasBottomStaysInCanvas() {
+        // sirentide/523 item 2a: a same-target pair low in the chart must not stack off the bottom.
+        assertEveryEdgeLabelInCanvas(CONVERGENT_NEAR_BOTTOM, 2);
+    }
+
+    @Test
+    void aDeepConvergentFanStaysInCanvas() {
+        // sirentide/523 item 2b: five convergent labels chain-stack deep enough to clip the bottom of
+        // the pre-fix canvas (measured: lowest label bottom 178.3 > canvasH 168). The canvas-height
+        // grow must contain every stacked label — no off-canvas clip. This is the machine channel for
+        // "not clipped off"; the grown-canvas visual legibility is BrewShot-reviewed at judge time.
+        assertEveryEdgeLabelInCanvas(CONVERGENT_FAN_5, 5);
+    }
+
+    /// Every edge label's box sits inside the declared canvas (no off-canvas clip from a deep stack),
+    /// and the expected number of edge labels is present (non-vacuous — a clip that DROPPED a label
+    /// would fail the count, not silently pass).
+    private static void assertEveryEdgeLabelInCanvas(String dsl, int expectedLabels) {
+        String svg = Sirentide.render(dsl);
+        double[] canvas = svgSize(svg);
+        List<double[]> labels = edgeLabelBboxes(svg);
+        assertEquals(expectedLabels, labels.size(),
+            "expected " + expectedLabels + " edge labels (non-vacuous); found " + labels.size());
+        for (double[] b : labels) {
+            assertInCanvas(b, canvas, "static");
         }
     }
 

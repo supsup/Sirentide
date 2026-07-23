@@ -262,6 +262,11 @@ public final class FlowchartLayout {
     static final class LabelDecollider {
         private final Map<Integer, List<double[]>> byTarget = new HashMap<>();
         private final List<double[]> nodeBoxes;   // [x0, y0, x1, y1]
+        // Lowest box-bottom of any label this pass actually MOVED (dy > 0). Natural (dy == 0) label
+        // extents are already inside canvasH by the pre-emit sizing, so only a STACKED label can push
+        // past the bottom (the sirentide/523 B1 mode); the caller grows canvasH to this. Stays
+        // NEGATIVE_INFINITY when nothing stacked, so a non-colliding diagram's canvasH is untouched.
+        private double stackedBottom = Double.NEGATIVE_INFINITY;
 
         LabelDecollider(List<double[]> obstacles) {
             this.nodeBoxes = new ArrayList<>(obstacles.size());
@@ -290,7 +295,17 @@ public final class FlowchartLayout {
                 }
             }
             placed.add(new double[] {box[0], box[1] + dy, box[2], box[3] + dy});
+            if (dy > 0) {
+                stackedBottom = Math.max(stackedBottom, box[3] + dy);
+            }
             return dy;
+        }
+
+        /// The lowest box-bottom of any STACKED label (dy > 0), or {@link Double#NEGATIVE_INFINITY} if
+        /// none stacked. The caller grows canvasH to `stackedBottom() + MARGIN` after the emit pass so a
+        /// deep convergent fan (sirentide/523) cannot push a stacked label off the bottom of the canvas.
+        double stackedBottom() {
+            return stackedBottom;
         }
 
         /// True iff {@code box} (shifted down by {@code dy}) overlaps any box in {@code others} in BOTH
@@ -999,6 +1014,17 @@ public final class FlowchartLayout {
             }
         }
 
+        // Contain a deep convergent fan (sirentide/523 B1 mode): a STACKED edge label (dy > 0) can be
+        // pushed PAST the pre-emit canvasH — nothing bounded the stack against canvas HEIGHT. ONLY when
+        // the lowest stacked label actually exceeds the canvas do we grow DOWN to fit it + MARGIN,
+        // mirroring the frame/rail grows above (a Math.max to a content bottom). Firing only on genuine
+        // overflow is deliberate: a diagram whose stacked labels already fit inside canvasH — and every
+        // non-stacking diagram (stackedBottom == NEGATIVE_INFINITY) — keeps its EXACT canvasH, so no
+        // non-overflowing diagram moves and every existing golden stays byte-identical.
+        if (labelDecollider.stackedBottom() > canvasH) {
+            canvasH = labelDecollider.stackedBottom() + MARGIN;
+        }
+
         return new LaidOut(canvasW, canvasH, shapes);
     }
 
@@ -1419,6 +1445,17 @@ public final class FlowchartLayout {
                     labelBaseline(measures[i], vy[i], boxH[i], wrapped[i] == null ? 1 : wrapped[i].length),
                     measures[i], wrapped[i], nodeFill[i], nodeText[i]);
             }
+        }
+
+        // Contain a deep convergent fan (sirentide/523 B1 mode): a STACKED edge label (dy > 0) can be
+        // pushed PAST the pre-emit canvasH — nothing bounded the stack against canvas HEIGHT. ONLY when
+        // the lowest stacked label actually exceeds the canvas do we grow DOWN to fit it + MARGIN,
+        // mirroring the frame/rail grows above (a Math.max to a content bottom). Firing only on genuine
+        // overflow is deliberate: a diagram whose stacked labels already fit inside canvasH — and every
+        // non-stacking diagram (stackedBottom == NEGATIVE_INFINITY) — keeps its EXACT canvasH, so no
+        // non-overflowing diagram moves and every existing golden stays byte-identical.
+        if (labelDecollider.stackedBottom() > canvasH) {
+            canvasH = labelDecollider.stackedBottom() + MARGIN;
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
