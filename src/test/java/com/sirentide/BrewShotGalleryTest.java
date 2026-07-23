@@ -112,6 +112,12 @@ class BrewShotGalleryTest {
             "flowchart LR\nclassDef deny fill:#fecaca\nclassDef ok fill:#bbf7d0\n"
                 + "A[Request] --> B{Authorized?}\nB -->|yes| C[Serve]\nB -->|no| D[Deny]\n"
                 + "class C ok\nclass D deny"),
+        new Case("flowchart-status-roles", "Flowchart semantic STATUS roles (built-in status-* classes)",
+            "flowchart TD\nNET[Untrusted network] --> FW{Firewall rule}\n"
+                + "FW -->|admitted| APP[App service]\nFW -->|refused| HOSTROOT[Host root]\n"
+                + "APP --> DATA[(User records)]\n"
+                + "class NET status-warn\nclass FW status-neutral\nclass APP status-ok\n"
+                + "class HOSTROOT status-danger\nclass DATA status-ok"),
         new Case("flowchart-caption", "Caption / note directive (annotation band below any diagram)",
             "%% caption: A merge lands only after both peers approve and no conflicts remain.\n"
                 + "flowchart LR\nA[Author] --> B[Review]\nB --> C[Merge]"),
