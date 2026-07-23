@@ -26,12 +26,17 @@ target it is **stacked one line (`EDGE_LABEL_SIZE * 1.5`) below**, greedily fann
 convergent labels down, and skipping any slot that would drop a label onto a **node box**. Labels
 to different targets — or already separated in x or y — are untouched, so every non-colliding
 diagram stays **byte-for-byte identical** (all pre-existing flowchart goldens unchanged; one new
-`flowchart-convergent` golden pins the stacked output). This revives the de-collision that was
-withdrawn on the "x-separated by construction" argument: that premise was **measured false**
-(guard `convergentLabelsArePairwiseXDisjoint` at confluence/flowchart-label-guard @ 277f3f1c —
-two convergent labels overprinted ~14px in x AND ~5px in y) and **retracted at sirentide/514**
-(anchor-x separation is not rendered-box-x separation). The ported guard now passes green,
-order-independently.
+`flowchart-convergent` golden pins the stacked output). A **deep** convergent fan (a realistic
+sink/error state) can stack far enough to reach the canvas edge, so when the lowest stacked label
+would fall past the bottom the canvas **grows in height to contain it + margin** — mirroring the
+existing frame/back-edge canvas grows, and firing **only on genuine overflow** so no
+non-overflowing diagram's canvas moves (review sir/523; one new `flowchart-convergent-fan` golden
+pins the grown output — five labels into one sink, canvas height 168 → 202, every label
+in-canvas). This revives the de-collision that was withdrawn on the "x-separated by construction"
+argument: that premise was **measured false** (guard `convergentLabelsArePairwiseXDisjoint` at
+confluence/flowchart-label-guard @ 277f3f1c — two convergent labels overprinted ~14px in x AND
+~5px in y) and **retracted at sirentide/514** (anchor-x separation is not rendered-box-x
+separation). The ported guard now passes green, order-independently.
 
 ---
 
