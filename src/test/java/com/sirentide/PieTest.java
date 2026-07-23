@@ -1,8 +1,11 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.Outcome;
+import com.sirentide.api.RenderResult;
 import com.sirentide.api.Sirentide;
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +77,52 @@ class PieTest {
     void renderIsDeterministic() {
         String dsl = "pie\n \"A\" : 3\n \"B\" : 7\n";
         assertEquals(Sirentide.render(dsl), Sirentide.render(dsl));
+    }
+
+    // -- thin-slice outside label DROP is named, not silent (plan 64cf1bae) --------------------------
+    // A very thin slice's outside leader-label has no horizontal room, so PieLayout drops the leader
+    // AND the text (a coloured wedge with no visible name). renderWithDiagnostics now NAMES the
+    // dropped slice on an OK-with-caveat and points at `pie legend` — WITHOUT touching the SVG bytes.
+    private static final String DROP_DSL =
+        "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74";
+
+    @Test
+    void aDroppedThinSliceLabelIsNamedOnAnOkCaveatSuggestingLegend() {
+        RenderResult r = Sirentide.renderWithDiagnostics(DROP_DSL);
+        assertEquals(Outcome.OK, r.diagnostics().outcome(), "the bake still SUCCEEDED (OK, with caveat)");
+        String msg = r.diagnostics().message();
+        assertTrue(msg.contains("right outside label that should clip"),
+            "the caveat NAMES the dropped slice: " + msg);
+        assertTrue(msg.contains("pie legend"), "the caveat points at `pie legend`: " + msg);
+        assertTrue(r.diagnostics().detail().contains("right outside label that should clip"),
+            "the detail crumb records the drop: " + r.diagnostics().detail());
+    }
+
+    @Test
+    void theDropCaveatDoesNotAlterTheSvgBytes() {
+        // (b) byte-identical SVG for the exact input — the caveat rides ALONGSIDE, never in the bake.
+        assertEquals(Sirentide.render(DROP_DSL), Sirentide.renderWithDiagnostics(DROP_DSL).svg(),
+            "renderWithDiagnostics(drop).svg() is byte-identical to render(drop)");
+    }
+
+    @Test
+    void legendModeShowsEveryLabelSoThereIsNoCaveat() {
+        // The answer the caveat suggests: `pie legend` puts EVERY label (including the would-be-dropped
+        // one) in the side key, so no label is lost and the outcome is a clean OK.
+        RenderResult r = Sirentide.renderWithDiagnostics("pie legend\n" + DROP_DSL.substring(4));
+        assertEquals(Outcome.OK, r.diagnostics().outcome(), "legend renders clean");
+        assertFalse(r.diagnostics().message().contains("dropped"),
+            "legend mode drops nothing, so no drop caveat: " + r.diagnostics().message());
+    }
+
+    @Test
+    void aComfortablePieCarriesNoDropCaveat() {
+        // Non-vacuity: an all-comfortable pie (every slice gets an inside label) must NOT trip the
+        // caveat — the signal fires only on an actual drop.
+        RenderResult r = Sirentide.renderWithDiagnostics(
+            "pie\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15");
+        assertEquals("Rendered successfully.", r.diagnostics().message(),
+            "a pie that drops nothing keeps the plain OK message");
     }
 
     @Test

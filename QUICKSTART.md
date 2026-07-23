@@ -50,7 +50,9 @@ String svg = Sirentide.render("""
 ```
 
 `legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
-colour. Swap the source and you get a different diagram from the same call. A **flowchart**:
+colour. A **very thin slice's** outside label may not fit and gets dropped (its wedge still draws;
+`renderWithDiagnostics` names the dropped label) — use `pie legend` to show every label in the side
+key. Swap the source and you get a different diagram from the same call. A **flowchart**:
 
 ```java
 String flow = Sirentide.render("""

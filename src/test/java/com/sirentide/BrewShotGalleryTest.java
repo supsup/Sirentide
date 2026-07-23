@@ -211,6 +211,11 @@ class BrewShotGalleryTest {
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
             "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74"),
+        // The LEGEND twin of the case above (plan 64cf1bae): the 1% slice's outside label has no room
+        // and is DROPPED on the bare pie (renderWithDiagnostics now NAMES it and suggests this mode);
+        // `pie legend` renders EVERY label — including the dropped one — in the left side key.
+        new Case("pie-thin-labels-legend", "Pie thin-slice labels — legend shows the dropped name",
+            "pie legend\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74"),
         new Case("timeline-endpoints", "Timeline endpoint labels (clamped)",
             "timeline\n\"very long left endpoint label\" : 0\n\"very long right endpoint label\" : 10"),
         new Case("flowchart-left-label", "Flowchart left-going edge label (clamped)",

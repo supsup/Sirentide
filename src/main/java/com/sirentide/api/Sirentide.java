@@ -202,10 +202,11 @@ public final class Sirentide {
             java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
             collectSeqs(laid.shapes(), seqs);
             if (seqs.size() <= 1) {
-                return new FramesResult(java.util.List.of(base), new Diagnostics(
-                    Outcome.OK, STAGE_EMIT,
-                    "Rendered successfully (single frame — the diagram has no play-through steps).",
-                    -1, ""));
+                Diagnostics caveat = pieDropCaveat(ir);
+                return new FramesResult(java.util.List.of(base), caveat != null ? caveat
+                    : new Diagnostics(Outcome.OK, STAGE_EMIT,
+                        "Rendered successfully (single frame — the diagram has no play-through steps).",
+                        -1, ""));
             }
 
             java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
@@ -220,8 +221,9 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            return new FramesResult(java.util.List.copyOf(frames), new Diagnostics(
-                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+            Diagnostics caveat = pieDropCaveat(ir);
+            return new FramesResult(java.util.List.copyOf(frames), caveat != null ? caveat
+                : new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -311,6 +313,15 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
+            // OK, with one honest caveat: a pie whose thin-slice OUTSIDE label had no room is drawn
+            // as a coloured wedge with NO visible name (PieLayout drops the leader+text rather than
+            // overrun the canvas). The SVG is unchanged — this only NAMES the dropped slice(s) and
+            // points at `pie legend`, which shows every label in a side key. Mirrors the caveat-on-OK
+            // shape: same Outcome.OK, a richer message/detail, no record change.
+            Diagnostics caveat = pieDropCaveat(ir);
+            if (caveat != null) {
+                return new RenderResult(svg, caveat);
+            }
             return new RenderResult(svg, new Diagnostics(
                 Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
         } catch (RuntimeException | StackOverflowError e) {
@@ -346,6 +357,27 @@ public final class Sirentide {
             "The renderer hit an unexpected failure during " + stage + ", so it degraded to the empty "
                 + "shell. This is a renderer bug, not a problem with your diagram — please report it.",
             -1, detail);
+    }
+
+    /// A SUCCESS-with-caveat diagnostic for a pie whose thin-slice OUTSIDE label(s) had no room and
+    /// were silently dropped (a coloured wedge with no visible name). Returns {@code null} for any
+    /// other diagram, or a pie that dropped nothing. The SVG itself is unchanged — this only turns a
+    /// silent geometry outcome into a named signal that points the author at `pie legend`. Outcome
+    /// stays {@link Outcome#OK} (the bake succeeded); only the message/detail carry the caveat.
+    private static Diagnostics pieDropCaveat(Diagram ir) {
+        if (!(ir instanceof Pie pie)) {
+            return null;
+        }
+        java.util.List<String> dropped = com.sirentide.layout.PieLayout.droppedOutsideLabels(pie);
+        if (dropped.isEmpty()) {
+            return null;
+        }
+        boolean one = dropped.size() == 1;
+        return new Diagnostics(Outcome.OK, STAGE_LAYOUT,
+            "Rendered, but " + dropped.size() + " thin-slice label" + (one ? "" : "s")
+                + " had no room outside the pie and " + (one ? "was" : "were") + " dropped ("
+                + String.join(", ", dropped) + "). Use `pie legend` to show every label in a side key.",
+            -1, "pie outside-label drop: " + String.join("; ", dropped));
     }
 
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY

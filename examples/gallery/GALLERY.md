@@ -596,6 +596,17 @@ pie
 
 ![Pie thin-slice outside labels (clipped)](pie-thin-labels.png)
 
+## Pie thin-slice labels — legend shows the dropped name
+
+```
+pie legend
+"quarter" : 25
+"right outside label that should clip" : 1
+"rest" : 74
+```
+
+![Pie thin-slice labels — legend shows the dropped name](pie-thin-labels-legend.png)
+
 ## Timeline endpoint labels (clamped)
 
 ```

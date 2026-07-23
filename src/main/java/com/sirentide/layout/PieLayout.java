@@ -181,8 +181,9 @@ public final class PieLayout {
             // edge, then ellipsize to fit. A thin slice with no horizontal room ellipsizes to EMPTY
             // (GEOMETRY-ESCAPE #1's honest outcome) — and then we DROP the leader too: a leader line
             // pointing at an empty label is dangling residue. The wedge itself already drew above.
-            double avail = right ? SIZE - o.lx() - CLAMP_MARGIN - CLAMP_MARGIN
-                                 : o.lx() - CLAMP_MARGIN - CLAMP_MARGIN;
+            // {@link #droppedOutsideLabels} REPLAYS this exact decision so renderWithDiagnostics can
+            // NAME the dropped slice(s) — keep the two in lockstep via {@link #outsideAvail}.
+            double avail = outsideAvail(o.lx(), o.mid());
             String label = FONT.ellipsize(o.label(), Math.max(0, avail), LABEL_SIZE);
             if (label.isBlank()) {
                 continue;   // no room for even an ellipsis → no label AND no leader (drop the residue)
@@ -190,6 +191,54 @@ public final class PieLayout {
             shapes.add(new Line(o.rimX(), o.rimY(), o.lx(), o.ly(), LEADER_STROKE, 1));
             placeOutside(shapes, label, o.lx(), o.ly(), right, textColor);
         }
+    }
+
+    /// The horizontal room an outside (thin-slice) label has between its leader-end anchor {@code lx}
+    /// and the near canvas edge — the amount {@link #emitSide} ellipsizes to. Depends ONLY on the
+    /// leader-end x (fixed by the slice mid-angle), never on the vertical spread, which is why
+    /// {@link #droppedOutsideLabels} can predict a drop without laying the whole diagram out.
+    private static double outsideAvail(double lx, double mid) {
+        return Math.cos(mid) >= 0 ? SIZE - lx - CLAMP_MARGIN - CLAMP_MARGIN
+                                  : lx - CLAMP_MARGIN - CLAMP_MARGIN;
+    }
+
+    /// The ORIGINAL labels of any thin (outside-leader) slices whose outside label ends up with no
+    /// horizontal room — ellipsized to blank and therefore DROPPED (its leader and text both
+    /// suppressed by {@link #emitSide}), so the rendered pie carries a coloured wedge with NO visible
+    /// name. Pure and deterministic: it replays the SAME per-slice geometry the layout uses (start at
+    /// 12 o'clock, sweep clockwise, thin = below {@link #THIN_SLICE}) and the SAME drop test
+    /// ({@link #outsideAvail} + the two-step ellipsize), so it never drifts from what actually drew.
+    /// Empty in legend mode (a legend key shows every label) and whenever nothing drops — the signal
+    /// {@code renderWithDiagnostics} turns into an author-facing caveat suggesting `pie legend`.
+    public static List<String> droppedOutsideLabels(Pie pie) {
+        List<String> dropped = new ArrayList<>();
+        if (pie.legend()) {
+            return dropped;
+        }
+        double total = pie.positiveTotal();
+        if (total <= 0) {
+            return dropped;
+        }
+        double cx = SIZE / 2;
+        double angle = -Math.PI / 2;
+        for (Slice s : pie.slices()) {
+            double value = s.value();
+            if (value <= 0) {
+                continue;
+            }
+            double sweep = (value / total) * 2 * Math.PI;
+            double mid = angle + sweep / 2;
+            angle += sweep;
+            if (sweep >= THIN_SLICE) {
+                continue;   // comfortable slice → centred inside label, never dropped
+            }
+            double lx = cx + (RADIUS + LEADER_LEN) * Math.cos(mid);
+            String outsideLabel = FONT.ellipsize(s.label(), MAX_OUTSIDE_LABEL, LABEL_SIZE);
+            if (FONT.ellipsize(outsideLabel, Math.max(0, outsideAvail(lx, mid)), LABEL_SIZE).isBlank()) {
+                dropped.add(s.label());
+            }
+        }
+        return dropped;
     }
 
     /// Emit a CENTERED inside label as glyph paths — centred on the point (contrast-filled).
