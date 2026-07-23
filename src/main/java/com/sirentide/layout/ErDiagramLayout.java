@@ -120,6 +120,14 @@ public final class ErDiagramLayout {
     // Gap between the outermost loop leg and its label's left edge.
     private static final double SELF_LOOP_LABEL_GAP = 4;
 
+    /// Minimum clear corridor between a self-loop label's text box and any NON-LOOP edge segment
+    /// crossing the label's x-band (eye-pass finding, plan 64cf1bae): half a label line-height plus a
+    /// small gap, so a loop label can never READ as a label ON a neighbour edge — misattribution,
+    /// worse than crowding, and invisible to every pure-disjointness receipt (non-overlap is not
+    /// unambiguity). The layout shifts the whole label fan to honour it ({@link SelfLoopFanShift});
+    /// the geometry oracle imports this SAME value so the corridor and its test can never drift apart.
+    static final double SELF_LOOP_EDGE_CLEARANCE = FONT.lineHeight(EDGE_LABEL_SIZE) / 2 + 4;
+
     /// One placed entity table: its grid rectangle plus the pre-measured header height and the
     /// (ellipsized) display lines, so the emit pass draws band/rows/text without re-measuring.
     /// `nameMeasure`/`rowMeasures` are the composite measures for lines carrying `$…$` math (null for
@@ -312,11 +320,92 @@ public final class ErDiagramLayout {
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
+        // -- neighbour-edge corridor avoidance (eye-pass finding, plan 64cf1bae; the class twin's
+        // exact mechanism). A straight (or bent) neighbour edge can cross the x-band where a table's
+        // self-loop label fan rides — the reserved lane extent bounds tables, not edges — and the
+        // labels then READ as labels ON that edge (the g4 er-self-loop shape: "manages" sat touching
+        // the uses edge). Every non-self route is computed ONCE here and handed to the emit pass, so
+        // the corridor the fan avoids can never drift from the edge actually drawn;
+        // {@link SelfLoopFanShift} then shifts each table's fan vertically (as a set, ordering
+        // preserved) until every label keeps {@link #SELF_LOOP_EDGE_CLEARANCE} from every crossing
+        // segment and table — or drops the fan below everything (the growth pass below grows the
+        // canvas), never threading it.
+        EdgeRouter.Route[] routes = new EdgeRouter.Route[er.relations().size()];
+        List<double[]> edgeSegments = new ArrayList<>();
+        List<double[]> boxRects = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            boxRects.add(new double[] {px[k], py[k], boxW[k], boxH[k]});
+        }
+        for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
+            Integer li = index.get(r.left());
+            Integer ri = index.get(r.right());
+            if (li == null || ri == null || li.equals(ri)) {
+                continue;
+            }
+            double[] lb = clipToRect(px[li] + boxW[li] / 2, py[li] + boxH[li] / 2,
+                boxW[li], boxH[li], px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2);
+            double[] rb = clipToRect(px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2,
+                boxW[ri], boxH[ri], px[li] + boxW[li] / 2, py[li] + boxH[li] / 2);
+            List<double[]> others = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                if (k != li && k != ri) {
+                    others.add(boxRects.get(k));
+                }
+            }
+            routes[e] = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+            if (routes[e].hasBend()) {
+                edgeSegments.add(new double[] {lb[0], lb[1], routes[e].wx(), routes[e].wy()});
+                edgeSegments.add(new double[] {routes[e].wx(), routes[e].wy(), rb[0], rb[1]});
+            } else {
+                edgeSegments.add(new double[] {lb[0], lb[1], rb[0], rb[1]});
+            }
+        }
+        // Each table's fan: the SAME label metrics + staircase x + baseline emitSelfLoop will use.
+        double[] fanShift = new double[n];
+        List<List<SelfLoopFanShift.FanLabel>> fans = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            fans.add(new ArrayList<>());
+        }
+        for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
+            Integer li = index.get(r.left());
+            if (li == null || !li.equals(index.get(r.right()))
+                || r.label() == null || r.label().isBlank()) {
+                continue;
+            }
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w;
+            double asc;
+            double desc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                w = m.width();
+                asc = m.ascent();
+                desc = m.descent();
+            } else {
+                w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+                desc = FONT.descent(EDGE_LABEL_SIZE);
+            }
+            double labelX = px[li] + boxW[li] + SELF_LOOP_OUT + (selfLoops[li] - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP + selfLane[e] * SELF_LOOP_LANE;
+            double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
+            fans.get(li).add(new SelfLoopFanShift.FanLabel(originX, originX + w, asc, desc,
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li])));
+        }
+        for (int i = 0; i < n; i++) {
+            if (!fans.get(i).isEmpty()) {
+                fanShift[i] = SelfLoopFanShift.solve(fans.get(i), edgeSegments, boxRects,
+                    SELF_LOOP_EDGE_CLEARANCE);
+            }
+        }
+
         // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
-        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE): the label
-        // baseline is stacked above the lane-0 exit leg (the same {@link #loopLabelBaseline} +
-        // ascent-floor formula emitSelfLoop uses), so grow the BOTTOM when a bottom-row label's
-        // descent reaches past the margin.
+        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE) or a
+        // corridor-shifted fan dropped below the bottom row: the label baseline (the same
+        // {@link #loopLabelBaseline} + fan-shift + ascent-floor formula emitSelfLoop uses) grows the
+        // BOTTOM when a label's descent reaches past the margin.
         for (int e = 0; e < er.relations().size(); e++) {
             ErRelation r = er.relations().get(e);
             Integer li = index.get(r.left());
@@ -336,7 +425,7 @@ public final class ErDiagramLayout {
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
             double baseline = Math.max(asc + 2,
-                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]));
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]) + fanShift[li]);
             canvasH = Math.max(canvasH, baseline + desc + 2);
         }
 
@@ -367,7 +456,7 @@ public final class ErDiagramLayout {
             }
             List<Shape> eg = new ArrayList<>();
             emitRelation(eg, placed, li, ri, r, er.textColor(), canvasW, canvasH, math,
-                selfLane[e], selfLoops[li]);
+                selfLane[e], selfLoops[li], routes[e], fanShift[li]);
             shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
@@ -526,10 +615,13 @@ public final class ErDiagramLayout {
     /// for a non-identifying `..` relation) + the crow-foot cardinality combo at EACH end + an optional
     /// `: label` at the edge midpoint. The edge line runs from each end's INNER-symbol attach point (the
     /// crow-foot convergence for a "many" end, the border for a "one" end) so the fork completes cleanly
-    /// to the border while the bars/circles sit on the line.
+    /// to the border while the bars/circles sit on the line. The `route` was computed ONCE in the layout
+    /// pre-pass — the SAME segments the label-fan corridor solver treated as obstacles, so avoided and
+    /// drawn geometry can never drift apart.
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
-                                     MathFragmentRenderer math, int lane, int laneCount) {
+                                     MathFragmentRenderer math, int lane, int laneCount,
+                                     EdgeRouter.Route route, double fanShift) {
         // Self-relation (`A ||--o{ A`): both endpoints are the same table. A zero-length straight edge
         // would put clipToRect at the table center for BOTH ends and draw the cardinality combos INSIDE
         // the table — and merely SKIPPING it erases a semantically-valid recursive relationship AND
@@ -537,29 +629,12 @@ public final class ErDiagramLayout {
         // self-LOOP off the right edge, with each end's cardinality combo on the loop, in this
         // relation's own lane (`lane` of the table's `laneCount`; layout reserved the extent).
         if (li == ri) {
-            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount);
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount,
+                fanShift);
             return;
         }
-        Placed left = placed[li];
-        Placed right = placed[ri];
-        double lcx = left.centerX();
-        double lcy = left.centerY();
-        double rcx = right.centerX();
-        double rcy = right.centerY();
-        double[] lb = clipToRect(lcx, lcy, left.w(), left.h(), rcx, rcy);    // left table border point
-        double[] rb = clipToRect(rcx, rcy, right.w(), right.h(), lcx, lcy);  // right table border point
-
-        // Route the border-to-border span around any third table (placement removes most crossings;
-        // this bends the residual hub-skip through a single waypoint).
-        List<double[]> others = new ArrayList<>();
-        for (int k = 0; k < placed.length; k++) {
-            if (k == li || k == ri) {
-                continue;
-            }
-            Placed p = placed[k];
-            others.add(new double[] {p.x(), p.y(), p.w(), p.h()});
-        }
-        EdgeRouter.Route route = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+        double[] lb = {route.sx(), route.sy()};   // left table border point
+        double[] rb = {route.ex(), route.ey()};   // right table border point
 
         // Each end's dir points from its border ALONG the edge — toward the waypoint when bent, else
         // toward the other table. The cardinality markers and inner attach follow that dir.
@@ -618,7 +693,7 @@ public final class ErDiagramLayout {
     /// reusing the SAME {@link #emitEdgeLine} primitive (honouring the identifying/dashed flag).
     private static void emitSelfLoop(List<Shape> shapes, Placed table, ErRelation r, String textColor,
                                      double canvasW, double canvasH, MathFragmentRenderer math,
-                                     int lane, int laneCount) {
+                                     int lane, int laneCount, double fanShift) {
         double x1 = table.x() + table.w();                  // right border
         double ay = loopExitY(table.y(), table.h(), lane);  // left-operand end attach (top)
         double by = loopReturnY(table.y(), table.h(), lane); // right-operand end attach (bottom)
@@ -643,7 +718,10 @@ public final class ErDiagramLayout {
         // loops fan one line-slot apart. Every label sits at x ≥ the outermost leg, so it never crosses
         // a lane line or a cardinality marker. The baseline is attach-INDEPENDENT (keyed off the table
         // rect, not the clamped attach nudges) so a short table can never collapse two labels onto the
-        // same y. The canvas clamps are belts: layout reserved the staircase width and grew the height.
+        // same y — and the whole fan rides the table's corridor `fanShift` (eye-pass finding: a
+        // neighbour edge crossing the fan's x-band must keep SELF_LOOP_EDGE_CLEARANCE from every
+        // label, or the labels read as labels ON that edge). The canvas clamps are belts: layout
+        // reserved the staircase width and grew the height.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -659,7 +737,8 @@ public final class ErDiagramLayout {
             double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
                 + SELF_LOOP_LABEL_GAP + lane * SELF_LOOP_LANE;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
-            double baseline = Math.max(asc + 2, loopLabelBaseline(table.y(), table.h(), lane, laneCount));
+            double baseline = Math.max(asc + 2,
+                loopLabelBaseline(table.y(), table.h(), lane, laneCount) + fanShift);
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, textColor, math);
         }
     }
@@ -691,8 +770,9 @@ public final class ErDiagramLayout {
     }
 
     /// Horizontal extent a table's self-loop lane adds past its right border: the outermost vertical
-    /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
-    /// self-loops. The row cursor reserves exactly this, and emitSelfLoop stays within it.
+    /// leg plus (when any of its loops is labeled) the label gap + the per-lane label STAIRCASE offset
+    /// + the widest label. Zero without self-loops. The row cursor reserves exactly this, and
+    /// emitSelfLoop stays within it (the widest label rides at most the outermost lane's stagger).
     private static double selfLaneExtent(int loops, double labelW) {
         if (loops == 0) {
             return 0;

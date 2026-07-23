@@ -353,6 +353,97 @@ class SelfLoopGeometryTest {
         assertAllGeometryInside(laid);   // the canvas grew to hold the offset staircase
     }
 
+    /// PROPERTY 6 — labels keep a CLEAR CORRIDOR from every NON-LOOP edge segment crossing their
+    /// x-band (eye-pass finding, plan 64cf1bae). The g5 gallery shape (class-self-loops-stacked,
+    /// Charles's named "optimize text placement" case) PASSED every disjointness receipt above while
+    /// FAILING the eye: the straight A→B neighbour edge threaded RIGHT BETWEEN "refines itself" and
+    /// "delegates", so both read as labels ON the A→B edge — misattribution, worse than crowding.
+    /// Non-overlap is not unambiguity. The pin: for every self-loop label, every non-loop edge
+    /// segment crossing the label's x-band keeps at least SELF_LOOP_EDGE_CLEARANCE of vertical gap
+    /// from the label's glyph box (the layouts shift the whole fan — ordering preserved — to honour
+    /// it; the clearance constant is IMPORTED from the layout so oracle and corridor cannot drift).
+    /// The ER twin (the g4 er-self-loop shape) is held to the same corridor: "manages" used to sit
+    /// touching the uses edge. RED on the pre-fix placement for both fixtures.
+    @Test
+    void selfLoopLabelFanKeepsClearOfNeighbourEdgeCorridors() {
+        // The exact g5 fixture.
+        LaidOut classLaid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  class B\n  A <|-- A : refines itself\n"
+                + "  A --> A : delegates\n  A --> B\n"));
+        assertLoopLabelsClearNonLoopEdges(classLaid, EDGE,
+            ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE);
+        assertAllGeometryInside(classLaid);
+        // The ER twin (the g4 shape).
+        LaidOut erLaid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  EMPLOYEE ||--o{ EMPLOYEE : manages\n  EMPLOYEE ||--|| DESK : uses\n"));
+        assertLoopLabelsClearNonLoopEdges(erLaid, ER_EDGE,
+            ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE);
+        assertAllGeometryInside(erLaid);
+    }
+
+    /// The property-6 oracle: every SELF-LOOP label's glyph box keeps ≥ `clearance` of vertical gap
+    /// from the y-interval of every NON-LOOP edge segment (dash segments included; a bent route's
+    /// legs are each a segment) over the part of that segment inside the label's x-band. Segments
+    /// outside the band constrain nothing (the corridor is about what passes THROUGH the label's
+    /// column). Carries its own positive control: at least one non-loop segment must actually cross
+    /// some label's x-band — the fan shifts vertically, so the crossing survives the fix and the
+    /// clearance assertions can never go vacuously green.
+    private static void assertLoopLabelsClearNonLoopEdges(LaidOut laid, String edgeStroke,
+                                                          double clearance) {
+        List<Group> edges = edgeGroups(laid);
+        List<Group> loops = edges.stream().filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        List<Group> nonLoops = edges.stream().filter(g -> !isSelfLoopGroup(g)).toList();
+        assertFalse(loops.isEmpty(), "the fixture renders at least one self-loop");
+        assertFalse(nonLoops.isEmpty(), "the fixture renders a non-loop neighbour edge");
+        boolean crossed = false;
+        for (Group loop : loops) {
+            double[] lab = labelBbox(loop);   // positive control: the loop label rendered glyphs
+            for (Group other : nonLoops) {
+                for (Shape s : other.members()) {
+                    if (!(s instanceof Line l) || !edgeStroke.equals(l.stroke())) {
+                        continue;   // markers/labels are covered by properties 2-4; this pins EDGES
+                    }
+                    double xLo = Math.max(Math.min(l.x1(), l.x2()), lab[0]);
+                    double xHi = Math.min(Math.max(l.x1(), l.x2()), lab[2]);
+                    if (xHi < xLo) {
+                        continue;   // this segment never enters the label's x-band
+                    }
+                    crossed = true;
+                    double[] yr = segmentYRange(l, xLo, xHi);
+                    double gap = Math.max(yr[0] - lab[3], lab[1] - yr[1]);
+                    assertTrue(gap >= clearance - 1e-6,
+                        "a non-loop edge segment passes within " + gap + "px (< " + clearance
+                            + ") of a self-loop label over x=[" + xLo + ".." + xHi + "]: label "
+                            + java.util.Arrays.toString(lab) + " vs segment (" + l.x1() + ","
+                            + l.y1() + ")-(" + l.x2() + "," + l.y2() + ")");
+                }
+            }
+        }
+        assertTrue(crossed,
+            "positive control: some non-loop segment crosses a label's x-band in this fixture");
+    }
+
+    /// The y-range a segment sweeps over `[xLo, xHi]` (a sub-range of its x-span). A vertical
+    /// segment contributes its full y-span.
+    private static double[] segmentYRange(Line l, double xLo, double xHi) {
+        double dx = l.x2() - l.x1();
+        if (Math.abs(dx) < 1e-9) {
+            return new double[] {Math.min(l.y1(), l.y2()), Math.max(l.y1(), l.y2())};
+        }
+        double ya = l.y1() + (xLo - l.x1()) / dx * (l.y2() - l.y1());
+        double yb = l.y1() + (xHi - l.x1()) / dx * (l.y2() - l.y1());
+        return new double[] {Math.min(ya, yb), Math.max(ya, yb)};
+    }
+
+    /// A self-loop's edge group id is `left + "-" + right` with left == right (`A-A`,
+    /// `EMPLOYEE-EMPLOYEE`) — the two halves around the middle dash are equal.
+    private static boolean isSelfLoopGroup(Group g) {
+        String id = g.anchor().id();
+        int h = id.length() / 2;
+        return id.length() % 2 == 1 && id.charAt(h) == '-'
+            && id.substring(0, h).equals(id.substring(h + 1));
+    }
+
     /// The bounding box {minX, minY, maxX, maxY} of a loop group's LABEL glyphs (a positive control in
     /// itself — throws if the group rendered no glyphs).
     private static double[] labelBbox(Group g) {

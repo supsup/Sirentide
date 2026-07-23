@@ -108,6 +108,14 @@ public final class ClassDiagramLayout {
     // Gap between the outermost loop leg and its label's left edge.
     private static final double SELF_LOOP_LABEL_GAP = 4;
 
+    /// Minimum clear corridor between a self-loop label's text box and any NON-LOOP edge segment
+    /// crossing the label's x-band (eye-pass finding, plan 64cf1bae): half a label line-height plus a
+    /// small gap, so a loop label can never READ as a label ON a neighbour edge — misattribution,
+    /// worse than crowding, and invisible to every pure-disjointness receipt (non-overlap is not
+    /// unambiguity). The layout shifts the whole label fan to honour it ({@link SelfLoopFanShift});
+    /// the geometry oracle imports this SAME value so the corridor and its test can never drift apart.
+    static final double SELF_LOOP_EDGE_CLEARANCE = FONT.lineHeight(EDGE_LABEL_SIZE) / 2 + 4;
+
     /// One placed class box: its grid rectangle plus the pre-measured compartment heights and the
     /// (ellipsized) display lines, so the emit pass draws bands/dividers/text without re-measuring.
     /// `nameMeasure`/`attrMeasures`/`methodMeasures` are the composite measures for lines carrying
@@ -314,11 +322,91 @@ public final class ClassDiagramLayout {
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
+        // -- neighbour-edge corridor avoidance (eye-pass finding, plan 64cf1bae). A straight (or
+        // bent) neighbour edge can cross the x-band where a node's self-loop label fan rides — the
+        // reserved lane extent bounds boxes, not edges — and the labels then READ as labels ON that
+        // edge (g5, class-self-loops-stacked: A→B threaded between "refines itself" and "delegates").
+        // Every non-self route is computed ONCE here and handed to the emit pass, so the corridor the
+        // fan avoids can never drift from the edge actually drawn; {@link SelfLoopFanShift} then
+        // shifts each node's fan vertically (as a set, ordering preserved) until every label keeps
+        // {@link #SELF_LOOP_EDGE_CLEARANCE} from every crossing segment and box — or drops the fan
+        // below everything (the growth pass below grows the canvas), never threading it.
+        EdgeRouter.Route[] routes = new EdgeRouter.Route[cd.relations().size()];
+        List<double[]> edgeSegments = new ArrayList<>();
+        List<double[]> boxRects = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            boxRects.add(new double[] {px[k], py[k], boxW[k], boxH[k]});
+        }
+        for (int e = 0; e < cd.relations().size(); e++) {
+            ClassRelation r = cd.relations().get(e);
+            Integer li = index.get(r.left());
+            Integer ri = index.get(r.right());
+            if (li == null || ri == null || li.equals(ri)) {
+                continue;
+            }
+            double[] lb = clipToRect(px[li] + boxW[li] / 2, py[li] + boxH[li] / 2,
+                boxW[li], boxH[li], px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2);
+            double[] rb = clipToRect(px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2,
+                boxW[ri], boxH[ri], px[li] + boxW[li] / 2, py[li] + boxH[li] / 2);
+            List<double[]> others = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                if (k != li && k != ri) {
+                    others.add(boxRects.get(k));
+                }
+            }
+            routes[e] = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+            if (routes[e].hasBend()) {
+                edgeSegments.add(new double[] {lb[0], lb[1], routes[e].wx(), routes[e].wy()});
+                edgeSegments.add(new double[] {routes[e].wx(), routes[e].wy(), rb[0], rb[1]});
+            } else {
+                edgeSegments.add(new double[] {lb[0], lb[1], rb[0], rb[1]});
+            }
+        }
+        // Each node's fan: the SAME label metrics + staircase x + baseline emitSelfLoop will use.
+        double[] fanShift = new double[n];
+        List<List<SelfLoopFanShift.FanLabel>> fans = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            fans.add(new ArrayList<>());
+        }
+        for (int e = 0; e < cd.relations().size(); e++) {
+            ClassRelation r = cd.relations().get(e);
+            Integer li = index.get(r.left());
+            if (li == null || !li.equals(index.get(r.right()))
+                || r.label() == null || r.label().isBlank()) {
+                continue;
+            }
+            String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w;
+            double asc;
+            double desc;
+            if (math != null && MathLabel.hasMath(lbl)) {
+                MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                w = m.width();
+                asc = m.ascent();
+                desc = m.descent();
+            } else {
+                w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
+                asc = FONT.ascent(EDGE_LABEL_SIZE);
+                desc = FONT.descent(EDGE_LABEL_SIZE);
+            }
+            double labelX = px[li] + boxW[li] + SELF_LOOP_OUT + (selfLoops[li] - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP + selfLane[e] * SELF_LOOP_LANE;
+            double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
+            fans.get(li).add(new SelfLoopFanShift.FanLabel(originX, originX + w, asc, desc,
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li])));
+        }
+        for (int i = 0; i < n; i++) {
+            if (!fans.get(i).isEmpty()) {
+                fanShift[i] = SelfLoopFanShift.solve(fans.get(i), edgeSegments, boxRects,
+                    SELF_LOOP_EDGE_CLEARANCE);
+            }
+        }
+
         // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
-        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE): the label
-        // baseline is stacked above the lane-0 exit leg (the same {@link #loopLabelBaseline} +
-        // ascent-floor formula emitSelfLoop uses), so grow the BOTTOM when a bottom-row label's
-        // descent reaches past the margin.
+        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE) or a
+        // corridor-shifted fan dropped below the bottom row: the label baseline (the same
+        // {@link #loopLabelBaseline} + fan-shift + ascent-floor formula emitSelfLoop uses) grows the
+        // BOTTOM when a label's descent reaches past the margin.
         for (int e = 0; e < cd.relations().size(); e++) {
             ClassRelation r = cd.relations().get(e);
             Integer li = index.get(r.left());
@@ -338,7 +426,7 @@ public final class ClassDiagramLayout {
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
             double baseline = Math.max(asc + 2,
-                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]));
+                loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li]) + fanShift[li]);
             canvasH = Math.max(canvasH, baseline + desc + 2);
         }
 
@@ -370,7 +458,7 @@ public final class ClassDiagramLayout {
             }
             List<Shape> eg = new ArrayList<>();
             emitRelation(eg, placed, li, ri, r, cd.textColor(), canvasW, canvasH, math,
-                selfLane[e], selfLoops[li]);
+                selfLane[e], selfLoops[li], routes[e], fanShift[li]);
             shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
@@ -538,40 +626,26 @@ public final class ClassDiagramLayout {
     }
 
     /// Routes one relationship between two placed boxes: the edge line between box borders (dashed for a
-    /// dependency) + its UML marker at the marked end + an optional `: label` at the edge midpoint. When
-    /// the straight edge would cross a THIRD box, {@link EdgeRouter} bends it around via one waypoint
-    /// (the marker then points along the first/last leg), so an edge never runs over a non-endpoint box.
+    /// dependency) + its UML marker at the marked end + an optional `: label` at the edge midpoint. The
+    /// `route` was computed ONCE in the layout pre-pass ({@link EdgeRouter} bends around a third box via
+    /// one waypoint; the marker then points along the first/last leg) — the SAME segments the label-fan
+    /// corridor solver treated as obstacles, so avoided and drawn geometry can never drift apart.
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri,
                                      ClassRelation r, String textColor, double canvasW, double canvasH,
-                                     MathFragmentRenderer math, int lane, int laneCount) {
+                                     MathFragmentRenderer math, int lane, int laneCount,
+                                     EdgeRouter.Route route, double fanShift) {
         // Self-relation (`A <|-- A`): both endpoints are the same box. A zero-length straight edge would
         // put clipToRect at the box center for BOTH ends and draw the marker INSIDE the box — and merely
         // SKIPPING it erases a semantically-valid recursive relationship AND leaves a phantom empty edge
         // group owning an anchor. Instead route a deterministic on-canvas self-LOOP off the right edge,
         // in this relation's own lane (`lane` of the node's `laneCount`; layout reserved the extent).
         if (li == ri) {
-            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount);
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount,
+                fanShift);
             return;
         }
-        Placed left = placed[li];
-        Placed right = placed[ri];
-        double lcx = left.centerX();
-        double lcy = left.centerY();
-        double rcx = right.centerX();
-        double rcy = right.centerY();
-        double[] lb = clipToRect(lcx, lcy, left.w(), left.h(), rcx, rcy);    // left box border point
-        double[] rb = clipToRect(rcx, rcy, right.w(), right.h(), lcx, lcy);  // right box border point
-
-        // Route around any third box (placement removes most crossings; this bends the residual).
-        List<double[]> others = new ArrayList<>();
-        for (int k = 0; k < placed.length; k++) {
-            if (k == li || k == ri) {
-                continue;
-            }
-            Placed p = placed[k];
-            others.add(new double[] {p.x(), p.y(), p.w(), p.h()});
-        }
-        EdgeRouter.Route route = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+        double[] lb = {route.sx(), route.sy()};   // left box border point
+        double[] rb = {route.ex(), route.ey()};   // right box border point
 
         // The first onward point from the left border and the previous point into the right border are
         // the waypoint when bent, else the opposite border — so the marker points ALONG the leg it caps.
@@ -632,12 +706,13 @@ public final class ClassDiagramLayout {
     /// can escape the viewBox or run through a neighbor. The UML {@link #marker} honours the kind's
     /// {@link RelationKind#markerAtLeft()} operand exactly like a straight edge: the LEFT operand maps
     /// to the TOP attach (mirroring the ER twin's left-cardinality-at-top), the RIGHT to the BOTTOM —
-    /// tip on the border, pointing outward. The label rides beside the node's OUTERMOST lane leg,
-    /// stacked upward above the lane-0 exit leg ({@link #loopLabelBaseline}), baseline floored below
-    /// the top edge (tall math: layout grew the bottom with the same formula).
+    /// tip on the border, pointing outward. The label rides beside the node's OUTERMOST lane leg on
+    /// its own staircase step ({@link #loopLabelBaseline}), shifted by the node's corridor `fanShift`
+    /// (layout's {@link SelfLoopFanShift} solve — the whole fan clears every neighbour-edge corridor),
+    /// baseline floored below the top edge (tall math: layout grew the bottom with the same formula).
     private static void emitSelfLoop(List<Shape> shapes, Placed box, ClassRelation r, String textColor,
                                      double canvasW, double canvasH, MathFragmentRenderer math,
-                                     int lane, int laneCount) {
+                                     int lane, int laneCount, double fanShift) {
         double x1 = box.x() + box.w();                    // right border
         double ay = loopExitY(box.y(), box.h(), lane);    // top attach (LEFT operand's end)
         double by = loopReturnY(box.y(), box.h(), lane);  // bottom attach (RIGHT operand's end)
@@ -664,8 +739,11 @@ public final class ClassDiagramLayout {
         // loops fan one line-slot apart. Every label sits at x ≥ the outermost leg, so it never crosses
         // a lane line or a border marker (markers cap at x1 + markerLength ≤ x1 + SELF_LOOP_OUT). The
         // baseline is attach-INDEPENDENT (keyed off the box rect, not the clamped attach nudges) so a
-        // short box can never collapse two labels onto the same y. The canvas clamps are belts: layout
-        // reserved the staircase width and grew the height with the same baseline formula.
+        // short box can never collapse two labels onto the same y — and the whole fan rides the node's
+        // corridor `fanShift` (eye-pass finding: a neighbour edge crossing the fan's x-band must keep
+        // SELF_LOOP_EDGE_CLEARANCE from every label, or the labels read as labels ON that edge). The
+        // canvas clamps are belts: layout reserved the staircase width and grew the height with the
+        // same baseline formula.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -681,7 +759,8 @@ public final class ClassDiagramLayout {
             double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
                 + SELF_LOOP_LABEL_GAP + lane * SELF_LOOP_LANE;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
-            double baseline = Math.max(asc + 2, loopLabelBaseline(box.y(), box.h(), lane, laneCount));
+            double baseline = Math.max(asc + 2,
+                loopLabelBaseline(box.y(), box.h(), lane, laneCount) + fanShift);
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
     }
