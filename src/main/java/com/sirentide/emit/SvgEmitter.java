@@ -332,11 +332,21 @@ public final class SvgEmitter {
     /// Deterministic, locale-independent number formatting: 3 decimal places, integer when
     /// whole. Byte-identical bakes depend on this (docs/DESIGN.md §6).
     private static String fmt(double v) {
-        // Last line of defense against a non-finite geometry leak: S4 rejects NaN/Infinity at
-        // parse, but if one still reaches the emitter, clamp to 0 rather than emit the literal
-        // "Infinity"/"NaN" (which is not valid SVG numeric syntax and breaks the bake silently).
+        // SIR-04 finite-geometry contract — the emit-time WAIST. Every emitted number in every
+        // diagram type passes through here, so this is the narrowest single choke point at which a
+        // non-finite COORDINATE can be caught. Parse-side S4 rejects literal NaN/Infinity tokens, but
+        // a legal FINITE input can still OVERFLOW an intermediate (an axis span, a running sum) to
+        // NaN/Infinity downstream — S4 cannot see that. The old behavior CLAMPED such a value to 0 and
+        // emitted a wrong-but-bounded diagram as SUCCESS (a silent blank/misplacement). That violates
+        // DESIGN §6 ("loud, never silent"): REFUSE it instead. The throw is caught by the bake guard
+        // (Sirentide.render's catch) and degrades to the inert shell, classified RENDER_BUG by
+        // renderWithDiagnostics — the same loud-degrade path a genuine renderer defect takes. The
+        // message deliberately omits "MAX_OUTPUT_BYTES" so it never masquerades as the cap degrade.
         if (!Double.isFinite(v)) {
-            v = 0.0;
+            throw new IllegalStateException(
+                "non-finite geometry (" + v + ") reached the emitter: a finite input overflowed an "
+                    + "intermediate to NaN/Infinity. Refusing to silently emit a zero-clamped diagram "
+                    + "(SIR-04; DESIGN §6 loud-never-silent).");
         }
         double r = Math.round(v * 1000.0) / 1000.0;
         return r == Math.rint(r)
