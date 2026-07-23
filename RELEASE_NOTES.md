@@ -12,8 +12,9 @@ The version bumped to 0.5.0 immediately after the 0.4.0 cut, because post-releas
 public CLI behavior — a jar built from post-0.4.0 main must never be mistakable for the
 immutable, already-vendored `sirentide-0.4.0.jar`. In so far: the `sirentide render <file.md>`
 render-check verb (plan 6eb098d6 slice A) with bake-parity fence extraction, the 0/1/2
-exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic `-o` writes
-(review sirentide/471). Notes finalize at cut time.
+exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only `-o` writes —
+fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
+path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
 ---
 

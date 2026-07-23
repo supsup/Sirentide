@@ -88,13 +88,16 @@ alias it:
 
 ```bash
 ./gradlew jar                # produces build/libs/sirentide-0.5.0.jar (Main-Class is set)
-alias sirentide='java -jar "$PWD/build/libs/sirentide-0.5.0.jar"'
+# The double quotes are load-bearing: $PWD expands NOW, while you are still in the checkout,
+# baking the absolute jar path into the alias — so it keeps working after you cd anywhere else.
+# (Single-quoting the alias would defer $PWD to each invocation and break outside the checkout.)
+alias sirentide="java -jar '$PWD/build/libs/sirentide-0.5.0.jar'"
 ```
 
 ```bash
 echo 'pie
   "A" : 60
-  "B" : 40' | java -jar build/libs/sirentide-0.5.0.jar
+  "B" : 40' | sirentide
 ```
 
 Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
@@ -122,10 +125,13 @@ The exit code tells you what `/docs` would do with the page:
   the bake leaves those literal), unreadable input, or an unwritable `-o` destination. Nothing
   is written.
 
-`-o` writes are **atomic**: the SVG is fully written to a temp sibling and then moved onto the
-destination, so a failed run never truncates or corrupts an existing file (a destination that is
-a directory is refused; a symlink destination is replaced as a path entry, not written through;
-`-o` naming the input file is a safe full replace). Fence **extraction is scanner-parity** with
+`-o` writes are **atomic — unconditionally**: the SVG is fully written to a temp sibling and then
+*atomically* moved onto the destination, so a failed run never truncates or corrupts an existing
+file. On a filesystem that cannot replace atomically, the CLI **refuses with exit 2** and leaves
+the destination untouched — there is no non-atomic fallback. (A destination that is a directory
+is refused; a symlink destination — even one pointing at a directory — is replaced as a path
+entry, not written through, its target untouched; `-o` naming the input file is a safe full
+replace.) Fence **extraction is scanner-parity** with
 the `/docs` bake's `SirentideDiagramConverter` (the Stafficy-repo pre-flexmark pass) — see the
 contract note on `FenceExtractor` and its cross-repository fixture test.
 

@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -291,6 +292,93 @@ class MainTest {
         assertEquals(0, c.exitCode);
         assertEquals(Sirentide.render("pie\n  \"A\" : 1"), Files.readString(md, StandardCharsets.UTF_8),
             "the input file is cleanly replaced by the complete SVG, never a partial interleave");
+        assertNoTempLitter(tmp);
+    }
+
+    // --- atomic-only move: no non-atomic fallback (review sirentide/490 B1) ---------------------
+
+    @Test
+    void anAtomicMoveIncapableFilesystemFailsClosedLeavingTheDestinationByteIdentical()
+        throws IOException {
+        // The mover seam forces the AtomicMoveNotSupportedException a POSIX temp dir can never
+        // produce. The old code retried with a plain REPLACE_EXISTING move, whose Java contract
+        // leaves the destination UNDEFINED on an I/O failure — silently voiding the documented
+        // unconditional never-corrupts promise. The fixed contract: refuse loudly (exit 2), leave
+        // the existing destination byte-identical, delete the completed temp sibling.
+        Path dest = tmp.resolve("out.svg");
+        String sentinel = "<svg>the previous good artifact</svg>";
+        Files.writeString(dest, sentinel, StandardCharsets.UTF_8);
+        ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        int code = Main.writeOutput("<svg>new render that must NOT land non-atomically</svg>",
+            dest.toString(),
+            new PrintStream(outBuf, true, StandardCharsets.UTF_8),
+            new PrintStream(errBuf, true, StandardCharsets.UTF_8),
+            (completedTmp, d) -> {
+                throw new AtomicMoveNotSupportedException(completedTmp.toString(), d.toString(),
+                    "test filesystem cannot atomic-move");
+            });
+        assertEquals(2, code, "no atomic replace available must be a LOUD failure, not a fallback");
+        String err = errBuf.toString(StandardCharsets.UTF_8);
+        assertTrue(err.contains("refusing a non-atomic overwrite"), "stderr: " + err);
+        assertEquals("", outBuf.toString(StandardCharsets.UTF_8));
+        assertEquals(sentinel, Files.readString(dest, StandardCharsets.UTF_8),
+            "the existing destination must remain byte-identical");
+        assertNoTempLitter(tmp);
+    }
+
+    @Test
+    void theProductionMoverAtomicallyReplacesAnExistingDestination() throws IOException {
+        // Pins Main.ATOMIC_REPLACE itself (the seam's production value): a completed sibling
+        // lands over an existing destination and the source entry is gone.
+        Path src = Files.writeString(tmp.resolve("completed.tmp"), "new", StandardCharsets.UTF_8);
+        Path dest = Files.writeString(tmp.resolve("dest.svg"), "old", StandardCharsets.UTF_8);
+        Main.ATOMIC_REPLACE.move(src, dest);
+        assertEquals("new", Files.readString(dest, StandardCharsets.UTF_8));
+        assertFalse(Files.exists(src), "the moved-from sibling must be gone");
+    }
+
+    // --- symlink destination policy: replaced as a path entry (review sirentide/490 B1 edge) ----
+
+    private Path symlinkOrSkip(Path link, Path target) {
+        try {
+            return Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "filesystem does not support symlinks: " + e);
+            throw new AssertionError("unreachable");
+        }
+    }
+
+    @Test
+    void minusODestinationSymlinkToADirectoryIsReplacedAsAPathEntryNotRefused() throws IOException {
+        // Files.isDirectory follows links by default, so the old check refused a symlink-to-dir
+        // even though the documented policy is "a symlink destination is replaced as a path
+        // entry". The check is now NOFOLLOW_LINKS: the policy keys on the entry, not its target.
+        Path md = writeMd("doc.md", "```sirentide\npie\n  \"A\" : 1\n```\n");
+        Path dir = Files.createDirectory(tmp.resolve("real-dir"));
+        Files.writeString(dir.resolve("marker.txt"), "survives", StandardCharsets.UTF_8);
+        Path link = symlinkOrSkip(tmp.resolve("link.svg"), dir);
+        Captured c = run("render", md.toString(), "-o", link.toString());
+        assertEquals(0, c.exitCode, "stderr: " + c.err);
+        assertFalse(Files.isSymbolicLink(link), "the link entry is swapped for a regular file");
+        assertEquals(Sirentide.render("pie\n  \"A\" : 1"), Files.readString(link, StandardCharsets.UTF_8));
+        assertTrue(Files.isDirectory(dir), "the link's old target directory must survive");
+        assertEquals("survives", Files.readString(dir.resolve("marker.txt"), StandardCharsets.UTF_8));
+        assertNoTempLitter(tmp);
+    }
+
+    @Test
+    void minusODestinationSymlinkToAFileIsReplacedAsAPathEntryNotWrittenThrough() throws IOException {
+        Path md = writeMd("doc.md", "```sirentide\npie\n  \"A\" : 1\n```\n");
+        Path target = Files.writeString(tmp.resolve("target.svg"), "original target bytes",
+            StandardCharsets.UTF_8);
+        Path link = symlinkOrSkip(tmp.resolve("link.svg"), target);
+        Captured c = run("render", md.toString(), "-o", link.toString());
+        assertEquals(0, c.exitCode, "stderr: " + c.err);
+        assertFalse(Files.isSymbolicLink(link), "the link entry is swapped for a regular file");
+        assertEquals(Sirentide.render("pie\n  \"A\" : 1"), Files.readString(link, StandardCharsets.UTF_8));
+        assertEquals("original target bytes", Files.readString(target, StandardCharsets.UTF_8),
+            "the link target must never be written through");
         assertNoTempLitter(tmp);
     }
 

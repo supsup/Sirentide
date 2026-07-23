@@ -10,6 +10,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
@@ -59,7 +60,8 @@ public final class Main {
         not render — /docs would keep the fence verbatim with a visible caption; nothing written.
         2 = loud error (no fence, unreadable/over-cap input, unwritable -o); nothing written.
         -o writes are atomic: the destination is replaced only after a complete render + write, so
-        a failure never truncates or corrupts an existing file.
+        a failure never truncates or corrupts an existing file. A filesystem that cannot replace
+        atomically is a loud exit 2 with the destination untouched (never a non-atomic overwrite).
         """;
 
     public static void main(String[] args) throws IOException {
@@ -161,26 +163,56 @@ public final class Main {
         }
     }
 
+    /// How the completed temp sibling is placed onto the destination — the ONLY move seam in the
+    /// class, injectable so a test can force {@link AtomicMoveNotSupportedException} and prove the
+    /// fail-closed branch (review sirentide/490 B1). Production is {@link #ATOMIC_REPLACE}.
+    @FunctionalInterface
+    interface Mover {
+        void move(Path completedTmp, Path dest) throws IOException;
+    }
+
+    /// The production mover: `ATOMIC_MOVE + REPLACE_EXISTING`, and NOTHING else — deliberately no
+    /// plain-`REPLACE_EXISTING` retry. For a non-atomic `Files.move` the Java contract leaves the
+    /// state of both files UNDEFINED on an I/O failure (the destination may be incomplete), which
+    /// would silently void the unconditional never-corrupts promise in {@link #USAGE} and
+    /// `QUICKSTART.md` exactly on the filesystems where it matters (review sirentide/490 B1; the
+    /// prior fallback was the same class of bug as review 471's direct truncating write).
+    static final Mover ATOMIC_REPLACE = (completedTmp, dest) ->
+        Files.move(completedTmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+
     /// Writes the baked `svg` to `outPath` when given, else to `out` (stdout). Returns the exit
     /// code: 0 on a complete write, 2 on any failure.
     ///
-    /// ## `-o` destination policy (review sirentide/471 B1 — atomic, never-corrupting)
+    /// ## `-o` destination policy (review sirentide/471 B1; atomic-only per review sirentide/490 B1)
     /// The SVG is first written COMPLETELY to a sibling temp file (`.sirentide-*.svg.tmp`) in the
     /// destination's directory, closed, then moved onto the destination with
-    /// `ATOMIC_MOVE + REPLACE_EXISTING` (falling back to a plain `REPLACE_EXISTING` move only if
-    /// the filesystem cannot do an atomic move). Consequences, all deliberate:
+    /// `ATOMIC_MOVE + REPLACE_EXISTING` — atomically or not at all. A filesystem that cannot
+    /// atomically replace ({@link AtomicMoveNotSupportedException}) is a loud exit 2 with the
+    /// destination untouched; there is deliberately NO non-atomic fallback (see
+    /// {@link #ATOMIC_REPLACE}). Consequences, all deliberate:
     /// - An EXISTING destination is either fully replaced by the new SVG or left BYTE-IDENTICAL —
-    ///   a failed render, an over-quota write, or an unwritable directory never truncates it.
+    ///   a failed render, an over-quota write, an unwritable directory, or an
+    ///   atomic-move-incapable filesystem never truncates it.
     /// - The temp file is always deleted on failure (no `.tmp` litter).
-    /// - A destination that is a DIRECTORY is a loud exit 2, untouched.
-    /// - A destination that is a SYMLINK is REPLACED as a path entry (the move swaps the link
-    ///   itself for a regular file); it is not written through to the link target.
+    /// - A destination whose PATH ENTRY is a directory is a loud exit 2, untouched. The check is
+    ///   `NOFOLLOW_LINKS`: the policy keys on the entry, not what a link points at.
+    /// - A destination that is a SYMLINK — even one pointing at a directory — is REPLACED as a
+    ///   path entry (the move swaps the link itself for a regular file); it is not written
+    ///   through to the link target, and the target is untouched.
     /// - `-o` naming the INPUT file is safe: the input was fully read before any write, and the
     ///   destination changes only at the final move.
     ///
     /// The stdout branch checks the stream's error state (PrintStream swallows IOException): a
     /// consumer that closed the pipe yields exit 2, never a silent success.
     private static int writeOutput(String svg, String outPath, PrintStream out, PrintStream err) {
+        return writeOutput(svg, outPath, out, err, ATOMIC_REPLACE);
+    }
+
+    /// Seam-injected variant of {@link #writeOutput(String, String, PrintStream, PrintStream)} —
+    /// package-private so a test can substitute a `Mover` that throws
+    /// {@link AtomicMoveNotSupportedException} (unreachable on a POSIX temp dir) and prove the
+    /// fail-closed contract. Production callers always go through the 4-arg overload.
+    static int writeOutput(String svg, String outPath, PrintStream out, PrintStream err, Mover mover) {
         if (outPath == null) {
             out.print(svg);
             out.flush();
@@ -191,7 +223,7 @@ public final class Main {
             return 0;
         }
         Path dest = Path.of(outPath);
-        if (Files.isDirectory(dest)) {
+        if (Files.isDirectory(dest, LinkOption.NOFOLLOW_LINKS)) {
             err.println("sirentide: cannot write '" + outPath + "': is a directory");
             return 2;
         }
@@ -204,15 +236,15 @@ public final class Main {
         try {
             tmp = Files.createTempFile(parent, ".sirentide-", ".svg.tmp");
             Files.writeString(tmp, svg, StandardCharsets.UTF_8);
-            try {
-                Files.move(tmp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) {
-                // Documented fallback: same complete-write-then-move shape, minus atomicity —
-                // only on filesystems that cannot atomically replace (the temp sibling still
-                // guarantees the content moved is complete).
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
+            mover.move(tmp, dest);
             return 0;
+        } catch (AtomicMoveNotSupportedException e) {
+            // Fail closed (review sirentide/490 B1): a non-atomic replacement could leave the
+            // destination incomplete on failure — refuse it; the finally block removes the
+            // completed temp sibling and the existing destination stays byte-identical.
+            err.println("sirentide: cannot write '" + outPath + "': filesystem does not support"
+                + " atomic replace — refusing a non-atomic overwrite (existing file untouched)");
+            return 2;
         } catch (IOException e) {
             err.println("sirentide: cannot write '" + outPath + "': " + e.getMessage());
             return 2;
