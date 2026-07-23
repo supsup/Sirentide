@@ -343,8 +343,10 @@ public final class Sirentide {
                             consumerBudget.maxUtf8Bytes());
                     }
                 }
-                return new FramesResult(java.util.List.of(base),
-                    okDiagnostics(STAGE_EMIT,
+                Diagnostics caveat = pieDropCaveat(ir);
+                return new FramesResult(java.util.List.of(base), caveat != null
+                    ? withFontCoverageCaveat(caveat)
+                    : okDiagnostics(STAGE_EMIT,
                         "Rendered successfully (single frame — the diagram has no play-through steps)."));
             }
             if (consumerBudget != null && seqs.size() > consumerBudget.maxFrames()) {
@@ -409,8 +411,10 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            return new FramesResult(java.util.List.copyOf(frames),
-                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
+            Diagnostics caveat = pieDropCaveat(ir);
+            return new FramesResult(java.util.List.copyOf(frames), caveat != null
+                ? withFontCoverageCaveat(caveat)
+                : okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -579,6 +583,16 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
+            // OK, with one honest caveat: a pie whose thin-slice OUTSIDE label had no room is drawn
+            // as a coloured wedge with NO visible name (PieLayout drops the leader+text rather than
+            // overrun the canvas). The SVG is unchanged — this only NAMES the dropped slice(s) and
+            // points at `pie legend`, which shows every label in a side key. Mirrors the caveat-on-OK
+            // shape: same Outcome.OK, a richer message/detail, no record change. Composed with the
+            // font-coverage caveat so neither honest note can shadow the other.
+            Diagnostics caveat = pieDropCaveat(ir);
+            if (caveat != null) {
+                return new RenderResult(svg, withFontCoverageCaveat(caveat));
+            }
             return new RenderResult(svg,
                 okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
@@ -615,12 +629,19 @@ public final class Sirentide {
     /// signal. `line` stays -1 (a coverage caveat spans the whole label set, not one line).
     /// Never throws (the corpus is a String already in hand; nothing here can crash a healthy render).
     private static Diagnostics okDiagnostics(String stage, String baseMessage) {
+        return withFontCoverageCaveat(new Diagnostics(Outcome.OK, stage, baseMessage, -1, ""));
+    }
+
+    /// The ONE carrier for the coverage caveat: appends it to ANY OK diagnostics, so a richer OK
+    /// (the pie dropped-label caveat) keeps the font note instead of shadowing it. Message text and
+    /// detail are appended; a second detail joins with "; ".
+    private static Diagnostics withFontCoverageCaveat(Diagnostics ok) {
         String rendered = com.sirentide.font.EmittedText.collected();
         java.util.List<Integer> uncovered = rendered.isEmpty() ? java.util.List.of()
             : com.sirentide.font.FontMetrics.bundled()
                 .uncoveredCodePoints(rendered, MAX_UNCOVERED_REPORTED);
         if (uncovered.isEmpty()) {
-            return new Diagnostics(Outcome.OK, stage, baseMessage, -1, "");
+            return ok;
         }
         StringBuilder points = new StringBuilder();
         for (int cp : uncovered) {
@@ -633,8 +654,9 @@ public final class Sirentide {
             + (uncovered.size() == 1 ? "" : "s")
             + " in the rendered text fall outside the bundled STIX Two Math font (Latin + math) and "
             + "bake as boxes: " + points + ". Non-Latin scripts and emoji are not covered.";
-        return new Diagnostics(Outcome.OK, stage, baseMessage + caveat, -1,
-            "out-of-coverage code points: " + points);
+        String coverageDetail = "out-of-coverage code points: " + points;
+        return new Diagnostics(Outcome.OK, ok.stage(), ok.message() + caveat, ok.line(),
+            ok.detail().isEmpty() ? coverageDetail : ok.detail() + "; " + coverageDetail);
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
@@ -692,6 +714,27 @@ public final class Sirentide {
             "The renderer hit an unexpected failure during " + stage + ", so it degraded to the empty "
                 + "shell. This is a renderer bug, not a problem with your diagram — please report it.",
             -1, detail);
+    }
+
+    /// A SUCCESS-with-caveat diagnostic for a pie whose thin-slice OUTSIDE label(s) had no room and
+    /// were silently dropped (a coloured wedge with no visible name). Returns {@code null} for any
+    /// other diagram, or a pie that dropped nothing. The SVG itself is unchanged — this only turns a
+    /// silent geometry outcome into a named signal that points the author at `pie legend`. Outcome
+    /// stays {@link Outcome#OK} (the bake succeeded); only the message/detail carry the caveat.
+    private static Diagnostics pieDropCaveat(Diagram ir) {
+        if (!(ir instanceof Pie pie)) {
+            return null;
+        }
+        java.util.List<String> dropped = com.sirentide.layout.PieLayout.droppedOutsideLabels(pie);
+        if (dropped.isEmpty()) {
+            return null;
+        }
+        boolean one = dropped.size() == 1;
+        return new Diagnostics(Outcome.OK, STAGE_LAYOUT,
+            "Rendered, but " + dropped.size() + " thin-slice label" + (one ? "" : "s")
+                + " had no room outside the pie and " + (one ? "was" : "were") + " dropped ("
+                + String.join(", ", dropped) + "). Use `pie legend` to show every label in a side key.",
+            -1, "pie outside-label drop: " + String.join("; ", dropped));
     }
 
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY
