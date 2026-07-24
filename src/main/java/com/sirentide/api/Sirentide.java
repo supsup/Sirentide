@@ -46,6 +46,26 @@ public final class Sirentide {
     /// runaway layout can't build a multi-GB buffer before this post-emit check ever runs (H2).
     public static final int MAX_OUTPUT_BYTES = 5_000_000;   // 5 MB of SVG
 
+    /// Cap on the NUMBER of play-through frames {@link #renderFrames} will bake (SIR-01). Every frame
+    /// re-emits the WHOLE scene, so an unbounded frame count makes total output O(N × sceneSize): at
+    /// the parser's {@code MAX_DATA_ROWS} (10k) a fully seq-anchored diagram yields ~10k frames of up
+    /// to {@link #MAX_OUTPUT_BYTES} each (~50 GB) retained in a single call → OOM on LEGAL input. Past
+    /// this the play-through bake degrades to the inert shell — the SAME loud/inert shape the per-frame
+    /// {@link #MAX_OUTPUT_BYTES} cap already uses. This is an EARLY guard (checked before any frame is
+    /// emitted); the real O(N²) blow-up is bounded by {@link #MAX_TOTAL_OUTPUT_BYTES}, since a
+    /// play-through with FEWER than this many frames can still retain gigabytes (a ~400-frame scene of
+    /// near-cap frames ≈ 1 GB). 512 is ~70× the largest real play-through yet well under the 10k cap.
+    public static final int MAX_FRAMES = 512;
+
+    /// Aggregate cap on the TOTAL bytes retained across ALL play-through frames (SIR-01). The per-frame
+    /// {@link #MAX_OUTPUT_BYTES} cap bounds ONE frame; this bounds their SUM, so the O(N²) retention of
+    /// N frames each re-emitting a near-cap scene cannot hold tens of GB. Past this the play-through
+    /// bake degrades to the inert shell (same shape as the per-frame cap). 10× {@link #MAX_OUTPUT_BYTES}
+    /// — far above any human-navigable slideshow (a play-through is many recolourings of ONE scene; if
+    /// that scene is large the human step-count is small), far below the pathological aggregate. This is
+    /// the load-bearing guard: {@link #MAX_FRAMES} alone leaves a ~1 GB window under it.
+    public static final int MAX_TOTAL_OUTPUT_BYTES = 50_000_000;   // 50 MB across ALL frames
+
     /// Bake a Sirentide DSL source into a self-contained SVG string. Honors the "malformed →
     /// inert, never throw" invariant (DESIGN §6/§7): ANY unexpected failure in parse/layout/emit,
     /// or an over-cap output, degrades to the inert empty shell instead of propagating.
@@ -134,13 +154,27 @@ public final class Sirentide {
             if (seqs.size() <= 1) {
                 return java.util.List.of(base);
             }
+            // SIR-01: frame-count cap — checked BEFORE baking any frame so a ~10k-seq input never
+            // starts building ~10k full-scene documents. Degrade to the inert shell, the SAME shape
+            // the per-frame MAX_OUTPUT_BYTES cap above uses.
+            if (seqs.size() > MAX_FRAMES) {
+                return java.util.List.of(INERT_SHELL);
+            }
 
             java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
+            long totalBytes = 0;                          // long: N × up-to-5 MB overflows an int
             for (int k : seqs) {
                 String svg = SvgEmitter.emit(laid, a11y, config.theme(), Emphasis.cumulative(k));
                 // Emphasis is a pure recolour of the ONE scene, so an emphasized frame can only shrink
                 // or hold the byte length vs the (already-capped) base — the guard is defensive.
                 if (svg.length() > MAX_OUTPUT_BYTES) {
+                    return java.util.List.of(INERT_SHELL);
+                }
+                totalBytes += svg.length();
+                // SIR-01: aggregate byte budget across ALL frames — the load-bearing guard against the
+                // O(N²) retention. Bounds peak held output to MAX_TOTAL_OUTPUT_BYTES (+ one in-flight
+                // frame). Same inert-shell degrade as the per-frame cap.
+                if (totalBytes > MAX_TOTAL_OUTPUT_BYTES) {
                     return java.util.List.of(INERT_SHELL);
                 }
                 frames.add(svg);
@@ -207,8 +241,20 @@ public final class Sirentide {
                     "Rendered successfully (single frame — the diagram has no play-through steps).",
                     -1, ""));
             }
+            // SIR-01: frame-count cap — mirror renderFrames EXACTLY (inert-shell frame), classified as
+            // the KNOWN bounded OUTPUT_CAP_EXCEEDED degrade (not a renderer bug), so the diagnostics
+            // frames stay byte-identical to renderFrames on this path too.
+            if (seqs.size() > MAX_FRAMES) {
+                return new FramesResult(java.util.List.of(INERT_SHELL), new Diagnostics(
+                    Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                    "The play-through has " + seqs.size() + " steps, past the " + MAX_FRAMES
+                        + "-frame cap, so it degraded to the empty shell. Reduce the number of "
+                        + "seq-anchored steps.",
+                    -1, "frame count " + seqs.size() + " > MAX_FRAMES"));
+            }
 
             java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
+            long totalBytes = 0;
             for (int k : seqs) {
                 String svg = SvgEmitter.emit(laid, a11y, config.theme(), Emphasis.cumulative(k));
                 if (svg.length() > MAX_OUTPUT_BYTES) {
@@ -217,6 +263,17 @@ public final class Sirentide {
                         "An emphasized play-through frame exceeded the " + MAX_OUTPUT_BYTES
                             + "-byte output cap, so the bake degraded to the empty shell.",
                         -1, "frame seq=" + k + " length " + svg.length() + " > MAX_OUTPUT_BYTES"));
+                }
+                totalBytes += svg.length();
+                // SIR-01: aggregate byte budget — mirror renderFrames' inert-shell degrade, classified
+                // as OUTPUT_CAP_EXCEEDED so the frames stay byte-identical to renderFrames.
+                if (totalBytes > MAX_TOTAL_OUTPUT_BYTES) {
+                    return new FramesResult(java.util.List.of(INERT_SHELL), new Diagnostics(
+                        Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                        "The play-through's frames summed past the " + MAX_TOTAL_OUTPUT_BYTES
+                            + "-byte aggregate output cap, so it degraded to the empty shell. Reduce "
+                            + "the number of steps or the scene size.",
+                        -1, "aggregate frame bytes " + totalBytes + " > MAX_TOTAL_OUTPUT_BYTES"));
                 }
                 frames.add(svg);
             }
