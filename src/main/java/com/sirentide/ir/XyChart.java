@@ -27,9 +27,9 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
     public XyChart {
         bars = List.copyOf(bars);
         // `series`/`seriesNames` stay NULLABLE — null `series` is the legacy single-series bar path
-        // (byte-identical). When present, defensively copy the outer list (the `double[]`s are
-        // treated as immutable by convention, like every other Slice-derived value in the IR).
-        series = series == null ? null : List.copyOf(series);
+        // (byte-identical). When present, defensively copy both the outer list and every mutable
+        // value array.
+        series = series == null ? null : copySeries(series);
         seriesNames = seriesNames == null ? null : List.copyOf(seriesNames);
         if (mode == null || mode.isBlank()) {
             mode = "bars";
@@ -37,6 +37,16 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
         if (textColor == null) {
             textColor = "currentColor";
         }
+    }
+
+    /// Defensive-copy accessor so a caller can't mutate any stored series values.
+    @Override
+    public List<double[]> series() {
+        return series == null ? null : copySeries(series);
+    }
+
+    private static List<double[]> copySeries(List<double[]> source) {
+        return source.stream().map(values -> values.clone()).toList();
     }
 
     /// Default construction with the `currentColor` text fill — keeps existing callers/tests
