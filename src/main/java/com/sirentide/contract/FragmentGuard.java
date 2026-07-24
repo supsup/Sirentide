@@ -56,6 +56,33 @@ public final class FragmentGuard {
     /// approaches this ceiling — it only bites a pathological one. 64 KiB.
     public static final int MAX_FRAGMENT_LEN = 65_536;
 
+    /// The font-size multiplier that bounds a fragment's box metrics (SIR-08). A single inline-math
+    /// fragment's width/height/depth is a small multiple of the font size (a tall matrix is ~10 em; a
+    /// long fraction a few dozen em). This ceiling — 10 000 em — is astronomically wider than any
+    /// legitimate inline fragment yet decisively rejects the DoS metrics an untrusted renderer can
+    /// emit: a NaN/Inf/1e308 extent (a ~9.2e15-px viewBox that OOMs a rasterizer). At a 16 px font the
+    /// cap is 160 000 px, whose viewBox area (~2.5e10) is ~5 orders of magnitude under the attack and
+    /// ~15 under 1e308, while leaving a real fragment (≤ ~50 em) four orders of headroom. Multiplying
+    /// by the font size keeps the bound proportional so it never rejects a large-font-size fragment.
+    public static final double MAX_METRIC_EM = 10_000;
+
+    /// True iff a fragment's box metrics are trustworthy (SIR-08): every value FINITE (not NaN/±Inf),
+    /// width/height/depth NON-NEGATIVE, and each extent within a font-size-derived ceiling
+    /// ({@link #MAX_METRIC_EM} × the font size). A violating metric is treated exactly like a
+    /// contract-violating structure — the caller degrades the fragment to its raw `$…$` source text
+    /// (see {@link com.sirentide.layout.MathLabel}). The font-size floor of 1.0 keeps a degenerate
+    /// tiny/zero font size from collapsing the ceiling to zero and wrongly rejecting a valid fragment.
+    public static boolean metricsClean(double widthPx, double heightPx, double depthPx, double fontSizePx) {
+        if (!Double.isFinite(widthPx) || !Double.isFinite(heightPx) || !Double.isFinite(depthPx)) {
+            return false;
+        }
+        if (widthPx < 0 || heightPx < 0 || depthPx < 0) {
+            return false;
+        }
+        double limit = MAX_METRIC_EM * Math.max(1.0, fontSizePx);
+        return widthPx <= limit && heightPx <= limit && depthPx <= limit;
+    }
+
     /// True iff `innerSvg` is a contract-clean fragment (only g/path, allowed attrs, legal values).
     /// A `null` or blank fragment is NOT clean (there is nothing to trust).
     public static boolean isClean(String innerSvg) {
@@ -67,6 +94,13 @@ public final class FragmentGuard {
         }
         Matcher m = TAG.matcher(innerSvg);
         int cursor = 0;
+        // SIR-02: a name stack proves STRUCTURE, not just token shape. Every open tag pushes; a close
+        // must match the top and pop; at EOF the stack must be empty. This makes the fragment
+        // self-contained — it can neither leave a tag open (unbalanced) nor close a tag it did not
+        // open (a `</g>` that would close the emitter's OWN wrapper group = containment escape). A
+        // foreign `<path>` therefore can never draw outside the emitter's translate/fill wrapper.
+        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        boolean sawElement = false;
         while (m.find()) {
             // Any character BETWEEN tags that is a bracket means malformed/hostile markup.
             String between = innerSvg.substring(cursor, m.start());
@@ -78,23 +112,40 @@ public final class FragmentGuard {
             boolean closing = !m.group(1).isEmpty();
             String name = m.group(2).toLowerCase(java.util.Locale.ROOT);
             String body = m.group(3);
+            boolean selfClose = !m.group(4).isEmpty();
             if (!ELEMENTS.contains(name)) {
                 return false;
             }
+            sawElement = true;
             if (closing) {
-                // A closing tag carries no attributes.
-                if (!body.isBlank()) {
+                // A closing tag carries no attributes and can NOT also be self-closed (`</g/>`).
+                if (selfClose || !body.isBlank()) {
                     return false;
                 }
+                // Must close the innermost still-open element: non-empty stack whose top matches.
+                // An empty stack here means the fragment is closing a tag it never opened — the
+                // emitter-wrapper escape. A mismatch means crossed/interleaved nesting.
+                if (stack.isEmpty() || !stack.peek().equals(name)) {
+                    return false;
+                }
+                stack.pop();
                 continue;
             }
             if (!attrsClean(name, body)) {
                 return false;
             }
+            // A self-closed element (`<path …/>`) is balanced by itself; a plain open tag pushes.
+            if (!selfClose) {
+                stack.push(name);
+            }
         }
         // Trailing text after the last tag must also be bracket-free.
         String tail = innerSvg.substring(cursor);
-        return tail.indexOf('<') < 0 && tail.indexOf('>') < 0;
+        if (tail.indexOf('<') >= 0 || tail.indexOf('>') >= 0) {
+            return false;
+        }
+        // Every opened element must have been closed, and a trusted fragment carries ≥1 element.
+        return sawElement && stack.isEmpty();
     }
 
     private static boolean attrsClean(String element, String body) {
