@@ -4,6 +4,7 @@ import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.GitGraph;
+import com.sirentide.ir.GitOp;
 import java.util.ArrayList;
 import java.util.List;
 
