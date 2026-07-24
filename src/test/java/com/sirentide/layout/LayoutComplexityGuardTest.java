@@ -112,6 +112,16 @@ class LayoutComplexityGuardTest {
             "the cap breach must remain identifiable across the parse boundary");
         assertEquals(DslParser.MAX_SEQUENCE_NOTES + 1, rejected.notes().size(),
             "the bounded overflow marker retains exactly the first excess valid note");
+        assertEquals("excess", rejected.notes().getLast().text());
+
+        Sequence rejectedWithTrailingNotes = assertInstanceOf(Sequence.class,
+            DslParser.parse(overCap
+                + "note over A : later excess one\n"
+                + "note over A : later excess two\n"));
+        assertEquals(DslParser.MAX_SEQUENCE_NOTES + 1, rejectedWithTrailingNotes.notes().size(),
+            "parsing stops at the first excess note instead of growing the overflow marker");
+        assertEquals("excess", rejectedWithTrailingNotes.notes().getLast().text(),
+            "later valid notes never replace the truthful first-excess marker");
 
         RenderResult result = Sirentide.renderWithDiagnostics(overCap);
         assertEquals(INERT_SHELL, result.svg(),

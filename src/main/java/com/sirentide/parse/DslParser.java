@@ -101,8 +101,9 @@ public final class DslParser {
     public static final int MAX_ACTORS = 50;
     // Sequence NOTE cap: messages already stop at MAX_DATA_ROWS, but note directives used to remain
     // uncapped and each one emits a multi-shape annotation band. Keep the two time-axis row kinds
-    // symmetric. Unlike a silently-truncated diagram, the first valid note past this cap rejects the
-    // whole parse to Empty, which the diagnostics API reports as a non-OK parse degrade.
+    // symmetric. Unlike a silently-truncated diagram, the first valid note past this cap is retained
+    // as the Sequence IR's single MAX_NOTES+1 overflow marker and parsing stops. SequenceLayout
+    // rejects that marker before geometry; the diagnostics API reports the named cap degrade.
     public static final int MAX_SEQUENCE_NOTES = Sequence.MAX_NOTES;
     // Sequence block-nesting cap (M2): a pathological `alt`/`loop`/`par` nesting depth would stack
     // unboundedly; opens past this are swallowed (their `end` hits an empty/other stack, inert).
