@@ -26,7 +26,7 @@ import com.sirentide.layout.XyChartLayout;
 /// (→ SVG string). Zero runtime dependency, deterministic, sanitizer-clean output
 /// (docs/DESIGN.md §2/§4).
 ///
-/// Live: fifteen diagram types render end to end, all projecting into the shared IR, plus
+/// Live: twenty-three diagram types render end to end, all projecting into the shared IR, plus
 /// LaTeX-math-in-labels (the {@link MathFragmentRenderer} seam), semantic anchors, and the
 /// baked-frame play-through ({@link #renderFrames}). The remaining thesis slice is the
 /// security-gated effect layer (`data-sirentide-fx`, contract Part 2).
@@ -398,6 +398,12 @@ public final class Sirentide {
                     + "empty shell. Reduce the number of rows or annotations.",
                 -1, detail);
         }
+        if (STAGE_LAYOUT.equals(stage) && msg != null && msg.contains("MAX_ROOT_SYSTEM_WORK")) {
+            return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_LAYOUT,
+                "The root-system projection exceeded its deterministic rank/root/work budget, so it "
+                    + "degraded to the empty shell. Use a smaller finite type.",
+                -1, detail);
+        }
         if (STAGE_EMIT.equals(stage) && msg != null && msg.contains("MAX_OUTPUT_BYTES")) {
             return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
                 "The baked SVG exceeded the " + MAX_OUTPUT_BYTES + "-byte output cap, so it degraded "
@@ -465,6 +471,9 @@ public final class Sirentide {
             // (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a multi-bond. No `$…$`
             // labels in this slice, so `math` is unused here.
             case com.sirentide.ir.Dynkin dk -> com.sirentide.layout.DynkinDiagramLayout.layout(dk);
+            // A finite root system: deterministic Weyl-reflection closure followed by its exponent-1
+            // Coxeter-plane (Petrie) projection, with guide rings and optional bounded minimal edges.
+            case com.sirentide.ir.RootSystem rs -> com.sirentide.layout.RootSystemLayout.layout(rs);
             case Empty ignored -> LaidOut.of(0, 0);
         };
     }

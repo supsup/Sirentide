@@ -585,6 +585,36 @@ type: G2
 
 ![Dynkin — G₂ (a triple bond with an arrow)](dynkin-g2.png)
 
+## Root system — A₂ hexagon (6 roots, 6 minimal links)
+
+```
+rootsystem
+type: A2
+edges: minimal
+```
+
+![Root system — A₂ hexagon (6 roots, 6 minimal links)](rootsystem-a2.png)
+
+## Root system — G₂ short/long roots (12 roots, rings only)
+
+```
+rootsystem
+type: G2
+edges: none
+```
+
+![Root system — G₂ short/long roots (12 roots, rings only)](rootsystem-g2.png)
+
+## Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)
+
+```
+rootsystem
+type: E8
+edges: minimal
+```
+
+![Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)](rootsystem-e8.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```
@@ -700,4 +730,3 @@ A[Energy $E=mc^2$] --> B[$\frac{v^2}{r}$]
 ```
 
 ![Math baked inside flowchart labels](math-in-labels.png)
-

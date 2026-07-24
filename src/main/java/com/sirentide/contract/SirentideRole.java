@@ -27,6 +27,9 @@ import java.util.Set;
 /// CORES → {@link #NODE} (each core's disc + dangling physical/operator leg(s) + in-disc label), virtual
 /// BONDS → {@link #EDGE} (each contracted-index segment between adjacent cores) — the Penrose chain reuses
 /// the shared graph node/edge vocabulary, no new role.
+/// rootsystem roots → {@link #POINT} (one Coxeter-plane disc per mathematical root), optional bounded
+/// ambient-minimal-distance links → {@link #EDGE}; concentric distinct-radius guide rings are
+/// decorative and un-anchored. The type deliberately reuses the closed point/edge vocabulary.
 ///
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).

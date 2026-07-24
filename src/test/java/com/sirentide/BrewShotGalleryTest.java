@@ -207,6 +207,17 @@ class BrewShotGalleryTest {
         new Case("dynkin-d4", "Dynkin — D₄ (a fork of two terminal nodes)", "dynkin\ntype: D4"),
         new Case("dynkin-e8", "Dynkin — E₈ (a line with a branch off the 3rd node)", "dynkin\ntype: E8"),
         new Case("dynkin-g2", "Dynkin — G₂ (a triple bond with an arrow)", "dynkin\ntype: G2"),
+        // Root-system Coxeter/Petrie projections: readable rank-two A2/G2 discriminators plus the
+        // intended E8 showpiece. The A2 receipt pins semantic minimal links; G2 exposes its two root
+        // lengths without a line web. E8's full 6,720-line minimal root-polytope graph is below the
+        // independent 10,000-edge and emitter-byte caps; eight orbit rings + 240 points remain
+        // visible over the graph. Every case below loads its TRACKED generated example page.
+        new Case("rootsystem-a2", "Root system — A₂ hexagon (6 roots, 6 minimal links)",
+            "rootsystem\ntype: A2\nedges: minimal"),
+        new Case("rootsystem-g2", "Root system — G₂ short/long roots (12 roots, rings only)",
+            "rootsystem\ntype: G2\nedges: none"),
+        new Case("rootsystem-e8", "Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)",
+            "rootsystem\ntype: E8\nedges: minimal"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
@@ -259,8 +270,20 @@ class BrewShotGalleryTest {
                 String svg = c.renderer() == null
                     ? Sirentide.render(c.dsl())
                     : Sirentide.render(c.dsl(), c.renderer());
-                shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
-                    + svg + "</body></html>");
+                // Root-system receipts load TRACKED generated pages, not test-only wrappers, proving
+                // the committed examples really embed the A2/G2/E8 bakes. Every other long-standing
+                // gallery case keeps the minimal wrapper it has always used.
+                String browserHtml = switch (c.name()) {
+                    case "rootsystem-a2" -> Files.readString(
+                        Path.of("examples", "rootsystem-a2.html").toAbsolutePath());
+                    case "rootsystem-g2" -> Files.readString(
+                        Path.of("examples", "rootsystem-g2.html").toAbsolutePath());
+                    case "rootsystem-e8" -> Files.readString(
+                        Path.of("examples", "rootsystem.html").toAbsolutePath());
+                    default -> "<!doctype html><html><body style=\"margin:20px;background:#fff\">"
+                        + svg + "</body></html>";
+                };
+                shot.html(browserHtml);
                 shot.settle(120);
 
                 @SuppressWarnings("unchecked")

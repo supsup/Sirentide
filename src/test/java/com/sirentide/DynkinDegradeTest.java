@@ -47,7 +47,9 @@ class DynkinDegradeTest {
 
     @Test
     void overCapRankDegradesToTheInertShell() {
-        assertEquals(INERT, type("A201"), "a rank past MAX_DYNKIN_RANK (200) bakes the inert shell (never OOM)");
+        assertEquals(INERT, type("A201"), "a rank past the established rank-200 catalog bakes inertly");
+        assertEquals(INERT, type("A65536"), "an old int-overflow discriminator bakes inertly");
+        assertEquals(INERT, type("A2147483647"), "Integer.MAX_VALUE bakes inertly");
         assertEquals(INERT, type("A1000000"), "a far-over-cap rank bakes the inert shell");
     }
 
@@ -61,7 +63,7 @@ class DynkinDegradeTest {
     void everyDegradePathIsByteIdenticalToTheUniversalInertShellWithNoTitle() {
         // The pre-368 bug baked a 48x48 SVG carrying <title>Dynkin diagram</title> + an "Empty Dynkin
         // diagram." desc for each of these. The fix makes them byte-identical to the 0x0 Empty shell.
-        for (String bad : new String[] {"Z9", "A201", "nonsense", "B1"}) {
+        for (String bad : new String[] {"Z9", "A201", "A65536", "A2147483647", "nonsense", "B1"}) {
             String svg = type(bad);
             assertEquals(INERT, svg, bad + " must be byte-identical to the universal inert shell");
             assertFalse(svg.contains("<title>"), bad + " inert shell carries no <title>: " + svg);
@@ -79,7 +81,7 @@ class DynkinDegradeTest {
     @Test
     void validMaximumRankAtTheCapRenders() {
         assertNotEquals(INERT, type("A200"),
-            "A200 is exactly at MAX_DYNKIN_RANK and must render (the cap boundary is inclusive)");
+            "A200 is exactly at the established Dynkin/catalog boundary and must render");
     }
 
     @Test

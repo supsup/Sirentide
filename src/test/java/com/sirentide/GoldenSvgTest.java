@@ -234,6 +234,11 @@ class GoldenSvgTest {
         // triple-bond + arrow geometry byte-for-byte.
         FIXTURES.put("dynkin-g2",
             "dynkin\n  type: G2\n");
+        // A root-system Coxeter-plane projection: A3 has 12 roots and h=4. Pins the concentric guide
+        // rings, all 12 POINT anchors, and the complete under-cap minimal-distance edge graph. The
+        // mathematical oracle lives in RootSystemProjectionTest; this is the byte-level render pin.
+        FIXTURES.put("rootsystem-a3",
+            "rootsystem\n  type: A3\n  edges: minimal\n");
         // The figure-eight (4₁) knot: a hand-built REDUCED ALTERNATING INTERLEAVED 4-crossing embedding
         // (plan 5f48185e). Pins its sampled curve, the 4 gap breaks (→ 4 EDGE-anchored strand arcs), and
         // the narrower FIGURE8_GAP_T. Its geometry reconstructs the canonical code O1U4O2U1O3U2O4U3.
