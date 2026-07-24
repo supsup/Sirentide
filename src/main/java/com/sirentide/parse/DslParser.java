@@ -99,6 +99,11 @@ public final class DslParser {
     // Sequence-diagram cap (DESIGN §6/§7): a pathological actor count would blow up the lifeline
     // grid; extra first-seen actors past this are dropped (their messages then skip in layout).
     public static final int MAX_ACTORS = 50;
+    // Sequence NOTE cap: messages already stop at MAX_DATA_ROWS, but note directives used to remain
+    // uncapped and each one emits a multi-shape annotation band. Keep the two time-axis row kinds
+    // symmetric. Unlike a silently-truncated diagram, the first valid note past this cap rejects the
+    // whole parse to Empty, which the diagnostics API reports as a non-OK parse degrade.
+    public static final int MAX_SEQUENCE_NOTES = Sequence.MAX_NOTES;
     // Sequence block-nesting cap (M2): a pathological `alt`/`loop`/`par` nesting depth would stack
     // unboundedly; opens past this are swallowed (their `end` hits an empty/other stack, inert).
     public static final int MAX_BLOCK_DEPTH = 64;
@@ -1619,10 +1624,13 @@ public final class DslParser {
     ///
     /// Both endpoints auto-register in first-seen order (a self-message `A ->> A` registers `A` once).
     /// A malformed line — no arrow token in the head, or an empty endpoint — is DROPPED whole (never
-    /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages;
-    /// ids/labels `cap()`'d. A bare `sequence` body (no non-blank lines) → a Sequence with no actors
-    /// and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY body that parses to zero
-    /// actors (every line malformed) sets `bodyHadContent=true` so layout degrades VISIBLY.
+    /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages, and
+    /// {@link #MAX_SEQUENCE_NOTES} notes; ids/labels `cap()`'d. Messages past their cap are inert as
+    /// before, while the first VALID note past its cap rejects the whole diagram to Empty rather than
+    /// silently omit an author-visible annotation. A bare `sequence` body (no non-blank lines) → a
+    /// Sequence with no actors and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY
+    /// body that parses to zero actors (every line malformed) sets `bodyHadContent=true` so layout
+    /// degrades VISIBLY.
     ///
     /// BLOCK KEYWORDS (M2 — alt/loop/par frames). A line whose FIRST token is `alt`/`loop`/`par`,
     /// `else`/`and`, or `end` AND which carries NO arrow token is a BLOCK DIRECTIVE, not a message
@@ -1661,7 +1669,14 @@ public final class DslParser {
                 if (handleBlockKeyword(line, messages, blocks, stack)) {
                     continue;
                 }
-                if (handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size())) {
+                SeqDirectiveResult directive =
+                    handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size());
+                if (directive == SeqDirectiveResult.NOTE_CAP_EXCEEDED) {
+                    // Do not silently omit a valid annotation and change the author's diagram. Empty
+                    // is the established parser-level bounded degrade; renderWithDiagnostics names it.
+                    return new Empty();
+                }
+                if (directive == SeqDirectiveResult.CONSUMED) {
                     continue;
                 }
             }
@@ -1723,24 +1738,35 @@ public final class DslParser {
     /// An optional `participant` filler after `create`/`destroy` (mermaid `create participant X`).
     private static final String KW_PARTICIPANT = "participant";
 
-    /// Handles a note / create / destroy directive line (already known to be arrowless). Returns true
-    /// when the first token WAS one of those keywords (consumed — added a note / lifecycle event, or
-    /// was an inert malformed directive), false when it is none (so the caller falls through to the
-    /// normal message parse). `atMsg` is `messages.size()` — the index the NEXT message will take, so a
-    /// note/create/destroy anchors between the surrounding messages (the same index convention the
-    /// block keywords use). Robustness (DESIGN §6): a malformed note (bad position / unknown actor / no
-    /// text) or an unknown-actor create/destroy is swallowed inert, never throws.
-    private static boolean handleNoteOrLifecycle(String line, LinkedHashSet<String> actors,
-                                                 List<SeqNote> notes, List<SeqLifecycle> lifecycles,
-                                                 int atMsg) {
+    /// Handles a note / create / destroy directive line (already known to be arrowless). Returns
+    /// CONSUMED when the first token was one of those keywords (added an event or swallowed an inert
+    /// malformed directive), NOT_DIRECTIVE when the caller should fall through to message parsing,
+    /// or NOTE_CAP_EXCEEDED for the first valid note past the explicit bound. `atMsg` is
+    /// `messages.size()` — the index the NEXT message will take, so a note/create/destroy anchors
+    /// between the surrounding messages (the same convention the block keywords use). Robustness
+    /// (DESIGN §6): malformed notes and unknown-actor lifecycle events stay inert, never throw.
+    private enum SeqDirectiveResult {
+        NOT_DIRECTIVE,
+        CONSUMED,
+        NOTE_CAP_EXCEEDED
+    }
+
+    private static SeqDirectiveResult handleNoteOrLifecycle(
+        String line, LinkedHashSet<String> actors, List<SeqNote> notes,
+        List<SeqLifecycle> lifecycles, int atMsg
+    ) {
         String[] kwRest = splitKeyword(line);
         switch (kwRest[0]) {
             case KW_NOTE -> {
                 SeqNote note = parseNote(kwRest[1], actors, atMsg);
                 if (note != null) {
+                    if (notes.size() >= MAX_SEQUENCE_NOTES) {
+                        return SeqDirectiveResult.NOTE_CAP_EXCEEDED;
+                    }
                     notes.add(note);
                 }
-                return true;   // a malformed note is consumed but inert (never a stray message)
+                // A malformed note is consumed but inert (never a stray message).
+                return SeqDirectiveResult.CONSUMED;
             }
             case KW_CREATE -> {
                 // `create [participant] X` REGISTERS the actor first-seen (create introduces it) and
@@ -1752,7 +1778,7 @@ public final class DslParser {
                         lifecycles.add(new SeqLifecycle(actor, true, atMsg));
                     }
                 }
-                return true;
+                return SeqDirectiveResult.CONSUMED;
             }
             case KW_DESTROY -> {
                 // `destroy [participant] X` ends an ALREADY-REGISTERED actor's lifeline. An unknown /
@@ -1761,10 +1787,11 @@ public final class DslParser {
                 if (!actor.isEmpty() && actors.contains(actor)) {
                     lifecycles.add(new SeqLifecycle(actor, false, atMsg));
                 }
-                return true;
+                return SeqDirectiveResult.CONSUMED;
             }
             default -> {
-                return false;   // not a note/lifecycle keyword → fall through to the message parse
+                // Not a note/lifecycle keyword → fall through to the message parse.
+                return SeqDirectiveResult.NOT_DIRECTIVE;
             }
         }
     }

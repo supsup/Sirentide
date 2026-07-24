@@ -1,7 +1,9 @@
 package com.sirentide.layout;
 
 import com.sirentide.contract.SirentideRole;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /// Per-diagram anchor factory: turns a raw element id/label into a deterministic {@link Anchor} with
@@ -14,6 +16,12 @@ import java.util.Set;
 final class AnchorAssigner {
 
     private final Set<String> used = new HashSet<>();
+    // The next suffix not yet tried FOR THIS sanitized base. Once a candidate has been tried it stays
+    // occupied forever (`used` only grows), so restarting at `-1` cannot discover a newly-free id; it
+    // only repeats old failed probes. Map lookup order is irrelevant (we never iterate it), preserving
+    // deterministic emit order and ids.
+    private final Map<String, Integer> nextSuffixByBase = new HashMap<>();
+    private long uniquenessProbeCount = 0;
     private int seq = 0;
 
     /// Mint the next anchor: sanitize `rawBase`, fall back to the role name if empty, uniquify, and
@@ -25,14 +33,36 @@ final class AnchorAssigner {
             base = role.wire();   // always charset-legal (lowercase ascii), keeps the id non-empty
         }
         String id = base;
-        int k = 1;
-        while (!used.add(id)) {
-            String suffix = "-" + k++;
-            String head = base.length() + suffix.length() > 32
-                ? base.substring(0, 32 - suffix.length())
-                : base;
-            id = head + suffix;
+        Integer nextSuffix = nextSuffixByBase.get(base);
+        if (nextSuffix == null && claim(id)) {
+            // Remember that the bare id is permanently occupied. The next collision can begin at -1
+            // without probing the bare id again.
+            nextSuffixByBase.put(base, 1);
+        } else {
+            int k = nextSuffix != null ? nextSuffix : 1;
+            while (true) {
+                String suffix = "-" + k++;
+                String head = base.length() + suffix.length() > 32
+                    ? base.substring(0, 32 - suffix.length())
+                    : base;
+                id = head + suffix;
+                if (claim(id)) {
+                    nextSuffixByBase.put(base, k);
+                    break;
+                }
+            }
         }
         return new Anchor(role, id, seq++);
+    }
+
+    /// One exact uniqueness-set probe. Package-private count is a deterministic complexity receipt;
+    /// it is deliberately not wall-clock instrumentation.
+    private boolean claim(String id) {
+        uniquenessProbeCount++;
+        return used.add(id);
+    }
+
+    long uniquenessProbeCount() {
+        return uniquenessProbeCount;
     }
 }

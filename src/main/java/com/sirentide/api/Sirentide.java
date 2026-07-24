@@ -378,15 +378,19 @@ public final class Sirentide {
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
-    /// {@link Diagnostics}. The emitter's incremental output-cap surfaces as an
-    /// {@link IllegalStateException} naming {@code MAX_OUTPUT_BYTES}: a KNOWN, bounded degrade
-    /// ({@link Outcome#OUTPUT_CAP_EXCEEDED}), NOT a renderer bug — so it is distinguished from a
-    /// genuine failure. A throwable from parse is a PARSE_ERROR (the hand-written parser is designed
-    /// not to throw, so this is defensive); anything unexpected from layout/emit is a
-    /// {@link Outcome#RENDER_BUG}, localized by stage.
+    /// {@link Diagnostics}. Named layout-work and emitter output caps are KNOWN bounded degrades
+    /// ({@link Outcome#OUTPUT_CAP_EXCEEDED}), NOT renderer bugs. A throwable from parse is a
+    /// PARSE_ERROR (the hand-written parser is designed not to throw, so this is defensive);
+    /// anything unexpected from layout/emit is a {@link Outcome#RENDER_BUG}, localized by stage.
     private static Diagnostics classifyFailure(String stage, Throwable e) {
         String msg = e.getMessage();
         String detail = e.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+        if (STAGE_LAYOUT.equals(stage) && msg != null && msg.contains("MAX_LAYOUT_WORK")) {
+            return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_LAYOUT,
+                "The diagram exceeded the deterministic layout-work budget, so it degraded to the "
+                    + "empty shell. Reduce the number of rows or annotations.",
+                -1, detail);
+        }
         if (STAGE_EMIT.equals(stage) && msg != null && msg.contains("MAX_OUTPUT_BYTES")) {
             return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
                 "The baked SVG exceeded the " + MAX_OUTPUT_BYTES + "-byte output cap, so it degraded "

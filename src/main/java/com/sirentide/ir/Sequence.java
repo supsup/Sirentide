@@ -37,6 +37,10 @@ public record Sequence(List<String> actors, List<SeqMessage> messages, String te
                        List<SeqNote> notes, List<SeqLifecycle> lifecycles)
     implements Diagram {
 
+    /// Shared parser/direct-layout bound for author-visible note bands. Kept on the IR type so the
+    /// pure layout layer does not depend back on parser internals.
+    public static final int MAX_NOTES = 10_000;
+
     public Sequence {
         actors = List.copyOf(actors);
         messages = List.copyOf(messages);
