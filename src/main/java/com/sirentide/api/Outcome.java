@@ -8,9 +8,9 @@ package com.sirentide.api;
 /// - {@link #OK} — the bake succeeded; the SVG is real content.
 /// - {@link #PARSE_ERROR} — the source didn't parse into a recognized diagram (unknown type keyword
 ///   on line 1, or an over-cap / unparseable header) and degraded to the empty shell.
-/// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the baked SVG passed the
-///   {@link Sirentide#MAX_OUTPUT_BYTES} cap (the emitter's incremental guard or the post-emit
-///   check), so it degraded to the inert shell rather than emit a runaway document.
+/// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the bake passed an output-size/frame
+///   cap or a deterministic layout-work cap, so it degraded to the inert shell rather than build or
+///   emit a runaway document.
 /// - {@link #UNSUPPORTED_CONSTRUCT} — reserved for a construct the parser recognizes-but-cannot-yet
 ///   render. v1 CANNOT distinguish this from {@link #PARSE_ERROR} without deeper parser annotation
 ///   (the parser degrades an unknown type to the same Empty target), so it is folded into
