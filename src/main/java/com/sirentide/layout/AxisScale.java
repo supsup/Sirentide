@@ -27,6 +27,17 @@ public final class AxisScale {
         }
         this.min = Math.min(min, max);
         this.max = Math.max(min, max);
+        // SIR-04: BOTH endpoints can be finite yet the SPAN (max - min) overflow to +Infinity — e.g.
+        // the domain [-1e308, 1e308]. A non-finite span silently poisons every projection: t =
+        // (value - min) / Infinity collapses interior points to `pixelStart` and the far endpoint to
+        // NaN (which the emitter used to clamp to 0), returning a wrong-but-bounded axis as SUCCESS.
+        // The endpoint check above (added earlier) does NOT catch this — the span is a DERIVED
+        // quantity. Reject it LOUDLY here: the throw propagates out of layout and the bake guard
+        // degrades to the inert shell (RENDER_BUG), never a misinformed axis (DESIGN §6).
+        if (!Double.isFinite(this.max - this.min)) {
+            throw new IllegalArgumentException(
+                "AxisScale domain span overflows to non-finite: [" + this.min + ", " + this.max + "]");
+        }
     }
 
     /// A scale whose domain is the min AND max of the given values (both ends computed — the missing
