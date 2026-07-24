@@ -1626,11 +1626,12 @@ public final class DslParser {
     /// A malformed line — no arrow token in the head, or an empty endpoint — is DROPPED whole (never
     /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages, and
     /// {@link #MAX_SEQUENCE_NOTES} notes; ids/labels `cap()`'d. Messages past their cap are inert as
-    /// before, while the first VALID note past its cap rejects the whole diagram to Empty rather than
-    /// silently omit an author-visible annotation. A bare `sequence` body (no non-blank lines) → a
-    /// Sequence with no actors and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY
-    /// body that parses to zero actors (every line malformed) sets `bodyHadContent=true` so layout
-    /// degrades VISIBLY.
+    /// before, while the first VALID note past its cap is retained as a single bounded overflow marker
+    /// on the Sequence IR. Layout rejects that marker before producing geometry, so the cap reason
+    /// survives the parse boundary and no author-visible annotation is silently omitted. A bare
+    /// `sequence` body (no non-blank lines) → a Sequence with no actors and `bodyHadContent=false` (an
+    /// intentional blank canvas). A NON-EMPTY body that parses to zero actors (every line malformed)
+    /// sets `bodyHadContent=true` so layout degrades VISIBLY.
     ///
     /// BLOCK KEYWORDS (M2 — alt/loop/par frames). A line whose FIRST token is `alt`/`loop`/`par`,
     /// `else`/`and`, or `end` AND which carries NO arrow token is a BLOCK DIRECTIVE, not a message
@@ -1672,9 +1673,11 @@ public final class DslParser {
                 SeqDirectiveResult directive =
                     handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size());
                 if (directive == SeqDirectiveResult.NOTE_CAP_EXCEEDED) {
-                    // Do not silently omit a valid annotation and change the author's diagram. Empty
-                    // is the established parser-level bounded degrade; renderWithDiagnostics names it.
-                    return new Empty();
+                    // Preserve exactly the first excess note in a bounded Sequence IR. Its count is a
+                    // truthful overflow marker across the parse boundary; SequenceLayout rejects it
+                    // before caption/title/theme can decorate a generic Empty fallback.
+                    return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor,
+                        bodyHadContent, blocks, notes, lifecycles);
                 }
                 if (directive == SeqDirectiveResult.CONSUMED) {
                     continue;
@@ -1760,10 +1763,10 @@ public final class DslParser {
             case KW_NOTE -> {
                 SeqNote note = parseNote(kwRest[1], actors, atMsg);
                 if (note != null) {
-                    if (notes.size() >= MAX_SEQUENCE_NOTES) {
+                    notes.add(note);
+                    if (notes.size() > MAX_SEQUENCE_NOTES) {
                         return SeqDirectiveResult.NOTE_CAP_EXCEEDED;
                     }
-                    notes.add(note);
                 }
                 // A malformed note is consumed but inert (never a stray message).
                 return SeqDirectiveResult.CONSUMED;

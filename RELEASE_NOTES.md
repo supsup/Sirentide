@@ -16,6 +16,13 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Bounded layout hot paths
+Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while
+Sankey column relaxation has a deterministic 250,000-edge-inspection ceiling. Sequences accept 10,000
+notes; the first valid excess note now crosses parsing as a bounded rejection marker and aborts before
+caption, title, or theme decoration, yielding the literal inert SVG shell plus a named sequence-note-cap
+diagnostic.
+
 ### Flowchart convergent-edge label de-collision (plan ea20153b part 2)
 Two labeled edges reaching the **same target** from nearby sources used to place their labels at
 nearly the same spot, so their rendered glyph **boxes overprinted in both axes** into an

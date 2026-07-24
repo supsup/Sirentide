@@ -11,7 +11,6 @@ import com.sirentide.api.Outcome;
 import com.sirentide.api.RenderResult;
 import com.sirentide.api.Sirentide;
 import com.sirentide.contract.SirentideRole;
-import com.sirentide.ir.Empty;
 import com.sirentide.ir.Sankey;
 import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.SeqNote;
@@ -30,6 +29,9 @@ import org.junit.jupiter.api.Test;
 /// 18863d64-4f81-4970-bb50-30caf9e20e35. These assert deterministic operation counts and exact
 /// allow/deny boundaries instead of relying on wall-clock timing.
 class LayoutComplexityGuardTest {
+
+    private static final String INERT_SHELL =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
     @Test
     void duplicateAnchorSuffixSearchUsesOneSetProbePerAssignedAnchor() {
@@ -106,14 +108,45 @@ class LayoutComplexityGuardTest {
 
         source.append("note over A : excess\n");
         String overCap = source.toString();
-        assertInstanceOf(Empty.class, DslParser.parse(overCap),
-            "the first excess valid note rejects the whole diagram instead of silently omitting it");
+        Sequence rejected = assertInstanceOf(Sequence.class, DslParser.parse(overCap),
+            "the cap breach must remain identifiable across the parse boundary");
+        assertEquals(DslParser.MAX_SEQUENCE_NOTES + 1, rejected.notes().size(),
+            "the bounded overflow marker retains exactly the first excess valid note");
+
         RenderResult result = Sirentide.renderWithDiagnostics(overCap);
-        assertEquals(Outcome.PARSE_ERROR, result.diagnostics().outcome(),
-            "the cap breach must be visible on the diagnostics channel");
-        assertEquals("parse", result.diagnostics().stage());
+        assertEquals(INERT_SHELL, result.svg(),
+            "the first excess note degrades to the literal inert shell before decoration");
+        assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, result.diagnostics().outcome(),
+            "the known sequence-note cap is a bounded-cap degrade, not a generic parse error");
+        assertEquals("layout", result.diagnostics().stage());
+        assertTrue(result.diagnostics().message().contains("sequence-note cap"),
+            "the author-facing diagnostic names the breached limit");
+        assertTrue(result.diagnostics().detail().contains("MAX_SEQUENCE_NOTES"),
+            "the diagnostic detail preserves the exact machine-readable cap name");
         assertEquals(Sirentide.render(overCap), result.svg(),
-            "diagnostics do not alter the guarded inert-shell bake");
+            "render and renderWithDiagnostics return the same literal degraded bytes");
+    }
+
+    @Test
+    void sequenceNoteCapDegradeCannotBeDecoratedByCaptionTitleOrTheme() {
+        String overCap = sequenceWithNotes(DslParser.MAX_SEQUENCE_NOTES + 1);
+        String decorated =
+            "%% caption: this must not become geometry\n"
+                + "%% title: this must not become accessibility markup\n"
+                + "%% theme: dark\n"
+                + overCap;
+
+        String plain = Sirentide.render(overCap);
+        RenderResult decoratedResult = Sirentide.renderWithDiagnostics(decorated);
+
+        assertEquals(INERT_SHELL, plain);
+        assertEquals(plain, Sirentide.render(decorated),
+            "caption, title, and theme cannot mutate the cap's literal inert shell");
+        assertEquals(plain, decoratedResult.svg(),
+            "the diagnostic path returns the same byte-identical degraded result");
+        assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, decoratedResult.diagnostics().outcome());
+        assertTrue(decoratedResult.diagnostics().message().contains("sequence-note cap"));
+        assertTrue(decoratedResult.diagnostics().detail().contains("MAX_SEQUENCE_NOTES"));
     }
 
     @Test
@@ -193,6 +226,14 @@ class LayoutComplexityGuardTest {
             flows.add(new SankeyFlow("n" + i, "n" + ((i + 1) % nodes), 1));
         }
         return flows;
+    }
+
+    private static String sequenceWithNotes(int notes) {
+        StringBuilder source = new StringBuilder("sequence\nA ->> B : register\n");
+        for (int i = 0; i < notes; i++) {
+            source.append("note over A : n\n");
+        }
+        return source.toString();
     }
 
     private static Map<String, Integer> index(List<SankeyFlow> flows) {

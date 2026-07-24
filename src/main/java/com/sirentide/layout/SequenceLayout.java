@@ -133,9 +133,9 @@ public final class SequenceLayout {
     /// {@link #layout(Sequence)}.
     public static LaidOut layout(Sequence seq, MathFragmentRenderer math) {
         if (seq.notes().size() > Sequence.MAX_NOTES) {
-            // The DSL parser rejects the first excess note before constructing this IR. Keep the
-            // public direct-layout entry point bounded too for callers that construct Sequence by
-            // hand, and fail loud rather than silently discard their annotations.
+            // The DSL parser retains exactly the first excess note as a bounded overflow marker.
+            // Reject it before any geometry is produced; direct IR callers receive the same loud
+            // bound rather than having their annotations silently discarded.
             throw new IllegalStateException(
                 "MAX_LAYOUT_WORK exceeded: sequence has " + seq.notes().size()
                     + " notes, past MAX_SEQUENCE_NOTES=" + Sequence.MAX_NOTES);

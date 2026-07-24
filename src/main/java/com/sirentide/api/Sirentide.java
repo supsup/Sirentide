@@ -385,6 +385,13 @@ public final class Sirentide {
     private static Diagnostics classifyFailure(String stage, Throwable e) {
         String msg = e.getMessage();
         String detail = e.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+        if (STAGE_LAYOUT.equals(stage) && msg != null && msg.contains("MAX_SEQUENCE_NOTES")) {
+            return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_LAYOUT,
+                "The sequence exceeded the " + Sequence.MAX_NOTES
+                    + "-note sequence-note cap, so it degraded to the empty shell. Reduce the "
+                    + "number of sequence notes.",
+                -1, detail);
+        }
         if (STAGE_LAYOUT.equals(stage) && msg != null && msg.contains("MAX_LAYOUT_WORK")) {
             return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_LAYOUT,
                 "The diagram exceeded the deterministic layout-work budget, so it degraded to the "
