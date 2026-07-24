@@ -3,6 +3,7 @@ package com.sirentide;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -256,6 +257,101 @@ class IrImmutabilityTest {
     }
 
     @Test
+    void xyChartReconstructionHasEqualValueAndHash() {
+        XyChart original = new XyChart(
+            List.of(new Slice("A", 0), new Slice("B", 0)),
+            List.of(new double[] {1, 2}, new double[] {3}),
+            List.of("one", "two"),
+            "line",
+            true,
+            "#123456");
+        XyChart reconstructed = new XyChart(
+            original.bars(),
+            original.series(),
+            original.seriesNames(),
+            original.mode(),
+            original.legend(),
+            original.textColor());
+
+        assertEquals(original, reconstructed);
+        assertEquals(reconstructed, original);
+        assertEquals(original.hashCode(), reconstructed.hashCode());
+    }
+
+    @Test
+    void xyChartsWithEqualContentInDistinctArraysAreEqual() {
+        XyChart left = new XyChart(
+            List.of(new Slice("A", 0), new Slice("B", 0)),
+            List.of(new double[] {1, 2}, new double[] {3, 4}),
+            List.of("one", "two"),
+            "line",
+            true,
+            "currentColor");
+        XyChart right = new XyChart(
+            List.of(new Slice("A", 0), new Slice("B", 0)),
+            List.of(new double[] {1, 2}, new double[] {3, 4}),
+            List.of("one", "two"),
+            "line",
+            true,
+            "currentColor");
+
+        assertEquals(left, right);
+        assertEquals(left.hashCode(), right.hashCode());
+    }
+
+    @Test
+    void xyChartValueEqualityIncludesEveryRecordComponent() {
+        List<Slice> bars = List.of(new Slice("A", 0), new Slice("B", 0));
+        List<double[]> series = List.of(new double[] {1, 2}, new double[] {3, 4});
+        List<String> names = List.of("one", "two");
+        XyChart baseline = new XyChart(
+            bars, series, names, "line", true, "currentColor");
+
+        assertNotEquals(baseline, new XyChart(
+            List.of(new Slice("changed", 0), new Slice("B", 0)),
+            series, names, "line", true, "currentColor"));
+        assertNotEquals(baseline, new XyChart(
+            bars, List.of(new double[] {1, 2}, new double[] {3, 5}),
+            names, "line", true, "currentColor"));
+        assertNotEquals(baseline, new XyChart(
+            bars, series, List.of("changed", "two"), "line", true, "currentColor"));
+        assertNotEquals(baseline, new XyChart(
+            bars, series, names, "scatter", true, "currentColor"));
+        assertNotEquals(baseline, new XyChart(
+            bars, series, names, "line", false, "currentColor"));
+        assertNotEquals(baseline, new XyChart(
+            bars, series, names, "line", true, "#123456"));
+    }
+
+    @Test
+    void xyChartEqualityHandlesRaggedAndZeroLengthArrays() {
+        XyChart left = new XyChart(
+            List.of(new Slice("A", 0), new Slice("B", 0), new Slice("C", 0)),
+            List.of(new double[0], new double[] {1}, new double[] {2, 3}),
+            List.of("one", "two"),
+            "line",
+            true,
+            "currentColor");
+        XyChart right = new XyChart(
+            List.of(new Slice("A", 0), new Slice("B", 0), new Slice("C", 0)),
+            List.of(new double[0], new double[] {1}, new double[] {2, 3}),
+            List.of("one", "two"),
+            "line",
+            true,
+            "currentColor");
+
+        assertEquals(left, right);
+        assertEquals(left.hashCode(), right.hashCode());
+        assertNotEquals(left, new XyChart(
+            right.bars(),
+            List.of(new double[0], new double[] {1}, new double[] {2, 3, 0}),
+            right.seriesNames(),
+            right.mode(),
+            right.legend(),
+            right.textColor()));
+    }
+
+    @Test
     void xyChartPreservesTheLegacyNullSeriesPathAndDefaults() {
         XyChart chart = new XyChart(
             List.of(new Slice("A", 1)),
@@ -270,6 +366,28 @@ class IrImmutabilityTest {
         assertEquals("bars", chart.mode());
         assertFalse(chart.legend());
         assertEquals("currentColor", chart.textColor());
+    }
+
+    @Test
+    void xyChartEqualityHandlesLegacyNullSeries() {
+        XyChart left = new XyChart(List.of(new Slice("A", 1)));
+        XyChart right = new XyChart(
+            left.bars(),
+            null,
+            null,
+            "bars",
+            false,
+            "currentColor");
+
+        assertEquals(left, right);
+        assertEquals(left.hashCode(), right.hashCode());
+        assertNotEquals(left, new XyChart(
+            left.bars(),
+            List.of(new double[] {1}),
+            null,
+            "bars",
+            false,
+            "currentColor"));
     }
 
     @Test
