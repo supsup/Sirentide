@@ -18,7 +18,7 @@ import java.util.Set;
 /// elements, so it emits no anchor group. gitGraph commit dots → {@link #COMMIT}, branch lanes →
 /// {@link #BRANCH} (its spine + name label); a branch/merge connector is decorative and un-anchored.
 /// journey tasks → {@link #TASK} (each task's point disc + name + actor labels); the satisfaction line,
-/// axes, and section-header brackets are decorative and un-anchored. mindmap nodes → {@link #NODE}
+/// and section-header brackets are decorative and un-anchored. mindmap nodes → {@link #NODE}
 /// (each node's box + label), parent→child connectors → {@link #EDGE} (its elbow lines) — the tree
 /// reuses the existing graph node/edge vocabulary, no new role. sankey nodes → {@link #NODE} (each
 /// node's box + label), flow bands → {@link #FLOW} (each source→target band quadrilateral). matrix
@@ -31,10 +31,11 @@ import java.util.Set;
 /// sequence NOTE boxes → {@link #NOTE} (the annotation-box role; a `create`/`destroy` adds no discrete
 /// element — it only modifies the lifeline it names — so it emits no anchor group).
 ///
-/// {@link #CLUSTER} (subgraph frames) and {@link #AXIS} (chart axes) stay RESERVED — those decorative
-/// structures are not anchored yet; the allowlist already admits them for a future slice. Adding a
-/// role here (not at a call site) is the single reviewed choke point that keeps the role vocabulary
-/// closed.
+/// Flowchart subgraph frames → {@link #CLUSTER} (one frame group, id from the stable subgraph id).
+/// The eight primary chart-axis spines → {@link #AXIS}: x/y for xychart, quadrant, and journey; one
+/// time axis for timeline and gantt. Tick marks, tick labels, and axis-end labels remain bare
+/// structural chrome; the queryable target is the physical axis line. Adding a role here (not at a
+/// call site) is the single reviewed choke point that keeps the role vocabulary closed.
 public enum SirentideRole {
     NODE("node"),
     EDGE("edge"),
@@ -71,7 +72,7 @@ public enum SirentideRole {
     // Each verdict cell's fill rect + centered token glyph anchors as one CELL group, in row-major
     // reading order. The header band + row-label column are structural and stay un-anchored.
     CELL("cell"),
-    // -- reserved (NOT emitted yet; admitted by the contract so a later slice is emitter-only) -------
+    // -- structural semantic targets (contract-admitted before their emitter-only S2 slice) ----------
     CLUSTER("cluster"),
     AXIS("axis");
 

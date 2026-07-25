@@ -83,6 +83,7 @@ public final class XyChartLayout {
         double plotW = plotRight - plotLeft;
 
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
 
         // Off-slice text fill (category, y-tick, and per-bar value labels): the page-background text
         // colour, default `currentColor` so it inherits the host page's colour (light AND dark).
@@ -90,8 +91,10 @@ public final class XyChartLayout {
         List<Slice> bars = chart.bars();
         if (bars.isEmpty()) {
             // Axes only (no data): keep the classic bottom x-axis + left y-axis.
-            shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1));
-            shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
+            shapes.add(axis(assigner, "x",
+                new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1)));
+            shapes.add(axis(assigner, "y",
+                new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1)));
             return new LaidOut(W, H, shapes);
         }
 
@@ -104,8 +107,10 @@ public final class XyChartLayout {
 
         // y-axis (full height) + the zero baseline as the x-axis (which may sit mid-plot for
         // mixed-sign data, at the top for all-negative, at the bottom for all-positive).
-        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));      // y-axis
-        shapes.add(new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1));    // x-axis (zero)
+        shapes.add(axis(assigner, "y",
+            new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1)));      // y-axis
+        shapes.add(axis(assigner, "x",
+            new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1)));    // x-axis (zero)
 
         // y-axis scale: nice 1-2-5 tick marks + numeric labels (was missing entirely — no y-scale).
         for (double tick : axis.ticks()) {
@@ -124,8 +129,7 @@ public final class XyChartLayout {
         double barW = slot * 0.6;
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each bar → ONE `<g role="bar">`
         // wrapping its rect + category label + value label (all emitted contiguously per bar). seq runs
-        // 0..N-1 in bar order; id from the category label.
-        AnchorAssigner assigner = new AnchorAssigner();
+        // 2..N+1 in bar order (after the y/x axes); id from the category label.
         for (int i = 0; i < n; i++) {
             Slice b = bars.get(i);
             double barEndY = axis.project(b.value(), plotBottom, plotTop);
@@ -189,10 +193,13 @@ public final class XyChartLayout {
         double plotW = plotRight - plotLeft;
 
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
 
         if (nCat == 0 || seriesCount == 0) {
-            shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
-            shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1));
+            shapes.add(axis(assigner, "y",
+                new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1)));
+            shapes.add(axis(assigner, "x",
+                new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, 1)));
             return new LaidOut(canvasW, canvasH, shapes);
         }
 
@@ -233,8 +240,10 @@ public final class XyChartLayout {
         double baselineY = grouped ? axis.project(0, plotBottom, plotTop) : plotBottom;
 
         // y-axis (full height) + the baseline x-axis.
-        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1));
-        shapes.add(new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1));
+        shapes.add(axis(assigner, "y",
+            new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, 1)));
+        shapes.add(axis(assigner, "x",
+            new Line(plotLeft, baselineY, plotRight, baselineY, AXIS_STROKE, 1)));
 
         for (double tick : axis.ticks()) {
             double ty = axis.project(tick, plotBottom, plotTop);
@@ -249,10 +258,10 @@ public final class XyChartLayout {
 
         double slot = plotW / nCat;
         if (grouped) {
-            layoutGroupedBars(shapes, series, bars, seriesCount, axis,
+            layoutGroupedBars(shapes, assigner, series, bars, seriesCount, axis,
                 plotLeft, plotBottom, plotTop, baselineY, slot, textColor, math);
         } else {
-            layoutPoints(shapes, series, bars, seriesCount, axis, mode,
+            layoutPoints(shapes, assigner, series, bars, seriesCount, axis, mode,
                 plotLeft, plotBottom, plotTop, slot, textColor, math);
         }
 
@@ -264,7 +273,8 @@ public final class XyChartLayout {
 
     /// Grouped bars: each category slot is divided among the series with a {@link #GROUP_GAP} inner
     /// gap. Series colour by palette index; a missing value = no bar for that series there.
-    private static void layoutGroupedBars(List<Shape> shapes, List<double[]> series, List<Slice> bars,
+    private static void layoutGroupedBars(List<Shape> shapes, AnchorAssigner assigner,
+                                          List<double[]> series, List<Slice> bars,
                                           int seriesCount, AxisScale axis, double plotLeft,
                                           double plotBottom, double plotTop, double baselineY,
                                           double slot, String textColor, MathFragmentRenderer math) {
@@ -272,10 +282,9 @@ public final class XyChartLayout {
         double barW = Math.max(0.5, (groupW - (seriesCount - 1) * GROUP_GAP) / seriesCount);
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each category COLUMN → ONE
         // `<g role="bar">` wrapping its series rects + the category label (all emitted contiguously per
-        // column). seq runs 0..nCat-1 in column order; id from the category label. (A grouped column
-        // holds one bar per series; the group is the column, matching the single-series case where a
-        // column IS one bar.)
-        AnchorAssigner assigner = new AnchorAssigner();
+        // column). seq follows the two axis groups in column order; id comes from the category label.
+        // (A grouped column holds one bar per series; the group is the column, matching the
+        // single-series case where a column IS one bar.)
         for (int i = 0; i < bars.size(); i++) {
             double[] row = series.get(i);
             double slotLeft = plotLeft + slot * i + (slot - groupW) / 2;
@@ -301,7 +310,8 @@ public final class XyChartLayout {
     /// also draws a {@link Line} segment between each pair of CONSECUTIVE categories where the series
     /// is present at BOTH — a missing point leaves a gap that breaks the line (never bridged, never
     /// zeroed). Segments are drawn before discs so a disc sits on top of its segment ends.
-    private static void layoutPoints(List<Shape> shapes, List<double[]> series, List<Slice> bars,
+    private static void layoutPoints(List<Shape> shapes, AnchorAssigner assigner,
+                                     List<double[]> series, List<Slice> bars,
                                      int seriesCount, AxisScale axis, String mode, double plotLeft,
                                      double plotBottom, double plotTop, double slot, String textColor,
                                      MathFragmentRenderer math) {
@@ -316,7 +326,6 @@ public final class XyChartLayout {
         // `<g role="bar">` (id = its category label, uniquified across series). Connecting SEGMENTS
         // (line mode) and category labels stay bare — a segment spans two points and belongs to neither,
         // exactly as a pie leader line stays bare. Wrapping each disc in place preserves emit order.
-        AnchorAssigner assigner = new AnchorAssigner();
         for (int s = 0; s < seriesCount; s++) {
             String col = Colors.PALETTE[s % Colors.PALETTE.length];
             if (line) {
@@ -394,6 +403,12 @@ public final class XyChartLayout {
         if (!d.isBlank()) {
             shapes.add(new GlyphRun(d, fill));
         }
+    }
+
+    /// Wrap one physical chart-axis line in its semantic group. Tick marks and labels remain in their
+    /// original positions in the flat emit stream; the anchor targets the stable axis spine itself.
+    private static Group axis(AnchorAssigner assigner, String id, Line line) {
+        return new Group(assigner.assign(SirentideRole.AXIS, id), List.<Shape>of(line));
     }
 
     private static String num(double v) {

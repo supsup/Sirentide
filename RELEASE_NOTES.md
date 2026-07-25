@@ -23,6 +23,13 @@ notes; the first valid excess note now crosses parsing as a bounded rejection ma
 caption, title, or theme decoration, yielding the literal inert SVG shell plus a named sequence-note-cap
 diagnostic.
 
+### Cluster and axis semantic anchors
+The final two contract-reserved roles now have producer coverage. Every drawn flowchart subgraph frame
+emits one `data-sirentide-role="cluster"` group keyed by its stable subgraph id. Eight primary axis
+spines emit `role="axis"`: x/y for xychart, quadrant, and journey, plus the single time axis in timeline
+and gantt. All groups share their diagram's existing id sanitizer, collision namespace, and contiguous
+emit-order sequence; no SVG element, attribute, or value grammar was widened.
+
 ### Flowchart convergent-edge label de-collision (plan ea20153b part 2)
 Two labeled edges reaching the **same target** from nearby sources used to place their labels at
 nearly the same spot, so their rendered glyph **boxes overprinted in both axes** into an

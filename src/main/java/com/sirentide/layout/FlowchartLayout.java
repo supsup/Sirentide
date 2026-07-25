@@ -828,19 +828,22 @@ public final class FlowchartLayout {
         // -- emit order matters (readability + the containment audit): cluster frames UNDER edges,
         // edges UNDER nodes, then boxes, then labels on top.
         List<Shape> shapes = new ArrayList<>();
+        // One assigner spans the WHOLE diagram: cluster frames emit first, then edges, then nodes.
+        // Sharing it keeps ids page-local unique even when (for example) a cluster id matches a node
+        // label, and keeps seq equal to semantic-group emit order.
+        AnchorAssigner assigner = new AnchorAssigner();
         for (ClusterFrame f : frames) {
-            emitClusterFrame(shapes, f, canvasW);
+            emitClusterFrame(shapes, f, canvasW, assigner);
         }
 
         // 1) edges: forward = a straight line (or, when routed through waypoints, a POLYLINE) from the
         // src bottom-center to the dst top-center + a triangle arrowhead on the FINAL segment; BACK-
         // edges = an orthogonal detour through a right-side lane (M1.1) — out the source's right side,
         // up the lane, back into the target's right side.
-        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): assigns each edge/node its
-        // role+unique-id+emit-order-seq. Edges are assigned FIRST (emit before nodes), so seq runs
-        // 0..E-1 over edges then E..E+N-1 over nodes — the element's emit-order index. Unused when
-        // !anchored (state diagram): the shapes go straight onto the flat list, byte-identical.
-        AnchorAssigner assigner = new AnchorAssigner();
+        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): assigns every cluster/edge/node
+        // its role+unique-id+emit-order-seq. Cluster frames consumed the first C values above; edges
+        // take C..C+E-1, then nodes C+E..C+E+N-1. A cluster-free chart retains the original edge-first
+        // 0..E-1 sequence. Unused when !anchored (legacy path): shapes stay flat and byte-identical.
         // Node fills as obstacles for the back-edge rail detour (plan e7144b77 #1) — coordinates are
         // final here (post cluster-shift), so the rects match what draws.
         List<double[]> obstacles = nodeObstacles(n, vx, vy, boxW, boxH);
@@ -1296,16 +1299,17 @@ public final class FlowchartLayout {
         // -- emit order (readability + containment audit): cluster frames under edges, edges under
         // nodes, then boxes, then labels.
         List<Shape> shapes = new ArrayList<>();
+        // Mirror TD: cluster frames, edges, and nodes share one page-local id/seq namespace.
+        AnchorAssigner assigner = new AnchorAssigner();
         for (ClusterFrame f : frames) {
-            emitClusterFrame(shapes, f, canvasW);
+            emitClusterFrame(shapes, f, canvasW, assigner);
         }
         String textColor = fc.textColor();
 
         // 1) edges. forward = right-middle → left-middle straight line (or a POLYLINE through waypoint
         // centres) + a triangle arrowhead on the FINAL segment; back = a detour DOWN out the source's
         // bottom, along a lane below the content, UP into the target's bottom with an up arrowhead.
-        // Per-diagram anchor factory (mirror of the TD path): edges assigned first, then nodes.
-        AnchorAssigner assigner = new AnchorAssigner();
+        // Per-diagram anchor factory (mirror of TD): clusters first, then edges, then nodes.
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -1828,10 +1832,12 @@ public final class FlowchartLayout {
         return best;
     }
 
-    /// One resolved subgraph cluster frame: the (ellipsized) `title` plus the border rectangle
-    /// `[left,right]×[top,bottom]` (the top band occupies `[top, top+CLUSTER_BAND_H]`). Layout-internal
+    /// One resolved subgraph cluster frame: the stable DSL `id`, the (ellipsized) `title`, plus the
+    /// border rectangle `[left,right]×[top,bottom]` (the top band occupies
+    /// `[top, top+CLUSTER_BAND_H]`). Layout-internal
     /// — {@link #emitClusterFrame} turns it into four border lines + a title band + a title glyph run.
-    private record ClusterFrame(String title, double left, double top, double right, double bottom) {}
+    private record ClusterFrame(String id, String title,
+                                double left, double top, double right, double bottom) {}
 
     /// Resolves each {@link FlowCluster} to a pixel {@link ClusterFrame}: the union of its member node
     /// rects (from `vx`/`vy`/`boxW`), grown by a depth-tightened padding, with a title band reserved
@@ -1860,7 +1866,7 @@ public final class FlowchartLayout {
             double bottom = b[3];
             String title = FONT.ellipsize(c.title(),
                 Math.min(CLUSTER_MAX_TITLE_W, right - left - 2 * CLUSTER_TITLE_PAD), CLUSTER_TITLE_SIZE);
-            out.add(new ClusterFrame(title, left, top, right, bottom));
+            out.add(new ClusterFrame(c.id(), title, left, top, right, bottom));
         }
         return out;
     }
@@ -2216,24 +2222,29 @@ public final class FlowchartLayout {
 
     /// Emits one cluster {@link ClusterFrame}: a STROKE-ONLY border (four {@link Line}s — a
     /// {@link Rect} carries fill only), a filled top BAND {@link Rect} holding the (contrast-filled)
-    /// title glyph run, all inside the svg/rect/line/path alphabet and clamped in-canvas. Emitted
-    /// BEFORE the edges/nodes so the frame sits behind the content it wraps.
-    private static void emitClusterFrame(List<Shape> shapes, ClusterFrame f, double canvasW) {
-        shapes.add(new Line(f.left(), f.top(), f.right(), f.top(), CLUSTER_STROKE, CLUSTER_STROKE_W));
-        shapes.add(new Line(f.left(), f.bottom(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
-        shapes.add(new Line(f.left(), f.top(), f.left(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
-        shapes.add(new Line(f.right(), f.top(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+    /// title glyph run, all inside the svg/rect/line/path alphabet and clamped in-canvas. The complete
+    /// frame is wrapped in ONE `role=cluster` group whose id comes from the stable `subgraph <id>`
+    /// token (not its display title). Emitted BEFORE the edges/nodes so the frame sits behind the
+    /// content it wraps.
+    private static void emitClusterFrame(List<Shape> shapes, ClusterFrame f, double canvasW,
+                                         AnchorAssigner assigner) {
+        List<Shape> members = new ArrayList<>();
+        members.add(new Line(f.left(), f.top(), f.right(), f.top(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        members.add(new Line(f.left(), f.bottom(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        members.add(new Line(f.left(), f.top(), f.left(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
+        members.add(new Line(f.right(), f.top(), f.right(), f.bottom(), CLUSTER_STROKE, CLUSTER_STROKE_W));
         // Title band — a filled rect across the frame top holding the cluster title.
-        shapes.add(new Rect(f.left(), f.top(), f.right() - f.left(), CLUSTER_BAND_H, CLUSTER_BAND_FILL));
+        members.add(new Rect(f.left(), f.top(), f.right() - f.left(), CLUSTER_BAND_H, CLUSTER_BAND_FILL));
         if (f.title() != null && !f.title().isBlank()) {
             double tw = FONT.runWidth(f.title(), CLUSTER_TITLE_SIZE);
             double x = clampLabelX(f.left() + CLUSTER_TITLE_PAD, tw, canvasW);
             double baseline = f.top() + CLUSTER_BAND_H / 2 + CLUSTER_TITLE_SIZE * 0.35;
             String d = FONT.textPathD(f.title(), x, baseline, CLUSTER_TITLE_SIZE);
             if (!d.isBlank()) {
-                shapes.add(new GlyphRun(d, Colors.contrastFill(CLUSTER_BAND_FILL)));
+                members.add(new GlyphRun(d, Colors.contrastFill(CLUSTER_BAND_FILL)));
             }
         }
+        shapes.add(new Group(assigner.assign(SirentideRole.CLUSTER, f.id()), members));
     }
 
     /// Deterministic 3-dp number formatting for arrowhead path data (byte-identical bakes, DESIGN §6).

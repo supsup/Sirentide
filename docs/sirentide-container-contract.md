@@ -43,8 +43,10 @@ Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constr
 enum into every consumer, and the Stafficy sanitizer pins its allow-list to
 `SirentideRole.WIRE_VALUES` directly — so the enum, not this table, is what enforcement reads.
 This table is kept byte-aligned with the enum by a **build-failing drift test**
-(`ContractDocDriftTest`) that parses this file and compares. `cluster` and `axis` are
-**RESERVED**: admitted by the contract + sanitizer, not yet emitted by any layout.
+(`ContractDocDriftTest`) that parses this file and compares. `cluster` is emitted on each
+flowchart subgraph frame (id from the stable subgraph id); `axis` is emitted on the eight primary
+axis spines across xychart, quadrant, journey, timeline, and gantt. These roles use the same closed
+id/seq value constraints as every other semantic group.
 
 **The seq split is deliberate.** The in-process contract (`SirentideContract.ANCHOR_SEQ`,
 `{1,9}`) stays loose for the unbounded in-process play-through; the `/docs` **wire** bound is
