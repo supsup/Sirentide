@@ -23,6 +23,12 @@ notes; the first valid excess note now crosses parsing as a bounded rejection ma
 caption, title, or theme decoration, yielding the literal inert SVG shell plus a named sequence-note-cap
 diagnostic.
 
+### Deep code-audit reconciliation
+The repository now carries Marlow's source-level audit of the 2026-07-23 baseline, reconciled against
+current main after independent reproduction of all 19 findings. The report distinguishes historical
+receipts from present code state, records the focused remediation merges that have already landed,
+corrects severity ratings, and keeps the remaining global-work-budget and contract/test gaps explicit.
+
 ### Cluster and axis semantic anchors
 The final two contract-reserved roles now have producer coverage. Every drawn flowchart subgraph frame
 emits one `data-sirentide-role="cluster"` group keyed by its stable subgraph id. Eight primary axis
