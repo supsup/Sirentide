@@ -72,7 +72,7 @@ Current main has landed items 1, 2, and 4. It has also landed local linearizatio
 This was a source-and-execution audit, not a style-only review.
 
 - Updated refs and pinned the review to the exact baseline above in an isolated worktree; `main` was not modified.
-- Inventoried 113 production Java files, 81 test files, 22 diagram types, and approximately 37.4 KLOC of production Java.
+- Inventoried 113 production Java files, 81 test files, 22 diagram types, approximately 18.2 KLOC of production Java, and 19.3 KLOC of test Java (37.4 KLOC combined).
 - Traced the four public bake pipelines, parser dispatch, every relevant layout family, SVG emission, a11y replay, CLI I/O, font decoding, and existing caps.
 - Reviewed repository history and active Sirentide plans to distinguish new findings from already-owned work.
 - Used three independent review lanes for performance, architecture/duplication, and correctness/reliability. I then inspected and reproduced every retained finding myself; unverified suggestions were discarded.
