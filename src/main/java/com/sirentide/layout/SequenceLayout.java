@@ -132,6 +132,14 @@ public final class SequenceLayout {
     /// seam. A null `math` degrades every `$…$` to plain text — byte-identical to
     /// {@link #layout(Sequence)}.
     public static LaidOut layout(Sequence seq, MathFragmentRenderer math) {
+        if (seq.notes().size() > Sequence.MAX_NOTES) {
+            // The DSL parser retains exactly the first excess note as a bounded overflow marker.
+            // Reject it before any geometry is produced; direct IR callers receive the same loud
+            // bound rather than having their annotations silently discarded.
+            throw new IllegalStateException(
+                "MAX_LAYOUT_WORK exceeded: sequence has " + seq.notes().size()
+                    + " notes, past MAX_SEQUENCE_NOTES=" + Sequence.MAX_NOTES);
+        }
         List<String> actors = seq.actors();
         int n = actors.size();
         if (n == 0) {
@@ -226,6 +234,9 @@ public final class SequenceLayout {
         double[] bottomByMsg = new double[msgCount];
         Arrays.fill(yByMsg, Double.NaN);
         Arrays.fill(bottomByMsg, Double.NaN);
+        // One stable pass over the notes replaces the old boundary×notes rescan. Buckets preserve
+        // declaration order because each note is appended while walking seq.notes() once.
+        NoteBuckets notesByBoundary = bucketNotes(seq.notes(), msgCount);
         // Walk the message boundaries K = 0..msgCount, accumulating an ABSOLUTE y cursor. Before each
         // message we INJECT any note bands + created-head bands anchored at that boundary (atMsg == K),
         // growing the diagram so the annotation never overlaps its neighbours. With no notes/creates
@@ -235,10 +246,7 @@ public final class SequenceLayout {
         double cursorY = headBottom + MSG_TOP_PAD;
         for (int K = 0; K <= msgCount; K++) {
             // Notes anchored at this boundary (declaration order): each injects its own vertical band.
-            for (SeqNote note : seq.notes()) {
-                if (note.atMsg() != K) {
-                    continue;
-                }
+            for (SeqNote note : notesByBoundary.at(K)) {
                 NoteBox nb = layoutNote(note, cursorY + NOTE_MARGIN, cx, index);
                 if (nb != null) {
                     noteBoxes.add(nb);
@@ -469,6 +477,53 @@ public final class SequenceLayout {
         }
 
         return new LaidOut(canvasW, canvasH, shapes);
+    }
+
+    /// Stable one-pass note buckets for message boundaries `0..msgCount`. Notes with an out-of-range
+    /// `atMsg` remain inert, matching the old rescan's behavior. The exact inspection count is kept as
+    /// a package-private deterministic complexity receipt (never wall-clock based).
+    static NoteBuckets bucketNotes(List<SeqNote> notes, int msgCount) {
+        if (msgCount < 0) {
+            throw new IllegalArgumentException("msgCount must be non-negative");
+        }
+        List<List<SeqNote>> byBoundary = new ArrayList<>(msgCount + 1);
+        for (int i = 0; i <= msgCount; i++) {
+            byBoundary.add(null);
+        }
+        int inspected = 0;
+        for (SeqNote note : notes) {
+            inspected++;
+            int boundary = note.atMsg();
+            if (boundary < 0 || boundary > msgCount) {
+                continue;
+            }
+            List<SeqNote> bucket = byBoundary.get(boundary);
+            if (bucket == null) {
+                bucket = new ArrayList<>();
+                byBoundary.set(boundary, bucket);
+            }
+            bucket.add(note);
+        }
+        return new NoteBuckets(byBoundary, inspected);
+    }
+
+    static final class NoteBuckets {
+        private final List<List<SeqNote>> byBoundary;
+        private final int inspectedNotes;
+
+        private NoteBuckets(List<List<SeqNote>> byBoundary, int inspectedNotes) {
+            this.byBoundary = byBoundary;
+            this.inspectedNotes = inspectedNotes;
+        }
+
+        List<SeqNote> at(int boundary) {
+            List<SeqNote> bucket = byBoundary.get(boundary);
+            return bucket != null ? bucket : List.of();
+        }
+
+        int inspectedNotes() {
+            return inspectedNotes;
+        }
     }
 
     /// A horizontal message between two DISTINCT lifelines: a stroked line + a dst arrowhead (a

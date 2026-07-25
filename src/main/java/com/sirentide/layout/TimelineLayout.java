@@ -44,10 +44,12 @@ public final class TimelineLayout {
     /// text — byte-identical to {@link #layout(Timeline)}.
     public static LaidOut layout(Timeline timeline, MathFragmentRenderer math) {
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
         // Both the event (top) and value/year (bottom) labels sit on the page background → the
         // page-background text colour, default `currentColor` (legible on light AND dark).
         String textColor = timeline.textColor();
-        shapes.add(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2));
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "time"),
+            List.<Shape>of(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2))));
 
         List<Slice> events = timeline.events();
         int n = events.size();
@@ -75,12 +77,12 @@ public final class TimelineLayout {
         double[] topW = new double[n];
         double[] botW = new double[n];
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each event's DOT is wrapped in
-        // ONE `<g role="event">` (seq in event order, id from the event label). Only the dot rides in
-        // the group — the top/bottom labels are laid out later (de-collision needs the full set) and
+        // ONE `<g role="event">` (seq after the time axis, in event order, id from the event label).
+        // Only the dot rides in the group — the top/bottom labels are laid out later (de-collision
+        // needs the full set) and
         // stay bare, exactly as a pie thin-slice's deferred outside label stays bare; the dot IS the
         // event's anchor point. Grouping the dot in place preserves emit order (dots emit here, labels
         // in the pass below).
-        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
@@ -129,15 +131,34 @@ public final class TimelineLayout {
         return new LaidOut(W, H, shapes);
     }
 
-    /// Greedy 2-row assignment: walk the labels in x order; keep each row's right edge. Place a
+    /// Greedy 2-row assignment: walk the labels in X ORDER; keep each row's right edge. Place a
     /// label on the first row whose last label clears it (left edge past that row's right edge +
     /// gap); if neither row is clear, use the row with the smaller right edge. Guarantees any two
     /// labels that overlap horizontally land on different rows, so their 2-D boxes stay disjoint.
-    private static int[] assignRows(double[] centers, double[] widths) {
+    ///
+    /// The greedy packing is only correct if the labels ARRIVE left-to-right. Events are placed by
+    /// VALUE (AxisScale), so their centre-x follows declaration order only when the input happens to
+    /// be value-sorted; a legal out-of-order declaration (e.g. `Launch:2023` before `Founded:2020`)
+    /// otherwise processed a right-hand label before a left-hand one, defeating the greedy clear-check
+    /// and letting two labels OVERLAP on the same row (SIR-10). Fix: process a STABLE sort of the
+    /// indices by centre-x (declaration order breaks centre ties), and write each result back by its
+    /// ORIGINAL index — so the returned array's ordering is unchanged, only the row VALUES differ.
+    ///
+    /// Package-visible so the correctness-fix test can assert the disjoint-row invariant directly on
+    /// crafted centres/widths.
+    static int[] assignRows(double[] centers, double[] widths) {
         int n = centers.length;
         int[] rows = new int[n];
-        double[] rowRight = {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) {
+            order[i] = i;
+        }
+        // Arrays.sort on a boxed array is a guaranteed-stable merge sort → equal centres keep
+        // declaration order, so the assignment stays deterministic + byte-stable.
+        java.util.Arrays.sort(order, (a, b) -> Double.compare(centers[a], centers[b]));
+        double[] rowRight = {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        for (int k = 0; k < n; k++) {
+            int i = order[k];
             double half = widths[i] / 2;
             double left = centers[i] - half;
             double right = centers[i] + half;
@@ -151,7 +172,7 @@ public final class TimelineLayout {
             if (row < 0) {
                 row = rowRight[0] <= rowRight[1] ? 0 : 1;   // least-bad: least-extended row
             }
-            rows[i] = row;
+            rows[i] = row;                                   // WRITE BACK by original index
             rowRight[row] = Math.max(rowRight[row], right);
         }
         return rows;

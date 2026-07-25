@@ -69,6 +69,30 @@ class GoldenSvgTest {
             "flowchart TD\n  A[Start] --> B[Work]\n  subgraph outer [Outer]\n    B --> C[Compile]\n"
                 + "    subgraph inner [Inner]\n      C --> D[Test]\n      D --> F[Lint]\n    end\n"
                 + "    F --> G[Package]\n  end\n  G --> E[Ship]\n");
+        // Convergent-edge label de-collision (label-legibility plan ea20153b part 2). TWO labeled edges
+        // reach the SAME target (X) from nearby sources, so their rendered label BOXES overprint in
+        // BOTH axes on the pre-fix layout — measured [x 66.29..96.95, y 78.62..83.61] vs
+        // [x 82.91..97.97, y 76.77..83.60], ~14px x-overlap AND ~5px y-overlap (guard-measured at
+        // confluence/flowchart-label-guard @ 277f3f1c; the "x-separated by construction" withdrawal
+        // premise was RETRACTED at sirentide/514 — anchor-x separation is not rendered-box-x
+        // separation). This golden pins the STACKED output: the second same-target label ("exit") is
+        // nudged one EDGE_LABEL_STACK (15px) below the first ("resume") so both read — post-fix
+        // [x 82.91..97.97, y 91.77..98.60], now Y-separated. This is the ONE flowchart golden the fix
+        // moves; every OTHER flowchart golden is a non-colliding fixture and stays byte-for-byte
+        // identical (its labels reach distinct targets, or are already x-separated so dy==0).
+        FIXTURES.put("flowchart-convergent",
+            "flowchart TD\n  A[a] -->|resume| X[x]\n  B[b] -->|exit| X\n");
+        // Deep convergent fan + canvas-height grow (plan ea20153b part 2, review sir/523). FIVE labeled
+        // edges into one sink chain-stack far enough that, before the grow, the lowest stacked label
+        // fell OFF the bottom (pre-fix canvasH 168, lowest label bottom 178.3). The de-collision now
+        // grows canvasH DOWN to contain the stack + MARGIN (canvasH 168 -> 202), so every stacked label
+        // is inside the canvas. This golden pins that GROWN output byte-for-byte — the deterministic
+        // machine proof of "no off-canvas clip" (the deep-fan legibility is BrewShot-reviewed at judge
+        // time). The grow fires ONLY on genuine overflow, so no non-overflowing diagram's canvasH moves.
+        FIXTURES.put("flowchart-convergent-fan",
+            "flowchart TD\n  A[A] -->|provisioning| S[Sink]\n  B[B] -->|invalidating| S\n"
+                + "  C[C] -->|transitioning| S\n  D[D] -->|reactivating| S\n"
+                + "  E[E] -->|deprovisioning| S\n");
         // A 3-actor sequence with ACTIVATION bars (M2): Client→Gateway opens Gateway's bar,
         // Gateway→Auth opens Auth's, Auth-->>Gateway closes Auth's, a NESTED self-call on Gateway
         // stacks an offset bar, and the final reply closes it — pinning the activation-rect geometry

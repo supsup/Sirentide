@@ -160,6 +160,17 @@ public final class MathLabel {
             return null;
         }
         MathFragment frag = out.get();
-        return FragmentGuard.isClean(frag.innerSvg()) ? frag : null;
+        // The foreign fragment must clear BOTH halves of the seam contract: STRUCTURE (SIR-02 —
+        // balanced, contained markup) and METRICS (SIR-08 — finite, non-negative, font-size-bounded
+        // box extents; an unvalidated NaN/1e308 extent would blow the label viewBox up to a
+        // rasterizer-DoS size). A failure of EITHER returns null, so the caller degrades this run to
+        // its raw `$…$` source text — the same fallback a render failure already takes.
+        if (!FragmentGuard.isClean(frag.innerSvg())) {
+            return null;
+        }
+        if (!FragmentGuard.metricsClean(frag.widthPx(), frag.heightPx(), frag.depthPx(), fontSizePx)) {
+            return null;
+        }
+        return frag;
     }
 }
