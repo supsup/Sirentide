@@ -1,0 +1,668 @@
+package com.sirentide.cli;
+
+import com.sirentide.api.Outcome;
+import com.sirentide.api.RenderResult;
+import com.sirentide.api.Sirentide;
+import com.sirentide.parse.DslParser;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryIteratorException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+/**
+ * Container-only folder worker. Markdown jobs use the shipped CLI's exact
+ * fence extractor and source cap; Markdown and raw DSL both use the same
+ * diagnostic render API as the application. This class is orchestration, not
+ * a second renderer.
+ *
+ * <p>Claims are atomic renames to a UUID-prefixed direct child of
+ * {@code input/processing}. The unique target means two workers can race for
+ * one source without either overwriting the other. Completed output and source
+ * archives are published with hard links from fully written files, which is an
+ * atomic create-if-absent operation on the mounted filesystem. There is no
+ * overwrite fallback.
+ */
+public final class SirentideFolderWorker {
+
+    private static final Path DEFAULT_INPUT = Path.of("/sirentide/input");
+    private static final Path DEFAULT_OUTPUT = Path.of("/sirentide/output");
+    private static final long DEFAULT_POLL_MILLIS = 500;
+    private static final long MIN_POLL_MILLIS = 10;
+    private static final long MAX_POLL_MILLIS = 60_000;
+    private static final int CLAIM_ID_LENGTH = 32;
+    private static final String CLAIM_SEPARATOR = "--";
+    private static final int DIAGNOSTIC_LIMIT = 512;
+
+    private final Path input;
+    private final Path output;
+    private final Path processing;
+    private final Path finished;
+    private final Path failed;
+    private final long pollMillis;
+
+    private SirentideFolderWorker(Path input, Path output, long pollMillis) {
+        this.input = input.toAbsolutePath().normalize();
+        this.output = output.toAbsolutePath().normalize();
+        this.processing = this.input.resolve("processing");
+        this.finished = this.input.resolve("finished");
+        this.failed = this.input.resolve("failed");
+        this.pollMillis = pollMillis;
+    }
+
+    public static void main(String[] args) {
+        if (args.length != 0) {
+            System.err.println("sirentide-watch: no arguments accepted");
+            System.exit(2);
+        }
+        try {
+            Path input = envPath("SIRENTIDE_INPUT_DIR", DEFAULT_INPUT);
+            Path output = envPath("SIRENTIDE_OUTPUT_DIR", DEFAULT_OUTPUT);
+            long pollMillis = envPollMillis();
+            new SirentideFolderWorker(input, output, pollMillis).run();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (Exception failure) {
+            // No exception message or path: mounted paths and host-specific
+            // details may contain secrets. The class and local method name the
+            // failure shape without exposing mounted content.
+            System.err.println("sirentide-watch: stopped after "
+                + failure.getClass().getSimpleName() + " in "
+                + localFailureSite(failure));
+            System.exit(2);
+        }
+    }
+
+    private static String localFailureSite(Throwable failure) {
+        for (StackTraceElement frame : failure.getStackTrace()) {
+            if (frame.getClassName().equals(SirentideFolderWorker.class.getName())) {
+                return frame.getMethodName();
+            }
+        }
+        return "worker";
+    }
+
+    private void run() throws IOException, InterruptedException {
+        ensureDirectory(input);
+        ensureDirectory(output);
+        ensureDirectory(processing);
+        ensureDirectory(finished);
+        ensureDirectory(failed);
+        ensureDirectory(finished.resolve("collisions"));
+        ensureDirectory(failed.resolve("collisions"));
+
+        System.err.println("sirentide-watch: ready");
+        while (!Thread.currentThread().isInterrupted()) {
+            boolean worked = processRecoveredClaims();
+            worked |= claimNewInputs();
+            if (!worked) {
+                Thread.sleep(pollMillis);
+            }
+        }
+    }
+
+    private boolean processRecoveredClaims() throws IOException {
+        List<Claim> claims = new ArrayList<>();
+        for (Path candidate : directChildren(processing)) {
+            Claim claim = parseClaim(candidate);
+            if (claim != null) {
+                claims.add(claim);
+            }
+        }
+        claims.sort(Comparator.comparing(claim -> claim.path().getFileName().toString()));
+        boolean processedAny = false;
+        for (Claim claim : claims) {
+            processedAny |= tryProcess(claim);
+        }
+        return processedAny;
+    }
+
+    private boolean claimNewInputs() throws IOException {
+        List<Path> candidates = new ArrayList<>();
+        for (Path candidate : directChildren(input)) {
+            if (eligible(candidate)) {
+                candidates.add(candidate);
+            }
+        }
+        candidates.sort(Comparator.comparing(path -> path.getFileName().toString()));
+
+        boolean claimedAny = false;
+        for (Path source : candidates) {
+            String originalName = source.getFileName().toString();
+            String jobId = UUID.randomUUID().toString().replace("-", "");
+            Path claimed = processing.resolve(jobId + CLAIM_SEPARATOR + originalName);
+            try {
+                Files.move(source, claimed, StandardCopyOption.ATOMIC_MOVE);
+                claimedAny = true;
+                tryProcess(new Claim(jobId, originalName, claimed));
+            } catch (NoSuchFileException | FileAlreadyExistsException raced) {
+                // Another worker won the source rename, or an operator raced a
+                // same-name state entry. No source bytes were overwritten.
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                throw new IOException("input mount cannot atomically claim work", unsupported);
+            }
+        }
+        return claimedAny;
+    }
+
+    /**
+     * Prefer an exclusive lock on the claimed source. Some bind-mount drivers
+     * do not coordinate advisory locks between containers, and a producer may
+     * create a readable but non-writable file, so the processing and archive
+     * paths are independently idempotent as the correctness boundary.
+     */
+    private boolean tryProcess(Claim claim) throws IOException {
+        try (ClaimLease lease = tryAcquire(claim.path())) {
+            if (lease == null) {
+                return false;
+            }
+            String attemptId = UUID.randomUUID().toString().replace("-", "");
+            process(claim, lease.channel(), attemptId);
+            return true;
+        }
+    }
+
+    private static ClaimLease tryAcquire(Path claimed) throws IOException {
+        if (!Files.isRegularFile(claimed, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        FileChannel channel;
+        try {
+            channel = FileChannel.open(claimed,
+                StandardOpenOption.READ, StandardOpenOption.WRITE,
+                LinkOption.NOFOLLOW_LINKS);
+        } catch (AccessDeniedException readOnlySource) {
+            return tryAcquireReadOnly(claimed);
+        } catch (NoSuchFileException raced) {
+            return null;
+        }
+        try {
+            FileLock lock = channel.tryLock();
+            if (lock == null) {
+                channel.close();
+                return null;
+            }
+            // A loser can open the inode while the winner still holds the
+            // lock, then acquire that inode lock just after the winner links
+            // it into finished/failed and deletes the processing pathname.
+            // Revalidate the unique claim path after acquisition so the loser
+            // never processes an already-archived inode through a vanished
+            // path.
+            if (!Files.isRegularFile(claimed, LinkOption.NOFOLLOW_LINKS)) {
+                channel.close();
+                return null;
+            }
+            return new ClaimLease(channel, lock);
+        } catch (OverlappingFileLockException alreadyHeldHere) {
+            channel.close();
+            return null;
+        } catch (IOException unsupportedLock) {
+            channel.close();
+            return tryAcquireReadOnly(claimed);
+        } catch (RuntimeException failure) {
+            channel.close();
+            throw failure;
+        }
+    }
+
+    private static ClaimLease tryAcquireReadOnly(Path claimed) throws IOException {
+        FileChannel channel;
+        try {
+            channel = FileChannel.open(claimed,
+                StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException raced) {
+            return null;
+        }
+        if (!Files.isRegularFile(claimed, LinkOption.NOFOLLOW_LINKS)) {
+            channel.close();
+            return null;
+        }
+        return new ClaimLease(channel, null);
+    }
+
+    private void process(Claim claim, FileChannel source, String attemptId)
+            throws IOException {
+        Path renderTemp = output.resolve(".sirentide-watch-" + claim.jobId()
+            + "-" + attemptId + ".svg.tmp");
+        Files.deleteIfExists(renderTemp);
+
+        try {
+            render(claim, source, renderTemp);
+            publishComplete(renderTemp, output.resolve(claim.originalName() + ".svg"));
+        } catch (JobFailure failure) {
+            Files.deleteIfExists(renderTemp);
+            if (completedByAnotherWorker(claim, source)) {
+                logAlreadyCompleted(claim);
+                return;
+            }
+            if (fail(claim, source, attemptId, failure.code())) {
+                System.err.println("sirentide-watch: job " + claim.jobId()
+                    + " failed (" + failure.code() + ")");
+            } else {
+                logAlreadyCompleted(claim);
+            }
+            return;
+        } catch (IOException failure) {
+            Files.deleteIfExists(renderTemp);
+            if (completedByAnotherWorker(claim, source)) {
+                logAlreadyCompleted(claim);
+                return;
+            }
+            String code = "io-" + failure.getClass().getSimpleName();
+            if (fail(claim, source, attemptId, code)) {
+                System.err.println("sirentide-watch: job " + claim.jobId()
+                    + " failed (" + code + ")");
+            } else {
+                logAlreadyCompleted(claim);
+            }
+            return;
+        } catch (RuntimeException failure) {
+            Files.deleteIfExists(renderTemp);
+            if (completedByAnotherWorker(claim, source)) {
+                logAlreadyCompleted(claim);
+                return;
+            }
+            String code = "runtime-" + failure.getClass().getSimpleName();
+            if (fail(claim, source, attemptId, code)) {
+                System.err.println("sirentide-watch: job " + claim.jobId()
+                    + " failed (" + code + ")");
+            } else {
+                logAlreadyCompleted(claim);
+            }
+            return;
+        }
+
+        if (archive(claim, source, finished)) {
+            System.err.println("sirentide-watch: job " + claim.jobId() + " finished");
+        } else {
+            logAlreadyCompleted(claim);
+        }
+    }
+
+    private static void logAlreadyCompleted(Claim claim) {
+        System.err.println("sirentide-watch: job " + claim.jobId()
+            + " already completed by another worker");
+    }
+
+    private boolean completedByAnotherWorker(Claim claim, FileChannel source)
+            throws IOException {
+        return !Files.exists(claim.path(), LinkOption.NOFOLLOW_LINKS)
+            && archivedAnywhere(claim, source);
+    }
+
+    private void render(Claim claim, FileChannel source, Path renderTemp)
+            throws IOException, JobFailure {
+        String lower = claim.originalName().toLowerCase(Locale.ROOT);
+        int cap = lower.endsWith(".md") || lower.endsWith(".markdown")
+            ? Main.MAX_MARKDOWN_BYTES : DslParser.MAX_SOURCE_BYTES;
+        byte[] bytes = readBounded(source, cap);
+        if (bytes.length > cap) {
+            throw new JobFailure("input-too-large");
+        }
+        if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+            renderMarkdown(bytes, renderTemp);
+        } else {
+            renderRawDsl(bytes, renderTemp);
+        }
+        if (!Files.isRegularFile(renderTemp, LinkOption.NOFOLLOW_LINKS)
+                || Files.size(renderTemp) == 0) {
+            throw new JobFailure("empty-output");
+        }
+    }
+
+    private static byte[] readBounded(FileChannel source, int cap) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(Math.min(cap + 1, 8192));
+        ByteBuffer buffer = ByteBuffer.allocate(8192);
+        long position = 0;
+        while (bytes.size() <= cap) {
+            buffer.clear();
+            buffer.limit(Math.min(buffer.capacity(), cap + 1 - bytes.size()));
+            int read = source.read(buffer, position);
+            if (read < 0) {
+                break;
+            }
+            if (read == 0) {
+                continue;
+            }
+            bytes.write(buffer.array(), 0, read);
+            position += read;
+        }
+        return bytes.toByteArray();
+    }
+
+    private static void renderMarkdown(byte[] bytes, Path renderTemp)
+            throws IOException, JobFailure {
+        String markdown = new String(bytes, StandardCharsets.UTF_8);
+        String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
+        if (fenceBody == null) {
+            throw new JobFailure("no-sirentide-fence");
+        }
+        writeRenderedDsl(fenceBody, renderTemp);
+    }
+
+    private static void renderRawDsl(byte[] bytes, Path renderTemp)
+            throws IOException, JobFailure {
+        writeRenderedDsl(new String(bytes, StandardCharsets.UTF_8), renderTemp);
+    }
+
+    private static void writeRenderedDsl(String dsl, Path renderTemp)
+            throws IOException, JobFailure {
+        RenderResult result;
+        try {
+            result = Sirentide.renderWithDiagnostics(dsl);
+        } catch (RuntimeException | StackOverflowError renderFailure) {
+            throw new JobFailure("renderer-failure");
+        }
+        if (result == null || result.diagnostics() == null
+                || result.diagnostics().outcome() != Outcome.OK
+                || result.svg() == null) {
+            String outcome = result == null || result.diagnostics() == null
+                ? "unknown" : result.diagnostics().outcome().name().toLowerCase(Locale.ROOT);
+            throw new JobFailure("render-" + outcome);
+        }
+        Files.writeString(renderTemp, result.svg(), StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+    }
+
+    private boolean fail(Claim claim, FileChannel source, String attemptId,
+            String rawCode) throws IOException {
+        String code = boundedCode(rawCode);
+        byte[] diagnostic = ("Sirentide watch job failed: " + code + ".\n")
+            .getBytes(StandardCharsets.UTF_8);
+        Path temp = output.resolve(".sirentide-watch-" + claim.jobId()
+            + "-" + attemptId + ".error.tmp");
+        Files.deleteIfExists(temp);
+        Files.write(temp, diagnostic, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+
+        Path direct = output.resolve(claim.originalName() + ".error.txt");
+        try {
+            publishComplete(temp, direct);
+        } catch (JobFailure collision) {
+            Files.deleteIfExists(temp);
+            Files.write(temp, diagnostic, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            try {
+                publishComplete(temp, output.resolve(
+                    claim.originalName() + "." + claim.jobId() + ".error.txt"));
+            } catch (JobFailure corruptRecovery) {
+                throw new IOException("unique diagnostic path collision", corruptRecovery);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+
+        return archive(claim, source, failed);
+    }
+
+    /** Publish a fully written same-directory file without any overwrite path. */
+    private static void publishComplete(Path complete, Path target)
+            throws IOException, JobFailure {
+        try {
+            Files.createLink(target, complete);
+        } catch (FileAlreadyExistsException collision) {
+            if (!sameRegularFileBytes(complete, target)) {
+                throw new JobFailure("output-collision");
+            }
+        }
+        Files.delete(complete);
+    }
+
+    private boolean archive(Claim claim, FileChannel source, Path bucket)
+            throws IOException {
+        Path direct = bucket.resolve(claim.originalName());
+        ArchiveAttempt directAttempt = tryArchiveAt(claim.path(), source, direct);
+        if (directAttempt == ArchiveAttempt.ARCHIVED) {
+            return true;
+        }
+        if (directAttempt == ArchiveAttempt.ALREADY_ARCHIVED) {
+            return false;
+        }
+
+        Path collisionDir = bucket.resolve("collisions").resolve(claim.jobId());
+        ensureDirectory(collisionDir);
+        Path collisionTarget = collisionDir.resolve(claim.originalName());
+        ArchiveAttempt collisionAttempt = tryArchiveAt(
+            claim.path(), source, collisionTarget);
+        if (collisionAttempt == ArchiveAttempt.ARCHIVED) {
+            return true;
+        }
+        if (collisionAttempt == ArchiveAttempt.ALREADY_ARCHIVED
+                || archivedAnywhere(claim, source)) {
+            return false;
+        }
+        throw new IOException("claim source disappeared before archive");
+    }
+
+    private static ArchiveAttempt tryArchiveAt(Path sourcePath, FileChannel source,
+            Path target)
+            throws IOException {
+        try {
+            Files.createLink(target, sourcePath);
+            return Files.deleteIfExists(sourcePath)
+                ? ArchiveAttempt.ARCHIVED : ArchiveAttempt.ALREADY_ARCHIVED;
+        } catch (FileAlreadyExistsException collision) {
+            if (!sameOpenFileBytes(source, target)) {
+                return ArchiveAttempt.TARGET_COLLISION;
+            }
+            return Files.deleteIfExists(sourcePath)
+                ? ArchiveAttempt.ARCHIVED : ArchiveAttempt.ALREADY_ARCHIVED;
+        } catch (NoSuchFileException sourceDisappeared) {
+            return sameOpenFileBytes(source, target)
+                ? ArchiveAttempt.ALREADY_ARCHIVED : ArchiveAttempt.SOURCE_MISSING;
+        }
+    }
+
+    private boolean archivedAnywhere(Claim claim, FileChannel source) throws IOException {
+        return archivedIn(finished, claim, source) || archivedIn(failed, claim, source);
+    }
+
+    private static boolean archivedIn(Path bucket, Claim claim, FileChannel source)
+            throws IOException {
+        Path direct = bucket.resolve(claim.originalName());
+        Path collision = bucket.resolve("collisions").resolve(claim.jobId())
+            .resolve(claim.originalName());
+        return sameOpenFileBytes(source, direct) || sameOpenFileBytes(source, collision);
+    }
+
+    private static boolean sameOpenFileBytes(FileChannel source, Path target)
+            throws IOException {
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        try (FileChannel other = FileChannel.open(target,
+                StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            long size = source.size();
+            if (size != other.size()) {
+                return false;
+            }
+            ByteBuffer left = ByteBuffer.allocate(8192);
+            ByteBuffer right = ByteBuffer.allocate(8192);
+            long position = 0;
+            while (position < size) {
+                int chunk = (int) Math.min(left.capacity(), size - position);
+                left.clear();
+                right.clear();
+                left.limit(chunk);
+                right.limit(chunk);
+                if (readAt(source, left, position) != chunk
+                        || readAt(other, right, position) != chunk) {
+                    return false;
+                }
+                left.flip();
+                right.flip();
+                if (!left.equals(right)) {
+                    return false;
+                }
+                position += chunk;
+            }
+            return true;
+        } catch (NoSuchFileException raced) {
+            return false;
+        }
+    }
+
+    private static int readAt(FileChannel channel, ByteBuffer buffer, long position)
+            throws IOException {
+        int total = 0;
+        while (buffer.hasRemaining()) {
+            int read = channel.read(buffer, position + total);
+            if (read <= 0) {
+                break;
+            }
+            total += read;
+        }
+        return total;
+    }
+
+    private static boolean sameRegularFileBytes(Path first, Path second)
+            throws IOException {
+        return Files.isRegularFile(first, LinkOption.NOFOLLOW_LINKS)
+            && Files.isRegularFile(second, LinkOption.NOFOLLOW_LINKS)
+            && Files.mismatch(first, second) == -1;
+    }
+
+    private static List<Path> directChildren(Path dir) throws IOException {
+        List<Path> children = new ArrayList<>();
+        try (var stream = Files.newDirectoryStream(dir)) {
+            for (Path child : stream) {
+                children.add(child);
+            }
+        } catch (DirectoryIteratorException failure) {
+            throw failure.getCause();
+        }
+        return children;
+    }
+
+    private static boolean eligible(Path path) {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+        String name = path.getFileName().toString();
+        if (name.startsWith(".")) {
+            return false;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".md")
+            || lower.endsWith(".markdown")
+            || lower.endsWith(".sirentide");
+    }
+
+    private static Claim parseClaim(Path path) {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        String name = path.getFileName().toString();
+        int prefixLength = CLAIM_ID_LENGTH + CLAIM_SEPARATOR.length();
+        if (name.length() <= prefixLength
+                || !name.regionMatches(CLAIM_ID_LENGTH, CLAIM_SEPARATOR, 0,
+                    CLAIM_SEPARATOR.length())) {
+            return null;
+        }
+        String jobId = name.substring(0, CLAIM_ID_LENGTH);
+        for (int i = 0; i < jobId.length(); i++) {
+            char c = jobId.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return null;
+            }
+        }
+        String original = name.substring(prefixLength);
+        if (!eligibleName(original)) {
+            return null;
+        }
+        return new Claim(jobId, original, path);
+    }
+
+    private static boolean eligibleName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return !name.startsWith(".")
+            && (lower.endsWith(".md")
+                || lower.endsWith(".markdown")
+                || lower.endsWith(".sirentide"));
+    }
+
+    private static void ensureDirectory(Path dir) throws IOException {
+        Files.createDirectories(dir);
+        if (Files.isSymbolicLink(dir)
+                || !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("required worker path is not a real directory");
+        }
+    }
+
+    private static Path envPath(String name, Path fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : Path.of(value);
+    }
+
+    private static long envPollMillis() {
+        String value = System.getenv("SIRENTIDE_WATCH_POLL_MS");
+        if (value == null || value.isBlank()) {
+            return DEFAULT_POLL_MILLIS;
+        }
+        try {
+            long parsed = Long.parseLong(value.trim());
+            if (parsed >= MIN_POLL_MILLIS && parsed <= MAX_POLL_MILLIS) {
+                return parsed;
+            }
+        } catch (NumberFormatException ignored) {
+            // Fixed refusal below; never echo the untrusted environment value.
+        }
+        throw new IllegalArgumentException(
+            "SIRENTIDE_WATCH_POLL_MS must be between 10 and 60000");
+    }
+
+    private static String boundedCode(String raw) {
+        String code = raw == null ? "unknown" : raw.replaceAll("[^A-Za-z0-9._-]", "-");
+        if (code.length() > DIAGNOSTIC_LIMIT) {
+            return code.substring(0, DIAGNOSTIC_LIMIT);
+        }
+        return code;
+    }
+
+    private record Claim(String jobId, String originalName, Path path) { }
+
+    private record ClaimLease(FileChannel channel, FileLock lock)
+            implements AutoCloseable {
+        @Override
+        public void close() throws IOException {
+            // Closing the channel releases any advisory lock. The worker's
+            // idempotent state transitions remain the correctness boundary.
+            channel.close();
+        }
+    }
+
+    private enum ArchiveAttempt {
+        ARCHIVED,
+        ALREADY_ARCHIVED,
+        TARGET_COLLISION,
+        SOURCE_MISSING
+    }
+
+    private static final class JobFailure extends Exception {
+        private final String code;
+
+        JobFailure(String code) {
+            super(code);
+            this.code = code;
+        }
+
+        String code() {
+            return code;
+        }
+    }
+}

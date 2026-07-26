@@ -16,6 +16,17 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Docker CLI and watched folders
+Sirentide now ships a multi-stage Java 25 Docker build with immutable application jars under
+`/opt/sirentide` and a non-root runtime. The original one-shot CLI remains the image's default
+entry point (with `cli` as an optional explicit mode), while `watch` adds a long-running folder
+flow over `/sirentide/input` and `/sirentide/output`. Complete `.md`, `.markdown`, and
+`.sirentide` inputs are atomically claimed into `input/processing`; successful sources move to
+`input/finished`, failures move to `input/failed`, and outputs or bounded diagnostics land in
+the output mount. Publication never overwrites an existing output or archived source, abandoned
+processing claims recover on restart, and concurrent workers converge on one final state even
+when a bind-mount driver does not coordinate advisory file locks.
+
 ### Bounded layout hot paths
 Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while
 Sankey column relaxation has a deterministic 250,000-edge-inspection ceiling. Sequences accept 10,000

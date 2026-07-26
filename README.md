@@ -34,6 +34,93 @@ Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` the
 
 Still ahead (the remaining *thesis* work): the native **effect layer** — `data-sirentide-fx`, the security-gated Part 2 the anchors were built to carry — see [SLOWSTART.md](SLOWSTART.md).
 
+## Docker
+
+Build the Java 25 image from the repository root:
+
+```sh
+docker build -t sirentide .
+```
+
+The image keeps its application artifacts under the immutable
+`/opt/sirentide` tree and runs as the non-root `10001:10001` user by default.
+The existing one-shot CLI remains the default entry point, so the original
+stdin-to-stdout flow is unchanged:
+
+```sh
+printf '%s\n' 'pie' '"Reviews" : 40' '"Docs" : 60' \
+  | docker run --rm -i sirentide > diagram.svg
+```
+
+`cli` is an optional explicit spelling for scripts that want to distinguish
+one-shot work from the folder worker. File input can be mounted read-only while
+the output mount stays writable:
+
+```sh
+mkdir -p Input Output
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,src="$PWD/Input",dst=/sirentide/input,readonly \
+  --mount type=bind,src="$PWD/Output",dst=/sirentide/output \
+  sirentide cli render /sirentide/input/diagram.md \
+    -o /sirentide/output/diagram.svg
+```
+
+### Watched input and output folders
+
+Run a long-lived worker with writable input and output mounts:
+
+```sh
+mkdir -p Input Output
+docker run -d --name sirentide-worker --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,src="$PWD/Input",dst=/sirentide/input \
+  --mount type=bind,src="$PWD/Output",dst=/sirentide/output \
+  sirentide watch
+```
+
+The examples map the process to the current host UID/GID so ordinary bind
+folders stay writable on Linux. If your container runtime already translates
+ownership, omit `--user` and retain the image's non-root `10001:10001` default.
+Prefer either approach over world-writable permissions. Watch mode accepts
+complete direct children of `/sirentide/input` with these extensions:
+
+- `.md` and `.markdown` — render the first ```` ```sirentide ```` fence, using
+  the same fence extraction, source cap, and render outcome as the CLI.
+- `.sirentide` — render a raw Sirentide DSL source.
+
+Hidden names, temporary uploads, symlinks, other extensions, and the worker's
+state directories are ignored. Producers should write a hidden sibling and
+rename it into place only when complete, for example:
+
+```sh
+cp diagram.md Input/.diagram.md.tmp
+mv Input/.diagram.md.tmp Input/diagram.md
+```
+
+For `diagram.md`, a successful job creates `Output/diagram.md.svg` and moves
+the source to `Input/finished/diagram.md`. The full lifecycle is:
+
+```text
+Input/diagram.md
+  -> Input/processing/<job-id>--diagram.md
+  -> Input/finished/diagram.md
+```
+
+A failed render instead writes a bounded, content-free
+`Output/diagram.md.error.txt` and moves the source to
+`Input/failed/diagram.md`. Existing outputs and archived inputs are never
+overwritten; conflicting archives are retained below a job-id directory in
+`finished/collisions` or `failed/collisions`. A file left in `processing` by a
+stopped container is recovered on restart. Multiple workers may share the same
+mounts: atomic claims plus idempotent publication ensure one final state even on
+bind-mount drivers that do not coordinate advisory file locks.
+
+Set `SIRENTIDE_WATCH_POLL_MS` to an integer from `10` through `60000` to change
+the scan interval (default `500`). The watched input mount must be writable so
+the worker can move jobs between state folders; the one-shot CLI input mount can
+remain read-only.
+
 ## Docs
 
 - **[QUICKSTART.md](QUICKSTART.md)** — render a diagram in five minutes.
