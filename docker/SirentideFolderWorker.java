@@ -22,10 +22,12 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -194,7 +196,10 @@ public final class SirentideFolderWorker {
             try {
                 Files.move(source, claimed, StandardCopyOption.ATOMIC_MOVE);
                 claimedAny = true;
-                tryProcess(new Claim(jobId, originalName, claimed));
+                Claim claim = claimAt(jobId, originalName, claimed);
+                if (claim != null) {
+                    tryProcess(claim);
+                }
             } catch (NoSuchFileException | FileAlreadyExistsException raced) {
                 // Another worker won the source rename, or an operator raced a
                 // same-name state entry. No source bytes were overwritten.
@@ -483,17 +488,18 @@ public final class SirentideFolderWorker {
                 unsupported);
         } catch (IOException racedOrFailed) {
             if (!Files.exists(claimDirectory, LinkOption.NOFOLLOW_LINKS)
-                    && unreadableAt(claim, pendingDirectory)) {
+                    && unreadableDispositionExists(claim, pendingDirectory)) {
                 return null;
             }
             throw racedOrFailed;
         }
 
         Path pendingSource = pendingDirectory.resolve(claim.originalName());
-        if (!Files.isRegularFile(pendingSource, LinkOption.NOFOLLOW_LINKS)) {
+        if (!sameUnreadableIdentity(claim, pendingSource)) {
             throw new IOException("unreadable pending state lost its source");
         }
-        return new Claim(claim.jobId(), claim.originalName(), pendingSource);
+        return new Claim(claim.jobId(), claim.originalName(), pendingSource,
+            claim.identity());
     }
 
     private boolean completeUnreadable(Claim claim, String rawCode) throws IOException {
@@ -594,7 +600,7 @@ public final class SirentideFolderWorker {
         }
 
         Path archivedSource = collisionDirectory.resolve(claim.originalName());
-        if (!Files.isRegularFile(archivedSource, LinkOption.NOFOLLOW_LINKS)) {
+        if (!sameUnreadableIdentity(claim, archivedSource)) {
             throw new IOException("unreadable claim archive lost its source");
         }
 
@@ -611,26 +617,53 @@ public final class SirentideFolderWorker {
             // The source already has a durable failed/collisions disposition.
             // Promotion is cosmetic; do not turn it back into live work or
             // stop the watcher when a mount refuses the shorter presentation.
-            if (!Files.isRegularFile(archivedSource, LinkOption.NOFOLLOW_LINKS)) {
+            if (!sameUnreadableIdentity(claim, archivedSource)) {
                 throw promotionFailure;
             }
         }
         return true;
     }
 
-    private static boolean unreadableAt(Claim claim, Path directory) {
-        return Files.isRegularFile(
-            directory.resolve(claim.originalName()), LinkOption.NOFOLLOW_LINKS);
+    /**
+     * A failed processing-to-pending move can mean another worker is still in
+     * pending or already reached either final archive shape. Compare the
+     * snapshotted inode identity at every location: a pre-existing same-name
+     * failed file is not proof that this claim completed.
+     */
+    private boolean unreadableDispositionExists(Claim claim, Path pendingDirectory)
+            throws IOException {
+        return sameUnreadableIdentity(
+                claim, pendingDirectory.resolve(claim.originalName()))
+            || unreadableArchived(claim,
+                failed.resolve("collisions").resolve(claim.jobId()));
     }
 
-    private static boolean unreadableArchived(Claim claim, Path collisionDirectory) {
-        return Files.isRegularFile(
-                collisionDirectory.resolve(claim.originalName()),
-                LinkOption.NOFOLLOW_LINKS)
-            || Files.isRegularFile(
-                collisionDirectory.getParent().getParent()
-                    .resolve(claim.originalName()),
-                LinkOption.NOFOLLOW_LINKS);
+    private boolean unreadableArchived(Claim claim, Path collisionDirectory)
+            throws IOException {
+        return sameUnreadableIdentity(
+                claim, collisionDirectory.resolve(claim.originalName()))
+            || sameUnreadableIdentity(
+                claim, failed.resolve(claim.originalName()));
+    }
+
+    private static boolean sameUnreadableIdentity(Claim claim, Path candidate)
+            throws IOException {
+        // A null file key cannot prove inode continuity. Fail closed instead
+        // of falling back to a same-name check; the supported Docker bind-mount
+        // path exposes a stable key and the smoke suite verifies it across moves.
+        if (claim.identity() == null || claim.identity().fileKey() == null) {
+            return false;
+        }
+        BasicFileAttributes attributes;
+        try {
+            attributes = Files.readAttributes(candidate,
+                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException missing) {
+            return false;
+        }
+        return attributes.isRegularFile()
+            && attributes.size() == claim.identity().size()
+            && Objects.equals(attributes.fileKey(), claim.identity().fileKey());
     }
 
     private static ArchiveAttempt tryArchiveAt(Path sourcePath, FileChannel source,
@@ -769,7 +802,23 @@ public final class SirentideFolderWorker {
             return null;
         }
         String original = claimed.getFileName().toString();
-        return eligibleName(original) ? new Claim(jobId, original, claimed) : null;
+        return eligibleName(original) ? claimAt(jobId, original, claimed) : null;
+    }
+
+    private static Claim claimAt(String jobId, String originalName, Path path)
+            throws IOException {
+        BasicFileAttributes attributes;
+        try {
+            attributes = Files.readAttributes(path,
+                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException raced) {
+            return null;
+        }
+        if (!attributes.isRegularFile()) {
+            return null;
+        }
+        return new Claim(jobId, originalName, path,
+            new FileIdentity(attributes.fileKey(), attributes.size()));
     }
 
     private static boolean validJobId(String value) {
@@ -848,7 +897,10 @@ public final class SirentideFolderWorker {
         return code;
     }
 
-    private record Claim(String jobId, String originalName, Path path) { }
+    private record Claim(String jobId, String originalName, Path path,
+                         FileIdentity identity) { }
+
+    private record FileIdentity(Object fileKey, long size) { }
 
     private record ClaimLease(FileChannel channel, FileLock lock)
             implements AutoCloseable {

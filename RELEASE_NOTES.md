@@ -32,6 +32,10 @@ Unreadable eligible inputs now receive a bounded failed disposition without copy
 their bytes, and the watcher remains live to process later jobs. Their original inode stays in a
 durable `failed/pending` state until diagnostic publication succeeds, so a cleared output-mount
 fault is reconciled on restart without overwriting an existing diagnostic or failed archive.
+Shared watchers now reconcile a vanished unreadable processing path against the exact
+snapshotted inode in pending, collision, and direct failed dispositions. A same-name
+unrelated archive cannot certify completion, while losing workers stay live and continue
+with later jobs.
 
 ### BrewShot gallery coverage ratchet
 The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing

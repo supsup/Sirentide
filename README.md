@@ -125,7 +125,10 @@ If diagnostic publication is interrupted, the inode remains durably recoverable
 below `failed/pending/<job-id>`; the next watcher publishes the same idempotent
 diagnostic before completing the final failed disposition. A temporary output
 mount fault therefore cannot leave an archived unreadable source without its
-promised diagnostic.
+promised diagnostic. Shared watchers snapshot that unreadable claim's filesystem
+identity; a losing worker accepts a pending, collision, or direct failed path
+only when it is the same inode and size. An unrelated same-name archive is never
+treated as proof of completion, and a completed race does not stop either watcher.
 
 The worker never lengthens the original name inside a path component. If the
 source name fits the mounted filesystem but adding `.svg` or `.error.txt` would
