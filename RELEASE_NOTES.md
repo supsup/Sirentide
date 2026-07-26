@@ -16,6 +16,15 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### BrewShot gallery coverage ratchet
+The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing
+the one missing reference among Sirentide's 22 production diagram types. A headless drift guard derives
+the authoritative type set from the sealed `Diagram` IR hierarchy and requires each type to map to a
+declared gallery specimen, parse back to that exact IR class, have a committed non-empty PNG, and appear
+in the generated gallery page. Aliases may share their canonical IR representative; a newly shipped type
+can no longer leave the README's every-type gallery claim silently false. No production rendering
+behavior changed in this audit.
+
 ### Bounded layout hot paths
 Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while
 Sankey column relaxation has a deterministic 250,000-edge-inspection ceiling. Sequences accept 10,000

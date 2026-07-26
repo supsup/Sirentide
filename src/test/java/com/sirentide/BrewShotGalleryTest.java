@@ -8,10 +8,18 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
+import com.sirentide.ir.Diagram;
+import com.sirentide.ir.Empty;
 import com.sirentide.math.LatteXMathFragmentRenderer;
+import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -66,6 +74,36 @@ class BrewShotGalleryTest {
     }
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
+
+    /// One canonical BrewShot reference per production IR type. The sealed {@link Diagram} hierarchy
+    /// is authoritative; the headless coverage test below makes a newly permitted type fail until this
+    /// mapping, its declared gallery case, its committed PNG, and the generated gallery page all agree.
+    /// Aliases intentionally map through the representative DSL's parsed IR rather than growing a
+    /// second parser-keyword inventory here.
+    private static final Map<Class<? extends Diagram>, String> TYPE_COVERAGE = Map.ofEntries(
+        Map.entry(com.sirentide.ir.Pie.class, "pie"),
+        Map.entry(com.sirentide.ir.XyChart.class, "xychart"),
+        Map.entry(com.sirentide.ir.Timeline.class, "timeline"),
+        Map.entry(com.sirentide.ir.Gantt.class, "gantt"),
+        Map.entry(com.sirentide.ir.Flowchart.class, "flowchart"),
+        Map.entry(com.sirentide.ir.Sequence.class, "sequence"),
+        Map.entry(com.sirentide.ir.StateDiagram.class, "state"),
+        Map.entry(com.sirentide.ir.QuadrantChart.class, "quadrant"),
+        Map.entry(com.sirentide.ir.ClassDiagram.class, "classDiagram"),
+        Map.entry(com.sirentide.ir.ErDiagram.class, "erDiagram"),
+        Map.entry(com.sirentide.ir.MathBlock.class, "mathblock"),
+        Map.entry(com.sirentide.ir.GitGraph.class, "gitGraph"),
+        Map.entry(com.sirentide.ir.Journey.class, "journey"),
+        Map.entry(com.sirentide.ir.Mindmap.class, "mindmap"),
+        Map.entry(com.sirentide.ir.Sankey.class, "sankey"),
+        Map.entry(com.sirentide.ir.Matrix.class, "matrix"),
+        Map.entry(com.sirentide.ir.Heatmap.class, "heatmap"),
+        Map.entry(com.sirentide.ir.Snake.class, "snake-sqrt2"),
+        Map.entry(com.sirentide.ir.TensorNetwork.class, "tensornetwork"),
+        Map.entry(com.sirentide.ir.YoungDiagram.class, "young"),
+        Map.entry(com.sirentide.ir.Knot.class, "knot-trefoil"),
+        Map.entry(com.sirentide.ir.Dynkin.class, "dynkin-b3")
+    );
 
     /// A class with more members than the display cap, so the box shows MAX_DISPLAYED_ROWS-1 rows
     /// plus a synthesized "… (N more)" row instead of an unreadable, canvas-blowing tower
@@ -197,6 +235,8 @@ class BrewShotGalleryTest {
             "tensornetwork\nmps A B C D"),
         new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
             "tensornetwork\nmpo A B C D"),
+        new Case("young", "Young diagram — partition 8 + 6 + 4 + 3 + 1",
+            "young\nrows: 8, 6, 4, 3, 1"),
         // Dynkin diagrams (finite-type semisimple-Lie-algebra classification, plan 8e13b196). Node
         // discs on a baseline (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a
         // multi-bond pointing from the longer to the shorter root. The Cartan-matrix oracle proves the
@@ -242,6 +282,36 @@ class BrewShotGalleryTest {
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();
+    }
+
+    @Test
+    void everyShippedDiagramTypeHasADeclaredGalleryCaseAndCommittedReference() throws Exception {
+        Set<Class<?>> shipped = new LinkedHashSet<>(Arrays.asList(Diagram.class.getPermittedSubclasses()));
+        shipped.remove(Empty.class);
+        assertEquals(shipped, TYPE_COVERAGE.keySet(),
+            "the explicit BrewShot type mapping must equal Diagram's sealed production inventory");
+
+        Map<String, Case> casesByName = new LinkedHashMap<>();
+        for (Case c : GALLERY) {
+            assertTrue(casesByName.put(c.name(), c) == null, "duplicate gallery case name: " + c.name());
+        }
+
+        Path dir = galleryDir();
+        String galleryPage = Files.readString(dir.resolve("GALLERY.md"));
+        for (Map.Entry<Class<? extends Diagram>, String> coverage : TYPE_COVERAGE.entrySet()) {
+            String caseName = coverage.getValue();
+            Case representative = casesByName.get(caseName);
+            assertTrue(representative != null,
+                coverage.getKey().getSimpleName() + " maps to missing gallery case " + caseName);
+            assertEquals(coverage.getKey(), DslParser.parse(representative.dsl()).getClass(),
+                caseName + " must parse to the mapped production IR type");
+
+            Path image = dir.resolve(caseName + ".png");
+            assertTrue(Files.isRegularFile(image) && Files.size(image) > 0,
+                coverage.getKey().getSimpleName() + " has no committed BrewShot image " + image);
+            assertTrue(galleryPage.contains("](" + caseName + ".png)"),
+                coverage.getKey().getSimpleName() + " has no generated GALLERY.md image entry");
+        }
     }
 
     @Test
