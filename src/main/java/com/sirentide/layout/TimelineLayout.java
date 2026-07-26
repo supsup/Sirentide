@@ -44,10 +44,12 @@ public final class TimelineLayout {
     /// text — byte-identical to {@link #layout(Timeline)}.
     public static LaidOut layout(Timeline timeline, MathFragmentRenderer math) {
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
         // Both the event (top) and value/year (bottom) labels sit on the page background → the
         // page-background text colour, default `currentColor` (legible on light AND dark).
         String textColor = timeline.textColor();
-        shapes.add(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2));
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "time"),
+            List.<Shape>of(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2))));
 
         List<Slice> events = timeline.events();
         int n = events.size();
@@ -75,12 +77,12 @@ public final class TimelineLayout {
         double[] topW = new double[n];
         double[] botW = new double[n];
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each event's DOT is wrapped in
-        // ONE `<g role="event">` (seq in event order, id from the event label). Only the dot rides in
-        // the group — the top/bottom labels are laid out later (de-collision needs the full set) and
+        // ONE `<g role="event">` (seq after the time axis, in event order, id from the event label).
+        // Only the dot rides in the group — the top/bottom labels are laid out later (de-collision
+        // needs the full set) and
         // stay bare, exactly as a pie thin-slice's deferred outside label stays bare; the dot IS the
         // event's anchor point. Grouping the dot in place preserves emit order (dots emit here, labels
         // in the pass below).
-        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);

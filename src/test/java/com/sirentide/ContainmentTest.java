@@ -345,6 +345,19 @@ class ContainmentTest {
         String pie = Sirentide.render("pie\n  \"Reviews\" : 40\n  \"Builds\" : 60\n");
         assertTrue(pie.contains("data-sirentide-role=\"slice\""), "a slice anchor was baked: " + pie);
         checkElement(parse(pie).getDocumentElement(), "pie-anchors");
+
+        // The S2 structural roles are producer-covered too: a subgraph frame emits cluster and the
+        // two xychart spines emit axis, through the exact same closed attribute/value grammar.
+        String cluster = Sirentide.render(
+            "flowchart TD\n  subgraph grp [Group]\n    A --> B\n  end\n");
+        String axes = Sirentide.render("xychart\n  \"A\" : 1\n");
+        String structural = cluster + axes;
+        assertTrue(structural.contains("data-sirentide-role=\"cluster\""),
+            "a cluster anchor was baked: " + structural);
+        assertTrue(structural.contains("data-sirentide-role=\"axis\""),
+            "an axis anchor was baked: " + structural);
+        checkElement(parse(cluster).getDocumentElement(), "cluster-anchors");
+        checkElement(parse(axes).getDocumentElement(), "axis-anchors");
     }
 
     /// The allowlist stays NON-VACUOUS for the anchor widen: a `<g>` carrying a FOREIGN data-* (the

@@ -15,7 +15,7 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Status
 
-Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-three diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md).
+Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-three diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Every shipped sealed-IR type also has a browser-audited BrewShot reference in the [gallery](examples/gallery/GALLERY.md), enforced by a headless type-to-capture coverage test.
 
 The six flagship types, in detail:
 
@@ -40,7 +40,7 @@ Still ahead (the remaining *thesis* work): the native **effect layer** — `data
 - **[SLOWSTART.md](SLOWSTART.md)** — the why, the differentiators, the milestone ladder.
 - **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — what's shipped, dated.
 - **[docs/DESIGN.md](docs/DESIGN.md)** — full design, the LatteX dependency, the security model.
-- **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot).
+- **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every shipped diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot) and checked against the sealed production IR inventory.
 
 ## Family
 

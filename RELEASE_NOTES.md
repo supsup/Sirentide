@@ -16,6 +16,15 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### BrewShot gallery coverage ratchet
+The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing
+the one missing reference among Sirentide's 22 production diagram types. A headless drift guard derives
+the authoritative type set from the sealed `Diagram` IR hierarchy and requires each type to map to a
+declared gallery specimen, parse back to that exact IR class, have a committed non-empty PNG, and appear
+in the generated gallery page. Aliases may share their canonical IR representative; a newly shipped type
+can no longer leave the README's every-type gallery claim silently false. No production rendering
+behavior changed in this audit.
+
 ### Bounded layout hot paths
 Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while
 Sankey column relaxation has a deterministic 250,000-edge-inspection ceiling. Sequences accept 10,000
@@ -46,6 +55,19 @@ while retaining their `edge` anchors. The complete E8 minimal figure is intentio
 its 6,720 edge anchors plus 240 point anchors make 6,960 play-through steps, above the shared
 512-frame cap, so `render` succeeds while `renderFrames` fails closed to its documented inert frame.
 Use `edges:none` or a smaller type when a root-system play-through is required.
+
+### Deep code-audit reconciliation
+The repository now carries Marlow's source-level audit of the 2026-07-23 baseline, reconciled against
+current main after independent reproduction of all 19 findings. The report distinguishes historical
+receipts from present code state, records the focused remediation merges that have already landed,
+corrects severity ratings, and keeps the remaining global-work-budget and contract/test gaps explicit.
+
+### Cluster and axis semantic anchors
+The final two contract-reserved roles now have producer coverage. Every drawn flowchart subgraph frame
+emits one `data-sirentide-role="cluster"` group keyed by its stable subgraph id. Eight primary axis
+spines emit `role="axis"`: x/y for xychart, quadrant, and journey, plus the single time axis in timeline
+and gantt. All groups share their diagram's existing id sanitizer, collision namespace, and contiguous
+emit-order sequence; no SVG element, attribute, or value grammar was widened.
 
 ### Flowchart convergent-edge label de-collision (plan ea20153b part 2)
 Two labeled edges reaching the **same target** from nearby sources used to place their labels at

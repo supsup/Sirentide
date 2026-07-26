@@ -77,6 +77,7 @@ public final class QuadrantChartLayout {
         double canvasH = MT + PLOT + MB;
 
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
 
         // 1. The four quadrant tints (Q2 top-left, Q1 top-right, Q3 bottom-left, Q4 bottom-right).
         shapes.add(new Rect(plotLeft, plotTop, half, half, TINTS[1]));   // Q2 top-left
@@ -89,8 +90,10 @@ public final class QuadrantChartLayout {
         shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, BORDER_WIDTH));
         shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, BORDER_WIDTH));
         shapes.add(new Line(plotRight, plotTop, plotRight, plotBottom, AXIS_STROKE, BORDER_WIDTH));
-        shapes.add(new Line(cx, plotTop, cx, plotBottom, AXIS_STROKE, AXIS_WIDTH));       // vertical axis
-        shapes.add(new Line(plotLeft, cy, plotRight, cy, AXIS_STROKE, AXIS_WIDTH));       // horizontal axis
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "y"),
+            List.<Shape>of(new Line(cx, plotTop, cx, plotBottom, AXIS_STROKE, AXIS_WIDTH)))); // vertical axis
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "x"),
+            List.<Shape>of(new Line(plotLeft, cy, plotRight, cy, AXIS_STROKE, AXIS_WIDTH)))); // horizontal axis
 
         // 3. Quadrant labels, centred in each cell, contrast-filled against that cell's tint. Cell
         // centres: Q1 (0.75,0.25up)=(cx+half/2, plotTop+half/2), etc.
@@ -109,9 +112,8 @@ public final class QuadrantChartLayout {
         // the quadrant tint the disc lands in (all tints light → a dark, page-theme-agnostic ink).
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each drawn point → ONE
         // `<g role="point">` wrapping its disc + label (both emitted contiguously per point, so the
-        // grouping preserves emit order exactly). seq runs 0..P-1 in point order; id from the label.
+        // grouping preserves emit order exactly). seq follows the y/x axes in point order; id from the label.
         List<Point> points = q.points();
-        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < points.size(); i++) {
             Point p = points.get(i);
             double px = plotLeft + p.x() * PLOT;

@@ -540,6 +540,15 @@ mpo A B C D
 
 ![Tensor network (MPO — second operator leg per core)](tensornetwork-mpo.png)
 
+## Young diagram — partition 8 + 6 + 4 + 3 + 1
+
+```
+young
+rows: 8, 6, 4, 3, 1
+```
+
+![Young diagram — partition 8 + 6 + 4 + 3 + 1](young.png)
+
 ## Dynkin — A₃ (a line, all single bonds)
 
 ```
