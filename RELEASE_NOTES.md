@@ -32,6 +32,30 @@ notes; the first valid excess note now crosses parsing as a bounded rejection ma
 caption, title, or theme decoration, yielding the literal inert SVG shell plus a named sequence-note-cap
 diagnostic.
 
+### Deterministic finite root-system Coxeter-plane projections
+The additive `rootsystem` type renders every root of `Aₙ/Bₙ/Cₙ/Dₙ` through the explicit rendering
+cap `n ≤ 24`, plus `E6/E7/E8`, `F4`, or `G2`, as a point in a deterministic Coxeter (Petrie) plane,
+with concentric distinct-radius guides and `edges: minimal|none`. Weyl-reflection closure and the
+exponent-1 Coxeter eigenspace are computed from the same refactored Dynkin/Cartan authority used by
+`dynkin` — no copied coordinate or matrix table, RNG, network, or runtime dependency.
+The shared public Dynkin/Cartan catalog now enforces its established inclusive rank-200 Dynkin
+boundary before bond/matrix allocation or arithmetic, and uses checked count/Coxeter/label
+arithmetic as defense in depth. The more expensive `rootsystem` consumer retains its independent
+rank-24 closure/pair-work cap. Its block parser is permissive around prose and malformed type
+candidates: the first valid type wins; a recognized invalid `edges:` directive still rejects the
+block because that vocabulary is closed.
+Rank/root/reflection/pair-work caps keep the bake bounded; an over-dense minimal graph degrades
+all-or-none to points/rings with `edges:none`, and the accessible description names the cap rather
+than silently drawing a partial graph. Malformed and over-cap types use the universal inert shell.
+Guide rings are distinct projected radii, not generically one ring per Coxeter orbit: separate orbits
+can coincide radially (A3 has three h=4 orbits but only two radii, with root multiplicities 8 and 4).
+The E8 showpiece does satisfy the stronger oracle: eight distinct rings of 30 roots.
+Semantic minimal links now use a one-pixel `#8490a1` stroke (3.24:1 non-text contrast against white)
+while retaining their `edge` anchors. The complete E8 minimal figure is intentionally static-only:
+its 6,720 edge anchors plus 240 point anchors make 6,960 play-through steps, above the shared
+512-frame cap, so `render` succeeds while `renderFrames` fails closed to its documented inert frame.
+Use `edges:none` or a smaller type when a root-system play-through is required.
+
 ### Deep code-audit reconciliation
 The repository now carries Marlow's source-level audit of the 2026-07-23 baseline, reconciled against
 current main after independent reproduction of all 19 findings. The report distinguishes historical

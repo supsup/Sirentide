@@ -15,6 +15,7 @@ import com.sirentide.ir.ErEntity;
 import com.sirentide.ir.ErRelation;
 import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.RelationKind;
+import com.sirentide.ir.RootSystem;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
@@ -37,6 +38,7 @@ import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.TensorNetwork;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.Dynkin;
+import com.sirentide.ir.DynkinCartan;
 import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqLifecycle;
 import com.sirentide.ir.SeqMessage;
@@ -132,11 +134,9 @@ public final class DslParser {
     // total is additionally bounded by MAX_DATA_ROWS (mirrors the snake square-total discipline).
     public static final int MAX_YOUNG_ROWS = 500;
     public static final int MAX_YOUNG_PART = 1000;
-    // Dynkin-diagram rank cap (plan 8e13b196). A_n has no mathematical upper bound, but the node/bond
-    // count grows linearly with the rank and a diagram wider than this is unreadable anyway; a `type:`
-    // whose rank exceeds this degrades to the inert shell (invalid family sentinel) rather than laying
-    // out a runaway strip — mirrors the per-type cap discipline, never OOMs, never throws.
-    public static final int MAX_DYNKIN_RANK = 200;
+    // Compatibility alias for the established Dynkin-diagram/shared-catalog boundary. RootSystem
+    // independently applies its lower rank-24 closure/pair-work cap after catalog validation.
+    public static final int MAX_DYNKIN_RANK = DynkinCartan.MAX_RANK;
 
     public static Diagram parse(String src) {
         if (src == null || src.isBlank()) {
@@ -241,6 +241,9 @@ public final class DslParser {
             // finite-type semisimple-Lie-algebra classification; an unknown/out-of-range type degrades
             // to the inert shell (never throws).
             case "dynkin" -> parseDynkin(lines, textColor);
+            // All roots of a finite crystallographic type projected onto a deterministic Coxeter
+            // (Petrie) plane. Optional bounded ambient-minimal-distance links are all-or-none.
+            case "rootsystem" -> parseRootSystem(lines, textColor);
             default -> new Empty();
         };
     }
@@ -2310,6 +2313,88 @@ public final class DslParser {
         // A bare `dynkin` with no type line → the universal inert shell (Empty), consistent with every
         // other empty/malformed degrade (review 368) — no invalid Dynkin sentinel is ever constructed.
         return new Empty();
+    }
+
+    /// Parse a finite root-system Coxeter-plane projection.
+    /// ```
+    /// rootsystem
+    /// type: E8
+    /// edges: minimal
+    /// ```
+    /// The type token is exactly one family letter glued to a positive rank; the finite-type validity
+    /// comes from the shared {@link com.sirentide.ir.DynkinCartan} catalog, and the classical-family
+    /// rendering cap from {@link RootSystem#MAX_RANK}. Parsing follows Sirentide's established
+    /// permissive-block convention: the first syntactically and semantically valid {@code type:}
+    /// value or bare type token wins; blank/malformed/unknown type candidates, unrecognized lines,
+    /// and every later type candidate are ignored. This lets surrounding prose or a stale type line
+    /// stay inert without changing a valid authored type. {@code edges} is different because it is a
+    /// recognized closed directive: its {@code minimal|none} vocabulary defaults to {@code minimal},
+    /// later valid directives override earlier ones, and ANY malformed {@code edges:} value rejects
+    /// the whole block. If no valid type is found, the universal {@link Empty} shell is returned. No
+    /// invalid RootSystem IR reaches layout.
+    private static Diagram parseRootSystem(String[] lines, String textColor) {
+        int[] type = null;
+        RootSystem.Edges edges = RootSystem.Edges.MINIMAL;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.regionMatches(true, 0, "edges:", 0, 6)) {
+                String value = line.substring(6).strip().toLowerCase(java.util.Locale.ROOT);
+                edges = switch (value) {
+                    case "none" -> RootSystem.Edges.NONE;
+                    case "minimal" -> RootSystem.Edges.MINIMAL;
+                    default -> null;
+                };
+                if (edges == null) {
+                    return new Empty();
+                }
+                continue;
+            }
+            if (line.regionMatches(true, 0, "type:", 0, 5)) {
+                if (type == null) {
+                    type = parseRootSystemType(line.substring(5).strip());
+                }
+                continue;
+            }
+            // A colon names an unknown directive, not a bare type. Unknown directives and junk are
+            // permissively inert; a later valid type may still establish the diagram.
+            if (type == null && line.indexOf(':') < 0) {
+                type = parseRootSystemType(line);
+            }
+        }
+        if (type == null) {
+            return new Empty();
+        }
+        return new RootSystem((char) type[0], type[1], edges, textColor);
+    }
+
+    /// Parse one root-system type candidate, returning {@code {family, rank}} only when it belongs to
+    /// the bounded shared catalog. Invalid/huge candidates are inert so the caller can keep scanning.
+    private static int[] parseRootSystemType(String typeToken) {
+        if (typeToken == null || typeToken.length() < 2
+                || !Character.isLetter(typeToken.charAt(0))) {
+            return null;
+        }
+        for (int i = 1; i < typeToken.length(); i++) {
+            if (!Character.isDigit(typeToken.charAt(i))) {
+                return null;
+            }
+        }
+        int rank;
+        try {
+            long parsed = Long.parseLong(typeToken.substring(1));
+            if (parsed <= 0 || parsed > Integer.MAX_VALUE) {
+                return null;
+            }
+            rank = (int) parsed;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        RootSystem probe = new RootSystem(typeToken.charAt(0), rank, RootSystem.Edges.NONE,
+            "currentColor");
+        return probe.valid() ? new int[] {probe.family(), probe.rank()} : null;
     }
 
     /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias

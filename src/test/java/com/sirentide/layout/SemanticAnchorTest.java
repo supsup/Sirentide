@@ -548,6 +548,23 @@ class SemanticAnchorTest {
         assertEquals(5, seqOf(a, "r1c2"));
     }
 
+    @Test
+    void rootSystemEmitsMinimalEdgesBeforeOnePointAnchorPerRoot() {
+        List<Anc> a = anchors(Sirentide.render(
+            "rootsystem\n  type: A2\n  edges: minimal\n"));
+        // A2 is a six-root hexagon with six minimal root-polytope edges.
+        assertWellFormed(a, 12);
+        assertEquals(6, countRole(a, "edge"), "one anchor per bounded minimal edge: " + a);
+        assertEquals(6, countRole(a, "point"), "one point anchor per mathematical root: " + a);
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge"))
+            .mapToInt(Anc::seq).max().orElse(-1);
+        int minPointSeq = a.stream().filter(x -> x.role().equals("point"))
+            .mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minPointSeq, "polytope edges draw/sequence before root points: " + a);
+        assertTrue(a.stream().filter(x -> x.role().equals("point"))
+            .allMatch(x -> x.id().startsWith("root-")), "root ids are deterministic indices: " + a);
+    }
+
     private static int seqOf(List<Anc> a, String id) {
         return a.stream().filter(x -> x.id().equals(id)).mapToInt(Anc::seq).findFirst().orElseThrow();
     }

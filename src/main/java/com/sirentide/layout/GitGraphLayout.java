@@ -13,7 +13,7 @@ import java.util.List;
 /// `merge` draws an elbow connector from the merged branch's tip into a merge commit on the active
 /// lane. Deterministic arithmetic — no optimization, byte-identical bakes (docs/DESIGN.md §6).
 ///
-/// The IR is the raw {@link GitOp} list; this layout REPLAYS it to resolve lanes/colours/connectors,
+/// The IR is the raw {@link com.sirentide.ir.GitOp} list; this layout REPLAYS it to resolve lanes/colours/connectors,
 /// and the malformed cases degrade INERTLY (never throw): a commit before any branch lands on an
 /// implicit `main` (lane 0, pre-registered); a `checkout`/`merge` of an unknown branch is dropped; a
 /// DUPLICATE `branch` name is dropped (no new lane, no switch); a SELF-merge (merge of the active
