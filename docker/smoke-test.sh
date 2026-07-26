@@ -163,13 +163,13 @@ test ! -e "$output/ignored.json.svg"
 test "$(wc -c < "$output/bad.md.error.txt")" -le 600
 ! grep -q 'TOP-SECRET-SENTINEL' "$output/bad.md.error.txt"
 
-# A 230-byte host-valid filename used to become an unrepresentable claim after
-# the worker prefixed a 32-byte UUID. The claim directory now keeps those
-# components separate, and the watcher remains alive after the disposition.
-long_claim_name="$(repeat_char 227 c).md"
+# A 230-byte host-valid .sirentide filename used to become an unrepresentable
+# claim after the worker prefixed a 32-byte UUID. The claim directory now keeps
+# those components separate, and the watcher remains alive after disposition.
+long_claim_name="$(repeat_char 220 c).sirentide"
 test "$(byte_length "$long_claim_name")" -eq 230
-write_markdown "$tmp_root/long-claim.md" 'LongClaim' 12
-mv "$tmp_root/long-claim.md" "$input/$long_claim_name"
+printf '%s\n' 'pie' '"LongClaim" : 12' > "$tmp_root/long-claim.sirentide"
+mv "$tmp_root/long-claim.sirentide" "$input/$long_claim_name"
 wait_for_path "$output/$long_claim_name.svg" "$watch_one"
 wait_for_path "$input/finished/$long_claim_name" "$watch_one"
 assert_svg "$output/$long_claim_name.svg"
