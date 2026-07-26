@@ -16,6 +16,18 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Frame-deck packaging design and contract truth
+The reviewed `sirentide-frames` packaging RFC now specifies a trusted-consumer
+budget API that rejects a frame-count cap before emission and enforces exact
+aggregate UTF-8 bytes incrementally without retaining a partial deck. Its Stafficy
+consumer budget is cumulative across the whole Markdown document (32 frames / 4
+MiB), leaving headroom under the existing response wrappers; existing public
+render overloads remain byte-compatible. This is a gated design, not a newly
+shipped runtime surface. The container contract now says so explicitly:
+`role`/`id`/`seq` anchors are live, while `data-sirentide-fx`, an effect enum, and
+a Sirentide `/docs` page runtime remain deferred. A build-failing test prevents
+those deferred surfaces from drifting back into present-tense documentation.
+
 ### Docker CLI and watched folders
 Sirentide now ships a multi-stage Java 25 Docker build with immutable application jars under
 `/opt/sirentide` and a non-root runtime. The original one-shot CLI remains the image's default

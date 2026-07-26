@@ -1,6 +1,7 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.contract.SirentideContract;
@@ -76,6 +77,24 @@ class ContractDocDriftTest {
         assertTrue(!SirentideRole.isWire("fx"), "fx is not a role wire value");
         assertTrue(!SirentideContract.attributeValueValid("data-sirentide-fx", "glow"),
             "the contract must not admit data-sirentide-fx before Part 2");
+    }
+
+    /// The design notes once described deferred FX/runtime behavior in the present tense.
+    /// Keep the public contract honest until code, sanitizer admission, and a security review
+    /// make that surface real.
+    @Test
+    void deferredFxAndRuntimeCannotBePresentedAsLive() throws IOException {
+        String doc = Files.readString(DOC);
+        assertTrue(doc.contains("There is no Sirentide page runtime in `/docs` today."),
+            "the contract must state the live /docs runtime boundary explicitly");
+        assertTrue(doc.contains("`data-sirentide-fx` is Part 2 — NOT admitted today."),
+            "the effect anchor must remain explicitly deferred");
+        assertFalse(doc.contains("my runtime reads it"),
+            "the contract must not claim a personal/live runtime");
+        assertFalse(doc.contains("the runtime pins to it"),
+            "the drift section must not claim a runtime that does not exist");
+        assertFalse(doc.contains("the runtime steps through it"),
+            "the play-through design must not be presented as shipped behavior");
     }
 
     private static String docLineContaining(String needle) throws IOException {
