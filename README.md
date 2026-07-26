@@ -116,6 +116,12 @@ stopped container is recovered on restart. Multiple workers may share the same
 mounts: atomic claims plus idempotent publication ensure one final state even on
 bind-mount drivers that do not coordinate advisory file locks.
 
+An eligible file that the non-root worker cannot open follows the same failed
+lifecycle instead of stopping the watcher: its inode is moved without reading
+or copying the source bytes, one bounded diagnostic is emitted, and later jobs
+continue normally. When a same-name failed archive already exists, the
+unreadable source remains below its job-id directory in `failed/collisions`.
+
 The worker never lengthens the original name inside a path component. If the
 source name fits the mounted filesystem but adding `.svg` or `.error.txt` would
 not, the corresponding output uses a bounded `job-<job-id>` filename instead;

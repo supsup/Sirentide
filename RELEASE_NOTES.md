@@ -28,6 +28,8 @@ processing claims recover on restart, and concurrent workers converge on one fin
 when a bind-mount driver does not coordinate advisory file locks. Claim IDs and original source
 names occupy separate path components, and job-id fallbacks bound derived output and diagnostic
 names when appending a suffix would exceed a mounted filesystem's component limit.
+Unreadable eligible inputs now receive a bounded failed disposition without copying or exposing
+their bytes, and the watcher remains live to process later jobs.
 
 ### BrewShot gallery coverage ratchet
 The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing

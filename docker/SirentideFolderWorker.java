@@ -185,13 +185,29 @@ public final class SirentideFolderWorker {
      * paths are independently idempotent as the correctness boundary.
      */
     private boolean tryProcess(Claim claim) throws IOException {
-        ClaimLease lease = tryAcquire(claim.path());
+        String attemptId = UUID.randomUUID().toString().replace("-", "");
+        ClaimLease lease;
+        try {
+            lease = tryAcquire(claim.path());
+        } catch (AccessDeniedException unreadableSource) {
+            try {
+                String code = "io-AccessDeniedException";
+                if (failUnreadable(claim, attemptId, code)) {
+                    System.err.println("sirentide-watch: job " + claim.jobId()
+                        + " failed (" + code + ")");
+                } else {
+                    logAlreadyCompleted(claim);
+                }
+                return true;
+            } finally {
+                deleteEmptyClaimDirectory(claim.path().getParent());
+            }
+        }
         if (lease == null) {
             deleteEmptyClaimDirectory(claim.path().getParent());
             return false;
         }
         try (lease) {
-            String attemptId = UUID.randomUUID().toString().replace("-", "");
             process(claim, lease.channel(), attemptId);
             return true;
         } finally {
@@ -404,6 +420,27 @@ public final class SirentideFolderWorker {
 
     private boolean fail(Claim claim, FileChannel source, String attemptId,
             String rawCode) throws IOException {
+        publishDiagnostic(claim, attemptId, rawCode);
+        return archive(claim, source, failed);
+    }
+
+    /**
+     * A source that cannot be opened must still leave the processing queue.
+     * Moving the worker-owned claim directory preserves the unreadable inode
+     * without requiring source read permission or a hard-link permission that
+     * Linux deliberately denies for another user's mode-000 file.
+     */
+    private boolean failUnreadable(Claim claim, String attemptId, String rawCode)
+            throws IOException {
+        if (!archiveUnreadable(claim)) {
+            return false;
+        }
+        publishDiagnostic(claim, attemptId, rawCode);
+        return true;
+    }
+
+    private void publishDiagnostic(Claim claim, String attemptId, String rawCode)
+            throws IOException {
         String code = boundedCode(rawCode);
         byte[] diagnostic = ("Sirentide watch job failed: " + code + ".\n")
             .getBytes(StandardCharsets.UTF_8);
@@ -427,8 +464,6 @@ public final class SirentideFolderWorker {
         } finally {
             Files.deleteIfExists(temp);
         }
-
-        return archive(claim, source, failed);
     }
 
     /** Publish a fully written same-directory file without any overwrite path. */
@@ -468,6 +503,65 @@ public final class SirentideFolderWorker {
             return false;
         }
         throw new IOException("claim source disappeared before archive");
+    }
+
+    /**
+     * Archive an unreadable source without inspecting or copying its bytes.
+     * The UUID claim directory is moved first, so only one racing worker can
+     * publish the diagnostic. The no-replace file move then restores the
+     * ordinary {@code failed/original-name} shape when that name is free; a
+     * collision safely remains under {@code failed/collisions/job-id}.
+     */
+    private boolean archiveUnreadable(Claim claim) throws IOException {
+        Path claimDirectory = claim.path().getParent();
+        Path collisionDirectory = failed.resolve("collisions").resolve(claim.jobId());
+        try {
+            Files.move(claimDirectory, collisionDirectory,
+                StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            throw new IOException("input mount cannot atomically archive unreadable work",
+                unsupported);
+        } catch (IOException racedOrFailed) {
+            if (!Files.exists(claimDirectory, LinkOption.NOFOLLOW_LINKS)
+                    && unreadableArchived(claim, collisionDirectory)) {
+                return false;
+            }
+            throw racedOrFailed;
+        }
+
+        Path archivedSource = collisionDirectory.resolve(claim.originalName());
+        if (!Files.isRegularFile(archivedSource, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("unreadable claim archive lost its source");
+        }
+
+        Path direct = failed.resolve(claim.originalName());
+        try {
+            // No REPLACE_EXISTING option: a same-name archive is never
+            // overwritten. Both paths are on the input mount, so this is a
+            // metadata-only rename and does not need permission to read bytes.
+            Files.move(archivedSource, direct);
+            deleteEmptyClaimDirectory(collisionDirectory);
+        } catch (FileAlreadyExistsException collision) {
+            // The source is already in its final collision archive.
+        } catch (IOException promotionFailure) {
+            // The source already has a durable failed/collisions disposition.
+            // Promotion is cosmetic; do not turn it back into live work or
+            // stop the watcher when a mount refuses the shorter presentation.
+            if (!Files.isRegularFile(archivedSource, LinkOption.NOFOLLOW_LINKS)) {
+                throw promotionFailure;
+            }
+        }
+        return true;
+    }
+
+    private static boolean unreadableArchived(Claim claim, Path collisionDirectory) {
+        return Files.isRegularFile(
+                collisionDirectory.resolve(claim.originalName()),
+                LinkOption.NOFOLLOW_LINKS)
+            || Files.isRegularFile(
+                collisionDirectory.getParent().getParent()
+                    .resolve(claim.originalName()),
+                LinkOption.NOFOLLOW_LINKS);
     }
 
     private static ArchiveAttempt tryArchiveAt(Path sourcePath, FileChannel source,

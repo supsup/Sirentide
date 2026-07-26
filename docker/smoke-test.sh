@@ -175,6 +175,44 @@ wait_for_path "$input/finished/$long_claim_name" "$watch_one"
 assert_svg "$output/$long_claim_name.svg"
 test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
 
+# A source may be atomically claimable even though the non-root worker cannot
+# open it. The unreadable job receives one bounded failure disposition without
+# leaking bytes, and the same watcher must still process the next valid job.
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$input:/sirentide/input" \
+    "$image" -c '
+        printf "%s\n" "pie" "\"UNREADABLE-SENTINEL\" : 14" \
+            > /sirentide/input/unreadable.sirentide
+        chmod 000 /sirentide/input/unreadable.sirentide
+    '
+wait_for_path "$output/unreadable.sirentide.error.txt" "$watch_one"
+wait_for_path "$input/failed/unreadable.sirentide" "$watch_one"
+test ! -e "$output/unreadable.sirentide.svg"
+test "$(wc -c < "$output/unreadable.sirentide.error.txt")" -le 600
+! grep -q 'UNREADABLE-SENTINEL' "$output/unreadable.sirentide.error.txt"
+test "$(find "$output" -maxdepth 1 -type f \
+    -name 'unreadable.sirentide*.error.txt' | wc -l | tr -d ' ')" -eq 1
+test -z "$(find "$input/processing" -type f \
+    -name 'unreadable.sirentide' -print -quit)"
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$input:/sirentide/input" \
+    "$image" -c '
+        chmod 0400 /sirentide/input/failed/unreadable.sirentide
+        test "$(cat /sirentide/input/failed/unreadable.sirentide)" = \
+            "pie
+\"UNREADABLE-SENTINEL\" : 14"
+    '
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+printf '%s\n' 'pie' '"AfterUnreadable" : 15' \
+    > "$input/after unreadable.sirentide"
+wait_for_path "$output/after unreadable.sirentide.svg" "$watch_one"
+wait_for_path "$input/finished/after unreadable.sirentide" "$watch_one"
+assert_svg "$output/after unreadable.sirentide.svg"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+unreadable_failure_count=$(docker logs "$watch_one" 2>&1 \
+    | grep -c 'failed (io-AccessDeniedException)$')
+test "$unreadable_failure_count" -eq 1
+
 # A source component may fit while appending an output suffix does not. In that
 # case a bounded job-id output is used and the source keeps its original name.
 max_success_name="$(repeat_char 249 s).md"
