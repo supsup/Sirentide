@@ -32,7 +32,7 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-/// FUZZ / PROPERTY-INVARIANT pass over ALL 21 diagram types (cycle-2 roadmap #4 — the trust floor).
+/// FUZZ / PROPERTY-INVARIANT pass over ALL diagram types (cycle-2 roadmap #4 — the trust floor).
 ///
 /// "malformed → inert, never throws, never escapes the alphabet" was, before this pass, an
 /// ASSUMPTION backed by happy-path goldens + a curated containment corpus. This test turns it into a
@@ -84,7 +84,7 @@ class FuzzInvariantTest {
     private static final String[] TYPES = {
         "pie", "xychart", "timeline", "gantt", "flowchart TD", "sequence", "state", "quadrant",
         "classDiagram", "erDiagram", "mathblock", "gitGraph", "journey", "mindmap", "sankey", "matrix",
-        "heatmap", "snake", "tensornetwork", "young", "dynkin", "knot"
+        "heatmap", "snake", "tensornetwork", "young", "dynkin", "rootsystem", "knot"
     };
 
     /// One representative, well-formed body per type — the fuzz SEEDS. Prefix-truncation, mutation,
@@ -121,6 +121,8 @@ class FuzzInvariantTest {
         "tensornetwork\n  mps A B C D\n",
         "young\n  rows: 3, 2, 1\n",
         "dynkin\n  type: B4\n",
+        // Weyl-closure + Coxeter-plane projection, including the bounded minimal-edge path.
+        "rootsystem\n  type: A3\n  edges: minimal\n",
         // knot — the twenty-first type (landed after sir400; census kept us honest, review sir403 freshen).
         "knot\n  type: trefoil\n"
     };
@@ -149,6 +151,7 @@ class FuzzInvariantTest {
         "tensornetwork\n  mps %LBL% B\n",
         "young\n  rows: %LBL%\n",
         "dynkin\n  type: %LBL%\n",
+        "rootsystem\n  type: %LBL%\n  edges: minimal\n",
         "knot\n  type: %LBL%\n",
         // config-block title override — the OTHER a11y-text seam.
         "%% title: %LBL%\npie\n  \"A\" : 10\n"
@@ -173,7 +176,7 @@ class FuzzInvariantTest {
         // Non-vacuity: the corpus must actually be large (guards against a generation regression that
         // silently empties it and makes the whole pass trivially "green").
         assertTrue(cases >= 3000, "fuzz corpus must exercise a few thousand cases, ran only " + cases);
-        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 22 types in " + ms + " ms");
+        System.out.println("[FuzzInvariantTest] " + cases + " adversarial cases across 23 types in " + ms + " ms");
     }
 
     /// The single-case invariant harness: INV-1 (no throw), INV-2 (well-formed + in-alphabet),

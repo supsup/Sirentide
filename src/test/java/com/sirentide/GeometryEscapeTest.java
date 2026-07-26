@@ -89,6 +89,22 @@ class GeometryEscapeTest {
         }
     }
 
+    @Test
+    void rootSystemProjectionsStayInsideTheirFixedSquare() {
+        // The representative acceptance set covers a single hexagonal ring, A3's truthful
+        // merged-radius/overlapping-point projection, two root lengths, and the dense E8 showpiece.
+        // The square is centred and x/y use the same scale, so the existing per-command x oracle
+        // proves the symmetric y extent as well.
+        for (String fixture : new String[] {
+            "A2\nedges: minimal",
+            "A3\nedges: minimal",
+            "G2\nedges: none",
+            "E8\nedges: minimal"
+        }) {
+            assertContained("rootsystem\ntype: " + fixture);
+        }
+    }
+
     private static void assertContained(String dsl) {
         String svg = Sirentide.render(dsl);
         Matcher wm = SVG_WIDTH.matcher(svg);

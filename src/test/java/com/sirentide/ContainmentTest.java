@@ -224,6 +224,14 @@ class ContainmentTest {
             + "  ,Homes,10\n  Loop,Loop,5\n",
         "sankey-beta\n  A,B,10\n  B,C,10\n",   // the `sankey-beta` alias + a 3-node chain
         "sankey\n",                            // empty body → minimal inert canvas (round-trips, never the shell)
+        // root-system Coxeter-plane projection: guide-ring stroked paths, POINT groups, bounded EDGE
+        // groups, the full under-cap E8 web, and A24's all-or-none edge-cap degrade. This is the new
+        // type's direct producer⊆contract proof on the existing svg/g/path/line alphabet.
+        "rootsystem\n  type: A2\n  edges: minimal\n",
+        "rootsystem\n  type: G2\n  edges: none\n",
+        "rootsystem\n  type: E8\n  edges: minimal\n",
+        "rootsystem\n  type: A24\n  edges: minimal\n",   // edge cap → points/rings, zero partial links
+        "rootsystem\n  type: A25\n  edges: minimal\n",   // rank cap → universal inert shell
         // knot diagram (plan sirentide-knot-diagram-primitive): the built-in classical knots —
         // one closed smooth curve of stroked M/L polyline strand arcs (fill=none) with over/under
         // crossings, each under strand broken by a gap. Exercises the arc <path> geometry + the EDGE

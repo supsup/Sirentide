@@ -103,8 +103,43 @@ public final class A11yDescriber {
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case com.sirentide.ir.Knot kn -> knot(kn);
             case com.sirentide.ir.Dynkin dk -> dynkin(dk);
+            case com.sirentide.ir.RootSystem rs -> rootSystem(rs);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Teaches the finite-type/Lie-algebra correspondence and the Coxeter invariant, e.g.
+    /// "A3 root system (sl4): 12 roots, Coxeter number 4." When an authored minimal-edge graph is
+    /// over the hard line cap, the description names the exact all-or-none degrade; a sightless
+    /// reader is never told that an incomplete minimal-distance link set was shown.
+    private static A11y rootSystem(com.sirentide.ir.RootSystem r) {
+        String type = r.typeLabel();
+        String algebra = com.sirentide.ir.DynkinCartan.algebraLabel(r.family(), r.rank());
+        StringBuilder desc = new StringBuilder(type).append(" root system (").append(algebra)
+            .append("): ").append(r.rootCount()).append(" roots, Coxeter number ")
+            .append(r.coxeterNumber()).append('.');
+        if (r.edges() == com.sirentide.ir.RootSystem.Edges.MINIMAL) {
+            com.sirentide.layout.RootSystemProjection.EdgeSummary edges =
+                com.sirentide.layout.RootSystemProjection.edgeSummary(r);
+            if (edges.degraded()) {
+                if (edges.minimalEdgeCount() >= 0) {
+                    desc.append(" Minimal-distance edges omitted: ")
+                        .append(edges.minimalEdgeCount()).append(" exceeds the ")
+                        .append(com.sirentide.ir.RootSystem.MAX_MINIMAL_EDGES)
+                        .append("-edge cap; rendered as edges none.");
+                } else {
+                    desc.append(" Minimal-distance edges omitted because the bounded pair-work cap "
+                        + "was reached; rendered as edges none.");
+                }
+            } else {
+                desc.append(' ').append(edges.minimalEdgeCount())
+                    .append(" ambient minimal-distance root ")
+                    .append(edges.minimalEdgeCount() == 1 ? "link shown." : "links shown.");
+            }
+        } else {
+            desc.append(" Edges: none.");
+        }
+        return new A11y(type + " root system", desc.toString());
     }
 
     /// Knot diagram: "Trefoil knot (3₁): 3 crossings, alternating." The crossing NUMBER is a property

@@ -37,7 +37,7 @@ Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTM
 
 ## What the emitter emits TODAY (the current producer surface)
 
-All **twenty-one shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `mathblock`, `gitGraph`, `journey`, `mindmap`, `sankey`, `matrix`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`). The `ContainmentTest` guards that alphabet: it renders a **curated seventeen-type corpus** (`pie` · `xychart` · `timeline` · `gantt` · `matrix` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `knot`) plus edge cases and fails the build on any element/attribute outside the allow-list — it pins the emitter's *alphabet*, distinct from a full per-type census (the four purely-additive types `snake`/`tensornetwork`/`young`/`dynkin` emit into the same `svg/g/path/rect/line` surface but are not in that corpus). The full allow-list:
+All **twenty-three shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `mathblock`, `gitGraph`, `journey`, `mindmap`, `sankey`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `rootsystem`, `knot`) bake to a strict subset of the contract below — the exact set pinned in `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`). The `ContainmentTest` guards that alphabet with a curated cross-type corpus plus edge cases, including `rootsystem` point/ring/minimal-edge and edge-cap-degrade fixtures, and fails the build on any element/attribute outside the allow-list. The full fuzz census separately requires a non-inert seed for every sealed IR type. The full allow-list:
 
 | Element | Attributes emitted today |
 | --- | --- |
@@ -50,9 +50,26 @@ All **twenty-one shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt`,
 
 The emitter now emits `<g>` (math fragments + the closed `data-sirentide-role`/`-id`/`-seq` anchor set) and `<title>`/`<desc>` alongside the original `svg`/`path`/`rect`/`line` surface. **Still not emitted:** `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, `<marker>`/`<defs>`, `stroke-dasharray`, `class`, and the still-gated `data-sirentide-fx` effect anchor. The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
 
+### Root-system bounded semantics
+
+`DynkinCartan.MAX_RANK=200` preserves the established Dynkin-diagram/public-catalog boundary.
+Unsupported larger classical ranks are rejected before bond construction, matrix allocation, or
+count/Coxeter/algebra arithmetic; arithmetic-bearing formulas use checked operations as a second
+guard. The more expensive root closure and pair census retain `RootSystem.MAX_RANK=24`. A
+`rootsystem` block permissively ignores junk and invalid type candidates until its first valid type,
+then ignores later type candidates. A recognized `edges:` directive remains strict:
+`minimal|none` only, and an invalid value rejects the block.
+
+Every emitted minimal-distance `<line>` remains inside its semantic `data-sirentide-role="edge"`
+group and uses a one-pixel `#8490a1` stroke, whose contrast against the white gallery canvas is
+3.24:1. E8 with `edges:minimal` is a supported static render but intentionally not a play-through:
+6,720 edge anchors + 240 point anchors = 6,960 steps, beyond `MAX_FRAMES=512`, so
+`renderFrames`/its diagnostic twin take the standard bounded inert-frame path. `edges:none` or a
+smaller type is the play-through path.
+
 ## The alphabet — GROWS PER MILESTONE
 
-The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all twenty-one diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). Activation frames already ship on the current path/line surface; `<marker>`/`<defs>` are the genuinely-deferred part, added at a later milestone (denser `sequence` heads / effect markers) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
+The alphabet starts minimal and grows only as a milestone needs it. **The current emitter (all twenty-three diagram types) needs NO `<marker>`/`<defs>`** — arrowheads are emitted as inline `<path>` triangles (pure-path discipline, tiny containment surface). Activation frames already ship on the current path/line surface; `<marker>`/`<defs>` are the genuinely-deferred part, added at a later milestone (denser `sequence` heads / effect markers) as a reviewed widening, value-constrained to same-document `#id` refs Sirentide itself emitted.
 
 ### M1 — allowed elements
 `svg`, `g`, `path`, `rect`, `line`, `polyline`, `polygon`, `circle`, `ellipse`.
@@ -76,7 +93,7 @@ The Stafficy sanitizer *tolerates* `<text>`/`<tspan>` (hand-authored doc SVGs us
 ## Milestone growth ledger
 | Milestone | Adds to the alphabet |
 | --- | --- |
-| Shipped — all twenty-two types (`pie` · `xychart` · `timeline` · `gantt` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `matrix` · `heatmap` · `snake` · `tensornetwork` · `young` · `dynkin` · `knot`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. No new elements were needed for the geometry — the graph, time-axis, and structured types all landed on the current path/line surface. |
+| Shipped — all twenty-three types (`pie` · `xychart` · `timeline` · `gantt` · `flowchart` · `sequence` · `state` · `quadrant` · `classDiagram` · `erDiagram` · `mathblock` · `gitGraph` · `journey` · `mindmap` · `sankey` · `matrix` · `heatmap` · `snake` · `tensornetwork` · `young` · `dynkin` · `rootsystem` · `knot`) | the `svg/path/rect/line` set above; arrowheads = inline `<path>`. Root-system rings reuse stroked paths, roots reuse point paths, and optional bounded minimal-distance links reuse lines — no contract widening. |
 | Shipped — a11y baking | `<title>`, `<desc>` (text-only children of the root `<svg>`) + `role="img"` — the standard deterministic SVG a11y triple |
 | Shipped — math-in-labels + the semantic-anchor layer | `<g>` carrying a numeric `transform`, an optional `fill` (math fragments), and the closed `data-sirentide-role`/`-id`/`-seq` anchor vocabulary (see the container contract) |
 | Future — fuller `sequence` denser heads / effect markers | `<marker>`, `<defs>` — value-constrained: `marker-end`/`marker-start` = `url(#localId)` only, referencing markers Sirentide emitted in the same doc |
