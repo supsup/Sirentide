@@ -25,7 +25,9 @@ flow over `/sirentide/input` and `/sirentide/output`. Complete `.md`, `.markdown
 `input/finished`, failures move to `input/failed`, and outputs or bounded diagnostics land in
 the output mount. Publication never overwrites an existing output or archived source, abandoned
 processing claims recover on restart, and concurrent workers converge on one final state even
-when a bind-mount driver does not coordinate advisory file locks.
+when a bind-mount driver does not coordinate advisory file locks. Claim IDs and original source
+names occupy separate path components, and job-id fallbacks bound derived output and diagnostic
+names when appending a suffix would exceed a mounted filesystem's component limit.
 
 ### Bounded layout hot paths
 Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while

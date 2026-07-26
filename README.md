@@ -103,7 +103,7 @@ the source to `Input/finished/diagram.md`. The full lifecycle is:
 
 ```text
 Input/diagram.md
-  -> Input/processing/<job-id>--diagram.md
+  -> Input/processing/<job-id>/diagram.md
   -> Input/finished/diagram.md
 ```
 
@@ -115,6 +115,13 @@ overwritten; conflicting archives are retained below a job-id directory in
 stopped container is recovered on restart. Multiple workers may share the same
 mounts: atomic claims plus idempotent publication ensure one final state even on
 bind-mount drivers that do not coordinate advisory file locks.
+
+The worker never lengthens the original name inside a path component. If the
+source name fits the mounted filesystem but adding `.svg` or `.error.txt` would
+not, the corresponding output uses a bounded `job-<job-id>` filename instead;
+the source is still archived under its unchanged original name. A diagnostic
+collision uses a bounded job-and-attempt filename and never overwrites the
+existing file.
 
 Set `SIRENTIDE_WATCH_POLL_MS` to an integer from `10` through `60000` to change
 the scan interval (default `500`). The watched input mount must be writable so

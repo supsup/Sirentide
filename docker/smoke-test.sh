@@ -48,6 +48,45 @@ wait_for_path() {
     fi
 }
 
+first_match() {
+    directory=$1
+    pattern=$2
+    for match in "$directory"/$pattern; do
+        if [ -f "$match" ]; then
+            printf '%s\n' "$match"
+            return 0
+        fi
+    done
+    return 1
+}
+
+wait_for_match() {
+    directory=$1
+    pattern=$2
+    container=$3
+    attempt=0
+    while ! match=$(first_match "$directory" "$pattern"); do
+        if [ "$attempt" -ge 240 ]; then
+            echo "timed out waiting for worker artifact matching: $directory/$pattern" >&2
+            docker logs "$container" >&2 || true
+            return 1
+        fi
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+    printf '%s\n' "$match"
+}
+
+repeat_char() {
+    count=$1
+    character=$2
+    printf '%*s' "$count" '' | tr ' ' "$character"
+}
+
+byte_length() {
+    LC_ALL=C printf '%s' "$1" | wc -c | tr -d ' '
+}
+
 assert_svg() {
     target=$1
     test -s "$target"
@@ -123,13 +162,59 @@ test ! -e "$output/.upload.md.tmp.svg"
 test ! -e "$output/ignored.json.svg"
 test "$(wc -c < "$output/bad.md.error.txt")" -le 600
 ! grep -q 'TOP-SECRET-SENTINEL' "$output/bad.md.error.txt"
+
+# A 230-byte host-valid filename used to become an unrepresentable claim after
+# the worker prefixed a 32-byte UUID. The claim directory now keeps those
+# components separate, and the watcher remains alive after the disposition.
+long_claim_name="$(repeat_char 227 c).md"
+test "$(byte_length "$long_claim_name")" -eq 230
+write_markdown "$tmp_root/long-claim.md" 'LongClaim' 12
+mv "$tmp_root/long-claim.md" "$input/$long_claim_name"
+wait_for_path "$output/$long_claim_name.svg" "$watch_one"
+wait_for_path "$input/finished/$long_claim_name" "$watch_one"
+assert_svg "$output/$long_claim_name.svg"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+
+# A source component may fit while appending an output suffix does not. In that
+# case a bounded job-id output is used and the source keeps its original name.
+max_success_name="$(repeat_char 249 s).md"
+test "$(byte_length "$max_success_name")" -eq 252
+write_markdown "$tmp_root/max-success.md" 'MaxSuccess' 13
+mv "$tmp_root/max-success.md" "$input/$max_success_name"
+wait_for_path "$input/finished/$max_success_name" "$watch_one"
+max_success_svg=$(wait_for_match "$output" 'job-*.svg' "$watch_one")
+assert_svg "$max_success_svg"
+test "$(byte_length "$(basename "$max_success_svg")")" -le 255
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+
+# A long failed recovery claim uses the bounded job-id diagnostic name. If that
+# target already contains different bytes, a bounded attempt-id fallback is
+# published without overwriting the sentinel or stopping the watcher.
+diagnostic_id=fedcba9876543210fedcba9876543210
+long_failure_name="$(repeat_char 249 f).md"
+test "$(byte_length "$long_failure_name")" -eq 252
+printf '%s\n' 'DIAGNOSTIC-SENTINEL' > "$output/job-$diagnostic_id.error.txt"
+mkdir "$input/processing/$diagnostic_id"
+printf '%s\n' 'LONG-FAILURE-SECRET' > "$tmp_root/max-failure.md"
+mv "$tmp_root/max-failure.md" \
+    "$input/processing/$diagnostic_id/$long_failure_name"
+wait_for_path "$input/failed/$long_failure_name" "$watch_one"
+diagnostic_fallback=$(wait_for_match \
+    "$output" "job-$diagnostic_id-*.error.txt" "$watch_one")
+test "$(cat "$output/job-$diagnostic_id.error.txt")" = 'DIAGNOSTIC-SENTINEL'
+test "$(wc -c < "$diagnostic_fallback")" -le 600
+! grep -q 'LONG-FAILURE-SECRET' "$diagnostic_fallback"
+test "$(byte_length "$(basename "$diagnostic_fallback")")" -le 255
+test ! -e "$input/processing/$diagnostic_id"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
 docker stop -t 2 "$watch_one" >/dev/null
 docker rm "$watch_one" >/dev/null
 
-# Restart recovery: a valid UUID-prefixed processing file is reclaimed after
-# the prior process is gone; unrelated processing files remain untouched.
+# Restart recovery: a valid UUID claim directory is reclaimed after the prior
+# process is gone; unrelated processing entries remain untouched.
 recovery_id=0123456789abcdef0123456789abcdef
-write_markdown "$input/processing/$recovery_id--recovered diagram.md" 'Recovered' 8
+mkdir "$input/processing/$recovery_id"
+write_markdown "$input/processing/$recovery_id/recovered diagram.md" 'Recovered' 8
 docker run -d --name "$watch_recovery" \
     -e SIRENTIDE_WATCH_POLL_MS=20 \
     -v "$input:/sirentide/input" \
@@ -138,6 +223,7 @@ docker run -d --name "$watch_recovery" \
 wait_for_path "$output/recovered diagram.md.svg" "$watch_recovery"
 wait_for_path "$input/finished/recovered diagram.md" "$watch_recovery"
 assert_svg "$output/recovered diagram.md.svg"
+test ! -e "$input/processing/$recovery_id"
 test -e "$input/processing/not-a-claim.md"
 docker stop -t 2 "$watch_recovery" >/dev/null
 docker rm "$watch_recovery" >/dev/null

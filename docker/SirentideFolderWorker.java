@@ -13,6 +13,7 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -33,12 +34,14 @@ import java.util.UUID;
  * diagnostic render API as the application. This class is orchestration, not
  * a second renderer.
  *
- * <p>Claims are atomic renames to a UUID-prefixed direct child of
- * {@code input/processing}. The unique target means two workers can race for
- * one source without either overwriting the other. Completed output and source
- * archives are published with hard links from fully written files, which is an
- * atomic create-if-absent operation on the mounted filesystem. There is no
- * overwrite fallback.
+ * <p>Claims are atomic renames to the original filename below a UUID-named
+ * directory in {@code input/processing}. Keeping the UUID and source name in
+ * separate path components means a host-valid source name is never lengthened
+ * past the mounted filesystem's component limit. The unique directory means
+ * two workers can race for one source without either overwriting the other.
+ * Completed output and source archives are published with hard links from
+ * fully written files, which is an atomic create-if-absent operation on the
+ * mounted filesystem. There is no overwrite fallback.
  */
 public final class SirentideFolderWorker {
 
@@ -48,7 +51,7 @@ public final class SirentideFolderWorker {
     private static final long MIN_POLL_MILLIS = 10;
     private static final long MAX_POLL_MILLIS = 60_000;
     private static final int CLAIM_ID_LENGTH = 32;
-    private static final String CLAIM_SEPARATOR = "--";
+    private static final int MAX_DERIVED_NAME_BYTES = 255;
     private static final int DIAGNOSTIC_LIMIT = 512;
 
     private final Path input;
@@ -126,7 +129,7 @@ public final class SirentideFolderWorker {
                 claims.add(claim);
             }
         }
-        claims.sort(Comparator.comparing(claim -> claim.path().getFileName().toString()));
+        claims.sort(Comparator.comparing(Claim::jobId));
         boolean processedAny = false;
         for (Claim claim : claims) {
             processedAny |= tryProcess(claim);
@@ -147,7 +150,15 @@ public final class SirentideFolderWorker {
         for (Path source : candidates) {
             String originalName = source.getFileName().toString();
             String jobId = UUID.randomUUID().toString().replace("-", "");
-            Path claimed = processing.resolve(jobId + CLAIM_SEPARATOR + originalName);
+            Path claimDirectory = processing.resolve(jobId);
+            try {
+                Files.createDirectory(claimDirectory);
+            } catch (FileAlreadyExistsException jobIdCollision) {
+                // A valid recovery claim already owns this UUID. Leave the
+                // source for the next bounded polling pass.
+                continue;
+            }
+            Path claimed = claimDirectory.resolve(originalName);
             try {
                 Files.move(source, claimed, StandardCopyOption.ATOMIC_MOVE);
                 claimedAny = true;
@@ -155,8 +166,13 @@ public final class SirentideFolderWorker {
             } catch (NoSuchFileException | FileAlreadyExistsException raced) {
                 // Another worker won the source rename, or an operator raced a
                 // same-name state entry. No source bytes were overwritten.
+                deleteEmptyClaimDirectory(claimDirectory);
             } catch (AtomicMoveNotSupportedException unsupported) {
+                deleteEmptyClaimDirectory(claimDirectory);
                 throw new IOException("input mount cannot atomically claim work", unsupported);
+            } catch (IOException failure) {
+                deleteEmptyClaimDirectory(claimDirectory);
+                throw failure;
             }
         }
         return claimedAny;
@@ -169,13 +185,17 @@ public final class SirentideFolderWorker {
      * paths are independently idempotent as the correctness boundary.
      */
     private boolean tryProcess(Claim claim) throws IOException {
-        try (ClaimLease lease = tryAcquire(claim.path())) {
-            if (lease == null) {
-                return false;
-            }
+        ClaimLease lease = tryAcquire(claim.path());
+        if (lease == null) {
+            deleteEmptyClaimDirectory(claim.path().getParent());
+            return false;
+        }
+        try (lease) {
             String attemptId = UUID.randomUUID().toString().replace("-", "");
             process(claim, lease.channel(), attemptId);
             return true;
+        } finally {
+            deleteEmptyClaimDirectory(claim.path().getParent());
         }
     }
 
@@ -245,7 +265,8 @@ public final class SirentideFolderWorker {
 
         try {
             render(claim, source, renderTemp);
-            publishComplete(renderTemp, output.resolve(claim.originalName() + ".svg"));
+            publishComplete(renderTemp, output.resolve(
+                derivedName(claim, ".svg")));
         } catch (JobFailure failure) {
             Files.deleteIfExists(renderTemp);
             if (completedByAnotherWorker(claim, source)) {
@@ -391,7 +412,7 @@ public final class SirentideFolderWorker {
         Files.deleteIfExists(temp);
         Files.write(temp, diagnostic, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 
-        Path direct = output.resolve(claim.originalName() + ".error.txt");
+        Path direct = output.resolve(derivedName(claim, ".error.txt"));
         try {
             publishComplete(temp, direct);
         } catch (JobFailure collision) {
@@ -399,7 +420,7 @@ public final class SirentideFolderWorker {
             Files.write(temp, diagnostic, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             try {
                 publishComplete(temp, output.resolve(
-                    claim.originalName() + "." + claim.jobId() + ".error.txt"));
+                    "job-" + claim.jobId() + "-" + attemptId + ".error.txt"));
             } catch (JobFailure corruptRecovery) {
                 throw new IOException("unique diagnostic path collision", corruptRecovery);
             }
@@ -563,29 +584,42 @@ public final class SirentideFolderWorker {
             || lower.endsWith(".sirentide");
     }
 
-    private static Claim parseClaim(Path path) {
-        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+    private static Claim parseClaim(Path path) throws IOException {
+        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
             return null;
         }
-        String name = path.getFileName().toString();
-        int prefixLength = CLAIM_ID_LENGTH + CLAIM_SEPARATOR.length();
-        if (name.length() <= prefixLength
-                || !name.regionMatches(CLAIM_ID_LENGTH, CLAIM_SEPARATOR, 0,
-                    CLAIM_SEPARATOR.length())) {
+        String jobId = path.getFileName().toString();
+        if (!validJobId(jobId)) {
             return null;
         }
-        String jobId = name.substring(0, CLAIM_ID_LENGTH);
-        for (int i = 0; i < jobId.length(); i++) {
-            char c = jobId.charAt(i);
+        List<Path> children;
+        try {
+            children = directChildren(path);
+        } catch (NoSuchFileException raced) {
+            return null;
+        }
+        if (children.size() != 1) {
+            return null;
+        }
+        Path claimed = children.get(0);
+        if (!Files.isRegularFile(claimed, LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        String original = claimed.getFileName().toString();
+        return eligibleName(original) ? new Claim(jobId, original, claimed) : null;
+    }
+
+    private static boolean validJobId(String value) {
+        if (value.length() != CLAIM_ID_LENGTH) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
             if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-                return null;
+                return false;
             }
         }
-        String original = name.substring(prefixLength);
-        if (!eligibleName(original)) {
-            return null;
-        }
-        return new Claim(jobId, original, path);
+        return true;
     }
 
     private static boolean eligibleName(String name) {
@@ -602,6 +636,23 @@ public final class SirentideFolderWorker {
                 || !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("required worker path is not a real directory");
         }
+    }
+
+    private static void deleteEmptyClaimDirectory(Path directory) throws IOException {
+        try {
+            Files.deleteIfExists(directory);
+        } catch (DirectoryNotEmptyException | NoSuchFileException racedOrInUse) {
+            // Another worker still owns the claim, or already removed it.
+        }
+    }
+
+    private static String derivedName(Claim claim, String suffix) {
+        String preferred = claim.originalName() + suffix;
+        if (preferred.getBytes(StandardCharsets.UTF_8).length
+                <= MAX_DERIVED_NAME_BYTES) {
+            return preferred;
+        }
+        return "job-" + claim.jobId() + suffix;
     }
 
     private static Path envPath(String name, Path fallback) {
