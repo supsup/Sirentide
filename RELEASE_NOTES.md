@@ -16,6 +16,27 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Docker CLI and watched folders
+Sirentide now ships a multi-stage Java 25 Docker build with immutable application jars under
+`/opt/sirentide` and a non-root runtime. The original one-shot CLI remains the image's default
+entry point (with `cli` as an optional explicit mode), while `watch` adds a long-running folder
+flow over `/sirentide/input` and `/sirentide/output`. Complete `.md`, `.markdown`, and
+`.sirentide` inputs are atomically claimed into `input/processing`; successful sources move to
+`input/finished`, failures move to `input/failed`, and outputs or bounded diagnostics land in
+the output mount. Publication never overwrites an existing output or archived source, abandoned
+processing claims recover on restart, and concurrent workers converge on one final state even
+when a bind-mount driver does not coordinate advisory file locks. Claim IDs and original source
+names occupy separate path components, and job-id fallbacks bound derived output and diagnostic
+names when appending a suffix would exceed a mounted filesystem's component limit.
+Unreadable eligible inputs now receive a bounded failed disposition without copying or exposing
+their bytes, and the watcher remains live to process later jobs. Their original inode stays in a
+durable `failed/pending` state until diagnostic publication succeeds, so a cleared output-mount
+fault is reconciled on restart without overwriting an existing diagnostic or failed archive.
+Shared watchers now reconcile a vanished unreadable processing path against the exact
+snapshotted inode in pending, collision, and direct failed dispositions. A same-name
+unrelated archive cannot certify completion, while losing workers stay live and continue
+with later jobs.
+
 ### BrewShot gallery coverage ratchet
 The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing
 the one missing reference among Sirentide's 22 production diagram types. A headless drift guard derives

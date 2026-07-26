@@ -1,0 +1,599 @@
+#!/bin/sh
+set -eu
+
+image=${1:-sirentide:local}
+tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/sirentide-docker-smoke.XXXXXX")
+name_suffix=$$
+watch_one="sirentide-smoke-one-$name_suffix"
+watch_recovery="sirentide-smoke-recovery-$name_suffix"
+watch_unreadable_fault="sirentide-smoke-unreadable-fault-$name_suffix"
+watch_unreadable_restart="sirentide-smoke-unreadable-restart-$name_suffix"
+watch_unreadable_restart_b="sirentide-smoke-unreadable-restart-b-$name_suffix"
+watch_collision="sirentide-smoke-collision-$name_suffix"
+watch_race_a="sirentide-smoke-race-a-$name_suffix"
+watch_race_b="sirentide-smoke-race-b-$name_suffix"
+watch_unreadable_race_a="sirentide-smoke-unreadable-race-a-$name_suffix"
+watch_unreadable_race_b="sirentide-smoke-unreadable-race-b-$name_suffix"
+watch_unreadable_race_c="sirentide-smoke-unreadable-race-c-$name_suffix"
+watch_unreadable_race_d="sirentide-smoke-unreadable-race-d-$name_suffix"
+
+cleanup() {
+    docker rm -f "$watch_one" "$watch_recovery" "$watch_unreadable_fault" \
+        "$watch_unreadable_restart" "$watch_unreadable_restart_b" \
+        "$watch_collision" "$watch_race_a" "$watch_race_b" \
+        "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+        "$watch_unreadable_race_c" "$watch_unreadable_race_d" \
+        >/dev/null 2>&1 || true
+    if [ -n "$tmp_root" ] && [ "$tmp_root" != "/" ]; then
+        chmod -R u+rwx "$tmp_root" >/dev/null 2>&1 || true
+        rm -rf -- "$tmp_root"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+write_markdown() {
+    target=$1
+    title=$2
+    value=$3
+    printf '%s\n' \
+        "# $title" \
+        '' \
+        '```sirentide' \
+        'pie' \
+        "\"$title\" : $value" \
+        '```' > "$target"
+}
+
+wait_for_path() {
+    target=$1
+    container=$2
+    attempt=0
+    while [ ! -e "$target" ] && [ "$attempt" -lt 240 ]; do
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+    if [ ! -e "$target" ]; then
+        echo "timed out waiting for expected worker artifact: $target" >&2
+        docker logs "$container" >&2 || true
+        return 1
+    fi
+}
+
+wait_for_log() {
+    container=$1
+    pattern=$2
+    attempt=0
+    while ! docker logs "$container" 2>&1 | grep -q "$pattern"; do
+        if [ "$attempt" -ge 240 ]; then
+            echo "timed out waiting for worker log: $pattern" >&2
+            docker logs "$container" >&2 || true
+            return 1
+        fi
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+}
+
+wait_for_container_stop() {
+    container=$1
+    attempt=0
+    while [ "$(docker inspect --format '{{.State.Running}}' "$container")" = true ]; do
+        if [ "$attempt" -ge 240 ]; then
+            echo "timed out waiting for worker to stop: $container" >&2
+            docker logs "$container" >&2 || true
+            return 1
+        fi
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+}
+
+first_match() {
+    directory=$1
+    pattern=$2
+    for match in "$directory"/$pattern; do
+        if [ -f "$match" ]; then
+            printf '%s\n' "$match"
+            return 0
+        fi
+    done
+    return 1
+}
+
+wait_for_match() {
+    directory=$1
+    pattern=$2
+    container=$3
+    attempt=0
+    while ! match=$(first_match "$directory" "$pattern"); do
+        if [ "$attempt" -ge 240 ]; then
+            echo "timed out waiting for worker artifact matching: $directory/$pattern" >&2
+            docker logs "$container" >&2 || true
+            return 1
+        fi
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+    printf '%s\n' "$match"
+}
+
+repeat_char() {
+    count=$1
+    character=$2
+    printf '%*s' "$count" '' | tr ' ' "$character"
+}
+
+byte_length() {
+    LC_ALL=C printf '%s' "$1" | wc -c | tr -d ' '
+}
+
+assert_svg() {
+    target=$1
+    test -s "$target"
+    grep -q '<svg' "$target"
+}
+
+# Runtime shape: non-root, immutable jars, fixed mount roots.
+docker run --rm --entrypoint sh "$image" -c '
+    test "$(id -u)" = 10001
+    test -r /opt/sirentide/sirentide.jar
+    test ! -w /opt/sirentide/sirentide.jar
+    test -r /opt/sirentide/sirentide-worker.jar
+    test -d /sirentide/input
+    test -d /sirentide/output
+'
+
+# The explicit `cli` spelling is byte-compatible with the old no-mode shape.
+printf '%s\n' 'pie' '"A" : 1' \
+    | docker run --rm -i "$image" > "$tmp_root/legacy.svg"
+printf '%s\n' 'pie' '"A" : 1' \
+    | docker run --rm -i "$image" cli > "$tmp_root/explicit-cli.svg"
+cmp "$tmp_root/legacy.svg" "$tmp_root/explicit-cli.svg"
+assert_svg "$tmp_root/legacy.svg"
+
+input="$tmp_root/Input"
+output="$tmp_root/Output"
+mkdir -p "$input" "$output"
+chmod 0777 "$input" "$output"
+
+# File CLI mode uses a read-only input mount and a writable output mount.
+write_markdown "$input/cli example.md" 'CLI' 2
+docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v "$input:/sirentide/input:ro" \
+    -v "$output:/sirentide/output" \
+    "$image" cli render '/sirentide/input/cli example.md' \
+    -o '/sirentide/output/cli example.svg'
+assert_svg "$output/cli example.svg"
+
+# Startup backlog, raw DSL, failure, spaces, and ignore rules.
+write_markdown "$input/startup diagram.md" 'Startup' 3
+printf '%s\n' 'pie' '"Raw" : 4' > "$input/raw diagram.sirentide"
+printf '%s\n' 'TOP-SECRET-SENTINEL' > "$input/bad.md"
+write_markdown "$input/.upload.md.tmp" 'Partial' 5
+printf '%s\n' '{"ignored":true}' > "$input/ignored.json"
+mkdir -p "$input/finished" "$input/processing"
+write_markdown "$input/finished/state child.md" 'StateChild' 6
+write_markdown "$input/processing/not-a-claim.md" 'NotAClaim' 7
+chmod -R a+rwX "$input" "$output"
+# Producers only need to make job bytes readable; archive transitions require
+# write access to the input directory, not to the source inode itself.
+chmod 0444 "$input/raw diagram.sirentide"
+
+docker run -d --name "$watch_one" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$input:/sirentide/input" \
+    -v "$output:/sirentide/output" \
+    "$image" watch >/dev/null
+
+wait_for_path "$output/startup diagram.md.svg" "$watch_one"
+wait_for_path "$output/raw diagram.sirentide.svg" "$watch_one"
+wait_for_path "$output/bad.md.error.txt" "$watch_one"
+wait_for_path "$input/finished/startup diagram.md" "$watch_one"
+wait_for_path "$input/finished/raw diagram.sirentide" "$watch_one"
+wait_for_path "$input/failed/bad.md" "$watch_one"
+assert_svg "$output/startup diagram.md.svg"
+assert_svg "$output/raw diagram.sirentide.svg"
+test -e "$input/.upload.md.tmp"
+test -e "$input/ignored.json"
+test -e "$input/finished/state child.md"
+test -e "$input/processing/not-a-claim.md"
+test ! -e "$output/.upload.md.tmp.svg"
+test ! -e "$output/ignored.json.svg"
+test "$(wc -c < "$output/bad.md.error.txt")" -le 600
+! grep -q 'TOP-SECRET-SENTINEL' "$output/bad.md.error.txt"
+
+# A 230-byte host-valid .sirentide filename used to become an unrepresentable
+# claim after the worker prefixed a 32-byte UUID. The claim directory now keeps
+# those components separate, and the watcher remains alive after disposition.
+long_claim_name="$(repeat_char 220 c).sirentide"
+test "$(byte_length "$long_claim_name")" -eq 230
+printf '%s\n' 'pie' '"LongClaim" : 12' > "$tmp_root/long-claim.sirentide"
+mv "$tmp_root/long-claim.sirentide" "$input/$long_claim_name"
+wait_for_path "$output/$long_claim_name.svg" "$watch_one"
+wait_for_path "$input/finished/$long_claim_name" "$watch_one"
+assert_svg "$output/$long_claim_name.svg"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+
+# A source may be atomically claimable even though the non-root worker cannot
+# open it. The unreadable job receives one bounded failure disposition without
+# leaking bytes, and the same watcher must still process the next valid job.
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$input:/sirentide/input" \
+    "$image" -c '
+        printf "%s\n" "pie" "\"UNREADABLE-SENTINEL\" : 14" \
+            > /sirentide/input/unreadable.sirentide
+        chmod 000 /sirentide/input/unreadable.sirentide
+    '
+wait_for_path "$output/unreadable.sirentide.error.txt" "$watch_one"
+wait_for_path "$input/failed/unreadable.sirentide" "$watch_one"
+test ! -e "$output/unreadable.sirentide.svg"
+test "$(wc -c < "$output/unreadable.sirentide.error.txt")" -le 600
+! grep -q 'UNREADABLE-SENTINEL' "$output/unreadable.sirentide.error.txt"
+test "$(find "$output" -maxdepth 1 -type f \
+    -name 'unreadable.sirentide*.error.txt' | wc -l | tr -d ' ')" -eq 1
+test -z "$(find "$input/processing" -type f \
+    -name 'unreadable.sirentide' -print -quit)"
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$input:/sirentide/input" \
+    "$image" -c '
+        chmod 0400 /sirentide/input/failed/unreadable.sirentide
+        test "$(cat /sirentide/input/failed/unreadable.sirentide)" = \
+            "pie
+\"UNREADABLE-SENTINEL\" : 14"
+    '
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+printf '%s\n' 'pie' '"AfterUnreadable" : 15' \
+    > "$input/after unreadable.sirentide"
+wait_for_path "$output/after unreadable.sirentide.svg" "$watch_one"
+wait_for_path "$input/finished/after unreadable.sirentide" "$watch_one"
+assert_svg "$output/after unreadable.sirentide.svg"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+unreadable_failure_count=$(docker logs "$watch_one" 2>&1 \
+    | grep -c 'failed (io-AccessDeniedException)$')
+test "$unreadable_failure_count" -eq 1
+
+# A source component may fit while appending an output suffix does not. In that
+# case a bounded job-id output is used and the source keeps its original name.
+max_success_name="$(repeat_char 249 s).md"
+test "$(byte_length "$max_success_name")" -eq 252
+write_markdown "$tmp_root/max-success.md" 'MaxSuccess' 13
+mv "$tmp_root/max-success.md" "$input/$max_success_name"
+wait_for_path "$input/finished/$max_success_name" "$watch_one"
+max_success_svg=$(wait_for_match "$output" 'job-*.svg' "$watch_one")
+assert_svg "$max_success_svg"
+test "$(byte_length "$(basename "$max_success_svg")")" -le 255
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+
+# A long failed recovery claim uses the bounded job-id diagnostic name. If that
+# target already contains different bytes, a bounded attempt-id fallback is
+# published without overwriting the sentinel or stopping the watcher.
+diagnostic_id=fedcba9876543210fedcba9876543210
+long_failure_name="$(repeat_char 249 f).md"
+test "$(byte_length "$long_failure_name")" -eq 252
+printf '%s\n' 'DIAGNOSTIC-SENTINEL' > "$output/job-$diagnostic_id.error.txt"
+mkdir "$input/processing/$diagnostic_id"
+printf '%s\n' 'LONG-FAILURE-SECRET' > "$tmp_root/max-failure.md"
+mv "$tmp_root/max-failure.md" \
+    "$input/processing/$diagnostic_id/$long_failure_name"
+wait_for_path "$input/failed/$long_failure_name" "$watch_one"
+diagnostic_fallback=$(wait_for_match \
+    "$output" "job-$diagnostic_id-*.error.txt" "$watch_one")
+test "$(cat "$output/job-$diagnostic_id.error.txt")" = 'DIAGNOSTIC-SENTINEL'
+test "$(wc -c < "$diagnostic_fallback")" -le 600
+! grep -q 'LONG-FAILURE-SECRET' "$diagnostic_fallback"
+test "$(byte_length "$(basename "$diagnostic_fallback")")" -le 255
+test ! -e "$input/processing/$diagnostic_id"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_one")" = true
+docker stop -t 2 "$watch_one" >/dev/null
+docker rm "$watch_one" >/dev/null
+
+# Restart recovery: a valid UUID claim directory is reclaimed after the prior
+# process is gone; unrelated processing entries remain untouched.
+recovery_id=0123456789abcdef0123456789abcdef
+mkdir "$input/processing/$recovery_id"
+write_markdown "$input/processing/$recovery_id/recovered diagram.md" 'Recovered' 8
+docker run -d --name "$watch_recovery" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$input:/sirentide/input" \
+    -v "$output:/sirentide/output" \
+    "$image" watch >/dev/null
+wait_for_path "$output/recovered diagram.md.svg" "$watch_recovery"
+wait_for_path "$input/finished/recovered diagram.md" "$watch_recovery"
+assert_svg "$output/recovered diagram.md.svg"
+test ! -e "$input/processing/$recovery_id"
+test -e "$input/processing/not-a-claim.md"
+docker stop -t 2 "$watch_recovery" >/dev/null
+docker rm "$watch_recovery" >/dev/null
+
+# An unreadable job is staged durably before its diagnostic is published. If a
+# writable output mount fails after the watcher is ready, a restart must finish
+# that exact job without replacing either a diagnostic or archive collision.
+fault_input="$tmp_root/FaultInput"
+fault_output="$tmp_root/FaultOutput"
+mkdir -p "$fault_input/failed" "$fault_output"
+chmod 0777 "$fault_input" "$fault_input/failed" "$fault_output"
+printf '%s\n' 'ARCHIVE-COLLISION-SENTINEL' \
+    > "$fault_input/failed/restart unreadable.sirentide"
+printf '%s\n' 'DIAGNOSTIC-COLLISION-SENTINEL' \
+    > "$fault_output/restart unreadable.sirentide.error.txt"
+
+docker run -d --name "$watch_unreadable_fault" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$fault_input:/sirentide/input" \
+    -v "$fault_output:/sirentide/output" \
+    "$image" watch >/dev/null
+wait_for_log "$watch_unreadable_fault" 'sirentide-watch: ready'
+chmod 0555 "$fault_output"
+unreadable_inode=$(docker run --rm --user 0:0 --entrypoint sh \
+    -v "$fault_input:/sirentide/input" \
+    "$image" -c '
+        printf "%s\n" "pie" "\"RESTART-UNREADABLE-SENTINEL\" : 16" \
+            > "/sirentide/input/restart unreadable.sirentide"
+        chmod 000 "/sirentide/input/restart unreadable.sirentide"
+        stat -c "%i" "/sirentide/input/restart unreadable.sirentide"
+    ')
+wait_for_container_stop "$watch_unreadable_fault"
+test "$(docker inspect --format '{{.State.ExitCode}}' \
+    "$watch_unreadable_fault")" -eq 2
+docker logs "$watch_unreadable_fault" 2>&1 \
+    | grep -q 'AccessDeniedException in publishDiagnostic$'
+fault_pending=$(find "$fault_input/failed/pending" -mindepth 2 -maxdepth 2 \
+    -type f -name 'restart unreadable.sirentide' -print)
+test -n "$fault_pending"
+test "$(printf '%s\n' "$fault_pending" | wc -l | tr -d ' ')" -eq 1
+fault_job_id=$(basename "$(dirname "$fault_pending")")
+test "$(byte_length "$fault_job_id")" -eq 32
+test -z "$(find "$fault_input/processing" -type f \
+    -name 'restart unreadable.sirentide' -print -quit)"
+test "$(cat "$fault_output/restart unreadable.sirentide.error.txt")" = \
+    'DIAGNOSTIC-COLLISION-SENTINEL'
+test "$(cat "$fault_input/failed/restart unreadable.sirentide")" = \
+    'ARCHIVE-COLLISION-SENTINEL'
+test "$(find "$fault_output" -maxdepth 1 -type f -name '*.error.txt' \
+    | wc -l | tr -d ' ')" -eq 1
+
+chmod 0777 "$fault_output"
+docker run -d --name "$watch_unreadable_restart" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$fault_input:/sirentide/input" \
+    -v "$fault_output:/sirentide/output" \
+    "$image" watch >/dev/null
+docker run -d --name "$watch_unreadable_restart_b" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$fault_input:/sirentide/input" \
+    -v "$fault_output:/sirentide/output" \
+    "$image" watch >/dev/null
+fault_diagnostic="$fault_output/job-$fault_job_id-$fault_job_id.error.txt"
+fault_archive="$fault_input/failed/collisions/$fault_job_id/restart unreadable.sirentide"
+wait_for_path "$fault_diagnostic" "$watch_unreadable_restart"
+wait_for_path "$fault_archive" "$watch_unreadable_restart"
+test "$(cat "$fault_output/restart unreadable.sirentide.error.txt")" = \
+    'DIAGNOSTIC-COLLISION-SENTINEL'
+test "$(cat "$fault_input/failed/restart unreadable.sirentide")" = \
+    'ARCHIVE-COLLISION-SENTINEL'
+test "$(wc -c < "$fault_diagnostic")" -le 600
+! grep -q 'RESTART-UNREADABLE-SENTINEL' "$fault_diagnostic"
+test "$(find "$fault_output" -maxdepth 1 -type f \
+    -name "job-$fault_job_id-*.error.txt" | wc -l | tr -d ' ')" -eq 1
+test ! -e "$fault_input/failed/pending/$fault_job_id"
+test -z "$(find "$fault_input/processing" -type f \
+    -name 'restart unreadable.sirentide' -print -quit)"
+final_inode=$(docker run --rm --user 0:0 --entrypoint sh \
+    -v "$fault_input:/sirentide/input" \
+    "$image" -c 'stat -c "%i" "$1"' sh \
+    "/sirentide/input/failed/collisions/$fault_job_id/restart unreadable.sirentide")
+test "$unreadable_inode" = "$final_inode"
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$fault_input:/sirentide/input" \
+    "$image" -c '
+        chmod 0400 "$1"
+        grep -q "RESTART-UNREADABLE-SENTINEL" "$1"
+    ' sh "/sirentide/input/failed/collisions/$fault_job_id/restart unreadable.sirentide"
+write_markdown "$fault_input/after restart.md" 'AfterRestart' 17
+wait_for_path "$fault_output/after restart.md.svg" "$watch_unreadable_restart"
+wait_for_path "$fault_input/finished/after restart.md" "$watch_unreadable_restart"
+assert_svg "$fault_output/after restart.md.svg"
+test "$(docker inspect --format '{{.State.Running}}' \
+    "$watch_unreadable_restart")" = true
+test "$(docker inspect --format '{{.State.Running}}' \
+    "$watch_unreadable_restart_b")" = true
+docker rm "$watch_unreadable_fault" >/dev/null
+docker stop -t 2 "$watch_unreadable_restart" \
+    "$watch_unreadable_restart_b" >/dev/null
+docker rm "$watch_unreadable_restart" "$watch_unreadable_restart_b" >/dev/null
+
+# A second source with a previously used name cannot overwrite either the
+# completed SVG or the first archived source. It becomes an explicit failure.
+write_markdown "$input/same name.md" 'First' 9
+docker run -d --name "$watch_collision" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$input:/sirentide/input" \
+    -v "$output:/sirentide/output" \
+    "$image" watch >/dev/null
+wait_for_path "$output/same name.md.svg" "$watch_collision"
+wait_for_path "$input/finished/same name.md" "$watch_collision"
+before_svg=$(sha256sum "$output/same name.md.svg" | cut -d ' ' -f 1)
+before_source=$(sha256sum "$input/finished/same name.md" | cut -d ' ' -f 1)
+write_markdown "$input/.same name.md.tmp" 'Second' 10
+mv "$input/.same name.md.tmp" "$input/same name.md"
+wait_for_path "$output/same name.md.error.txt" "$watch_collision"
+wait_for_path "$input/failed/same name.md" "$watch_collision"
+test "$before_svg" = "$(sha256sum "$output/same name.md.svg" | cut -d ' ' -f 1)"
+test "$before_source" = "$(sha256sum "$input/finished/same name.md" | cut -d ' ' -f 1)"
+docker stop -t 2 "$watch_collision" >/dev/null
+docker rm "$watch_collision" >/dev/null
+
+# Two workers share one mount. Advisory locking is only an optimization: the
+# idempotent publication/archive path makes exactly one worker emit a finished
+# event even when a bind-mount driver lets both execute the same claim.
+race_input="$tmp_root/RaceInput"
+race_output="$tmp_root/RaceOutput"
+mkdir -p "$race_input" "$race_output"
+chmod 0777 "$race_input" "$race_output"
+docker run -d --name "$watch_race_a" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$race_input:/sirentide/input" \
+    -v "$race_output:/sirentide/output" \
+    "$image" watch >/dev/null
+docker run -d --name "$watch_race_b" \
+    -e SIRENTIDE_WATCH_POLL_MS=20 \
+    -v "$race_input:/sirentide/input" \
+    -v "$race_output:/sirentide/output" \
+    "$image" watch >/dev/null
+write_markdown "$race_input/.race file.md.tmp" 'Race' 11
+mv "$race_input/.race file.md.tmp" "$race_input/race file.md"
+wait_for_path "$race_output/race file.md.svg" "$watch_race_a"
+wait_for_path "$race_input/finished/race file.md" "$watch_race_a"
+sleep 0.2
+assert_svg "$race_output/race file.md.svg"
+test ! -e "$race_output/race file.md.error.txt"
+test ! -e "$race_input/failed/race file.md"
+test "$(docker inspect --format '{{.State.Running}}' "$watch_race_a")" = true
+test "$(docker inspect --format '{{.State.Running}}' "$watch_race_b")" = true
+finished_count=$(
+    { docker logs "$watch_race_a"; docker logs "$watch_race_b"; } 2>&1 \
+        | grep -c ' finished$'
+)
+test "$finished_count" -eq 1
+docker stop -t 2 "$watch_race_a" "$watch_race_b" >/dev/null
+docker rm "$watch_race_a" "$watch_race_b" >/dev/null
+
+# Four ready workers take overlapping snapshots of a large set of unreadable
+# recovery claims. Every loser must recognize the winner's exact pending,
+# collision, or direct disposition instead of treating the vanished processing
+# path as fatal. Half the jobs deliberately collide with unrelated same-name
+# files, so a bare name match cannot satisfy the identity check.
+unreadable_race_input="$tmp_root/UnreadableRaceInput"
+unreadable_race_output="$tmp_root/UnreadableRaceOutput"
+unreadable_race_jobs=1000
+mkdir -p "$unreadable_race_input" "$unreadable_race_output"
+chmod 0777 "$unreadable_race_input" "$unreadable_race_output"
+for watcher in \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d"; do
+    docker run -d --name "$watcher" \
+        -e SIRENTIDE_WATCH_POLL_MS=20 \
+        -v "$unreadable_race_input:/sirentide/input" \
+        -v "$unreadable_race_output:/sirentide/output" \
+        "$image" watch >/dev/null
+    wait_for_log "$watcher" 'sirentide-watch: ready'
+done
+docker pause \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d" >/dev/null
+
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$unreadable_race_input:/sirentide/input" \
+    -v "$unreadable_race_output:/sirentide/output" \
+    "$image" -c '
+        set -eu
+        jobs=$1
+        expected=/sirentide/input/.unreadable-race-inodes
+        : > "$expected"
+        i=0
+        while [ "$i" -lt "$jobs" ]; do
+            job=$(printf "%032x" "$i")
+            name=$(printf "unreadable-%04d.sirentide" "$i")
+            claim="/sirentide/input/processing/$job"
+            mkdir -p "$claim"
+            chmod 0777 "$claim"
+            printf "%s\n" "pie" "\"UNREADABLE-RACE-SENTINEL-$i\" : 1" \
+                > "$claim/$name"
+            chmod 000 "$claim/$name"
+            inode=$(stat -c "%i" "$claim/$name")
+            if [ $((i % 2)) -eq 0 ]; then
+                printf "%s\n" "ARCHIVE-COLLISION-$i" \
+                    > "/sirentide/input/failed/$name"
+                printf "%s\n" "DIAGNOSTIC-COLLISION-$i" \
+                    > "/sirentide/output/$name.error.txt"
+                kind=collision
+            else
+                kind=direct
+            fi
+            printf "%s %s %s %s %s\n" "$job" "$name" "$inode" "$kind" "$i" \
+                >> "$expected"
+            i=$((i + 1))
+        done
+    ' sh "$unreadable_race_jobs"
+
+docker unpause \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d" >/dev/null
+attempt=0
+while find "$unreadable_race_input/processing" \
+        "$unreadable_race_input/failed/pending" -type f \
+        -name 'unreadable-*.sirentide' -print -quit | grep -q .; do
+    for watcher in \
+        "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+        "$watch_unreadable_race_c" "$watch_unreadable_race_d"; do
+        if [ "$(docker inspect --format '{{.State.Running}}' "$watcher")" != true ]; then
+            echo "shared unreadable watcher stopped: $watcher" >&2
+            docker logs "$watcher" >&2 || true
+            exit 1
+        fi
+    done
+    if [ "$attempt" -ge 600 ]; then
+        echo 'timed out waiting for shared unreadable claims' >&2
+        exit 1
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+done
+
+docker run --rm --user 0:0 --entrypoint sh \
+    -v "$unreadable_race_input:/sirentide/input" \
+    -v "$unreadable_race_output:/sirentide/output" \
+    "$image" -c '
+        set -eu
+        while read -r job name inode kind index; do
+            if [ "$kind" = collision ]; then
+                final="/sirentide/input/failed/collisions/$job/$name"
+                diagnostic="/sirentide/output/job-$job-$job.error.txt"
+                test "$(cat "/sirentide/input/failed/$name")" = \
+                    "ARCHIVE-COLLISION-$index"
+                test "$(cat "/sirentide/output/$name.error.txt")" = \
+                    "DIAGNOSTIC-COLLISION-$index"
+            else
+                final="/sirentide/input/failed/$name"
+                diagnostic="/sirentide/output/$name.error.txt"
+                test ! -e "/sirentide/output/job-$job-$job.error.txt"
+            fi
+            test -f "$final"
+            test "$(stat -c "%i" "$final")" = "$inode"
+            test "$(stat -c "%h" "$final")" -eq 1
+            test -s "$diagnostic"
+            test "$(wc -c < "$diagnostic")" -le 600
+            ! grep -q UNREADABLE-RACE-SENTINEL "$diagnostic"
+        done < /sirentide/input/.unreadable-race-inodes
+    '
+
+for watcher in \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d"; do
+    test "$(docker inspect --format '{{.State.Running}}' "$watcher")" = true
+done
+test -z "$(find "$unreadable_race_input/processing" \
+    "$unreadable_race_input/failed/pending" -type f \
+    -name 'unreadable-*.sirentide' -print -quit)"
+test "$(find "$unreadable_race_output" -maxdepth 1 -type f \
+    -name '*.error.txt' | wc -l | tr -d ' ')" -eq 1500
+write_markdown "$unreadable_race_input/after unreadable race.md" \
+    'AfterUnreadableRace' 18
+wait_for_path "$unreadable_race_output/after unreadable race.md.svg" \
+    "$watch_unreadable_race_a"
+wait_for_path "$unreadable_race_input/finished/after unreadable race.md" \
+    "$watch_unreadable_race_a"
+assert_svg "$unreadable_race_output/after unreadable race.md.svg"
+docker stop -t 2 \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d" >/dev/null
+docker rm \
+    "$watch_unreadable_race_a" "$watch_unreadable_race_b" \
+    "$watch_unreadable_race_c" "$watch_unreadable_race_d" >/dev/null
+
+# No success-shaped temp artifacts survive any path.
+test -z "$(find "$output" "$race_output" "$unreadable_race_output" \
+    -maxdepth 1 -type f -name '.*.tmp' -print -quit)"
+
+echo "sirentide Docker smoke: PASS"
