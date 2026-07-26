@@ -28,6 +28,7 @@ RUN addgroup -S -g 10001 sirentide \
         /sirentide/input/processing \
         /sirentide/input/finished \
         /sirentide/input/failed \
+        /sirentide/input/failed/pending \
         /sirentide/output \
     && chown -R sirentide:sirentide /sirentide
 

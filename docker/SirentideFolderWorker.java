@@ -59,6 +59,7 @@ public final class SirentideFolderWorker {
     private final Path processing;
     private final Path finished;
     private final Path failed;
+    private final Path unreadablePending;
     private final long pollMillis;
 
     private SirentideFolderWorker(Path input, Path output, long pollMillis) {
@@ -67,6 +68,7 @@ public final class SirentideFolderWorker {
         this.processing = this.input.resolve("processing");
         this.finished = this.input.resolve("finished");
         this.failed = this.input.resolve("failed");
+        this.unreadablePending = this.failed.resolve("pending");
         this.pollMillis = pollMillis;
     }
 
@@ -110,15 +112,45 @@ public final class SirentideFolderWorker {
         ensureDirectory(failed);
         ensureDirectory(finished.resolve("collisions"));
         ensureDirectory(failed.resolve("collisions"));
+        ensureDirectory(unreadablePending);
 
         System.err.println("sirentide-watch: ready");
         while (!Thread.currentThread().isInterrupted()) {
-            boolean worked = processRecoveredClaims();
+            boolean worked = processRecoveredUnreadableClaims();
+            worked |= processRecoveredClaims();
             worked |= claimNewInputs();
             if (!worked) {
                 Thread.sleep(pollMillis);
             }
         }
+    }
+
+    /**
+     * Finish unreadable jobs whose diagnostic publication was interrupted.
+     * The source remains below {@code failed/pending} until the diagnostic is
+     * durable, so an output-mount fault cannot turn a restart into silent data
+     * loss. The job id is also the stable diagnostic fallback id: concurrent
+     * reconcilers therefore publish the same bytes to the same no-replace path.
+     */
+    private boolean processRecoveredUnreadableClaims() throws IOException {
+        List<Claim> claims = new ArrayList<>();
+        for (Path candidate : directChildren(unreadablePending)) {
+            Claim claim = parseClaim(candidate);
+            if (claim != null) {
+                claims.add(claim);
+            }
+        }
+        claims.sort(Comparator.comparing(Claim::jobId));
+        boolean processedAny = false;
+        for (Claim claim : claims) {
+            String code = "io-AccessDeniedException";
+            if (completeUnreadable(claim, code)) {
+                System.err.println("sirentide-watch: job " + claim.jobId()
+                    + " failed (" + code + ")");
+            }
+            processedAny = true;
+        }
+        return processedAny;
     }
 
     private boolean processRecoveredClaims() throws IOException {
@@ -192,7 +224,7 @@ public final class SirentideFolderWorker {
         } catch (AccessDeniedException unreadableSource) {
             try {
                 String code = "io-AccessDeniedException";
-                if (failUnreadable(claim, attemptId, code)) {
+                if (failUnreadable(claim, code)) {
                     System.err.println("sirentide-watch: job " + claim.jobId()
                         + " failed (" + code + ")");
                 } else {
@@ -425,18 +457,50 @@ public final class SirentideFolderWorker {
     }
 
     /**
-     * A source that cannot be opened must still leave the processing queue.
-     * Moving the worker-owned claim directory preserves the unreadable inode
-     * without requiring source read permission or a hard-link permission that
-     * Linux deliberately denies for another user's mode-000 file.
+     * A source that cannot be opened first moves to a durable pending-failure
+     * state. Moving the worker-owned claim directory preserves the unreadable
+     * inode without source read permission or the hard-link permission Linux
+     * deliberately denies for another user's mode-000 file. Only the winner
+     * of that atomic move performs the initial reconciliation; a restart will
+     * retry any winner interrupted while the output mount was unavailable.
      */
-    private boolean failUnreadable(Claim claim, String attemptId, String rawCode)
-            throws IOException {
-        if (!archiveUnreadable(claim)) {
+    private boolean failUnreadable(Claim claim, String rawCode) throws IOException {
+        Claim pending = stageUnreadable(claim);
+        if (pending == null) {
             return false;
         }
-        publishDiagnostic(claim, attemptId, rawCode);
-        return true;
+        return completeUnreadable(pending, rawCode);
+    }
+
+    private Claim stageUnreadable(Claim claim) throws IOException {
+        Path claimDirectory = claim.path().getParent();
+        Path pendingDirectory = unreadablePending.resolve(claim.jobId());
+        try {
+            Files.move(claimDirectory, pendingDirectory,
+                StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException unsupported) {
+            throw new IOException("input mount cannot atomically stage unreadable work",
+                unsupported);
+        } catch (IOException racedOrFailed) {
+            if (!Files.exists(claimDirectory, LinkOption.NOFOLLOW_LINKS)
+                    && unreadableAt(claim, pendingDirectory)) {
+                return null;
+            }
+            throw racedOrFailed;
+        }
+
+        Path pendingSource = pendingDirectory.resolve(claim.originalName());
+        if (!Files.isRegularFile(pendingSource, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("unreadable pending state lost its source");
+        }
+        return new Claim(claim.jobId(), claim.originalName(), pendingSource);
+    }
+
+    private boolean completeUnreadable(Claim claim, String rawCode) throws IOException {
+        // Reuse the job id as the fallback id. A retry or a second worker then
+        // converges on the same diagnostic instead of minting duplicates.
+        publishDiagnostic(claim, claim.jobId(), rawCode);
+        return archiveUnreadable(claim);
     }
 
     private void publishDiagnostic(Claim claim, String attemptId, String rawCode)
@@ -444,8 +508,9 @@ public final class SirentideFolderWorker {
         String code = boundedCode(rawCode);
         byte[] diagnostic = ("Sirentide watch job failed: " + code + ".\n")
             .getBytes(StandardCharsets.UTF_8);
+        String tempId = UUID.randomUUID().toString().replace("-", "");
         Path temp = output.resolve(".sirentide-watch-" + claim.jobId()
-            + "-" + attemptId + ".error.tmp");
+            + "-" + tempId + ".error.tmp");
         Files.deleteIfExists(temp);
         Files.write(temp, diagnostic, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 
@@ -506,11 +571,10 @@ public final class SirentideFolderWorker {
     }
 
     /**
-     * Archive an unreadable source without inspecting or copying its bytes.
-     * The UUID claim directory is moved first, so only one racing worker can
-     * publish the diagnostic. The no-replace file move then restores the
-     * ordinary {@code failed/original-name} shape when that name is free; a
-     * collision safely remains under {@code failed/collisions/job-id}.
+     * Finalize a staged unreadable source without inspecting or copying its
+     * bytes. This runs only after diagnostic publication. The no-replace file
+     * move restores the ordinary {@code failed/original-name} shape when that
+     * name is free; a collision remains below {@code failed/collisions/job-id}.
      */
     private boolean archiveUnreadable(Claim claim) throws IOException {
         Path claimDirectory = claim.path().getParent();
@@ -552,6 +616,11 @@ public final class SirentideFolderWorker {
             }
         }
         return true;
+    }
+
+    private static boolean unreadableAt(Claim claim, Path directory) {
+        return Files.isRegularFile(
+            directory.resolve(claim.originalName()), LinkOption.NOFOLLOW_LINKS);
     }
 
     private static boolean unreadableArchived(Claim claim, Path collisionDirectory) {

@@ -29,7 +29,9 @@ when a bind-mount driver does not coordinate advisory file locks. Claim IDs and 
 names occupy separate path components, and job-id fallbacks bound derived output and diagnostic
 names when appending a suffix would exceed a mounted filesystem's component limit.
 Unreadable eligible inputs now receive a bounded failed disposition without copying or exposing
-their bytes, and the watcher remains live to process later jobs.
+their bytes, and the watcher remains live to process later jobs. Their original inode stays in a
+durable `failed/pending` state until diagnostic publication succeeds, so a cleared output-mount
+fault is reconciled on restart without overwriting an existing diagnostic or failed archive.
 
 ### BrewShot gallery coverage ratchet
 The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing

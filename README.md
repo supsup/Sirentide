@@ -121,6 +121,11 @@ lifecycle instead of stopping the watcher: its inode is moved without reading
 or copying the source bytes, one bounded diagnostic is emitted, and later jobs
 continue normally. When a same-name failed archive already exists, the
 unreadable source remains below its job-id directory in `failed/collisions`.
+If diagnostic publication is interrupted, the inode remains durably recoverable
+below `failed/pending/<job-id>`; the next watcher publishes the same idempotent
+diagnostic before completing the final failed disposition. A temporary output
+mount fault therefore cannot leave an archived unreadable source without its
+promised diagnostic.
 
 The worker never lengthens the original name inside a path component. If the
 source name fits the mounted filesystem but adding `.svg` or `.error.txt` would
