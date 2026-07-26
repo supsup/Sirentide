@@ -97,6 +97,24 @@ class ContractDocDriftTest {
             "the play-through design must not be presented as shipped behavior");
     }
 
+    /// Sirentide's producer is intentionally narrower than Stafficy's generic safe-SVG
+    /// sanitizer. Keep the public contract from turning a producer invariant into a false
+    /// claim that Stafficy strips every otherwise-safe inner SVG attribute.
+    @Test
+    void producerAndStafficySanitizerBoundariesStayDistinct() throws IOException {
+        String doc = Files.readString(DOC);
+        assertTrue(doc.contains(
+            "Sirentide's emitter puts exactly these three semantic-anchor attributes"),
+            "the three-anchor rule must be attributed to the Sirentide producer");
+        assertTrue(doc.contains(
+            "its generic safe-SVG allow-list can also preserve inert inner SVG `class`, `id`, and"),
+            "the contract must disclose Stafficy's broader generic safe-SVG boundary");
+        assertFalse(doc.contains("Anything else is stripped."),
+            "the contract must not overstate the Stafficy sanitizer");
+        assertFalse(doc.contains("any non-`sirentide-*` class"),
+            "Stafficy does not strip every inner SVG class");
+    }
+
     private static String docLineContaining(String needle) throws IOException {
         for (String line : Files.readAllLines(DOC)) {
             if (line.contains(needle) && line.startsWith("|")) {

@@ -35,7 +35,10 @@ Diagrams are block-level (no inline/display split like math):
 
 ## The inner-element anchor vocabulary (closed + value-constrained)
 
-Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constrained. **Anything else is stripped.**
+Sirentide's emitter puts exactly these three semantic-anchor attributes on inner `<g>` groups,
+each enum- or pattern-constrained. Stafficy keeps this `data-sirentide-*` vocabulary closed, but
+its generic safe-SVG allow-list can also preserve inert inner SVG `class`, `id`, and
+presentation/geometry attributes on hand-authored input.
 
 | Attribute | Allowed value | Meaning |
 | --- | --- | --- |
@@ -63,16 +66,20 @@ lands (security-gated, Lattice sign-off), the effect-name enum will ship the sam
 do — jar-exported and drift-guarded, not doc-as-truth. Planned starting vocabulary (design
 intent only): `glow`, `pulse`, `fade`, `draw`, `handscribe`, `spotlight`, `none`.
 
-### Banned on inner elements (build-failing)
-Any `on*`; `<script>`; `href`/`xlink:href`; any `style` attribute; any `data-*` outside the closed list above (including `data-sirentide-fx` until Part 2); **any `class` at all on inner elements** (class lives ONLY on the wrapper `<div>`); any executable or navigational affordance.
+### Banned from Sirentide producer output (build-failing)
+
+Sirentide emits no `on*`, `<script>`, `href`/`xlink:href`, `style`, foreign `data-*`, or inner
+`class` attributes. This producer invariant is deliberately narrower than Stafficy's generic
+safe-SVG sanitizer; arbitrary sanitized SVG may retain inert inner `class`, `id`, and
+presentation/geometry attributes.
 
 ## `constrainSirentideWrappers` — the Stafficy sanitizer pass (Confluence)
 
 The sibling of `constrainMathWrappers` / `constrainCalloutClasses`. On every Sirentide subtree the sanitizer:
 1. Keeps the wrapper `<div class="sirentide sirentide-<type>">` (class value-checked against the closed set).
 2. On every inner element, **strips any `data-sirentide-*` not in the allow-list, and any value not matching its enum/pattern** (a rogue `data-sirentide-fx="alert(1)"` → dropped; `data-sirentide-onwhatever` → dropped).
-3. Strips any `on*`, `href`, `style`, `<script>`, and any non-`sirentide-*` class.
-4. Leaves the geometry (governed by the emitter contract) untouched.
+3. Relies on the generic safe-SVG allow-list to strip executable or navigational surface such as `on*`, `href`/`xlink:href`, `style`, and `<script>`.
+4. May preserve generic safe-SVG `class`, `id`, and presentation/geometry attributes on inner SVG elements; Sirentide's own emitter simply does not produce them beyond its narrower contract.
 
 Value-constrain HARD; never free-form. Back it with an **e2e MarkdownHtml survival test**: a Sirentide diagram survives sanitize with its wrapper class + allowed inner `data-sirentide-*` intact, and a crafted rogue attribute is provably stripped — **drift-guarded against the shared enum/pattern constants, build-failing on drift.**
 

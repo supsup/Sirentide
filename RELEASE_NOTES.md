@@ -403,7 +403,8 @@ stays inside its declared canvas — the visual class the byte-pinned goldens ca
 
 A ```` ```sirentide ```` fenced block in a Stafficy `/docs` page now bakes to a sanitized inline
 diagram (vendored jar + converter, mirroring LatteX). BrewShot bumped 0.1.0 → 0.6.0 for crisp
-gallery capture; the container-contract drift is closed with an enum-backed guard.
+gallery capture. The container contract now distinguishes Sirentide's narrow producer output from
+Stafficy's broader generic safe-SVG sanitizer, with enum- and prose-backed drift guards.
 
 ## 2026-07-10 — diagnostics twin for play-through
 
