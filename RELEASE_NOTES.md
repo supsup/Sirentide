@@ -28,6 +28,19 @@ shipped runtime surface. The container contract now says so explicitly:
 a Sirentide `/docs` page runtime remain deferred. A build-failing test prevents
 those deferred surfaces from drifting back into present-tense documentation.
 
+### Deterministic Timeline and GitGraph displayed-label packing
+Displayed Timeline event/value labels and GitGraph commit-ID labels now use a
+compatibility-gated interval partition over their actual post-clamp emitted
+boxes. Existing clean diagrams retain their SVG bytes exactly. When a Timeline
+band or GitGraph branch lane would overprint, the earliest-finishing-row rule
+allocates the minimum deterministic row count; Timeline shifts/grows its axis
+and canvas, while GitGraph carries added label depth into later lane baselines,
+spines, and branch/merge connectors. The parser's 10,000-item bound feeds only
+linear retained placement state, with no silent display-row cap or overflow
+stack. This is deliberately a narrow claim about those displayed labels — it
+does not claim every Sirentide label or whole diagram is overlap-free, and it
+does not change Flowchart's separate actual-box decollider.
+
 ### Docker CLI and watched folders
 Sirentide now ships a multi-stage Java 25 Docker build with immutable application jars under
 `/opt/sirentide` and a non-root runtime. The original one-shot CLI remains the image's default

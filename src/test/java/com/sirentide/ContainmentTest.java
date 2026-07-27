@@ -44,6 +44,10 @@ class ContainmentTest {
         "xychart scatter\n  \"A\" : 5 8\n  \"B\" : -3 2\n",       // scatter, multi-series, negative
         // timeline
         "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n",
+        // generalized rows + endpoint clamps: three coincident labels at each end of the axis.
+        "timeline\n  \"Left alpha label long\" : 0\n  \"Left bravo label long\" : 0\n"
+            + "  \"Left charlie label long\" : 0\n  \"Right delta label long\" : 100\n"
+            + "  \"Right echo label long\" : 100\n  \"Right foxtrot label\" : 100\n",
         "timeline\n",                                             // axis only
         // gantt
         "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n  \"Test\" : 7-10\n",
@@ -193,6 +197,10 @@ class ContainmentTest {
         "gitGraph\n  commit\n  commit id: \"fix\"\n  checkout ghost\n  branch develop\n"
             + "  branch develop\n  checkout develop\n  commit\n  commit id: \"wip\"\n  checkout main\n"
             + "  merge develop\n  merge main\n  commit\n",
+        // adjacent long IDs force per-lane rows; the crowded main-lane depth prefixes into develop.
+        "gitGraph\n  commit id: \"aaaaaaaaaaaa\"\n  commit id: \"bbbbbbbbbbbb\"\n"
+            + "  commit id: \"cccccccccccc\"\n  branch develop\n  commit id: \"dev\"\n"
+            + "  checkout main\n  merge develop\n  commit id: \"dddddddddddd\"\n",
         "gitGraph\n",   // empty body → minimal empty canvas (round-trips, never the inert shell)
         // journey (13th type): a title, two sections, several scored tasks, a MULTI-ACTOR task, plus
         // MALFORMED cases — an OUT-OF-RANGE score (clamped 1..5), a NON-NUMERIC score (dropped), a task
