@@ -86,8 +86,18 @@ public final class GitGraphLayout {
             double labelWidth = FONT.runWidth(label, ID_SIZE);
             double originX = Math.max(CLAMP_MARGIN,
                 Math.min(x(cd.col()) - labelWidth / 2, width - CLAMP_MARGIN - labelWidth));
-            labels[i] = new CommitLabel(label, originX,
-                LabelIntervalPacker.pathBounds(FONT.textPathD(label, originX, 0, ID_SIZE)));
+            LabelIntervalPacker.Box box = LabelIntervalPacker.pathBounds(
+                FONT.textPathD(label, originX, 0, ID_SIZE));
+            // Advance width can miss ink overhangs. Correct from the emitted box and recompute it;
+            // already-contained IDs retain their exact legacy origin and bytes.
+            double shift = LabelIntervalPacker.horizontalInFrameShift(
+                box, CLAMP_MARGIN, width - CLAMP_MARGIN);
+            if (shift != 0) {
+                originX += shift;
+                box = LabelIntervalPacker.pathBounds(
+                    FONT.textPathD(label, originX, 0, ID_SIZE));
+            }
+            labels[i] = new CommitLabel(label, originX, box);
         }
 
         double[] labelBaselineOffsets = new double[commits.size()];

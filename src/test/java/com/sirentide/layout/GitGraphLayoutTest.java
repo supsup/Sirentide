@@ -180,6 +180,29 @@ class GitGraphLayoutTest {
     }
 
     @Test
+    void rightEndpointCombiningMarkOverhangUsesTheActualCommitIdBoxForClamp() {
+        String rightOverhanging = "!".repeat(26) + "\u20e4";
+        GitGraph graph = (GitGraph) DslParser.parse(
+            "gitGraph\n  commit\n  commit id: \"" + rightOverhanging + "\"\n");
+
+        LaidOut laid = GitGraphLayout.layout(graph);
+        double[] box = laid.shapes().stream()
+            .filter(Group.class::isInstance)
+            .map(Group.class::cast)
+            .filter(g -> g.anchor().role() == com.sirentide.contract.SirentideRole.COMMIT)
+            .flatMap(g -> g.members().stream())
+            .filter(GlyphRun.class::isInstance)
+            .map(GlyphRun.class::cast)
+            .map(g -> pathBounds(g.pathD()))
+            .findFirst()
+            .orElseThrow();
+
+        assertTrue(box[0] >= 2 - 1e-6 && box[2] <= laid.width() - 2 + 1e-6,
+            "actual commit-ID ink stays inside the horizontal canvas: "
+                + java.util.Arrays.toString(box) + " in width " + laid.width());
+    }
+
+    @Test
     void crowdedEarlierLaneOffsetsLaterLaneAndKeepsConnectorsAttached() {
         String dsl = """
             gitGraph

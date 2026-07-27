@@ -124,6 +124,83 @@ final class LabelIntervalPacker {
         return true;
     }
 
+    /// Whether an existing placement clears every pair of actual boxes in two dimensions. Horizontal
+    /// overlap alone is harmless when the placed vertical boxes clear by {@code gap}, and vertically
+    /// overlapping row envelopes are harmless when the relevant labels are horizontally remote.
+    ///
+    /// The same-row precheck guarantees at most one active horizontal interval per row. The sweep is
+    /// therefore O(n log n + n*r), where {@code r} is the existing row count (two for Timeline's
+    /// compatibility path), without a parser-scale pairwise matrix.
+    static boolean placedBoxesClean(Box[] boxes, int[] rows, double[] baselines, double gap) {
+        requireInputs(boxes, gap);
+        if (rows == null || baselines == null || rows.length != boxes.length) {
+            throw new IllegalArgumentException("placed-box input mismatch");
+        }
+        for (double baseline : baselines) {
+            if (!Double.isFinite(baseline)) {
+                throw new IllegalArgumentException("non-finite label baseline");
+            }
+        }
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null && (rows[i] < 0 || rows[i] >= baselines.length)) {
+                throw new IllegalArgumentException("displayed label row outside baseline array");
+            }
+        }
+        if (!rowsClean(boxes, rows, gap)) {
+            return false;
+        }
+
+        List<Integer> order = new ArrayList<>(boxes.length);
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null) {
+                order.add(i);
+            }
+        }
+        order.sort(Comparator.comparingDouble((Integer i) -> boxes[i].minX())
+            .thenComparingInt(Integer::intValue));
+
+        List<Integer> active = new ArrayList<>(baselines.length);
+        for (int index : order) {
+            Box box = boxes[index];
+            active.removeIf(previous -> boxes[previous].maxX() + gap <= box.minX());
+            double minY = box.minY() + baselines[rows[index]];
+            double maxY = box.maxY() + baselines[rows[index]];
+            for (int previous : active) {
+                Box other = boxes[previous];
+                double otherMinY = other.minY() + baselines[rows[previous]];
+                double otherMaxY = other.maxY() + baselines[rows[previous]];
+                boolean verticallyClear = otherMaxY + gap <= minY || maxY + gap <= otherMinY;
+                if (!verticallyClear) {
+                    return false;
+                }
+            }
+            active.add(index);
+        }
+        return true;
+    }
+
+    /// Translation needed to put an actual horizontal box inside {@code [minX,maxX]}. A box wider
+    /// than the available frame is left-aligned so a caller may grow the right canvas deterministically.
+    /// Returning zero preserves the exact legacy origin and emitted bytes for already-contained ink.
+    static double horizontalInFrameShift(Box box, double minX, double maxX) {
+        if (!Double.isFinite(minX) || !Double.isFinite(maxX) || maxX < minX) {
+            throw new IllegalArgumentException("invalid horizontal frame");
+        }
+        if (box == null) {
+            return 0;
+        }
+        if (box.maxX() - box.minX() > maxX - minX) {
+            return minX - box.minX();
+        }
+        if (box.minX() < minX) {
+            return minX - box.minX();
+        }
+        if (box.maxX() > maxX) {
+            return maxX - box.maxX();
+        }
+        return 0;
+    }
+
     /// Conservative compatibility check for the vertical bands of an existing assignment. It is
     /// intentionally band-based: if two row envelopes overlap, the generalized path recomputes
     /// baselines even when a particular pair happens to be horizontally disjoint.

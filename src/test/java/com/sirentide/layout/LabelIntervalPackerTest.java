@@ -71,6 +71,41 @@ class LabelIntervalPackerTest {
     }
 
     @Test
+    void compatibilityGateUsesActualPairwiseTwoDimensionalClearance() {
+        LabelIntervalPacker.Box[] horizontallyRemote = {
+            new LabelIntervalPacker.Box(0, -8, 10, 2),
+            new LabelIntervalPacker.Box(100, -20, 110, 8)
+        };
+        int[] rows = {0, 1};
+        double[] overlappingBands = {0, 10};
+
+        assertFalse(LabelIntervalPacker.rowBandsDisjoint(
+            horizontallyRemote, rows, overlappingBands));
+        assertTrue(LabelIntervalPacker.placedBoxesClean(
+            horizontallyRemote, rows, overlappingBands, 4),
+            "overlapping row envelopes are harmless for horizontally remote labels");
+
+        LabelIntervalPacker.Box[] colliding = {
+            horizontallyRemote[0], new LabelIntervalPacker.Box(5, -20, 15, 8)
+        };
+        assertFalse(LabelIntervalPacker.placedBoxesClean(colliding, rows, overlappingBands, 4),
+            "a pair that overlaps in both placed dimensions is not clean");
+    }
+
+    @Test
+    void actualBoxClampShiftCorrectsBothInkEdgesAndLeftAlignsAnOverwideBox() {
+        assertEquals(10, LabelIntervalPacker.horizontalInFrameShift(
+            new LabelIntervalPacker.Box(-8, -1, 40, 1), 2, 478), 1e-9);
+        assertEquals(-12, LabelIntervalPacker.horizontalInFrameShift(
+            new LabelIntervalPacker.Box(430, -1, 490, 1), 2, 478), 1e-9);
+        assertEquals(10, LabelIntervalPacker.horizontalInFrameShift(
+            new LabelIntervalPacker.Box(-8, -1, 600, 1), 2, 478), 1e-9,
+            "an overwide box is left-aligned for deterministic right-canvas growth");
+        assertEquals(0, LabelIntervalPacker.horizontalInFrameShift(
+            new LabelIntervalPacker.Box(2, -1, 478, 1), 2, 478), 1e-9);
+    }
+
+    @Test
     void verticalBaselinesSeparateActualRowEnvelopesInBothDirections() {
         LabelIntervalPacker.Box[] boxes = {
             new LabelIntervalPacker.Box(0, -8, 10, 2),

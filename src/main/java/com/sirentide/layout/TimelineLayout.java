@@ -126,17 +126,17 @@ public final class TimelineLayout {
         LabelIntervalPacker.Box[] botBoxes = boxes(botLabels);
 
         // COMPATIBILITY GATE: calculate the legacy two-row assignment first and keep the old
-        // placement/canvas byte-for-byte whenever its ACTUAL emitted intervals + row envelopes are
-        // clean. Only a failing band enters the unbounded-row interval partitioner.
+        // placement/canvas byte-for-byte whenever its ACTUAL emitted boxes clear pairwise in 2-D.
+        // Only a failing band enters the unbounded-row interval partitioner.
         int[] legacyTopRows = assignRows(xs, topW);
         int[] legacyBotRows = assignRows(xs, botW);
         double[] legacyTopBaselines = {-14, -14 - ROW_STAGGER};
         double[] legacyBotBaselines = {24, 24 + ROW_STAGGER};
-        boolean topClean = LabelIntervalPacker.rowsClean(topBoxes, legacyTopRows, LABEL_GAP)
-            && LabelIntervalPacker.rowBandsDisjoint(topBoxes, legacyTopRows, legacyTopBaselines)
+        boolean topClean = LabelIntervalPacker.placedBoxesClean(
+                topBoxes, legacyTopRows, legacyTopBaselines, LABEL_GAP)
             && clearsAboveAxis(topBoxes, legacyTopRows, legacyTopBaselines);
-        boolean botClean = LabelIntervalPacker.rowsClean(botBoxes, legacyBotRows, LABEL_GAP)
-            && LabelIntervalPacker.rowBandsDisjoint(botBoxes, legacyBotRows, legacyBotBaselines)
+        boolean botClean = LabelIntervalPacker.placedBoxesClean(
+                botBoxes, legacyBotRows, legacyBotBaselines, LABEL_GAP)
             && clearsBelowAxis(botBoxes, legacyBotRows, legacyBotBaselines);
 
         int[] topRows;
@@ -278,6 +278,17 @@ public final class TimelineLayout {
                 labelWork.charge(path.length());
             }
             box = LabelIntervalPacker.pathBounds(path);
+        }
+        // Advance width is placement input, not an ink bound: combining marks and overhanging glyphs
+        // may escape either edge. Correct from the actual emitted box, then recompute that box at the
+        // translated origin. Already-contained labels retain the exact legacy origin and path bytes.
+        double shift = LabelIntervalPacker.horizontalInFrameShift(
+            box, CLAMP_MARGIN, W - CLAMP_MARGIN);
+        if (shift != 0) {
+            originX += shift;
+            box = measured != null
+                ? mathBounds(measured, originX, size)
+                : LabelIntervalPacker.pathBounds(FONT.textPathD(text, originX, 0, size));
         }
         return new LabelSpec(text, measured, originX, size, box);
     }

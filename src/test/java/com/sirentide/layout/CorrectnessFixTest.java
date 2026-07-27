@@ -6,14 +6,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.a11y.A11y;
 import com.sirentide.a11y.A11yDescriber;
+import com.sirentide.api.MathFragment;
+import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
 import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Pie;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.Task;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
@@ -193,6 +200,39 @@ class CorrectnessFixTest {
                 "post-clamp glyph box stays in the horizontal canvas: "
                     + java.util.Arrays.toString(box));
         }
+    }
+
+    @Test
+    void separatedTallMathTimelineRetainsExactLegacySvgBytes() throws Exception {
+        MathFragmentRenderer guarded = (latex, size) -> Optional.of(new MathFragment(
+            "<path d=\"M0 -18 L20 -18 L20 2 L0 2 Z\" fill=\"currentColor\"/>",
+            20, 18, 2));
+        String svg = Sirentide.render("""
+            timeline
+              "AAAAAAAAAAAA" : 0
+              "BBBBBBBBBBBB" : 1
+              "$x$"          : 100
+            """, guarded);
+
+        assertEquals("a82e2afdb58619ab20649412df11370a281b3425b43ea1e247e67bfdd720e9f8",
+            sha256(svg), "a clean legacy Timeline remains byte-identical");
+    }
+
+    @Test
+    void timelineCombiningMarkOverhangUsesTheActualGlyphBoxForEndpointClamp() {
+        String overhanging = "\u20e4" + "W".repeat(100);
+        String dsl = "timeline\n  \"" + overhanging + "\" : 0\n  \"Right\" : 100\n";
+
+        LaidOut laid = TimelineLayout.layout((com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse(dsl));
+        double[] firstTop = timelineTopBoxes(laid).get(0);
+
+        assertTrue(firstTop[0] >= 2 - 1e-6,
+            "actual left ink overhang stays inside the clamp margin: "
+                + java.util.Arrays.toString(firstTop));
+        assertTrue(firstTop[2] <= laid.width() - 2 + 1e-6,
+            "correcting the left overhang cannot create a right escape: "
+                + java.util.Arrays.toString(firstTop));
     }
 
     @Test
@@ -386,5 +426,10 @@ class CorrectnessFixTest {
                     + java.util.Arrays.toString(b));
             }
         }
+    }
+
+    private static String sha256(String value) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+            .digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 }
