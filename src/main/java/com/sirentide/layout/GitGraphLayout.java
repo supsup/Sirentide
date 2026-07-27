@@ -5,6 +5,7 @@ import com.sirentide.contract.SirentideRole;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.GitGraph;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /// Pure gitGraph layout: a commit history drawn as dots on a horizontal TIME axis (x advances one
@@ -38,6 +39,7 @@ public final class GitGraphLayout {
     private static final double ID_SIZE = 10;         // commit-id label font size
     private static final double BRANCH_SIZE = 11;     // branch-name label font size
     private static final double CLAMP_MARGIN = 2;     // min gap kept from the canvas edge
+    private static final double LABEL_GAP = 4;        // horizontal + vertical commit-ID clearance
 
     private static final FontMetrics FONT = FontMetrics.bundled();
 
@@ -71,7 +73,66 @@ public final class GitGraphLayout {
             maxLane = Math.max(maxLane, cd.lane());
         }
         double width = MARGIN_LEFT + (totalCols - 1) * STEP_X + MARGIN_RIGHT;
-        double height = TOP + maxLane * LANE_GAP + MARGIN_BOTTOM;
+        // Build every ID exactly as the legacy path does, then retain its ACTUAL post-clamp glyph
+        // interval at baseline zero. This lets each lane validate the current one-row placement
+        // before any geometry moves.
+        CommitLabel[] labels = new CommitLabel[commits.size()];
+        for (int i = 0; i < commits.size(); i++) {
+            GitGraphReplay.Commit cd = commits.get(i);
+            if (cd.id() == null || cd.id().isBlank()) {
+                continue;
+            }
+            String label = FONT.ellipsize(cd.id(), STEP_X * 1.6, ID_SIZE);
+            double labelWidth = FONT.runWidth(label, ID_SIZE);
+            double originX = Math.max(CLAMP_MARGIN,
+                Math.min(x(cd.col()) - labelWidth / 2, width - CLAMP_MARGIN - labelWidth));
+            labels[i] = new CommitLabel(label, originX,
+                LabelIntervalPacker.pathBounds(FONT.textPathD(label, originX, 0, ID_SIZE)));
+        }
+
+        double[] labelBaselineOffsets = new double[commits.size()];
+        Arrays.fill(labelBaselineOffsets, DOT_R + 11);  // exact legacy one-row baseline
+        double[] laneExtra = new double[maxLane + 1];
+        for (int lane = 0; lane <= maxLane; lane++) {
+            List<Integer> indices = new ArrayList<>();
+            for (int i = 0; i < commits.size(); i++) {
+                if (commits.get(i).lane() == lane && labels[i] != null
+                    && labels[i].relativeBox() != null) {
+                    indices.add(i);
+                }
+            }
+            LabelIntervalPacker.Box[] laneBoxes = new LabelIntervalPacker.Box[indices.size()];
+            for (int i = 0; i < indices.size(); i++) {
+                laneBoxes[i] = labels[indices.get(i)].relativeBox();
+            }
+            int[] legacyRows = new int[laneBoxes.length];  // every ID currently occupies row zero
+            if (LabelIntervalPacker.rowsClean(laneBoxes, legacyRows, LABEL_GAP)) {
+                continue;                                 // complete byte-compatibility path
+            }
+            LabelIntervalPacker.Result packed = LabelIntervalPacker.pack(laneBoxes, LABEL_GAP);
+            int[] packedRows = packed.rows();
+            double[] baselines = LabelIntervalPacker.baselinesDown(
+                laneBoxes, packedRows, packed.rowCount(), DOT_R + 11, LABEL_GAP);
+            for (int i = 0; i < indices.size(); i++) {
+                labelBaselineOffsets[indices.get(i)] = baselines[packedRows[i]];
+            }
+            // Preserve the legacy inter-lane breathing room. Only the added label depth becomes a
+            // prefix offset for later lane baselines and bottom canvas growth.
+            double legacyBottom = maxPlacedY(laneBoxes, legacyRows,
+                new double[] {DOT_R + 11});
+            double packedBottom = maxPlacedY(laneBoxes, packedRows, baselines);
+            laneExtra[lane] = Math.max(0, packedBottom - legacyBottom);
+        }
+
+        // Resolve every lane baseline from deterministic prefix growth. A crowded earlier lane moves
+        // all later lane geometry together: spines, dots, branch labels, and both connector endpoints.
+        double[] laneYs = new double[maxLane + 1];
+        double prefixExtra = 0;
+        for (int lane = 0; lane <= maxLane; lane++) {
+            laneYs[lane] = TOP + lane * LANE_GAP + prefixExtra;
+            prefixExtra += laneExtra[lane];
+        }
+        double height = TOP + maxLane * LANE_GAP + prefixExtra + MARGIN_BOTTOM;
 
         List<Shape> shapes = new ArrayList<>();
 
@@ -80,9 +141,9 @@ public final class GitGraphLayout {
         //    source lane then rise into the merge commit. Two straight segments = a clean elbow.
         for (GitGraphReplay.Connector cn : connectors) {
             double fromX = x(cn.fromCol());
-            double fromY = y(cn.fromLane());
+            double fromY = laneYs[cn.fromLane()];
             double toX = x(cn.toCol());
-            double toY = y(cn.toLane());
+            double toY = laneYs[cn.toLane()];
             if (cn.isBranch()) {
                 shapes.add(new Line(fromX, fromY, fromX, toY, cn.color(), SPINE_W));   // vertical at branch point
                 shapes.add(new Line(fromX, toY, toX, toY, cn.color(), SPINE_W));       // along the child lane
@@ -102,7 +163,7 @@ public final class GitGraphLayout {
                 continue;   // a branch declared but never committed to draws no lane
             }
             List<Shape> members = new ArrayList<>();
-            double laneY = y(b.lane());
+            double laneY = laneYs[b.lane()];
             if (b.lastCol() > b.firstCol()) {
                 members.add(new Line(x(b.firstCol()), laneY, x(b.lastCol()), laneY, b.color(), SPINE_W));
             }
@@ -118,19 +179,14 @@ public final class GitGraphLayout {
         // 3) COMMIT dots (one `<g role="commit">` per commit, declaration order). The dot rides in the
         //    group; an explicit id gets a centred label BELOW the dot (clamped in-frame). A merge/unlabeled
         //    commit's group carries just the dot. The anchor id is the commit id, else its branch name.
-        for (GitGraphReplay.Commit cd : commits) {
+        for (int i = 0; i < commits.size(); i++) {
+            GitGraphReplay.Commit cd = commits.get(i);
             double cx = x(cd.col());
-            double cy = y(cd.lane());
+            double cy = laneYs[cd.lane()];
             List<Shape> members = new ArrayList<>();
             members.add(new Wedge(cx, cy, DOT_R, 0, 2 * Math.PI, cd.color()));
-            if (cd.id() != null && !cd.id().isBlank()) {
-                String label = FONT.ellipsize(cd.id(), STEP_X * 1.6, ID_SIZE);
-                double w = FONT.runWidth(label, ID_SIZE);
-                double originX = Math.max(CLAMP_MARGIN, Math.min(cx - w / 2, width - CLAMP_MARGIN - w));
-                String d = FONT.textPathD(label, originX, cy + DOT_R + 11, ID_SIZE);
-                if (!d.isBlank()) {
-                    members.add(new GlyphRun(d, textColor));
-                }
+            if (labels[i] != null) {
+                labels[i].emit(members, cy + labelBaselineOffsets[i], textColor);
             }
             String anchorBase = cd.id() != null && !cd.id().isBlank()
                 ? cd.id() : replay.branchNameOf(cd.lane());
@@ -144,7 +200,22 @@ public final class GitGraphLayout {
         return MARGIN_LEFT + col * STEP_X;
     }
 
-    private static double y(int lane) {
-        return TOP + lane * LANE_GAP;
+    private record CommitLabel(String text, double originX,
+                               LabelIntervalPacker.Box relativeBox) {
+        void emit(List<Shape> members, double baseline, String fill) {
+            String path = FONT.textPathD(text, originX, baseline, ID_SIZE);
+            if (!path.isBlank()) {
+                members.add(new GlyphRun(path, fill));
+            }
+        }
+    }
+
+    private static double maxPlacedY(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                     double[] baselines) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < boxes.length; i++) {
+            max = Math.max(max, boxes[i].maxY() + baselines[rows[i]]);
+        }
+        return max;
     }
 }

@@ -23,7 +23,7 @@ public final class TimelineLayout {
     private static final double TOP_SIZE = 11;      // category-label font size
     private static final double VALUE_SIZE = 10;    // year/value font size
     private static final double ROW_STAGGER = 13;   // vertical offset for the alternate label row
-    private static final double LABEL_GAP = 4;       // min horizontal clearance between same-row labels
+    private static final double LABEL_GAP = 4;      // horizontal + vertical clearance between labels
     /// Max rendered width of an event (top) label before it ellipsizes. Without this a legal DSL of
     /// MAX_DATA_ROWS rows × MAX_LABEL_LEN-char labels builds multi-GB of glyph-path data (H2 OOM).
     /// ~120px (a quarter of the 480px canvas) matches the other layouts' established label-width cap
@@ -31,6 +31,12 @@ public final class TimelineLayout {
     private static final double MAX_LABEL_W = 120;
     /// In-frame clamp margin: the min gap kept between any glyph box and the canvas edge.
     private static final double CLAMP_MARGIN = 2;
+    /// Maximum aggregate characters of Timeline label paths + guarded fragment markup that layout
+    /// may materialize before the emitter's whole-document cap can run. Math-renderer failures
+    /// deliberately degrade to raw `$…$` text (without ellipsizing a formula), so parser-scale legal
+    /// input could otherwise retain gigabytes of fallback glyph paths in the LaidOut scene. This
+    /// mirrors the 5 MB output choke point and throws the already-classified MAX_LAYOUT_WORK signal.
+    private static final long MAX_TIMELINE_LABEL_WORK = 5_000_000;
 
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String AXIS_STROKE = "#cbd5e1";
@@ -43,18 +49,15 @@ public final class TimelineLayout {
     /// bakes through the shared {@link MathLabel} seam. A null `math` degrades every `$…$` to plain
     /// text — byte-identical to {@link #layout(Timeline)}.
     public static LaidOut layout(Timeline timeline, MathFragmentRenderer math) {
-        List<Shape> shapes = new ArrayList<>();
-        AnchorAssigner assigner = new AnchorAssigner();
         // Both the event (top) and value/year (bottom) labels sit on the page background → the
         // page-background text colour, default `currentColor` (legible on light AND dark).
         String textColor = timeline.textColor();
-        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "time"),
-            List.<Shape>of(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2))));
-
         List<Slice> events = timeline.events();
         int n = events.size();
         if (n == 0) {
-            return new LaidOut(W, H, shapes);
+            AnchorAssigner assigner = new AnchorAssigner();
+            return new LaidOut(W, H, List.of(new Group(assigner.assign(SirentideRole.AXIS, "time"),
+                List.<Shape>of(new Line(MARGIN, AXIS_Y, W - MARGIN, AXIS_Y, AXIS_STROKE, 2)))));
         }
         double plotLeft = MARGIN;
         double plotRight = W - MARGIN;
@@ -76,13 +79,8 @@ public final class TimelineLayout {
         MathLabel.Measured[] topMeasures = new MathLabel.Measured[n];
         double[] topW = new double[n];
         double[] botW = new double[n];
-        // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each event's DOT is wrapped in
-        // ONE `<g role="event">` (seq after the time axis, in event order, id from the event label).
-        // Only the dot rides in the group — the top/bottom labels are laid out later (de-collision
-        // needs the full set) and
-        // stay bare, exactly as a pie thin-slice's deferred outside label stays bare; the dot IS the
-        // event's anchor point. Grouping the dot in place preserves emit order (dots emit here, labels
-        // in the pass below).
+        String[] fills = new String[n];
+        LabelWorkBudget labelWork = new LabelWorkBudget();
         for (int i = 0; i < n; i++) {
             Slice e = events.get(i);
             xs[i] = axis.project(e.value(), plotLeft, plotRight);
@@ -93,6 +91,10 @@ public final class TimelineLayout {
             // through the MathLabel seam on its composite width.
             if (math != null && MathLabel.hasMath(e.label())) {
                 MathLabel.Measured mm = MathLabel.measure(e.label(), TOP_SIZE, FONT, math);
+                // Charge BEFORE retaining this measured result. At a renderer miss, a single legal
+                // label can still yield a large raw glyph path, but the previous retained measures
+                // stay below the cap and only this one bounded (MAX_LABEL_LEN) path is transient.
+                labelWork.charge(measuredWork(mm, TOP_SIZE));
                 topMeasures[i] = mm;
                 topText[i] = e.label();
                 topW[i] = mm.width();
@@ -105,36 +107,104 @@ public final class TimelineLayout {
             botText[i] = e.valueLabel() != null ? e.valueLabel() : num(e.value());
             botW[i] = FONT.runWidth(botText[i], VALUE_SIZE);
             // Explicit per-item colour (canonical `#rrggbb` from the parser) overrides the palette.
-            String fill = e.color() != null ? e.color() : Colors.PALETTE[i % Colors.PALETTE.length];
-            shapes.add(new Group(assigner.assign(SirentideRole.EVENT, e.label()),
-                List.<Shape>of(new Wedge(xs[i], AXIS_Y, DOT_R, 0, 2 * Math.PI, fill))));
+            fills[i] = e.color() != null ? e.color() : Colors.PALETTE[i % Colors.PALETTE.length];
         }
-        // DE-COLLISION: labels of events close in value share nearly the same x and their boxes
-        // overlap ("Founded"/"Series A" in the screenshot). Measure each label's width and, where an
-        // adjacent label would overlap the one before it, push it to a SECOND row (2-row vertical
-        // stagger) — the simplest readable fix. Top labels rise, bottom values drop.
-        int[] topRows = assignRows(xs, topW);
-        int[] botRows = assignRows(xs, botW);
+
+        // Build the EXACT post-clamp emitted label boxes at baseline zero. Horizontal bounds do not
+        // change when a row moves vertically; keeping the baseline relative lets the same box drive
+        // both compatibility validation and deterministic row spacing. Math is measured/rendered once
+        // through its guarded seam; its box is the union of emitted text outlines + fragment metrics.
+        LabelSpec[] topLabels = new LabelSpec[n];
+        LabelSpec[] botLabels = new LabelSpec[n];
         for (int i = 0; i < n; i++) {
-            double topBaseline = AXIS_Y - 14 - topRows[i] * ROW_STAGGER;            // above the line
-            if (topMeasures[i] != null) {
-                // Math event label: centre on the composite width, clamped in-frame like the plain path.
-                double w = topMeasures[i].width();
-                double originX = Math.max(CLAMP_MARGIN, Math.min(xs[i] - w / 2, W - CLAMP_MARGIN - w));
-                MathLabel.emit(topMeasures[i], originX, topBaseline, textColor, TOP_SIZE, FONT, shapes);
-            } else {
-                centeredLabel(shapes, topText[i], xs[i], topBaseline, TOP_SIZE, textColor);
-            }
-            centeredLabel(shapes, botText[i], xs[i],
-                AXIS_Y + 24 + botRows[i] * ROW_STAGGER, VALUE_SIZE, textColor);     // below the line
+            topLabels[i] = labelSpec(topText[i], topMeasures[i], xs[i], TOP_SIZE,
+                labelWork, topMeasures[i] != null);
+            botLabels[i] = labelSpec(botText[i], null, xs[i], VALUE_SIZE,
+                labelWork, false);
         }
-        return new LaidOut(W, H, shapes);
+        LabelIntervalPacker.Box[] topBoxes = boxes(topLabels);
+        LabelIntervalPacker.Box[] botBoxes = boxes(botLabels);
+
+        // COMPATIBILITY GATE: calculate the legacy two-row assignment first and keep the old
+        // placement/canvas byte-for-byte whenever its ACTUAL emitted intervals + row envelopes are
+        // clean. Only a failing band enters the unbounded-row interval partitioner.
+        int[] legacyTopRows = assignRows(xs, topW);
+        int[] legacyBotRows = assignRows(xs, botW);
+        double[] legacyTopBaselines = {-14, -14 - ROW_STAGGER};
+        double[] legacyBotBaselines = {24, 24 + ROW_STAGGER};
+        boolean topClean = LabelIntervalPacker.rowsClean(topBoxes, legacyTopRows, LABEL_GAP)
+            && LabelIntervalPacker.rowBandsDisjoint(topBoxes, legacyTopRows, legacyTopBaselines)
+            && clearsAboveAxis(topBoxes, legacyTopRows, legacyTopBaselines);
+        boolean botClean = LabelIntervalPacker.rowsClean(botBoxes, legacyBotRows, LABEL_GAP)
+            && LabelIntervalPacker.rowBandsDisjoint(botBoxes, legacyBotRows, legacyBotBaselines)
+            && clearsBelowAxis(botBoxes, legacyBotRows, legacyBotBaselines);
+
+        int[] topRows;
+        double[] topBaselines;
+        if (topClean) {
+            topRows = legacyTopRows;
+            topBaselines = legacyTopBaselines;
+        } else {
+            LabelIntervalPacker.Result packed = LabelIntervalPacker.pack(topBoxes, LABEL_GAP);
+            topRows = packed.rows();
+            topBaselines = LabelIntervalPacker.baselinesUp(
+                topBoxes, topRows, packed.rowCount(),
+                firstBaselineAboveAxis(topBoxes, topRows, -14), LABEL_GAP);
+        }
+        int[] botRows;
+        double[] botBaselines;
+        if (botClean) {
+            botRows = legacyBotRows;
+            botBaselines = legacyBotBaselines;
+        } else {
+            LabelIntervalPacker.Result packed = LabelIntervalPacker.pack(botBoxes, LABEL_GAP);
+            botRows = packed.rows();
+            botBaselines = LabelIntervalPacker.baselinesDown(
+                botBoxes, botRows, packed.rowCount(),
+                firstBaselineBelowAxis(botBoxes, botRows, 24), LABEL_GAP);
+        }
+
+        // A failing top band can grow upward past y=0: shift the axis and every axis-relative shape
+        // down just enough. Bottom growth extends the canvas only; numeric canvas growth never
+        // allocates by pixel area. Clean current diagrams keep AXIS_Y/H exactly.
+        double topMin = placedMinY(topBoxes, topRows, topBaselines);
+        double axisShift = topMin == Double.POSITIVE_INFINITY
+            ? 0 : Math.max(0, CLAMP_MARGIN - (AXIS_Y + topMin));
+        double axisY = AXIS_Y + axisShift;
+        double bottomMax = placedMaxY(botBoxes, botRows, botBaselines);
+        double height = H + axisShift;
+        if (bottomMax != Double.NEGATIVE_INFINITY) {
+            height = Math.max(height, axisY + bottomMax + CLAMP_MARGIN);
+        }
+        // A guarded math fragment may legitimately be wider than the legacy 480 px canvas. Its
+        // trusted metrics are numeric placement state, not a pixel allocation: grow only the canvas
+        // edge needed to contain the already-clamped emitted box. Ordinary labels stay at W exactly.
+        double labelMaxX = Math.max(maxX(topBoxes), maxX(botBoxes));
+        double width = labelMaxX == Double.NEGATIVE_INFINITY
+            ? W : Math.max(W, labelMaxX + CLAMP_MARGIN);
+
+        List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "time"),
+            List.<Shape>of(new Line(MARGIN, axisY, W - MARGIN, axisY, AXIS_STROKE, 2))));
+        // Each event DOT remains the anchored element, in the exact legacy emit order. Deferred
+        // labels stay bare, as before.
+        for (int i = 0; i < n; i++) {
+            shapes.add(new Group(assigner.assign(SirentideRole.EVENT, events.get(i).label()),
+                List.<Shape>of(new Wedge(xs[i], axisY, DOT_R, 0, 2 * Math.PI, fills[i]))));
+        }
+        for (int i = 0; i < n; i++) {
+            topLabels[i].emit(shapes, axisY + baseline(topRows[i], topBaselines), textColor);
+            botLabels[i].emit(shapes, axisY + baseline(botRows[i], botBaselines), textColor);
+        }
+        return new LaidOut(width, height, shapes);
     }
 
-    /// Greedy 2-row assignment: walk the labels in X ORDER; keep each row's right edge. Place a
+    /// Legacy greedy 2-row assignment: walk the labels in X ORDER; keep each row's right edge. Place a
     /// label on the first row whose last label clears it (left edge past that row's right edge +
-    /// gap); if neither row is clear, use the row with the smaller right edge. Guarantees any two
-    /// labels that overlap horizontally land on different rows, so their 2-D boxes stay disjoint.
+    /// gap); if neither row is clear, use the row with the smaller right edge. The least-bad fallback
+    /// can overlap when three or more labels converge; the compatibility gate above detects that from
+    /// actual emitted boxes and invokes {@link LabelIntervalPacker} only then.
     ///
     /// The greedy packing is only correct if the labels ARRIVE left-to-right. Events are placed by
     /// VALUE (AxisScale), so their centre-x follows declaration order only when the input happens to
@@ -178,16 +248,163 @@ public final class TimelineLayout {
         return rows;
     }
 
-    private static void centeredLabel(List<Shape> shapes, String text, double cx, double baseline,
-                                      double size, String fill) {
-        double w = FONT.runWidth(text, size);
-        // Center on cx, then clamp both ends into [CLAMP_MARGIN, W-CLAMP_MARGIN-w] so an endpoint's
-        // wide label (near x=MARGIN or x=W-MARGIN) can't overhang the canvas edge (GEOMETRY-ESCAPE
-        // #2). Row de-collision above still runs on the true centers — only the emitted origin clamps.
-        double originX = Math.max(CLAMP_MARGIN, Math.min(cx - w / 2, W - CLAMP_MARGIN - w));
-        String d = FONT.textPathD(text, originX, baseline, size);
-        if (!d.isBlank()) {
-            shapes.add(new GlyphRun(d, fill));
+    private record LabelSpec(String text, MathLabel.Measured measured, double originX, double size,
+                             LabelIntervalPacker.Box relativeBox) {
+        void emit(List<Shape> shapes, double baseline, String fill) {
+            if (measured != null) {
+                MathLabel.emit(measured, originX, baseline, fill, size, FONT, shapes);
+                return;
+            }
+            String path = FONT.textPathD(text, originX, baseline, size);
+            if (!path.isBlank()) {
+                shapes.add(new GlyphRun(path, fill));
+            }
+        }
+    }
+
+    private static LabelSpec labelSpec(String text, MathLabel.Measured measured,
+                                       double centerX, double size, LabelWorkBudget labelWork,
+                                       boolean alreadyCharged) {
+        double width = measured != null ? measured.width() : FONT.runWidth(text, size);
+        // Exact legacy clamp: a clean diagram must retain the same origin and path bytes.
+        double originX = Math.max(CLAMP_MARGIN,
+            Math.min(centerX - width / 2, W - CLAMP_MARGIN - width));
+        LabelIntervalPacker.Box box;
+        if (measured != null) {
+            box = mathBounds(measured, originX, size);
+        } else {
+            String path = FONT.textPathD(text, originX, 0, size);
+            if (!alreadyCharged) {
+                labelWork.charge(path.length());
+            }
+            box = LabelIntervalPacker.pathBounds(path);
+        }
+        return new LabelSpec(text, measured, originX, size, box);
+    }
+
+    private static long measuredWork(MathLabel.Measured measured, double size) {
+        long work = 0;
+        for (MathLabel.Resolved run : measured.runs()) {
+            long runWork = run.fragment() != null
+                ? run.fragment().innerSvg().length()
+                : FONT.textPathD(run.text(), 0, 0, size).length();
+            work = Math.addExact(work, runWork);
+        }
+        return work;
+    }
+
+    private static LabelIntervalPacker.Box mathBounds(MathLabel.Measured measured,
+                                                       double originX, double size) {
+        LabelIntervalPacker.Box union = null;
+        double penX = originX;
+        for (MathLabel.Resolved run : measured.runs()) {
+            LabelIntervalPacker.Box box;
+            if (run.fragment() != null) {
+                box = new LabelIntervalPacker.Box(penX, -run.fragment().heightPx(),
+                    penX + run.fragment().widthPx(), run.fragment().depthPx());
+            } else {
+                box = LabelIntervalPacker.pathBounds(
+                    FONT.textPathD(run.text(), penX, 0, size));
+            }
+            if (box != null) {
+                union = union == null ? box : union.union(box);
+            }
+            penX += run.advance();
+        }
+        return union;
+    }
+
+    private static LabelIntervalPacker.Box[] boxes(LabelSpec[] labels) {
+        LabelIntervalPacker.Box[] boxes = new LabelIntervalPacker.Box[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            boxes[i] = labels[i].relativeBox();
+        }
+        return boxes;
+    }
+
+    private static double baseline(int row, double[] baselines) {
+        return row >= 0 ? baselines[row] : baselines[0];
+    }
+
+    private static double placedMinY(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                     double[] baselines) {
+        double min = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null) {
+                min = Math.min(min, boxes[i].minY() + baselines[rows[i]]);
+            }
+        }
+        return min;
+    }
+
+    private static double placedMaxY(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                     double[] baselines) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null) {
+                max = Math.max(max, boxes[i].maxY() + baselines[rows[i]]);
+            }
+        }
+        return max;
+    }
+
+    private static boolean clearsAboveAxis(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                           double[] baselines) {
+        double max = placedMaxY(boxes, rows, baselines);
+        return max == Double.NEGATIVE_INFINITY || max + LABEL_GAP <= -DOT_R;
+    }
+
+    private static boolean clearsBelowAxis(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                           double[] baselines) {
+        double min = placedMinY(boxes, rows, baselines);
+        return min == Double.POSITIVE_INFINITY || min >= DOT_R + LABEL_GAP;
+    }
+
+    private static double firstBaselineAboveAxis(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                                 double legacyBaseline) {
+        double rowMax = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null && rows[i] == 0) {
+                rowMax = Math.max(rowMax, boxes[i].maxY());
+            }
+        }
+        return rowMax == Double.NEGATIVE_INFINITY ? legacyBaseline
+            : Math.min(legacyBaseline, -DOT_R - LABEL_GAP - rowMax);
+    }
+
+    private static double firstBaselineBelowAxis(LabelIntervalPacker.Box[] boxes, int[] rows,
+                                                 double legacyBaseline) {
+        double rowMin = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null && rows[i] == 0) {
+                rowMin = Math.min(rowMin, boxes[i].minY());
+            }
+        }
+        return rowMin == Double.POSITIVE_INFINITY ? legacyBaseline
+            : Math.max(legacyBaseline, DOT_R + LABEL_GAP - rowMin);
+    }
+
+    private static double maxX(LabelIntervalPacker.Box[] boxes) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (LabelIntervalPacker.Box box : boxes) {
+            if (box != null) {
+                max = Math.max(max, box.maxX());
+            }
+        }
+        return max;
+    }
+
+    private static final class LabelWorkBudget {
+        private long used;
+
+        void charge(long amount) {
+            if (amount < 0 || used > MAX_TIMELINE_LABEL_WORK - amount) {
+                throw new IllegalStateException(
+                    "MAX_LAYOUT_WORK exceeded: timeline label materialization passed "
+                        + "MAX_TIMELINE_LABEL_WORK (" + MAX_TIMELINE_LABEL_WORK
+                        + " path/fragment characters)");
+            }
+            used += amount;
         }
     }
 

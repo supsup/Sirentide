@@ -104,6 +104,189 @@ class CorrectnessFixTest {
         }
     }
 
+    /// Three equal-valued events emit at the same x. The legacy two-row fallback assigns rows
+    /// [0, 1, 0], so the first and third ACTUAL glyph boxes overprint. The generalized packer must
+    /// allocate the third row and keep every displayed top label disjoint. RED on current main.
+    @Test
+    void timelineThreeEqualXLabelsHaveDisjointRenderedGlyphBoxes() {
+        com.sirentide.ir.Timeline timeline = (com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse("""
+                timeline
+                  "Alpha milestone" : 1
+                  "Bravo milestone" : 1
+                  "Charlie marker"  : 1
+                """);
+
+        List<GlyphRun> labels = Group.flatten(TimelineLayout.layout(timeline).shapes()).stream()
+            .filter(GlyphRun.class::isInstance)
+            .map(GlyphRun.class::cast)
+            .toList();
+        assertEquals(6, labels.size(), "three event labels plus three values");
+
+        // Timeline emits top then bottom for each event. Audit the emitted top-label paths, not
+        // advance-width estimates.
+        List<double[]> top = List.of(
+            pathBounds(labels.get(0).pathD()),
+            pathBounds(labels.get(2).pathD()),
+            pathBounds(labels.get(4).pathD()));
+        assertPairwiseDisjoint(top, "equal-x Timeline top labels");
+    }
+
+    @Test
+    void timelineEqualXPermutationsKeepDeclarationAssociationAndStableRows() {
+        String[] labels = {"Wide WWW marker", "thin iii note", "mixed zigzag"};
+        int[][] permutations = {
+            {0, 1, 2}, {0, 2, 1}, {1, 0, 2},
+            {1, 2, 0}, {2, 0, 1}, {2, 1, 0}
+        };
+        double[] expectedWidths = new double[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            List<double[]> single = timelineTopBoxes("timeline\n  \"" + labels[i] + "\" : 1\n");
+            expectedWidths[i] = single.get(0)[2] - single.get(0)[0];
+        }
+
+        for (int[] permutation : permutations) {
+            StringBuilder dsl = new StringBuilder("timeline\n");
+            for (int index : permutation) {
+                dsl.append("  \"").append(labels[index]).append("\" : 1\n");
+            }
+            LaidOut laid = TimelineLayout.layout((com.sirentide.ir.Timeline)
+                com.sirentide.parse.DslParser.parse(dsl.toString()));
+            List<double[]> boxes = timelineTopBoxes(laid);
+            assertPairwiseDisjoint(boxes, "permuted equal-x Timeline labels");
+
+            for (int i = 0; i < permutation.length; i++) {
+                assertEquals(expectedWidths[permutation[i]], boxes.get(i)[2] - boxes.get(i)[0], 1e-6,
+                    "emitted label " + i + " stays associated with declaration " + permutation[i]);
+            }
+            // The contract sorts ACTUAL left edges first (declaration only breaks equal-left ties).
+            // All three intervals overlap, so that order must map to rows 0/1/2, growing upward.
+            List<double[]> byLeft = boxes.stream()
+                .sorted(java.util.Comparator.comparingDouble(b -> b[0]))
+                .toList();
+            assertTrue(byLeft.get(0)[1] > byLeft.get(1)[1]
+                    && byLeft.get(1)[1] > byLeft.get(2)[1],
+                "stable left-edge order maps to outward rows: " + byLeft.stream()
+                    .map(b -> List.of(b[0], b[1])).toList());
+            assertEquals(laid, TimelineLayout.layout((com.sirentide.ir.Timeline)
+                com.sirentide.parse.DslParser.parse(dsl.toString())),
+                "the same authored permutation lays out byte-structurally identically");
+        }
+    }
+
+    @Test
+    void timelinePackedEndpointLabelsStayClampedInsideTheCanvas() {
+        String dsl = """
+            timeline
+              "Left alpha label long"   : 0
+              "Left bravo label long"   : 0
+              "Left charlie label long" : 0
+              "Right delta label long"  : 100
+              "Right echo label long"   : 100
+              "Right foxtrot label"     : 100
+            """;
+        LaidOut laid = TimelineLayout.layout((com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse(dsl));
+
+        for (double[] box : glyphBoxes(laid)) {
+            assertTrue(box[0] >= 2 - 1e-6 && box[2] <= laid.width() - 2 + 1e-6,
+                "post-clamp glyph box stays in the horizontal canvas: "
+                    + java.util.Arrays.toString(box));
+        }
+    }
+
+    @Test
+    void timelineManyCoincidentLabelsShiftAxisGrowCanvasAndStayContained() {
+        StringBuilder dsl = new StringBuilder("timeline\n");
+        for (int i = 0; i < 20; i++) {
+            dsl.append("  \"Coincident marker ").append(i).append("\" : 7\n");
+        }
+        LaidOut laid = TimelineLayout.layout((com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse(dsl.toString()));
+
+        List<double[]> glyphs = glyphBoxes(laid);
+        assertEquals(40, glyphs.size(), "20 top labels plus 20 displayed values");
+        assertPairwiseDisjoint(timelineTopBoxes(laid), "20-row Timeline top band");
+        assertPairwiseDisjoint(timelineBottomBoxes(laid), "20-row Timeline bottom band");
+        for (double[] box : glyphs) {
+            assertTrue(box[0] >= -1e-6 && box[1] >= -1e-6
+                    && box[2] <= laid.width() + 1e-6 && box[3] <= laid.height() + 1e-6,
+                "packed Timeline glyph stays contained: " + java.util.Arrays.toString(box)
+                    + " in " + laid.width() + "x" + laid.height());
+        }
+        List<Shape> flat = Group.flatten(laid.shapes());
+        Line axis = flat.stream().filter(Line.class::isInstance).map(Line.class::cast)
+            .findFirst().orElseThrow();
+        assertTrue(axis.y1() > 80, "the top band shifts the legacy axis down: " + axis.y1());
+        assertTrue(laid.height() > 160, "the bottom band grows the legacy canvas: " + laid.height());
+        assertTrue(flat.stream().filter(Wedge.class::isInstance).map(Wedge.class::cast)
+            .allMatch(dot -> Math.abs(dot.cy() - axis.y1()) < 1e-9),
+            "every event dot follows the shifted axis baseline");
+    }
+
+    @Test
+    void timelineTallMathLabelClearsTheAxisAndBottomBand() {
+        double fragmentWidth = 40;
+        double fragmentHeight = 60;
+        double fragmentDepth = 50;
+        com.sirentide.api.MathFragmentRenderer tall = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<path d=\"M0 -60 L40 -60 L40 50 L0 50 Z\" fill=\"currentColor\"/>",
+                fragmentWidth, fragmentHeight, fragmentDepth));
+        com.sirentide.ir.Timeline timeline = (com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse("timeline\n  \"$x$\" : 7\n");
+
+        LaidOut laid = TimelineLayout.layout(timeline, tall);
+        List<Shape> flat = Group.flatten(laid.shapes());
+        MathBox math = flat.stream().filter(MathBox.class::isInstance).map(MathBox.class::cast)
+            .findFirst().orElseThrow();
+        Wedge dot = flat.stream().filter(Wedge.class::isInstance).map(Wedge.class::cast)
+            .findFirst().orElseThrow();
+        GlyphRun value = flat.stream().filter(GlyphRun.class::isInstance).map(GlyphRun.class::cast)
+            .findFirst().orElseThrow();
+        double[] valueBox = pathBounds(value.pathD());
+        double mathTop = math.y() - fragmentHeight;
+        double mathBottom = math.y() + fragmentDepth;
+
+        assertTrue(mathTop >= 2 - 1e-6, "the tall fragment stays above the top canvas edge");
+        assertTrue(mathBottom + 4 <= dot.cy() - dot.r() + 1e-6,
+            "the top band clears the event dot by the layout gap");
+        assertTrue(mathBottom <= valueBox[1] + 1e-6,
+            "the tall top label cannot overprint the displayed value below the axis");
+        assertTrue(valueBox[3] <= laid.height() + 1e-6,
+            "the bottom value stays inside the shifted canvas");
+    }
+
+    @Test
+    void timelineWideMathFragmentGrowsTheCanvasToContainItsDeclaredBox() {
+        double fragmentWidth = 600;
+        com.sirentide.api.MathFragmentRenderer wide = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<path d=\"M0 -8 L600 -8 L600 2 L0 2 Z\" fill=\"currentColor\"/>",
+                fragmentWidth, 8, 2));
+        com.sirentide.ir.Timeline timeline = (com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse("timeline\n  \"$wide$ tail\" : 7\n");
+
+        LaidOut laid = TimelineLayout.layout(timeline, wide);
+        List<Shape> flat = Group.flatten(laid.shapes());
+        MathBox math = flat.stream()
+            .filter(MathBox.class::isInstance).map(MathBox.class::cast)
+            .findFirst().orElseThrow();
+        double[] trailingText = flat.stream()
+            .filter(GlyphRun.class::isInstance).map(GlyphRun.class::cast)
+            .map(g -> pathBounds(g.pathD()))
+            .max(java.util.Comparator.comparingDouble(box -> box[0]))
+            .orElseThrow();
+
+        assertTrue(laid.width() >= math.x() + fragmentWidth + 2 - 1e-6,
+            "the trusted fragment metrics remain inside the horizontal canvas");
+        assertTrue(trailingText[0] >= math.x() + fragmentWidth - 1e-6,
+            "the selected glyph run is the text emitted after the math fragment");
+        assertTrue(laid.width() >= trailingText[2] + 2 - 1e-6,
+            "canvas growth consumes the whole composite text-and-fragment union");
+        assertTrue(laid.width() > 480, "only an overwide label grows the legacy canvas");
+    }
+
     // ---- SIR-09: a reversed Gantt task's bar stays on-canvas ------------------------------------
 
     /// A reversed task R(100→0) alongside A(0→50). The naive domain min(starts)..max(ends) = [0,50]
@@ -137,5 +320,71 @@ class CorrectnessFixTest {
         Matcher m = Pattern.compile(regex).matcher(s);
         assertTrue(m.find(), "count pattern /" + regex + "/ not found in: " + s);
         return Integer.parseInt(m.group(1));
+    }
+
+    private static double[] pathBounds(String path) {
+        Matcher m = Pattern.compile("-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?").matcher(path);
+        List<Double> values = new ArrayList<>();
+        while (m.find()) {
+            values.add(Double.parseDouble(m.group()));
+        }
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i + 1 < values.size(); i += 2) {
+            double x = values.get(i);
+            double y = values.get(i + 1);
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    private static List<double[]> glyphBoxes(LaidOut laid) {
+        return Group.flatten(laid.shapes()).stream()
+            .filter(GlyphRun.class::isInstance)
+            .map(GlyphRun.class::cast)
+            .map(g -> pathBounds(g.pathD()))
+            .toList();
+    }
+
+    private static List<double[]> timelineTopBoxes(String dsl) {
+        return timelineTopBoxes(TimelineLayout.layout((com.sirentide.ir.Timeline)
+            com.sirentide.parse.DslParser.parse(dsl)));
+    }
+
+    private static List<double[]> timelineTopBoxes(LaidOut laid) {
+        List<double[]> all = glyphBoxes(laid);
+        List<double[]> top = new ArrayList<>();
+        for (int i = 0; i < all.size(); i += 2) {
+            top.add(all.get(i));
+        }
+        return top;
+    }
+
+    private static List<double[]> timelineBottomBoxes(LaidOut laid) {
+        List<double[]> all = glyphBoxes(laid);
+        List<double[]> bottom = new ArrayList<>();
+        for (int i = 1; i < all.size(); i += 2) {
+            bottom.add(all.get(i));
+        }
+        return bottom;
+    }
+
+    private static void assertPairwiseDisjoint(List<double[]> boxes, String subject) {
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] a = boxes.get(i);
+                double[] b = boxes.get(j);
+                boolean overlaps = a[0] < b[2] && b[0] < a[2]
+                    && a[1] < b[3] && b[1] < a[3];
+                assertFalse(overlaps, subject + " overlap at " + i + "-" + j
+                    + ": " + java.util.Arrays.toString(a) + " vs "
+                    + java.util.Arrays.toString(b));
+            }
+        }
     }
 }
