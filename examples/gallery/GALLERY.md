@@ -130,6 +130,22 @@ timeline
 
 ![Timeline (proportional)](timeline.png)
 
+## Timeline label interval-packing (crowded month)
+
+```
+timeline
+"Charter signed by founders" : 2026-03-02
+"Seed round closed early" : 2026-03-05
+"Prototype demo to board" : 2026-03-09
+"Design freeze declared" : 2026-03-13
+"Beta invitations mailed" : 2026-03-17
+"Security review passed" : 2026-03-21
+"Release candidate cut" : 2026-03-25
+"Public launch announced" : 2026-03-30
+```
+
+![Timeline label interval-packing (crowded month)](timeline-packed.png)
+
 ## Gantt
 
 ```
@@ -739,3 +755,4 @@ A[Energy $E=mc^2$] --> B[$\frac{v^2}{r}$]
 ```
 
 ![Math baked inside flowchart labels](math-in-labels.png)
+

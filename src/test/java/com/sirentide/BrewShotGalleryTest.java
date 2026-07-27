@@ -10,16 +10,25 @@ import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.layout.GlyphRun;
+import com.sirentide.layout.Group;
+import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Shape;
+import com.sirentide.layout.TimelineLayout;
+import com.sirentide.layout.Wedge;
 import com.sirentide.math.LatteXMathFragmentRenderer;
 import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -39,6 +48,10 @@ import org.junit.jupiter.api.Test;
  * not byte-goldens — regenerate freely. Skips clean (never fails) when no local Chrome.
  */
 class BrewShotGalleryTest {
+
+    /** Coordinate-pair scanner for FontMetrics glyph paths (the M/L/Q/Z command alphabet). */
+    private static final Pattern PATH_NUMBER = Pattern.compile(
+        "-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?");
 
     /** JS audit: collect every drawn element whose client bbox escapes the root svg box. */
     private static final String CONTAINMENT_AUDIT = """
@@ -132,6 +145,22 @@ class BrewShotGalleryTest {
                 + "\"Q3\" : 3 6\n\"Q4\" : 9 2"),
         new Case("timeline", "Timeline (proportional)",
             "timeline\n\"Founded\" : 2000\n\"Series A\" : 2005\n\"Launch\" : 2020"),
+        // The INTERVAL-PACKER case. Eight long event labels inside one month: each label is wider
+        // than the axis pitch between neighbours, so the legacy two-row stagger would overprint and
+        // TimelineLayout's compatibility gate hands the band to LabelIntervalPacker. Every other
+        // committed timeline (the `timeline` case above, `timeline-endpoints`, the golden fixture and
+        // the showcase card) clears the gate and takes the legacy path, so before this case the
+        // packer rendered in the gallery exactly zero times. Pinned headlessly by
+        // theClusteredTimelineCaseActuallyReachesTheIntervalPacker below.
+        new Case("timeline-packed", "Timeline label interval-packing (crowded month)",
+            "timeline\n\"Charter signed by founders\" : 2026-03-02\n"
+                + "\"Seed round closed early\" : 2026-03-05\n"
+                + "\"Prototype demo to board\" : 2026-03-09\n"
+                + "\"Design freeze declared\" : 2026-03-13\n"
+                + "\"Beta invitations mailed\" : 2026-03-17\n"
+                + "\"Security review passed\" : 2026-03-21\n"
+                + "\"Release candidate cut\" : 2026-03-25\n"
+                + "\"Public launch announced\" : 2026-03-30"),
         new Case("gantt", "Gantt",
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
         new Case("flowchart", "Flowchart (layered, custom node colour)",
@@ -294,6 +323,122 @@ class BrewShotGalleryTest {
 
     private static Path galleryDir() {
         return Path.of("examples", "gallery").toAbsolutePath();
+    }
+
+    /// The SHIPPED DSL of a registered case — never a second copy of it, so a pin below can never
+    /// drift from the diagram the gallery actually captures.
+    private static String galleryDsl(String name) {
+        for (Case c : GALLERY) {
+            if (c.name().equals(name)) {
+                return c.dsl();
+            }
+        }
+        throw new AssertionError("no gallery case named " + name);
+    }
+
+    /// The Timeline interval packer is COMPATIBILITY-GATED: {@code TimelineLayout} keeps the legacy
+    /// two-row stagger byte-for-byte whenever the ACTUAL emitted boxes already clear pairwise, and
+    /// only a failing band reaches {@link com.sirentide.layout.LabelIntervalPacker}. A screenshot
+    /// cannot tell the two paths apart, so this pins which path the `timeline-packed` case took,
+    /// from the emitted scene, HEADLESSLY (no Chrome, so it can never assume-skip).
+    ///
+    /// THE SIGNAL IS STRUCTURAL, not a tuned threshold. The legacy path has exactly TWO event-label
+    /// baselines (-14 and -14-ROW_STAGGER), and every non-empty label's ink covers the x-height band
+    /// immediately above its own baseline — so all labels sharing a baseline merge into ONE vertical
+    /// band, and a legacy render can show AT MOST TWO disjoint event-label bands for any input.
+    /// Three or more bands is reachable only through {@code LabelIntervalPacker.baselinesUp}. Force
+    /// the gate open (`topClean = true`) and this case collapses to two bands and fails here.
+    @Test
+    void theClusteredTimelineCaseActuallyReachesTheIntervalPacker() {
+        LaidOut laid = TimelineLayout.layout(
+            (com.sirentide.ir.Timeline) DslParser.parse(galleryDsl("timeline-packed")));
+        List<Shape> flat = new ArrayList<>();
+        flatten(laid.shapes(), flat);
+        double axisY = flat.stream().filter(s -> s instanceof Wedge)
+            .mapToDouble(s -> ((Wedge) s).cy()).max().orElseThrow();
+
+        List<double[]> eventLabels = new ArrayList<>();     // {minX, minY, maxX, maxY}, absolute
+        for (Shape s : flat) {
+            if (s instanceof GlyphRun run) {
+                double[] box = glyphBounds(run.pathD());
+                if (box != null && box[3] < axisY) {        // drawn above the axis → an EVENT label
+                    eventLabels.add(box);
+                }
+            }
+        }
+        assertEquals(8, eventLabels.size(),
+            "all eight declared event labels must be drawn above the axis");
+
+        assertTrue(bandCount(eventLabels) >= 3,
+            "timeline-packed must reach the interval partitioner: the legacy two-baseline stagger "
+                + "can emit at most two disjoint event-label bands, and this render shows "
+                + bandCount(eventLabels));
+
+        for (int i = 0; i < eventLabels.size(); i++) {
+            for (int j = i + 1; j < eventLabels.size(); j++) {
+                double[] a = eventLabels.get(i);
+                double[] b = eventLabels.get(j);
+                assertTrue(a[0] >= b[2] || b[0] >= a[2] || a[1] >= b[3] || b[1] >= a[3],
+                    "packed event labels must not overprint: " + Arrays.toString(a)
+                        + " vs " + Arrays.toString(b));
+            }
+        }
+    }
+
+    private static void flatten(List<Shape> shapes, List<Shape> into) {
+        for (Shape s : shapes) {
+            if (s instanceof Group g) {
+                flatten(g.members(), into);
+            } else {
+                into.add(s);
+            }
+        }
+    }
+
+    /// Exact bounds of a FontMetrics glyph path (the M/L/Q/Z alphabet is pure coordinate pairs).
+    private static double[] glyphBounds(String pathD) {
+        Matcher m = PATH_NUMBER.matcher(pathD);
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        boolean sawPair = false;
+        while (m.find()) {
+            double x = Double.parseDouble(m.group());
+            if (!m.find()) {
+                break;
+            }
+            double y = Double.parseDouble(m.group());
+            sawPair = true;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        return sawPair ? new double[] {minX, minY, maxX, maxY} : null;
+    }
+
+    /// Distinct label ROWS, read back as the connected components of the vertical-interval overlap
+    /// graph. Labels on one baseline always overlap vertically; rows produced by the packer are
+    /// separated by its exact envelope gap.
+    private static int bandCount(List<double[]> boxes) {
+        List<double[]> bands = new ArrayList<>();
+        for (double[] box : boxes) {
+            double lo = box[1];
+            double hi = box[3];
+            List<double[]> keep = new ArrayList<>();
+            for (double[] band : bands) {
+                if (band[0] <= hi && lo <= band[1]) {
+                    lo = Math.min(lo, band[0]);
+                    hi = Math.max(hi, band[1]);
+                } else {
+                    keep.add(band);
+                }
+            }
+            keep.add(new double[] {lo, hi});
+            bands = keep;
+        }
+        return bands.size();
     }
 
     @Test
