@@ -900,7 +900,13 @@ class SemanticAnchorTest {
         // still replaces Zl/Zp defensively (a tag could carry one elsewhere), but asserting a
         // PARSE_ERROR here would be asserting a behaviour the parser does not have. Raised with
         // Marlow separately rather than decided here.
-        for (String hazard : java.util.List.of(bidi, zwj)) {
+        // SUPPLEMENTARY-PLANE hazards (Marlow sirentide/719): above U+FFFF a code point arrives
+        // as a surrogate PAIR, and neither half is category Cf -- each is SURROGATE. A char-based
+        // classifier therefore passed every one of these through while correctly catching every
+        // BMP case, which is why the earlier round looked complete.
+        String langTag = new String(Character.toChars(0xE0001));   // LANGUAGE TAG (Cf, plane 14)
+        String tagLatin = new String(Character.toChars(0xE0041));  // TAG LATIN A (Cf, plane 14)
+        for (String hazard : java.util.List.of(bidi, zwj, langTag, tagLatin)) {
             String src = "flowchart TD\n  A[x<b " + hazard + "evil>]";
             var diag = Sirentide.renderWithDiagnostics(src);
             assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, diag.diagnostics().outcome(),

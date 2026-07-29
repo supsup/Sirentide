@@ -210,23 +210,42 @@ public final class LabelMarkup {
     /// Now replaces ISO controls, Unicode format controls (Cf — bidi overrides, zero-width
     /// joiners, invisible separators) and the LINE/PARAGRAPH separators (Zl/Zp), which are not
     /// ISO controls either but still break a one-line diagnostic into two.
-    private static boolean isDisplayHazard(char c) {
-        if (Character.isISOControl(c)) {
+    /// Takes a CODE POINT, not a char (Marlow, sirentide/719).
+    ///
+    /// The first version took a `char` and walked the string with `charAt`. Every BMP hazard was
+    /// classified correctly and every SUPPLEMENTARY-PLANE one survived, because a code point
+    /// above U+FFFF arrives as a surrogate PAIR and neither half is category Cf — each is
+    /// SURROGATE. So U+E0001 LANGUAGE TAG and the U+E0020..E007F TAG block passed straight
+    /// through a method whose whole job was to stop them.
+    ///
+    /// The same enumeration trap as the round before it: I widened from ISO controls to Cf and
+    /// stopped at the plane boundary I had not thought about. Iterating by code point removes the
+    /// boundary rather than extending the list across it.
+    private static boolean isDisplayHazard(int cp) {
+        if (Character.isISOControl(cp)) {
             return true;
         }
-        int type = Character.getType(c);
+        int type = Character.getType(cp);
         return type == Character.FORMAT
             || type == Character.LINE_SEPARATOR
-            || type == Character.PARAGRAPH_SEPARATOR;
+            || type == Character.PARAGRAPH_SEPARATOR
+            || type == Character.SURROGATE          // an unpaired surrogate is undisplayable too
+            || type == Character.UNASSIGNED;
     }
 
     private static String sanitize(String tag) {
         StringBuilder out = new StringBuilder(Math.min(tag.length(), MAX_ECHO));
-        for (int i = 0; i < tag.length() && out.length() < MAX_ECHO; i++) {
-            char c = tag.charAt(i);
-            out.append(isDisplayHazard(c) ? '?' : c);
+        int i = 0;
+        while (i < tag.length() && out.length() < MAX_ECHO) {
+            int cp = tag.codePointAt(i);
+            i += Character.charCount(cp);
+            if (isDisplayHazard(cp)) {
+                out.append('?');          // ONE marker per code point, not one per char
+            } else {
+                out.appendCodePoint(cp);
+            }
         }
-        if (tag.length() > MAX_ECHO) {
+        if (i < tag.length()) {
             out.append("...");
         }
         return out.toString();
