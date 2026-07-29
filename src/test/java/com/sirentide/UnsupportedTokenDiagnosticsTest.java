@@ -73,6 +73,52 @@ class UnsupportedTokenDiagnosticsTest {
         assertTrue(DslParser.parse("flowchart TD\nA[a<br />b] --> B\n") instanceof Empty);
     }
 
+    /// Marlow sirentide/706 Finding 2 (HIGH): a BARE endpoint is a visible label too. `A<br/>B --> C`
+    /// parses a first label exactly equal to `A<br/>B`, emits real glyph paths, and returned OK —
+    /// the br-tag walk only looked INSIDE bracket/pipe spans. The span was never the boundary that
+    /// mattered; "parser-accepted visible label" is.
+    @Test
+    void brTagInABareEndpointDegradesAndIsNamed() {
+        assertDegradesNaming("flowchart TD\nA<br/>B --> C\n", "<br/>", 2);
+    }
+
+    /// The safe-comparison control Finding 2 asked for: a bare `<` that is NOT a br-tag shape stays
+    /// legal at top level (matchesBrTag requires `<br` + optional `/` + `>`), so widening the walk to
+    /// the whole line cannot regress ordinary comparison prose. `<brave>` guards the near-miss too.
+    @Test
+    void bareAngleBracketComparisonsStayLegalOutsideSpans() {
+        assertRendersReal("flowchart TD\na<b --> C\n");
+        assertRendersReal("flowchart TD\nA[x < y] --> B\n");
+        assertRendersReal("flowchart TD\nA<brave>B --> C\n");
+    }
+
+    /// Marlow sirentide/706 Finding 3 (MEDIUM), line-provenance half: `detectUnsupportedConstruct`
+    /// stripped LEADING BLANK LINES before splitting, so the reported line number drifted off the
+    /// author's physical source — two leading blanks made a physical-line-4 `&` report as line 2.
+    /// The parser's own preamble walk already skips blanks WITHOUT renumbering; the detector must
+    /// count the same way.
+    @Test
+    void leadingBlankLinesDoNotShiftTheReportedLine() {
+        assertDegradesNaming("\n\nflowchart TD\nA & B --> C\n", "&", 4);
+    }
+
+    /// Finding 3, cap-provenance half: a source under one million UTF-16 units but OVER the 1 MB
+    /// UTF-8 byte cap (multi-byte payload) is size-rejected by `parse` — and was then MISCLASSIFIED
+    /// by the detector as UNSUPPORTED_CONSTRUCT, because the detector only checked the UTF-16
+    /// `length()` half of the bound and went on to find the early `&`. The detector must share the
+    /// parser's exact UTF-8 envelope: an over-cap source is a cap rejection, never a construct claim.
+    @Test
+    void overCapMultibyteSourceIsNotMisclassifiedAsUnsupportedConstruct() {
+        // ~1.2 MB of UTF-8 in ~600k UTF-16 units: passes the detector's old length() check,
+        // fails the parser's true byte walk. The early `&` on line 2 is the bait.
+        String dsl = "flowchart TD\nA & B --> C\n%% " + "é".repeat(600_000) + "\n";
+        assertTrue(dsl.length() < DslParser.MAX_SOURCE_BYTES, "bait must pass the UTF-16 half");
+        RenderResult r = Sirentide.renderWithDiagnostics(dsl);
+        assertNotEquals(Outcome.UNSUPPORTED_CONSTRUCT, r.diagnostics().outcome(),
+            "an over-cap source is a cap rejection, never an unsupported-construct claim: "
+                + r.diagnostics().outcome());
+    }
+
     @Test
     void styleDirectiveDegradesAndIsNamed() {
         assertDegradesNaming("flowchart TD\nA[x] --> B[y]\nstyle A fill:#f9f,stroke:#333\n", "style", 3);

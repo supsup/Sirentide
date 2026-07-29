@@ -138,27 +138,38 @@ public final class DslParser {
     // independently applies its lower rank-24 closure/pair-work cap after catalog validation.
     public static final int MAX_DYNKIN_RANK = DynkinCartan.MAX_RANK;
 
-    public static Diagram parse(String src) {
-        if (src == null || src.isBlank()) {
-            return new Empty();
-        }
-        // Oversized source degrades to inert (never parse a runaway input into millions of shapes).
-        // MAX_SOURCE_BYTES is a UTF-8 *byte* bound (DESIGN §6/§7 + the CLI stdin read cap). The cheap
-        // `length()` guard is a fast reject on UTF-16 code units (always ≤ the UTF-8 byte count for
-        // BMP, but multi-byte chars mean length() UNDER-counts bytes — a 600k-char `é` string is
-        // 1.2 MB of UTF-8 yet only 600k code units). So ALSO scan the true UTF-8 byte length with a
-        // no-alloc code-point walk (never materializes a byte[]) and reject once it exceeds the cap.
+    /// True when `src` exceeds {@link #MAX_SOURCE_BYTES} measured in UTF-8 BYTES — the ONE source-cap
+    /// envelope, shared by {@link #parse}, {@link #parseConfig} and {@link #detectUnsupportedConstruct}
+    /// (plan 933eed50, Marlow sirentide/706 Finding 3). The cheap `length()` guard is a fast reject on
+    /// UTF-16 code units (always ≤ the UTF-8 byte count for BMP, but multi-byte chars mean length()
+    /// UNDER-counts bytes — a 600k-char `é` string is 1.2 MB of UTF-8 yet only 600k code units), so
+    /// this ALSO scans the true UTF-8 byte length with a no-alloc code-point walk (never materializes
+    /// a byte[]). Before extraction the detector held only the length() half, so an over-cap multibyte
+    /// source was size-rejected by parse and then MISCLASSIFIED by the detector as an unsupported
+    /// construct — two hand-maintained copies of one bound, drifted. One envelope, three callers.
+    static boolean exceedsSourceCap(String src) {
         if (src.length() > MAX_SOURCE_BYTES) {
-            return new Empty();
+            return true;
         }
         long utf8Bytes = 0;
         for (int i = 0, n = src.length(); i < n; ) {
             int cp = src.codePointAt(i);
             utf8Bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
             if (utf8Bytes > MAX_SOURCE_BYTES) {
-                return new Empty();
+                return true;
             }
             i += Character.charCount(cp);
+        }
+        return false;
+    }
+
+    public static Diagram parse(String src) {
+        if (src == null || src.isBlank()) {
+            return new Empty();
+        }
+        // Oversized source degrades to inert (never parse a runaway input into millions of shapes).
+        if (exceedsSourceCap(src)) {
+            return new Empty();
         }
         String[] rawLines = src.strip().split("\\R");
         // Strip the OPTIONAL leading CONFIG BLOCK (an optional `sirentide` marker + `%% key: value`
@@ -289,7 +300,7 @@ public final class DslParser {
     /// (mermaid's own init syntax) parses to key `{init…` which is unknown → ignored (inert), so a
     /// mermaid-style block is harmless rather than an error.
     public static DiagramConfig parseConfig(String src) {
-        if (src == null || src.isBlank() || src.length() > MAX_SOURCE_BYTES) {
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
             return DiagramConfig.DEFAULT;
         }
         String[] lines = src.strip().split("\\R");
@@ -952,10 +963,16 @@ public final class DslParser {
     /// quoted/bracketed label (`A[Tom & Jerry]`, `A[x ~~~ y]`) is legal content and never trips it.
     /// Never throws (DESIGN §6).
     public static UnsupportedConstruct detectUnsupportedConstruct(String src) {
-        if (src == null || src.isBlank() || src.length() > MAX_SOURCE_BYTES) {
+        // The SAME UTF-8 envelope parse uses (706 Finding 3): an over-cap source is a cap rejection,
+        // never a construct claim — the old length()-only half let an over-cap multibyte source fall
+        // through to the scan and come back misclassified as UNSUPPORTED_CONSTRUCT.
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
             return null;
         }
-        String[] rawLines = src.strip().split("\\R");
+        // NO strip() before the split (706 Finding 3): leading blank lines are part of the author's
+        // physical line numbering — preambleEnd already SKIPS them without renumbering, so stripping
+        // here made a physical-line-4 token report as line 2. Split the raw source.
+        String[] rawLines = src.split("\\R");
         int bodyStart = preambleEnd(rawLines);
         if (bodyStart >= rawLines.length) {
             return null;
@@ -1020,7 +1037,6 @@ public final class DslParser {
         int i = 0;
         while (i < n) {
             char c = line.charAt(i);
-            boolean inSpan = bracketClose != 0 || inPipe;
             if (bracketClose != 0) {
                 if (c == bracketClose) {
                     bracketClose = 0;
@@ -1042,8 +1058,12 @@ public final class DslParser {
             } else if (c == '~' && i + 2 < n && line.charAt(i + 1) == '~' && line.charAt(i + 2) == '~') {
                 return "~~~";                       // a top-level `~~~` — invisible link
             }
-            // A `<br…>` line-break tag INSIDE a label span bakes as literal glyphs today.
-            if (inSpan && matchesBrTag(line, i)) {
+            // A `<br…>` line-break tag ANYWHERE on the statement line bakes as literal glyphs today —
+            // inside a span it is label content, and at TOP LEVEL a bare endpoint (`A<br/>B --> C`)
+            // is a parser-accepted visible label too (Marlow sirentide/706 Finding 2: the span was
+            // never the boundary that mattered). matchesBrTag is precise enough to widen safely:
+            // `a<b`, `x < y` and `<brave>` never trip.
+            if (matchesBrTag(line, i)) {
                 return "<br/>";
             }
             i++;
