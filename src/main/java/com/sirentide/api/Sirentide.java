@@ -79,6 +79,12 @@ public final class Sirentide {
     /// Same malformed→inert invariant; a throwing renderer is caught per-fragment (degrades that
     /// run to raw text) and never propagates a bake.
     public static String render(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // PLAIN RENDER BOUNDARY (Marlow sirentide/733 HIGH): a MathFragmentRenderer callback
+        // may legally re-enter plain render on the diagnostics thread; beneath an armed frame
+        // this suspends capture so THIS render's glyphs reach no corpus — only the render
+        // actually executing contributes to a corpus, and a plain render contributes to none.
+        // A top-level plain render takes the no-allocation fast path (suspended == false).
+        boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
         try {
             // The leading config block (%% title/theme/direction) — read independently of the body
             // parse; DiagramConfig.DEFAULT (no config) threads a byte-identical bake (no title
@@ -114,6 +120,8 @@ public final class Sirentide {
             // genuine heap exhaustion. The emitter's incremental MAX_OUTPUT_BYTES cap plus the label
             // ellipsization in every layout keep normal operation from ever reaching that point (H2).
             return INERT_SHELL;
+        } finally {
+            com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
 
@@ -138,6 +146,11 @@ public final class Sirentide {
     /// through). Honors the same never-throw invariant as `render`: ANY failure degrades to a single
     /// frame == the guarded `render` output, never a propagated bake.
     public static java.util.List<String> renderFrames(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // PLAIN RENDER BOUNDARY — same scoping as render(dsl, math) (Marlow sirentide/733
+        // HIGH): a plain frames render beneath an armed diagnostic frame contributes to no
+        // corpus; top-level takes the no-allocation fast path. The degrade path's nested
+        // render(dsl, math) call manages its own boundary (nested suspensions stack safely).
+        boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
@@ -210,6 +223,8 @@ public final class Sirentide {
             // Never throw (DESIGN §6/§7): degrade to a single frame == the guarded static render. A
             // malformed/no-seq source thus always yields exactly [render(dsl, math)].
             return java.util.List.of(render(dsl, math));
+        } finally {
+            com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
 
@@ -229,6 +244,18 @@ public final class Sirentide {
     /// never-throw bake. NEVER throws.
     public static FramesResult renderFramesWithDiagnostics(String dsl,
                                                            com.sirentide.api.MathFragmentRenderer math) {
+        // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
+        // disarm — a leaked sink must never survive into an unrelated render on this thread.
+        com.sirentide.font.EmittedText.arm();
+        try {
+            return renderFramesWithDiagnosticsArmed(dsl, math);
+        } finally {
+            com.sirentide.font.EmittedText.disarm();
+        }
+    }
+
+    private static FramesResult renderFramesWithDiagnosticsArmed(String dsl,
+                                                                 com.sirentide.api.MathFragmentRenderer math) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -253,6 +280,16 @@ public final class Sirentide {
             // degrade target means the type keyword was never understood — a parse-level signal,
             // with the frames unchanged (== renderFrames' output for Empty: the single base frame).
             if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                // Mirror renderWithDiagnostics: an unsupported flowchart construct degrades to the
+                // same Empty target — name the token on the UNSUPPORTED_CONSTRUCT channel (plan
+                // 933eed50 F2) rather than folding it into the generic PARSE_ERROR.
+                com.sirentide.parse.DslParser.UnsupportedConstruct unsupported =
+                    com.sirentide.parse.DslParser.detectUnsupportedConstruct(dsl);
+                if (unsupported != null) {
+                    return new FramesResult(java.util.List.of(base), new Diagnostics(
+                        Outcome.UNSUPPORTED_CONSTRUCT, STAGE_PARSE, unsupported.message(),
+                        unsupported.line(), "unsupported flowchart token: " + unsupported.token()));
+                }
                 return new FramesResult(java.util.List.of(base), new Diagnostics(
                     Outcome.PARSE_ERROR, STAGE_PARSE,
                     "The diagram source was not recognized: line 1's diagram-type keyword is unknown "
@@ -264,10 +301,9 @@ public final class Sirentide {
             java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
             collectSeqs(laid.shapes(), seqs);
             if (seqs.size() <= 1) {
-                return new FramesResult(java.util.List.of(base), new Diagnostics(
-                    Outcome.OK, STAGE_EMIT,
-                    "Rendered successfully (single frame — the diagram has no play-through steps).",
-                    -1, ""));
+                return new FramesResult(java.util.List.of(base),
+                    okDiagnostics(STAGE_EMIT,
+                        "Rendered successfully (single frame — the diagram has no play-through steps)."));
             }
             // SIR-01: frame-count cap — mirror renderFrames EXACTLY (inert-shell frame), classified as
             // the KNOWN bounded OUTPUT_CAP_EXCEEDED degrade (not a renderer bug), so the diagnostics
@@ -305,8 +341,8 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            return new FramesResult(java.util.List.copyOf(frames), new Diagnostics(
-                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+            return new FramesResult(java.util.List.copyOf(frames),
+                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -367,6 +403,18 @@ public final class Sirentide {
     /// worker owns that file), so {@link Diagnostics#line()} is `-1` when unknown and an unknown type
     /// folds into {@link Outcome#PARSE_ERROR}. See the record javadocs for the follow-up slots.
     public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
+        // disarm — a leaked sink must never survive into an unrelated render on this thread.
+        com.sirentide.font.EmittedText.arm();
+        try {
+            return renderWithDiagnosticsArmed(dsl, math);
+        } finally {
+            com.sirentide.font.EmittedText.disarm();
+        }
+    }
+
+    private static RenderResult renderWithDiagnosticsArmed(String dsl,
+                                                           com.sirentide.api.MathFragmentRenderer math) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -398,6 +446,18 @@ public final class Sirentide {
             // an intentional-looking empty shell but their DSL was never understood. Surface that as a
             // parse-level signal. `svg` is still returned unchanged (== render's output for Empty).
             if (ir instanceof Empty && dsl != null && !dsl.isBlank()) {
+                // A KNOWN flowchart construct the DSL does not support (a top-level `&` fan-out, `~~~`
+                // invisible link, `<br/>` in a label, or a `style`/`click` directive) degrades the
+                // whole flowchart to the SAME Empty target as an unknown type. Split it out of the
+                // generic PARSE_ERROR by NAMING the offending token (plan 933eed50 F2) — this
+                // populates the reserved UNSUPPORTED_CONSTRUCT slot, with a real 1-based line.
+                com.sirentide.parse.DslParser.UnsupportedConstruct unsupported =
+                    com.sirentide.parse.DslParser.detectUnsupportedConstruct(dsl);
+                if (unsupported != null) {
+                    return new RenderResult(svg, new Diagnostics(
+                        Outcome.UNSUPPORTED_CONSTRUCT, STAGE_PARSE, unsupported.message(),
+                        unsupported.line(), "unsupported flowchart token: " + unsupported.token()));
+                }
                 return new RenderResult(svg, new Diagnostics(
                     Outcome.PARSE_ERROR, STAGE_PARSE,
                     "The diagram source was not recognized: line 1's diagram-type keyword is unknown "
@@ -405,13 +465,62 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
-            return new RenderResult(svg, new Diagnostics(
-                Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, ""));
+            return new RenderResult(svg,
+                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
             return new RenderResult(INERT_SHELL, classifyFailure(stage, e));
         }
+    }
+
+    /// The cap on how many distinct out-of-coverage code points a coverage caveat names (plan
+    /// 933eed50 F1) — bounds the diagnostic message on a label full of unsupported glyphs, mirroring
+    /// the parser's cap discipline. Ten is plenty to make the boundary concrete without a runaway note.
+    private static final int MAX_UNCOVERED_REPORTED = 10;
+
+    /// Build the OK-outcome {@link Diagnostics} for a successful bake, RIDING a non-fatal COVERAGE
+    /// caveat when the EMITTED TEXT contains code points the bundled label font cannot render (plan
+    /// 933eed50 F1; Marlow sirentide/706 Finding 1; sirentide/712 HIGH 1). The bake itself is
+    /// UNCHANGED — geometry, byte output, the OK classification all hold; an out-of-coverage code
+    /// point still bakes exactly as today (a .notdef tofu box). This only turns that
+    /// previously-SILENT fallback into a nameable signal: the caveat is appended to the
+    /// author-facing `message` and the offending `U+XXXX` code points listed in `detail`.
+    ///
+    /// The scanned corpus is {@link com.sirentide.font.EmittedText#collected()} — the exact text
+    /// runs {@link com.sirentide.font.FontMetrics#textPathD} baked during THIS armed diagnostics
+    /// run, tapped at the single glyph-emission funnel. Ground truth by construction (712 HIGH 1):
+    /// layout-time ellipsization truncates BEFORE the tap (a truncated-away code point produces no
+    /// signal), a FragmentGuard-degraded math run passes THROUGH the tap (its tofu is named), live
+    /// math fragments bypass it (their glyphs come from the fragment, not the bundled font), and
+    /// comments/`accDescr`/syntax never reach it at all. This replaces the deleted RenderedLabels
+    /// pre-layout IR walk, which could not see any of those emission-time facts and whose sealed
+    /// type switch could not catch a new label FIELD or transform inside an existing layout.
+    /// When every emitted code point is in coverage the result is byte-for-byte the old
+    /// {@code Diagnostics(OK, stage, baseMessage, -1, "")} — a pure-Latin label produces NO
+    /// signal. `line` stays -1 (a coverage caveat spans the whole label set, not one line).
+    /// Never throws (the corpus is a String already in hand; nothing here can crash a healthy render).
+    private static Diagnostics okDiagnostics(String stage, String baseMessage) {
+        String rendered = com.sirentide.font.EmittedText.collected();
+        java.util.List<Integer> uncovered = rendered.isEmpty() ? java.util.List.of()
+            : com.sirentide.font.FontMetrics.bundled()
+                .uncoveredCodePoints(rendered, MAX_UNCOVERED_REPORTED);
+        if (uncovered.isEmpty()) {
+            return new Diagnostics(Outcome.OK, stage, baseMessage, -1, "");
+        }
+        StringBuilder points = new StringBuilder();
+        for (int cp : uncovered) {
+            if (points.length() > 0) {
+                points.append(", ");
+            }
+            points.append(String.format("U+%04X", cp));
+        }
+        String caveat = " Note: " + uncovered.size() + " code point"
+            + (uncovered.size() == 1 ? "" : "s")
+            + " in the rendered text fall outside the bundled STIX Two Math font (Latin + math) and "
+            + "bake as boxes: " + points + ". Non-Latin scripts and emoji are not covered.";
+        return new Diagnostics(Outcome.OK, stage, baseMessage + caveat, -1,
+            "out-of-coverage code points: " + points);
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
