@@ -85,6 +85,13 @@ public final class Sirentide {
             // override, Theme.DEFAULT = no bg rect + no colour remap → option A).
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            // Fail closed on tag-shaped markup in DISPLAY labels. The defect this closes is
+            // that `A[TRUE NEGATIVE<br/>safe to act on]` rendered `<br/>` as VISIBLE TEXT with
+            // exit 0 and a well-formed SVG — every automated check passed and only a human
+            // looking at the picture could tell. Throwing reuses the catch below, so the
+            // never-throw contract (DESIGN §6/§7) holds and the degrade is the same
+            // byte-stable inert shell every other failure takes.
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             LaidOut laid = layout(ir, math);
             // A `%% caption:`/`note:` directive adds a centered, wrapped annotation band below the
             // diagram (plan sirentide-caption-note-directive). No-caption returns `laid` unchanged.
@@ -134,6 +141,9 @@ public final class Sirentide {
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            // The FRAMES path needs the same gate: wiring only render() would let a
+            // play-through emit the markup as visible text, which is the defect verbatim.
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             // Layout ONCE — every frame re-emits THIS scene with a different emphasis map, so the
             // geometry can never drift between frames (only fills/strokes differ). Deterministic.
             LaidOut laid = layout(ir, math);
@@ -181,6 +191,22 @@ public final class Sirentide {
             }
             return java.util.List.copyOf(frames);
         } catch (RuntimeException | StackOverflowError e) {
+            // A LATE TAG REJECTION IS TERMINAL — never retried (Marlow, sirentide/713 HIGH).
+            //
+            // The degrade below re-invokes render(dsl, math), which calls the injected
+            // MathFragmentRenderer AGAIN. MathFragmentRenderer carries no purity or
+            // stable-result contract, so a renderer that fails once and succeeds on the retry
+            // turns a fail-closed rejection back into live output. Measured at ee041959 with a
+            // renderer returning empty then a valid fragment: render() gave an 85-byte inert
+            // shell while renderFrames() gave 2620 bytes of LIVE SVG for the same source —
+            // breaking both the fail-closed invariant and the static/frames byte parity the
+            // plan requires.
+            //
+            // The retry remains the intended degrade for UNRELATED failures; it is only a
+            // rejection it must not be allowed to reverse.
+            if (e instanceof com.sirentide.parse.LabelMarkupException) {
+                return java.util.List.of(INERT_SHELL);
+            }
             // Never throw (DESIGN §6/§7): degrade to a single frame == the guarded static render. A
             // malformed/no-seq source thus always yields exactly [render(dsl, math)].
             return java.util.List.of(render(dsl, math));
@@ -219,6 +245,8 @@ public final class Sirentide {
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            // BEFORE the stage advances, same as renderWithDiagnostics.
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
@@ -304,6 +332,13 @@ public final class Sirentide {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
             // from the caught throwable + the stage it escaped, same as renderWithDiagnostics.
+            // Same terminal rule as renderFrames (Marlow sirentide/713): a late tag rejection
+            // must NOT be re-run through the injected renderer, or a non-pure renderer that
+            // succeeds on the second call converts PARSE_ERROR + inert shell into PARSE_ERROR
+            // + live SVG -- the diagnostic says rejected while the bytes say rendered.
+            if (e instanceof com.sirentide.parse.LabelMarkupException) {
+                return new FramesResult(java.util.List.of(INERT_SHELL), classifyFailure(stage, e));
+            }
             return new FramesResult(java.util.List.of(render(dsl, math)), classifyFailure(stage, e));
         }
     }
@@ -369,6 +404,8 @@ public final class Sirentide {
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
+            // BEFORE the stage advances: a throw must classify at STAGE_PARSE, not layout.
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
@@ -479,6 +516,18 @@ public final class Sirentide {
     private static Diagnostics classifyFailure(String stage, Throwable e) {
         String msg = e.getMessage();
         String detail = e.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+        // Keyed on the exception TYPE, deliberately, while the branches below key on message
+        // substrings. A substring match is a stringly-typed contract that breaks silently when
+        // wording changes; LabelMarkupException carries labelId and tag as TYPED fields, so the
+        // diagnostic is composed from structure rather than re-parsed out of prose.
+        if (e instanceof com.sirentide.parse.LabelMarkupException lme) {
+            return new Diagnostics(Outcome.PARSE_ERROR, STAGE_PARSE,
+                "The label " + lme.labelId() + " contains unsupported markup " + lme.tag()
+                    + ", so the diagram degraded to the empty shell. Sirentide renders label text "
+                    + "literally and does not interpret HTML — remove the tag, or use a literal "
+                    + "comparison like `a < b`, which stays legal.",
+                -1, detail);
+        }
         if (STAGE_LAYOUT.equals(stage) && msg != null && msg.contains("MAX_SEQUENCE_NOTES")) {
             return new Diagnostics(Outcome.OUTPUT_CAP_EXCEEDED, STAGE_LAYOUT,
                 "The sequence exceeded the " + Sequence.MAX_NOTES
