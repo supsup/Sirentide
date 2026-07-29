@@ -165,4 +165,36 @@ class UnsupportedTokenDiagnosticsTest {
         assertRendersReal("flowchart TD\nA[a < b] --> B[End]\n");
         assertRendersReal("flowchart TD\nA[<brave> heart] --> B[End]\n");
     }
+
+    // -- Marlow sirentide/712 HIGH 2: the detector's boundary is VISIBLE labels, not dropped rows --
+
+    /**
+     * REVIEWER DISCRIMINATOR (red before the fix): an `accDescr:` row is a reserved directive the
+     * parser DROPS entirely — nothing on it ever renders. A `<br/>` inside that dropped metadata
+     * therefore cannot be an unsupported VISIBLE construct, yet the whole-line scan turned the
+     * healthy two-node diagram into the zero-size inert shell + UNSUPPORTED_CONSTRUCT solely
+     * because the dropped row contained `br`. The control (same accDescr without the tag) and the
+     * probe must render byte-identically and classify OK.
+     */
+    @Test
+    void brTagInDroppedAccessibilityMetadataDoesNotInvalidateVisibleDiagram() {
+        String control = "flowchart TD\naccDescr: line break\nA[ok] --> B[done]\n";
+        String probe = "flowchart TD\naccDescr: line<br/>break\nA[ok] --> B[done]\n";
+        assertEquals(Sirentide.render(control), Sirentide.render(probe),
+            "the parser drops both accDescr rows — the visible diagram is identical");
+        assertRendersReal(probe);
+        assertEquals(Outcome.OK, Sirentide.renderWithDiagnostics(probe).diagnostics().outcome(),
+            "a br inside dropped a11y metadata must not reclassify the healthy diagram");
+    }
+
+    /** The other reserved spellings share the drop path — pin the family, not the instance. */
+    @Test
+    void brTagInOtherReservedDirectiveRowsDoesNotTrip() {
+        assertRendersReal("flowchart TD\naccTitle: big<br/>title\nA[ok] --> B[done]\n");
+        assertRendersReal("flowchart TD\ndirection LR<br/>\nA[ok] --> B[done]\n");
+    }
+
+    // (The positive controls for br in VISIBLE positions — label span and bare endpoint — are
+    // already pinned above by brTagInLabelDegradesAndNames / the 706 bare-endpoint test; the
+    // reserved-row fix must leave both green.)
 }

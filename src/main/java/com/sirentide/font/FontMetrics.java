@@ -175,6 +175,10 @@ public final class FontMetrics {
     /// §4/§6) — deterministic, no `<text>`, no view-time font dependency. `originX`/`baselineY`
     /// are the pen start in user (pixel) coordinates.
     public String textPathD(String text, double originX, double baselineY, double fontSizePx) {
+        // The glyph-emission tap (sirentide/712 HIGH 1): when a diagnostics render has armed the
+        // sink, record the EXACT text this call bakes — post-ellipsization, post-math-degrade —
+        // so coverage diagnostics derive from emitted glyphs, never a re-derivation of the IR.
+        EmittedText.record(text);
         double scale = fontSizePx / unitsPerEm;
         StringBuilder d = new StringBuilder();
         double penX = originX;

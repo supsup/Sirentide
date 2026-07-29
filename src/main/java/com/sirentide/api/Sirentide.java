@@ -203,6 +203,18 @@ public final class Sirentide {
     /// never-throw bake. NEVER throws.
     public static FramesResult renderFramesWithDiagnostics(String dsl,
                                                            com.sirentide.api.MathFragmentRenderer math) {
+        // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
+        // disarm — a leaked sink must never survive into an unrelated render on this thread.
+        com.sirentide.font.EmittedText.arm();
+        try {
+            return renderFramesWithDiagnosticsArmed(dsl, math);
+        } finally {
+            com.sirentide.font.EmittedText.disarm();
+        }
+    }
+
+    private static FramesResult renderFramesWithDiagnosticsArmed(String dsl,
+                                                                 com.sirentide.api.MathFragmentRenderer math) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -247,7 +259,7 @@ public final class Sirentide {
             collectSeqs(laid.shapes(), seqs);
             if (seqs.size() <= 1) {
                 return new FramesResult(java.util.List.of(base),
-                    okDiagnostics(ir, config.caption(), math != null, STAGE_EMIT,
+                    okDiagnostics(STAGE_EMIT,
                         "Rendered successfully (single frame — the diagram has no play-through steps)."));
             }
             // SIR-01: frame-count cap — mirror renderFrames EXACTLY (inert-shell frame), classified as
@@ -287,8 +299,7 @@ public final class Sirentide {
                 frames.add(svg);
             }
             return new FramesResult(java.util.List.copyOf(frames),
-                okDiagnostics(ir, config.caption(), math != null, STAGE_EMIT,
-                    "Rendered successfully."));
+                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -342,6 +353,18 @@ public final class Sirentide {
     /// worker owns that file), so {@link Diagnostics#line()} is `-1` when unknown and an unknown type
     /// folds into {@link Outcome#PARSE_ERROR}. See the record javadocs for the follow-up slots.
     public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
+        // disarm — a leaked sink must never survive into an unrelated render on this thread.
+        com.sirentide.font.EmittedText.arm();
+        try {
+            return renderWithDiagnosticsArmed(dsl, math);
+        } finally {
+            com.sirentide.font.EmittedText.disarm();
+        }
+    }
+
+    private static RenderResult renderWithDiagnosticsArmed(String dsl,
+                                                           com.sirentide.api.MathFragmentRenderer math) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -391,8 +414,7 @@ public final class Sirentide {
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
             return new RenderResult(svg,
-                okDiagnostics(ir, config.caption(), math != null, STAGE_EMIT,
-                    "Rendered successfully."));
+                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
@@ -406,33 +428,28 @@ public final class Sirentide {
     private static final int MAX_UNCOVERED_REPORTED = 10;
 
     /// Build the OK-outcome {@link Diagnostics} for a successful bake, RIDING a non-fatal COVERAGE
-    /// caveat when the RENDERED TEXT contains code points the bundled label font cannot render (plan
-    /// 933eed50 F1; Marlow sirentide/706 Finding 1). The bake itself is UNCHANGED — geometry, byte
-    /// output, the OK classification all hold; an out-of-coverage code point still bakes exactly as
-    /// today (a .notdef tofu box). This only turns that previously-SILENT fallback into a nameable
-    /// signal: the caveat is appended to the author-facing `message` and the offending `U+XXXX` code
-    /// points listed in `detail`.
+    /// caveat when the EMITTED TEXT contains code points the bundled label font cannot render (plan
+    /// 933eed50 F1; Marlow sirentide/706 Finding 1; sirentide/712 HIGH 1). The bake itself is
+    /// UNCHANGED — geometry, byte output, the OK classification all hold; an out-of-coverage code
+    /// point still bakes exactly as today (a .notdef tofu box). This only turns that
+    /// previously-SILENT fallback into a nameable signal: the caveat is appended to the
+    /// author-facing `message` and the offending `U+XXXX` code points listed in `detail`.
     ///
-    /// The scanned corpus is {@link RenderedLabels#collect} — NOT the raw DSL. Comments, `accDescr`
-    /// and syntax never bake as glyphs, and warning about them was 706's HIGH: a coverage detail for
-    /// glyphs that do not exist, indistinguishable from a real one. `mathLive` mirrors the MathLabel
-    /// degrade — with no renderer, `$latex$` re-materializes as plain glyphs and must be scanned;
-    /// with one, math runs leave the glyph path. When every rendered code point is in coverage the
-    /// result is byte-for-byte the old {@code Diagnostics(OK, stage, baseMessage, -1, "")} — a
-    /// pure-Latin label produces NO signal. `line` stays -1 (a coverage caveat spans the whole label
-    /// set, not one line). Never throws.
-    private static Diagnostics okDiagnostics(Diagram ir, String caption, boolean mathLive,
-                                             String stage, String baseMessage) {
-        String rendered;
-        try {
-            rendered = RenderedLabels.collect(ir, caption, mathLive);
-        } catch (RuntimeException e) {
-            // "Never throws" is this method's contract, and it now guards a real hazard: a
-            // diagnostics-side walk crashing must NEVER reclassify a render that genuinely
-            // succeeded (the bake is already done). Degrade to the caveat-free OK — a missing
-            // coverage caveat is a smaller lie than RENDER_BUG on a healthy SVG.
-            return new Diagnostics(Outcome.OK, stage, baseMessage, -1, "");
-        }
+    /// The scanned corpus is {@link com.sirentide.font.EmittedText#collected()} — the exact text
+    /// runs {@link com.sirentide.font.FontMetrics#textPathD} baked during THIS armed diagnostics
+    /// run, tapped at the single glyph-emission funnel. Ground truth by construction (712 HIGH 1):
+    /// layout-time ellipsization truncates BEFORE the tap (a truncated-away code point produces no
+    /// signal), a FragmentGuard-degraded math run passes THROUGH the tap (its tofu is named), live
+    /// math fragments bypass it (their glyphs come from the fragment, not the bundled font), and
+    /// comments/`accDescr`/syntax never reach it at all. This replaces the deleted RenderedLabels
+    /// pre-layout IR walk, which could not see any of those emission-time facts and whose sealed
+    /// type switch could not catch a new label FIELD or transform inside an existing layout.
+    /// When every emitted code point is in coverage the result is byte-for-byte the old
+    /// {@code Diagnostics(OK, stage, baseMessage, -1, "")} — a pure-Latin label produces NO
+    /// signal. `line` stays -1 (a coverage caveat spans the whole label set, not one line).
+    /// Never throws (the corpus is a String already in hand; nothing here can crash a healthy render).
+    private static Diagnostics okDiagnostics(String stage, String baseMessage) {
+        String rendered = com.sirentide.font.EmittedText.collected();
         java.util.List<Integer> uncovered = rendered.isEmpty() ? java.util.List.of()
             : com.sirentide.font.FontMetrics.bundled()
                 .uncoveredCodePoints(rendered, MAX_UNCOVERED_REPORTED);

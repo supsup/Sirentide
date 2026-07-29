@@ -947,11 +947,12 @@ public final class DslParser {
 
     /// A recognized-but-UNSUPPORTED Mermaid construct found at a STATEMENT-LEVEL syntax position in a
     /// flowchart body (plan 933eed50 F2). `token` is the offending sigil/keyword (`&`, `~~~`, `<br/>`,
-    /// `style`, `click`); `line` is its 1-based line in the preamble-stripped source (best-effort —
-    /// `src.strip()` drops leading blanks); `message` is the author-facing sentence. It exists so the
-    /// diagnostic render entry can turn the silent inert-shell degrade — which used to mint a literal
-    /// WRONG node (`A & B --> C` → one node named `A & B`) — into a NAMED signal on the
-    /// {@link com.sirentide.api.Outcome#UNSUPPORTED_CONSTRUCT} channel.
+    /// `style`, `click`); `line` is its 1-based PHYSICAL line counted from the top of the author's
+    /// raw source — leading blank/preamble lines keep their numbers (706 Finding 3: the old
+    /// `src.strip()` renumbered a physical-line-4 token as line 2); `message` is the author-facing
+    /// sentence. It exists so the diagnostic render entry can turn the silent inert-shell degrade —
+    /// which used to mint a literal WRONG node (`A & B --> C` → one node named `A & B`) — into a
+    /// NAMED signal on the {@link com.sirentide.api.Outcome#UNSUPPORTED_CONSTRUCT} channel.
     public record UnsupportedConstruct(String token, int line, String message) {}
 
     /// Detect the FIRST recognized-but-unsupported Mermaid construct in a FLOWCHART source, or `null`
@@ -987,8 +988,9 @@ public final class DslParser {
         if (u == null) {
             return null;
         }
-        // The scanner reports a 0-based index into `lines`; re-base it onto the preamble-stripped
-        // source (1-based) so the number the author sees counts from the top of their source.
+        // The scanner reports a 0-based index into the body-relative `lines`; add the preamble
+        // offset back and convert to 1-based, so the number the author sees is the PHYSICAL line
+        // counted from the top of their raw source (706 Finding 3).
         return new UnsupportedConstruct(u.token(), bodyStart + u.line() + 1, u.message());
     }
 
@@ -1003,7 +1005,16 @@ public final class DslParser {
     ///     mirroring {@link #isReservedDirectiveLine}.
     ///   - an in-line sigil scanned OUTSIDE every `[]`/`{}`/`()`/`||` span ({@link
     ///     #firstUnsupportedSigil}): a top-level `&` (edge fan-out) or `~~~` (invisible link), or a
-    ///     `<br…>` line-break tag INSIDE a label span (baked as literal glyphs today).
+    ///     `<br…>` line-break tag anywhere on the statement line — span content AND bare-endpoint
+    ///     labels bake it as literal glyphs (Marlow sirentide/706 Finding 2).
+    ///
+    /// The scan's boundary is VISIBLE content (Marlow sirentide/712 HIGH 2): an arrowless line that
+    /// {@link #isReservedDirectiveLine} recognizes (`accTitle:`/`accDescr:`/`direction …`) is DROPPED
+    /// inert by {@link #parseFlowchart} — nothing on it ever renders — so its content cannot be an
+    /// unsupported VISIBLE construct and the sigil scan skips it. Without the skip, a `<br/>` inside
+    /// dropped a11y metadata degraded the whole healthy diagram to the inert shell. The
+    /// `style`/`click` naming stays AHEAD of the skip: those two are named unsupported constructs in
+    /// their own right, never silently-ignorable rows.
     private static UnsupportedConstruct firstUnsupportedFlowToken(String[] lines) {
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -1014,6 +1025,9 @@ public final class DslParser {
                 String[] kw = splitKeyword(line);
                 if ((kw[0].equals("style") || kw[0].equals("click")) && !kw[1].isEmpty()) {
                     return new UnsupportedConstruct(kw[0], i, unsupportedMessage(kw[0]));
+                }
+                if (isReservedDirectiveLine(kw)) {
+                    continue;
                 }
             }
             String sigil = firstUnsupportedSigil(line);
@@ -1027,9 +1041,13 @@ public final class DslParser {
     /// Walk a flowchart body line tracking `[]`/`{}`/`()` bracket spans and `||` pipe spans (the same
     /// span notion {@link #topLevelEdges} uses, widened to the `()` shape delimiters), returning the
     /// first unsupported in-line sigil — a TOP-LEVEL `&` (fan-out) or `~~~` (invisible link), or a
-    /// `<br…>` tag INSIDE a label span — or `null`. Statement-level only: a sigil inside a span is
-    /// legal label content and never trips. Non-nesting by design (a label holds an operator, not a
-    /// nested span), mirroring {@link #topLevelEdges}.
+    /// `<br…>` tag ANYWHERE on the line (inside a span it is label content, at top level a bare
+    /// endpoint like `A<br/>B` is a parser-accepted visible label too; the span was never the
+    /// boundary that mattered — Marlow sirentide/706 Finding 2) — or `null`. The `&`/`~~~` checks
+    /// stay statement-level only: those sigils inside a span are legal label content and never trip.
+    /// Non-nesting by design (a label holds an operator, not a nested span), mirroring
+    /// {@link #topLevelEdges}. The caller has already skipped reserved (dropped, never-rendered)
+    /// directive rows — see {@link #firstUnsupportedFlowToken}.
     private static String firstUnsupportedSigil(String line) {
         char bracketClose = 0;   // 0 = outside a []/{}/() span, else the awaited ']' '}' or ')'
         boolean inPipe = false;

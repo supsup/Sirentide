@@ -85,6 +85,74 @@ class FontCoverageDiagnosticsTest {
             "the caveat mechanism itself must stay alive");
     }
 
+    // ------------------------------------------------------------------
+    // Marlow sirentide/712 HIGH 1: the coverage corpus must be the text that ACTUALLY reaches
+    // glyph emission — not a parallel re-derivation from pre-layout IR. Both directions below
+    // were reviewer-reproduced exact-output histories at tip 8de63118.
+    // ------------------------------------------------------------------
+
+    /**
+     * FALSE-POSITIVE DISCRIMINATOR (reviewer's, red before the fix): a flowchart edge label of
+     * 400 ASCII characters followed by a rocket. FlowchartLayout ellipsizes the label before
+     * emission, so the rocket is never baked — the SVG is byte-identical to the same label
+     * ending in ASCII 'x'. A coverage caveat naming U+1F680 here warns about a glyph that
+     * does not exist in the output.
+     */
+    @Test
+    void emojiEllipsizedOutOfAnEdgeLabelProducesNoCoverageSignal() {
+        String pad = "a".repeat(400);
+        String control = "flowchart LR\n  A -->|" + pad + "x| B\n";
+        String probe = "flowchart LR\n  A -->|" + pad + "🚀| B\n";
+        assertEquals(Sirentide.render(control), Sirentide.render(probe),
+            "byte-identity control: the differing suffix is past the emitted ellipsis");
+        Diagnostics d = Sirentide.renderWithDiagnostics(probe).diagnostics();
+        assertEquals(Outcome.OK, d.outcome());
+        assertFalse(d.detail().contains("U+1F680"),
+            "no rocket glyph was emitted, so no coverage signal may name it: " + d.detail());
+        assertFalse(d.message().contains("U+1F680"),
+            "the author-facing message must not warn about un-emitted text: " + d.message());
+    }
+
+    /**
+     * The reviewer-required NON-FLOW ellipsization control: the repair must be a shared
+     * emission-seam property, not a flow-only patch. A timeline event label long enough to
+     * ellipsize behaves identically.
+     */
+    @Test
+    void emojiEllipsizedOutOfATimelineLabelProducesNoCoverageSignal() {
+        String pad = "a".repeat(400);
+        String control = "timeline\n  \"" + pad + "x\" : 2020\n";
+        String probe = "timeline\n  \"" + pad + "🚀\" : 2020\n";
+        assertEquals(Sirentide.render(control), Sirentide.render(probe),
+            "byte-identity control: the timeline label ellipsizes before the differing suffix");
+        Diagnostics d = Sirentide.renderWithDiagnostics(probe).diagnostics();
+        assertEquals(Outcome.OK, d.outcome());
+        assertFalse(d.detail().contains("U+1F680"),
+            "non-flow layouts share the emission seam: " + d.detail());
+    }
+
+    /**
+     * FALSE-NEGATIVE DISCRIMINATOR (reviewer's, red before the fix): a math run whose fragment
+     * fails the FragmentGuard degrades to plain glyphs — the rocket really does bake as a tofu
+     * box — but the pre-layout walk dropped every MathRun when a renderer was present, so the
+     * feature's core promise (name emitted tofu) was violated exactly where the degrade
+     * happens. The SVG-identity control pins that the diagnostics twin renders the same bytes.
+     */
+    @Test
+    void emojiInAMathRunThatFailsTheFragmentGuardStillProducesCoverageSignal() {
+        String dsl = "flowchart LR\n  A[$🚀$]\n";
+        com.sirentide.api.MathFragmentRenderer rejected = (latex, fontSizePx) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<script>x</script>", 10, 10, 0));
+        RenderResult r = Sirentide.renderWithDiagnostics(dsl, rejected);
+        assertEquals(Sirentide.render(dsl, rejected), r.svg(),
+            "identity control: diagnostics never alter the SVG");
+        Diagnostics d = r.diagnostics();
+        assertEquals(Outcome.OK, d.outcome(), "the degraded bake still succeeds");
+        assertTrue(d.detail().contains("U+1F680"),
+            "the guard-degraded raw $…$ run bakes the rocket as tofu — the signal must name it: "
+                + d.detail());
+    }
+
     @Test
     void fontCoverageOracleAgreesWithGlyphLookup() {
         FontMetrics fm = FontMetrics.bundled();
