@@ -40,6 +40,32 @@ public final class LabelMarkup {
     /// surface, and Marlow's contract calls for a BOUNDED, control-sanitized echo.
     static final int MAX_ECHO = 32;
 
+    /// Validates every DISPLAY label in `diagram`, throwing on the first offending tag.
+    ///
+    /// This is the one policy call site Marlow's ruling asks for (sirentide/671): the seam sits
+    /// after the parser has built the IR, so it knows which fields are display text and which
+    /// are identifiers. {@link LabelSurfaces} decides that split; this method decides only what
+    /// counts as markup.
+    ///
+    /// Throwing rather than returning a result is deliberate and reuses machinery that already
+    /// exists. {@code Sirentide.render} catches RuntimeException and degrades to the byte-stable
+    /// INERT SHELL, preserving the never-throw contract (DESIGN §6/§7), and
+    /// {@code renderWithDiagnostics} classifies it as {@link com.sirentide.api.Outcome#PARSE_ERROR}
+    /// at stage `parse` — provided the call happens BEFORE the stage advances past parse, which
+    /// is why the call site sits immediately after {@code DslParser.parse}.
+    ///
+    /// @throws LabelMarkupException on the first display label containing tag-shaped markup
+    public static void validate(com.sirentide.ir.Diagram diagram) {
+        for (LabelSurfaces.Labeled labeled : LabelSurfaces.of(diagram)) {
+            String tag = offendingTag(labeled.text());
+            if (tag != null) {
+                // The token arrives already bounded and control-sanitized from offendingTag, so
+                // a hostile label cannot pump or escape the diagnostic it lands in.
+                throw new LabelMarkupException(labeled.id(), tag);
+            }
+        }
+    }
+
     /// The first markup-shaped tag in a literal run of `label`, or `null` when there is none.
     ///
     /// Returned already bounded and control-sanitized, so callers may place it directly into a

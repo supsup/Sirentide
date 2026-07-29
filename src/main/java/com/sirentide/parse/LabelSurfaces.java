@@ -87,42 +87,42 @@ public final class LabelSurfaces {
             case StateDiagram s -> flowchart(s.graph(), "state.", out);
             case Matrix m -> matrix(m, out);
 
-            case com.sirentide.ir.Pie p -> slices(p.slices(), "pie", out);
-            case com.sirentide.ir.Timeline t -> slices(t.events(), "timeline", out);
+            case com.sirentide.ir.Pie p -> slices(nz(p.slices()), "pie", out);
+            case com.sirentide.ir.Timeline t -> slices(nz(t.events()), "timeline", out);
             case com.sirentide.ir.XyChart x -> {
-                slices(x.bars(), "xychart.bar", out);
+                slices(nz(x.bars()), "xychart.bar", out);
                 // seriesNames IS the legend, which Marlow's list names explicitly.
-                for (int i = 0; i < x.seriesNames().size(); i++) {
-                    add(out, "xychart.series[" + i + "]", x.seriesNames().get(i));
+                for (int i = 0; i < nz(x.seriesNames()).size(); i++) {
+                    add(out, "xychart.series[" + i + "]", nz(x.seriesNames()).get(i));
                 }
             }
             case com.sirentide.ir.Gantt g -> {
-                for (int i = 0; i < g.tasks().size(); i++) {
-                    add(out, "gantt.task[" + i + "]", g.tasks().get(i).label());
+                for (int i = 0; i < nz(g.tasks()).size(); i++) {
+                    add(out, "gantt.task[" + i + "]", nz(g.tasks()).get(i).label());
                 }
             }
             case com.sirentide.ir.Sequence sq -> {
                 // actors ARE the displayed lifeline captions. SeqMessage.from/to and
                 // SeqLifecycle.actor merely REFERENCE them, so validating the actor list
                 // covers the text exactly once instead of three times.
-                for (int i = 0; i < sq.actors().size(); i++) {
-                    add(out, "sequence.actor[" + i + "]", sq.actors().get(i));
+                for (int i = 0; i < nz(sq.actors()).size(); i++) {
+                    add(out, "sequence.actor[" + i + "]", nz(sq.actors()).get(i));
                 }
-                for (int i = 0; i < sq.messages().size(); i++) {
-                    add(out, "sequence.message[" + i + "]", sq.messages().get(i).label());
+                for (int i = 0; i < nz(sq.messages()).size(); i++) {
+                    add(out, "sequence.message[" + i + "]", nz(sq.messages()).get(i).label());
                 }
-                for (int i = 0; i < sq.notes().size(); i++) {
-                    add(out, "sequence.note[" + i + "]", sq.notes().get(i).text());
+                for (int i = 0; i < nz(sq.notes()).size(); i++) {
+                    add(out, "sequence.note[" + i + "]", nz(sq.notes()).get(i).text());
                 }
-                for (int i = 0; i < sq.blocks().size(); i++) {
+                for (int i = 0; i < nz(sq.blocks()).size(); i++) {
                     // .kind is a keyword (alt/opt/loop); .label is the author's text.
-                    var blk = sq.blocks().get(i);
+                    var blk = nz(sq.blocks()).get(i);
                     add(out, "sequence.block[" + i + "]", blk.label());
                     // Dividers inside a block carry their own author text -- also missed on
                     // the first pass, same cause as the heatmap legend.
-                    for (int d = 0; d < blk.dividers().size(); d++) {
+                    for (int d = 0; d < nz(blk.dividers()).size(); d++) {
                         add(out, "sequence.block[" + i + "].divider[" + d + "]",
-                            blk.dividers().get(d).label());
+                            nz(blk.dividers()).get(d).label());
                     }
                 }
             }
@@ -135,69 +135,69 @@ public final class LabelSurfaces {
                 for (int i = 0; ql != null && i < ql.length; i++) {
                     add(out, "quadrant.label[" + i + "]", ql[i]);
                 }
-                for (int i = 0; i < q.points().size(); i++) {
-                    add(out, "quadrant.point[" + i + "]", q.points().get(i).label());
+                for (int i = 0; i < nz(q.points()).size(); i++) {
+                    add(out, "quadrant.point[" + i + "]", nz(q.points()).get(i).label());
                 }
             }
             case com.sirentide.ir.ClassDiagram c -> {
-                for (var box : c.classes()) {
+                for (var box : nz(c.classes())) {
                     add(out, "class:" + box.name(), box.name());
-                    for (int i = 0; i < box.attributes().size(); i++) {
-                        add(out, "class:" + box.name() + ".attr[" + i + "]", box.attributes().get(i));
+                    for (int i = 0; i < nz(box.attributes()).size(); i++) {
+                        add(out, "class:" + box.name() + ".attr[" + i + "]", nz(box.attributes()).get(i));
                     }
-                    for (int i = 0; i < box.methods().size(); i++) {
-                        add(out, "class:" + box.name() + ".method[" + i + "]", box.methods().get(i));
+                    for (int i = 0; i < nz(box.methods()).size(); i++) {
+                        add(out, "class:" + box.name() + ".method[" + i + "]", nz(box.methods()).get(i));
                     }
                 }
-                for (var rel : c.relations()) {
+                for (var rel : nz(c.relations())) {
                     // left/right name existing classes -> references, not new display text.
                     add(out, "class-rel:" + rel.left() + "->" + rel.right(), rel.label());
                 }
             }
             case com.sirentide.ir.ErDiagram er -> {
-                for (var ent : er.entities()) {
+                for (var ent : nz(er.entities())) {
                     add(out, "er:" + ent.name(), ent.name());
-                    for (int i = 0; i < ent.attributes().size(); i++) {
-                        var a = ent.attributes().get(i);
+                    for (int i = 0; i < nz(ent.attributes()).size(); i++) {
+                        var a = nz(ent.attributes()).get(i);
                         // type and name both render inside the entity box; key is a marker.
                         add(out, "er:" + ent.name() + ".attr[" + i + "].type", a.type());
                         add(out, "er:" + ent.name() + ".attr[" + i + "].name", a.name());
                     }
                 }
-                for (var rel : er.relations()) {
+                for (var rel : nz(er.relations())) {
                     add(out, "er-rel:" + rel.left() + "->" + rel.right(), rel.label());
                 }
             }
             case com.sirentide.ir.GitGraph gg -> {
-                for (int i = 0; i < gg.ops().size(); i++) {
+                for (int i = 0; i < nz(gg.ops()).size(); i++) {
                     // Branch.name labels a lane and IS display text. Commit.id is excluded
                     // as an identifier -- see UNAUDITED for that judgement call.
-                    if (gg.ops().get(i) instanceof com.sirentide.ir.GitOp.Branch b) {
+                    if (nz(gg.ops()).get(i) instanceof com.sirentide.ir.GitOp.Branch b) {
                         add(out, "gitgraph.branch[" + i + "]", b.name());
                     }
                 }
             }
             case com.sirentide.ir.Journey j -> {
                 add(out, "journey.title", j.title());
-                for (int si = 0; si < j.sections().size(); si++) {
-                    var sec = j.sections().get(si);
+                for (int si = 0; si < nz(j.sections()).size(); si++) {
+                    var sec = nz(j.sections()).get(si);
                     add(out, "journey.section[" + si + "]", sec.name());
-                    for (int ti = 0; ti < sec.tasks().size(); ti++) {
-                        var task = sec.tasks().get(ti);
+                    for (int ti = 0; ti < nz(sec.tasks()).size(); ti++) {
+                        var task = nz(sec.tasks()).get(ti);
                         add(out, "journey.section[" + si + "].task[" + ti + "]", task.name());
-                        for (int ai = 0; ai < task.actors().size(); ai++) {
+                        for (int ai = 0; ai < nz(task.actors()).size(); ai++) {
                             add(out, "journey.section[" + si + "].task[" + ti + "].actor[" + ai + "]",
-                                task.actors().get(ai));
+                                nz(task.actors()).get(ai));
                         }
                     }
                 }
             }
             case com.sirentide.ir.Mindmap mm -> mindmap(mm.root(), "mindmap", out);
             case com.sirentide.ir.Sankey sk -> {
-                for (int i = 0; i < sk.flows().size(); i++) {
+                for (int i = 0; i < nz(sk.flows()).size(); i++) {
                     // In a sankey the endpoint NAMES are the rendered node labels; there is
                     // no separate label field, so these are display text, not references.
-                    var flow = sk.flows().get(i);
+                    var flow = nz(sk.flows()).get(i);
                     add(out, "sankey.flow[" + i + "].source", flow.source());
                     add(out, "sankey.flow[" + i + "].target", flow.target());
                 }
@@ -209,20 +209,20 @@ public final class LabelSurfaces {
                 // because a missing FIELD is not a missing CASE.
                 add(out, "heatmap.lowLabel", h.lowLabel());
                 add(out, "heatmap.highLabel", h.highLabel());
-                for (int i = 0; i < h.columns().size(); i++) {
-                    add(out, "heatmap.column[" + i + "]", h.columns().get(i));
+                for (int i = 0; i < nz(h.columns()).size(); i++) {
+                    add(out, "heatmap.column[" + i + "]", nz(h.columns()).get(i));
                 }
-                for (int r = 0; r < h.rows().size(); r++) {
-                    var row = h.rows().get(r);
+                for (int r = 0; r < nz(h.rows()).size(); r++) {
+                    var row = nz(h.rows()).get(r);
                     add(out, "heatmap.row[" + r + "]", row.label());
-                    for (int c = 0; c < row.cells().size(); c++) {
-                        add(out, "heatmap.cell[" + r + "][" + c + "]", row.cells().get(c).text());
+                    for (int c = 0; c < nz(row.cells()).size(); c++) {
+                        add(out, "heatmap.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
                     }
                 }
             }
             case com.sirentide.ir.TensorNetwork tn -> {
-                for (int i = 0; i < tn.cores().size(); i++) {
-                    add(out, "tensor.core[" + i + "]", tn.cores().get(i));
+                for (int i = 0; i < nz(tn.cores()).size(); i++) {
+                    add(out, "tensor.core[" + i + "]", nz(tn.cores()).get(i));
                 }
             }
 
@@ -245,18 +245,18 @@ public final class LabelSurfaces {
     /// for {@code Anchor.sanitizeId}, and rejecting them here is the precise failure Marlow
     /// named in ruling point 2.
     private static void flowchart(Flowchart f, String prefix, List<Labeled> out) {
-        for (int i = 0; i < f.nodes().size(); i++) {
-            var n = f.nodes().get(i);
+        for (int i = 0; i < nz(f.nodes()).size(); i++) {
+            var n = nz(f.nodes()).get(i);
             // A node has a real id, so use it: a stable identity a human can find in source.
             add(out, prefix + "node:" + n.id(), n.label());
         }
-        for (int i = 0; i < f.edges().size(); i++) {
-            var e = f.edges().get(i);
+        for (int i = 0; i < nz(f.edges()).size(); i++) {
+            var e = nz(f.edges()).get(i);
             // Edges have no id of their own; from->to is stable and human-locatable.
             add(out, prefix + "edge:" + e.from() + "->" + e.to(), e.label());
         }
-        for (int i = 0; i < f.clusters().size(); i++) {
-            var c = f.clusters().get(i);
+        for (int i = 0; i < nz(f.clusters()).size(); i++) {
+            var c = nz(f.clusters()).get(i);
             add(out, prefix + "cluster:" + c.id(), c.title());   // TITLE only, never c.id()
         }
     }
@@ -264,8 +264,8 @@ public final class LabelSurfaces {
     /// Slice-backed diagrams (pie, timeline, xychart bars) share one shape, so they share
     /// one walker rather than three copies that could drift apart.
     private static void slices(List<com.sirentide.ir.Slice> slices, String kind, List<Labeled> out) {
-        for (int i = 0; i < slices.size(); i++) {
-            var sl = slices.get(i);
+        for (int i = 0; i < nz(slices).size(); i++) {
+            var sl = nz(slices).get(i);
             add(out, kind + "[" + i + "]", sl.label());
             add(out, kind + "[" + i + "].valueLabel", sl.valueLabel());
         }
@@ -278,23 +278,40 @@ public final class LabelSurfaces {
             return;
         }
         add(out, path, node.text());
-        for (int i = 0; i < node.children().size(); i++) {
-            mindmap(node.children().get(i), path + "." + i, out);
+        for (int i = 0; i < nz(node.children()).size(); i++) {
+            mindmap(nz(node.children()).get(i), path + "." + i, out);
         }
     }
 
     /// Matrix display surfaces: column headers (the legend), row labels, and cell text.
     private static void matrix(Matrix m, List<Labeled> out) {
-        for (int i = 0; i < m.columns().size(); i++) {
-            add(out, "matrix.column[" + i + "]", m.columns().get(i));
+        for (int i = 0; i < nz(m.columns()).size(); i++) {
+            add(out, "matrix.column[" + i + "]", nz(m.columns()).get(i));
         }
-        for (int r = 0; r < m.rows().size(); r++) {
-            var row = m.rows().get(r);
+        for (int r = 0; r < nz(m.rows()).size(); r++) {
+            var row = nz(m.rows()).get(r);
             add(out, "matrix.row[" + r + "]", row.label());
-            for (int c = 0; c < row.cells().size(); c++) {
-                add(out, "matrix.cell[" + r + "][" + c + "]", row.cells().get(c).text());
+            for (int c = 0; c < nz(row.cells()).size(); c++) {
+                add(out, "matrix.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
             }
         }
+    }
+
+    /// Null-safe list access. Several IR records keep their list fields NULLABLE by design --
+    /// `XyChart.series`/`seriesNames` are the legacy single-series path, and a null there is a
+    /// legitimate diagram, not a malformed one.
+    ///
+    /// The first version of this walker called `.size()` on them directly. That threw an NPE
+    /// which `Sirentide.render` dutifully caught and degraded to the INERT SHELL -- so a
+    /// perfectly legal chart silently rendered as an empty box. 29 tests across 12 suites went
+    /// red at once, which is the only reason it was not shipped: the vacuity battery used
+    /// fully-populated fixtures and could not see it.
+    ///
+    /// The lesson is narrower than "handle nulls": a validator that DEGRADES THE THING IT
+    /// VALIDATES is worse than no validator, because the failure looks exactly like the
+    /// renderer's own inert-shell degrade.
+    private static <T> List<T> nz(List<T> list) {
+        return list == null ? List.of() : list;
     }
 
     private static void add(List<Labeled> out, String id, String text) {

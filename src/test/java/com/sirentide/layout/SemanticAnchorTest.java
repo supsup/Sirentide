@@ -663,33 +663,65 @@ class SemanticAnchorTest {
         assertEquals(nodeIds.size(), nodeIds.stream().distinct().count(), "core ids are all distinct");
     }
 
-    /// A hostile row/column/cell label can NEVER place an illegal char into an emitted matrix cell
-    /// `<g>` id — the ids are coordinate-derived, so they are structurally immune, and the render path
-    /// also never leaks the raw markup into the output. The security property mirrored for matrix.
+    /// COORDINATE-ID COVERAGE, preserved on a LEGAL label (Marlow's ruling point 4,
+    /// sirentide/671). The original version of this test used a tag-shaped label, which is
+    /// intentionally INVALID under the fail-closed contract — so keeping it here would have
+    /// tested the degrade path while claiming to test anchor charset safety.
+    ///
+    /// The label is deliberately metacharacter-RICH and tag-SHAPED-NOT: `a < b` has a space
+    /// after the bracket, `&` and `"` are ordinary text. All three must survive to the escaping
+    /// sink, and the ids must stay coordinate-derived.
     @Test
-    void aHostileMatrixLabelCannotBreakOutOfTheAnchorAttribute() {
+    void matrixCoordinateIdsSurviveALegalMetacharacterRichLabel() {
         String svg = Sirentide.render(
-            "matrix\n  cols: <script>a\"b, ok\n  \"<img src=x onerror=alert(1)>\" : pass, fail\n");
+            "matrix\n  cols: a < b, ok\n  \"x & y\" : pass, fail\n");
         List<Anc> a = anchors(svg);
-        assertFalse(a.isEmpty(), "the matrix still emits cell anchors: " + a);
+        assertFalse(a.isEmpty(), "a LEGAL metacharacter-rich matrix must still emit anchors: " + a);
         for (Anc x : anchors(svg)) {
             assertTrue(SirentideContract.ANCHOR_ID.matcher(x.id()).matches(),
-                "emitted id stays charset-legal for a hostile label: " + x.id());
+                "emitted id stays charset-legal: " + x.id());
             assertTrue(x.id().matches("r\\d+c\\d+"),
-                "the id is coordinate-derived, never the hostile text: " + x.id());
+                "the id is coordinate-derived, never the label text: " + x.id());
         }
-        // The hostile label never reaches the output as live MARKUP — it only survives XML-escaped
-        // inside the a11y `<desc>` text (`&lt;img … onerror …&gt;`), which is inert. No `<` opens a tag.
-        assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
-        assertFalse(svg.contains("<img"), "no element injection from the label: " + svg);
-        // NON-VACUITY (Lattice sirentide/215 follow-up 1): also assert the hostile
-        // labels ARE present XML-ESCAPED, so this pins "the label went through the
-        // parser + escaping sink" — not merely "no live tag", which a label silently
-        // dropped would also satisfy.
-        assertTrue(svg.contains("&lt;script&gt;"),
-            "the <script> label survives XML-escaped (reached the sink, not dropped): " + svg);
-        assertTrue(svg.contains("&lt;img") && svg.contains("onerror"),
-            "the <img … onerror> label is present but inert-escaped, pinning parser-through-sink coverage: " + svg);
+        // NON-VACUITY: the metacharacters must actually reach the sink XML-ESCAPED, not be
+        // silently dropped — a dropped label would also satisfy "no live tag".
+        assertTrue(svg.contains("&lt;") || svg.contains("&amp;"),
+            "the legal metacharacters reached the escaping sink: " + svg);
+    }
+
+    /// THE FAIL-CLOSED HALF (Marlow's ruling point 3). The same hostile source that used to be
+    /// asserted as a SUCCESS is now intentionally invalid: its display labels are tag-shaped,
+    /// so the render degrades and the diagnostic says so.
+    ///
+    /// This is the end-to-end contract, not a unit check on the detector: parse → validate →
+    /// degrade → classify, through the public API.
+    @Test
+    void aTagShapedMatrixLabelFailsClosedWithAStableIdentityAndBoundedToken() {
+        String source =
+            "matrix\n  cols: <script>a\"b, ok\n  \"<img src=x onerror=alert(1)>\" : pass, fail\n";
+
+        // 1. render() degrades. No cell anchors, because there is no diagram.
+        String svg = Sirentide.render(source);
+        assertTrue(anchors(svg).isEmpty(),
+            "a tag-shaped display label must degrade, not render: " + anchors(svg));
+
+        // 2. the markup never reaches the output in ANY form on the degrade path.
+        assertFalse(svg.contains("<script>"), "no live markup in the degrade: " + svg);
+        assertFalse(svg.contains("<img"), "no element injection in the degrade: " + svg);
+
+        // 3. the diagnostic classifies at PARSE, names a STABLE identity, and bounds the token.
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "tag-shaped display label is a parse-level failure: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(),
+            "must classify at PARSE, not layout — the stage is set before validation runs");
+        String message = result.diagnostics().message();
+        assertTrue(message.contains("matrix."),
+            "the diagnostic names a stable label identity: " + message);
+        // The echoed token is bounded and control-sanitized by LabelMarkup, so a hostile label
+        // cannot pump the diagnostic — which is itself an output surface that gets printed,
+        // logged and pasted.
+        assertTrue(message.length() < 600, "the diagnostic stays bounded: " + message.length());
     }
 
     /// knot (plan sirentide-knot-diagram-primitive): the knot shadow is a 4-valent graph whose strand
