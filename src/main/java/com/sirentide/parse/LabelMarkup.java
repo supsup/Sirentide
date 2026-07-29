@@ -199,11 +199,32 @@ public final class LabelMarkup {
 
     /// Bounds the echo and strips control characters, so a hostile label cannot inject
     /// newlines or terminal escapes into a diagnostic that gets printed, logged or pasted.
+    ///
+    /// ISO CONTROLS ARE NOT THE WHOLE HAZARD (Marlow, sirentide/713). The first version replaced
+    /// only `Character.isISOControl`, which misses Unicode FORMAT controls entirely — they are
+    /// category Cf, not ISO controls. His probe: `offendingTag("x<b \u202Eevil>")` returned the
+    /// token with U+202E RIGHT-TO-LEFT OVERRIDE intact, so a bounded, "sanitized" diagnostic
+    /// could still VISUALLY REORDER the text around it once printed, logged or pasted. The token
+    /// was bounded but not control-sanitized, which is the promise this method's name makes.
+    ///
+    /// Now replaces ISO controls, Unicode format controls (Cf — bidi overrides, zero-width
+    /// joiners, invisible separators) and the LINE/PARAGRAPH separators (Zl/Zp), which are not
+    /// ISO controls either but still break a one-line diagnostic into two.
+    private static boolean isDisplayHazard(char c) {
+        if (Character.isISOControl(c)) {
+            return true;
+        }
+        int type = Character.getType(c);
+        return type == Character.FORMAT
+            || type == Character.LINE_SEPARATOR
+            || type == Character.PARAGRAPH_SEPARATOR;
+    }
+
     private static String sanitize(String tag) {
         StringBuilder out = new StringBuilder(Math.min(tag.length(), MAX_ECHO));
         for (int i = 0; i < tag.length() && out.length() < MAX_ECHO; i++) {
             char c = tag.charAt(i);
-            out.append(Character.isISOControl(c) ? '?' : c);
+            out.append(isDisplayHazard(c) ? '?' : c);
         }
         if (tag.length() > MAX_ECHO) {
             out.append("...");

@@ -842,6 +842,82 @@ class SemanticAnchorTest {
         }
     }
 
+
+    /// MARLOW sirentide/713 HIGH, his exact probe: a late tag rejection must be TERMINAL, never
+    /// re-run through the injected renderer.
+    ///
+    /// Both frames entry points degraded by calling render(dsl, math) again. MathFragmentRenderer
+    /// carries no purity or stable-result contract, so a renderer that FAILS ONCE AND SUCCEEDS ON
+    /// THE RETRY turned a fail-closed rejection back into live output. Measured at ee041959:
+    /// render() returned an 85-byte inert shell while renderFrames() returned 2620 bytes of LIVE
+    /// SVG for the same source — the diagnostic said PARSE_ERROR while the bytes said rendered,
+    /// breaking both the fail-closed invariant and static/frames byte parity.
+    ///
+    /// The retry is still the intended degrade for UNRELATED failures. It is only a REJECTION it
+    /// must not be permitted to reverse.
+    @Test
+    void aLateTagRejectionCannotBeUndoneByTheFramesRetry() {
+        String src = "flowchart TD\n  A[a] -->|$<br/>$| B[b]";
+        // fails on the first invocation, succeeds on every later one
+        java.util.function.Supplier<com.sirentide.api.MathFragmentRenderer> fresh = () -> {
+            java.util.concurrent.atomic.AtomicInteger n =
+                new java.util.concurrent.atomic.AtomicInteger();
+            return (tex, size) -> n.getAndIncrement() == 0
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        };
+
+        String staticSvg = Sirentide.render(src, fresh.get());
+        String frame = Sirentide.renderFrames(src, fresh.get()).get(0);
+        assertEquals(staticSvg, frame,
+            "static/frames BYTE PARITY: the frames path must not re-run the renderer and escape "
+                + "the inert shell the static path produced");
+
+        var framesDiag = Sirentide.renderFramesWithDiagnostics(src, fresh.get());
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+            framesDiag.diagnostics().outcome(),
+            "the diagnostic must still classify as PARSE_ERROR");
+        assertEquals(staticSvg, framesDiag.frames().get(0),
+            "a PARSE_ERROR diagnostic accompanied by LIVE SVG is the exact contradiction this "
+                + "pins: the bytes must be the inert shell, not a second successful render");
+    }
+
+
+    /// MARLOW sirentide/713 MEDIUM, his exact probe. U+202E RIGHT-TO-LEFT OVERRIDE is category
+    /// Cf (FORMAT), NOT an ISO control, so it survived a "control-sanitized" diagnostic and could
+    /// visually reorder the text around it once printed, logged or pasted. The token was bounded
+    /// but not sanitized, which is the promise the method's name makes.
+    ///
+    /// Pinned through the PUBLIC diagnostic surface, not just the helper, because that is where a
+    /// human or an agent actually meets the bytes.
+    @Test
+    void unicodeFormatControlsDoNotSurviveIntoThePublicDiagnostic() {
+        String bidi = "\u202E";                                  // RIGHT-TO-LEFT OVERRIDE (Cf)
+        String zwj  = "\u200D";                                  // ZERO WIDTH JOINER (Cf)
+        // NOTE: U+2028 LINE SEPARATOR is deliberately NOT in this loop. Measured: a label
+        // `x<b \u2028evil>` returns OK, because the separator breaks the tag-name grammar so the
+        // scanner never classifies it as a tag and there is no diagnostic to sanitize. sanitize()
+        // still replaces Zl/Zp defensively (a tag could carry one elsewhere), but asserting a
+        // PARSE_ERROR here would be asserting a behaviour the parser does not have. Raised with
+        // Marlow separately rather than decided here.
+        for (String hazard : java.util.List.of(bidi, zwj)) {
+            String src = "flowchart TD\n  A[x<b " + hazard + "evil>]";
+            var diag = Sirentide.renderWithDiagnostics(src);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, diag.diagnostics().outcome(),
+                "the tag itself must still be refused");
+            assertFalse(diag.diagnostics().toString().contains(hazard),
+                "a display hazard (U+" + Integer.toHexString(hazard.codePointAt(0)).toUpperCase()
+                    + ") must not survive into the public diagnostic: "
+                    + diag.diagnostics());
+        }
+        // POSITIVE CONTROL: ordinary text in the offending token is PRESERVED, so the
+        // replacement is targeted rather than a blanket scrub that would make the diagnostic
+        // useless for identifying what was rejected.
+        var plain = Sirentide.renderWithDiagnostics("flowchart TD\n  A[x<bEVIL>]");
+        assertTrue(plain.diagnostics().toString().contains("bEVIL"),
+            "the offending token must remain identifiable: " + plain.diagnostics());
+    }
+
     /// CONTAINMENT (Marlow requirement 3): no production glyph path may reach the outline
     /// primitive without passing the gate. textPathD is the only caller of the private
     /// appendGlyph and the only production caller of sfnt.glyphContours, so the guard cannot
@@ -853,24 +929,99 @@ class SemanticAnchorTest {
         try (var walk = java.nio.file.Files.walk(root)) {
             for (java.nio.file.Path f : walk.filter(x -> x.toString().endsWith(".java")).toList()) {
                 String src = java.nio.file.Files.readString(f);
-                boolean isFontMetrics = f.getFileName().toString().equals("FontMetrics.java");
-                boolean isSfnt = f.getFileName().toString().equals("SfntMetrics.java");
-                if (!isFontMetrics && !isSfnt && src.contains("glyphContours")) {
-                    offenders.add(f + " calls glyphContours outside the guarded primitive");
+                String name = f.getFileName().toString();
+                if (!name.equals("FontMetrics.java") && !name.equals("SfntMetrics.java")
+                        && src.contains("glyphContours")) {
+                    offenders.add(f + " uses glyphContours outside the guarded primitive");
                 }
             }
         }
+
+        // IN-FILE CONTAINMENT (Marlow sirentide/713 MEDIUM). The first version EXCLUDED
+        // FontMetrics.java wholesale and then asserted two unrelated substrings were present --
+        // so a SECOND method inside FontMetrics could call appendGlyph/glyphContours with no
+        // guard and this test would still pass. That is precisely the future bypass requirement 3
+        // exists to turn red for, and the exclusion made it structurally unable to.
+        //
+        // Now: every call site of appendGlyph and every non-recursive glyphContours use inside
+        // FontMetrics must sit in a method that guards first. Derived by locating each call and
+        // walking back to its enclosing method declaration, rather than assuming there is one.
+        String fm = java.nio.file.Files.readString(root.resolve("com/sirentide/font/FontMetrics.java"));
+        java.util.List<String> callers = enclosingMethodsOfCalls(fm,
+            java.util.List.of("appendGlyph(", "sfnt.glyphContours("));
+        assertFalse(callers.isEmpty(),
+            "the scan must find at least one glyph-conversion call, or it is vacuous");
+        for (String m : callers) {
+            if (m.equals("appendGlyph")) {
+                continue;   // the private primitive itself; its callers are what must guard
+            }
+            assertTrue(guardsBeforeGlyphWork(fm, m),
+                "method " + m + " reaches glyph conversion without calling guardPlainGlyphs "
+                    + "first -- an unguarded in-class path to plain-glyph emission");
+        }
         assertEquals(java.util.List.of(), offenders,
-            "any direct use of the glyph outline primitive outside FontMetrics would be an "
+            "any use of the glyph outline primitive outside FontMetrics/SfntMetrics would be an "
                 + "unguarded path to plain-glyph emission");
-        // POSITIVE CONTROL for the scan itself: the guarded primitive must still be found,
-        // or this test would pass simply because the search was broken.
-        String fm = java.nio.file.Files.readString(
-            root.resolve("com/sirentide/font/FontMetrics.java"));
-        assertTrue(fm.contains("guardPlainGlyphs(text)"),
-            "the gate must be present in textPathD, or this containment test is vacuous");
-        assertTrue(fm.contains("sfnt.glyphContours"),
-            "the scan must be able to see glyphContours at all");
+    }
+
+    /// Names of the methods that CONTAIN any of the given call snippets.
+    private static java.util.List<String> enclosingMethodsOfCalls(
+            String src, java.util.List<String> snippets) {
+        java.util.List<String> found = new java.util.ArrayList<>();
+        java.util.regex.Matcher decl = java.util.regex.Pattern
+            .compile("(?m)^\\s*(?:public|private|protected)?\\s*(?:static\\s+)?[\\w<>\\[\\], .]+?\\s+(\\w+)\\s*\\([^)]*\\)\\s*\\{")
+            .matcher(src);
+        java.util.List<int[]> spans = new java.util.ArrayList<>();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        while (decl.find()) {
+            spans.add(new int[] {decl.end() - 1, bodyEnd(src, decl.end() - 1)});
+            names.add(decl.group(1));
+        }
+        for (int i = 0; i < spans.size(); i++) {
+            String body = src.substring(spans.get(i)[0], spans.get(i)[1]);
+            for (String snip : snippets) {
+                if (body.contains(snip) && !found.contains(names.get(i))) {
+                    found.add(names.get(i));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// True when `guardPlainGlyphs` appears in the named method BEFORE its first glyph-conversion
+    /// call -- ordering matters, since a guard after the contours are appended guards nothing.
+    private static boolean guardsBeforeGlyphWork(String src, String method) {
+        java.util.regex.Matcher decl = java.util.regex.Pattern
+            .compile("(?m)^\\s*(?:public|private|protected)?\\s*(?:static\\s+)?[\\w<>\\[\\], .]+?\\s+"
+                + java.util.regex.Pattern.quote(method) + "\\s*\\([^)]*\\)\\s*\\{")
+            .matcher(src);
+        if (!decl.find()) {
+            return false;
+        }
+        String body = src.substring(decl.end() - 1, bodyEnd(src, decl.end() - 1));
+        int guard = body.indexOf("guardPlainGlyphs(");
+        int work = Math.min(idx(body, "appendGlyph("), idx(body, "sfnt.glyphContours("));
+        return guard >= 0 && guard < work;
+    }
+
+    private static int idx(String s, String needle) {
+        int i = s.indexOf(needle);
+        return i < 0 ? Integer.MAX_VALUE : i;
+    }
+
+    private static int bodyEnd(String src, int openBrace) {
+        int depth = 0;
+        for (int i = openBrace; i < src.length(); i++) {
+            if (src.charAt(i) == '{') {
+                depth++;
+            } else if (src.charAt(i) == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return src.length();
     }
 
     /// Marlow's BLOCKER at sirentide/693, as public-API regressions with a NON-NULL renderer.

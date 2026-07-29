@@ -191,6 +191,22 @@ public final class Sirentide {
             }
             return java.util.List.copyOf(frames);
         } catch (RuntimeException | StackOverflowError e) {
+            // A LATE TAG REJECTION IS TERMINAL — never retried (Marlow, sirentide/713 HIGH).
+            //
+            // The degrade below re-invokes render(dsl, math), which calls the injected
+            // MathFragmentRenderer AGAIN. MathFragmentRenderer carries no purity or
+            // stable-result contract, so a renderer that fails once and succeeds on the retry
+            // turns a fail-closed rejection back into live output. Measured at ee041959 with a
+            // renderer returning empty then a valid fragment: render() gave an 85-byte inert
+            // shell while renderFrames() gave 2620 bytes of LIVE SVG for the same source —
+            // breaking both the fail-closed invariant and the static/frames byte parity the
+            // plan requires.
+            //
+            // The retry remains the intended degrade for UNRELATED failures; it is only a
+            // rejection it must not be allowed to reverse.
+            if (e instanceof com.sirentide.parse.LabelMarkupException) {
+                return java.util.List.of(INERT_SHELL);
+            }
             // Never throw (DESIGN §6/§7): degrade to a single frame == the guarded static render. A
             // malformed/no-seq source thus always yields exactly [render(dsl, math)].
             return java.util.List.of(render(dsl, math));
@@ -295,6 +311,13 @@ public final class Sirentide {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
             // from the caught throwable + the stage it escaped, same as renderWithDiagnostics.
+            // Same terminal rule as renderFrames (Marlow sirentide/713): a late tag rejection
+            // must NOT be re-run through the injected renderer, or a non-pure renderer that
+            // succeeds on the second call converts PARSE_ERROR + inert shell into PARSE_ERROR
+            // + live SVG -- the diagnostic says rejected while the bytes say rendered.
+            if (e instanceof com.sirentide.parse.LabelMarkupException) {
+                return new FramesResult(java.util.List.of(INERT_SHELL), classifyFailure(stage, e));
+            }
             return new FramesResult(java.util.List.of(render(dsl, math)), classifyFailure(stage, e));
         }
     }
