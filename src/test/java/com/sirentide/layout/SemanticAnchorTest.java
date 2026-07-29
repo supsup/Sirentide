@@ -705,6 +705,61 @@ class SemanticAnchorTest {
         }
     }
 
+    /// THE CAPABILITY MAP, ASSERTED BEHAVIOURALLY, one row per distinct emitted label surface.
+    ///
+    /// Three granularities failed before this one: per diagram TYPE, then per LAYOUT FILE, then
+    /// a source-scan for `MathLabel` in that file. Marlow's sirentide/697 killed the third: a
+    /// single layout emits several surfaces through DIFFERENT paths, so a file-level boolean
+    /// cannot describe it. FlowchartLayout routes node/edge through MathLabel but emits cluster
+    /// TITLES via FONT directly; SequenceLayout routes actors/messages through MathLabel but
+    /// emits notes, blocks and dividers via FONT.
+    ///
+    /// So this stops describing the code and INTERROGATES it. Every row feeds `$<br/>$` through
+    /// the public API with a NON-NULL renderer:
+    ///
+    ///   PLAIN surface  -> PARSE_ERROR   (the dollars are literal glyphs; the tag must fail closed)
+    ///   MATH surface   -> OK            (a real math run, legitimately exempt)
+    ///
+    /// A behavioural probe cannot pass on bookkeeping. The previous guard asserted my own map
+    /// against my own source-scan and agreed with itself while two bypasses were live.
+    @Test
+    void everyEmittedLabelSurfaceBehavesAsItsEmitterImplies() {
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> null;
+        record Row(String surface, boolean mathAware, String source) {}
+        List<Row> rows = List.of(
+            // --- PLAIN: emitter is FONT.runWidth/textPathD/ellipsize, no MathLabel ---
+            new Row("config caption",      false, "%% caption: $<br/>$\npie\n \"A\" : 1"),
+            new Row("flowchart cluster",   false, "flowchart TD\n  subgraph grp [$<br/>$]\n    A[a] --> B[b]\n  end"),
+            // state transition labels reuse FlowchartLayout's EDGE path (MathLabel), and state
+            // DISPLAY NAMES reuse the node path -- so both are math-aware, and the plain arm
+            // for this type is proved by the flowchart cluster row above (same emitter).
+            new Row("state display name",  true,  "state\n  Idle : $<br/>$\n  Idle --> Run"),
+            new Row("state transition",    true,  "state\n  Idle --> Run : $<br/>$"),
+            new Row("sequence note",       false, "sequence\n  Alice ->> Bob : hi\n  note over Alice,Bob : $<br/>$"),
+            new Row("gitgraph commit",     false, "gitGraph\n commit id: \"$<br/>$\""),
+            new Row("mindmap node",        false, "mindmap\n  root $<br/>$"),
+            new Row("journey title",       false, "journey\n  title $<br/>$\n  section Go\n    Make tea: 5: Me"),
+            new Row("sankey endpoint",     false, "sankey\n  $<br/>$,Electricity,25\n"),
+            new Row("heatmap column",      false, "heatmap\ncols: $<br/>$\n\"row\" : 1"),
+            new Row("tensor core",         false, "tensornetwork\n  mps $<br/>$ B\n"),
+            // --- MATH: emitter routes through MathLabel, so a real math run is exempt ---
+            new Row("flowchart node",      true,  "flowchart TD\n  A[$<br/>$] --> B[b]"),
+            new Row("flowchart edge",      true,  "flowchart TD\n  A[a] -->|$<br/>$| B[b]"),
+            new Row("sequence message",    true,  "sequence\n  Alice ->> Bob : $<br/>$"),
+            new Row("sequence actor",      true,  "sequence\n  $<br/>$ ->> Bob : hi"));
+
+        for (Row r : rows) {
+            var got = Sirentide.renderWithDiagnostics(r.source(), math).diagnostics().outcome();
+            var want = r.mathAware()
+                ? com.sirentide.api.Outcome.OK : com.sirentide.api.Outcome.PARSE_ERROR;
+            assertEquals(want, got, r.surface() + " is "
+                + (r.mathAware() ? "MATH-aware (emits through MathLabel), so a real $…$ run is "
+                    + "exempt and must render" : "PLAIN (emits through FONT directly), so $…$ is "
+                    + "literal there and the tag must fail closed")
+                + ". Got " + got + " for: " + r.source());
+        }
+    }
+
     /// Marlow's BLOCKER at sirentide/693, as public-API regressions with a NON-NULL renderer.
     ///
     /// Journey, Sankey, Heatmap and TensorNetwork render labels as plain glyph paths -- three

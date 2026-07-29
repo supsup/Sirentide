@@ -135,16 +135,16 @@ public final class LabelSurfaces {
                     add(out, "sequence.message[" + i + "]", nz(sq.messages()).get(i).label());
                 }
                 for (int i = 0; i < nz(sq.notes()).size(); i++) {
-                    add(out, "sequence.note[" + i + "]", nz(sq.notes()).get(i).text());
+                    addPlain(out, "sequence.note[" + i + "]", nz(sq.notes()).get(i).text());
                 }
                 for (int i = 0; i < nz(sq.blocks()).size(); i++) {
                     // .kind is a keyword (alt/opt/loop); .label is the author's text.
                     var blk = nz(sq.blocks()).get(i);
-                    add(out, "sequence.block[" + i + "]", blk.label());
+                    addPlain(out, "sequence.block[" + i + "]", blk.label());
                     // Dividers inside a block carry their own author text -- also missed on
                     // the first pass, same cause as the heatmap legend.
                     for (int d = 0; d < nz(blk.dividers()).size(); d++) {
-                        add(out, "sequence.block[" + i + "].divider[" + d + "]",
+                        addPlain(out, "sequence.block[" + i + "].divider[" + d + "]",
                             nz(blk.dividers()).get(d).label());
                     }
                 }
@@ -290,7 +290,7 @@ public final class LabelSurfaces {
         }
         for (int i = 0; i < nz(f.clusters()).size(); i++) {
             var c = nz(f.clusters()).get(i);
-            add(out, prefix + "cluster:" + c.id(), c.title());   // TITLE only, never c.id()
+            addPlain(out, prefix + "cluster:" + c.id(), c.title());  // TITLE only, never c.id()
         }
     }
 
@@ -371,10 +371,28 @@ public final class LabelSurfaces {
         addLabel(out, id, text, true);
     }
 
-    /// PLAIN surface: no `MathLabel` in its layout, so `$…$` is literal glyph text there and
-    /// the whole authored string must be scanned. Restricted to the four layouts that document
-    /// themselves as plain -- widening this set silently re-opens the dollar-wrap bypass,
-    /// narrowing it rejects valid formulas.
+    /// PLAIN surface: its EMITTER does not route through `MathLabel`, so `$…$` is literal
+    /// glyph text there and the whole authored string must be scanned.
+    ///
+    /// ## Capability is per SURFACE, not per LAYOUT -- the third granularity I got wrong
+    ///
+    /// I first classified per DIAGRAM TYPE, then per LAYOUT FILE. Both are too coarse, and
+    /// Marlow showed why at sirentide/697: a single layout emits several label surfaces
+    /// through DIFFERENT paths.
+    ///
+    ///  - `FlowchartLayout` routes node and edge labels through `MathLabel`, but
+    ///    `emitClusterFrame` emits the cluster TITLE via `FONT.runWidth`/`textPathD` only.
+    ///  - `SequenceLayout` routes actor heads and message labels through `MathLabel`, but
+    ///    notes, block labels and divider labels go through `FONT.ellipsize`/`runWidth`/
+    ///    `textPathD`.
+    ///
+    /// So `subgraph grp [$<br/>$]` and a `note over … : $<br/>$` both returned OK with the
+    /// math renderer invoked ZERO times -- the dollar-wrap bypass, on surfaces inside layouts
+    /// I had classified wholesale as math-aware.
+    ///
+    /// The lesson is not the two layouts. A file-level boolean cannot describe a file with
+    /// mixed behaviour, and my guard could not see it because each fixture exercised ONE
+    /// prefix per layout and I let that stand for the layout.
     private static void addPlain(List<Labeled> out, String id, String text) {
         addLabel(out, id, text, false);
     }

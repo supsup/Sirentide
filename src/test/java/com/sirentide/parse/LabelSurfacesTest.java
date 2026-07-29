@@ -134,7 +134,17 @@ class LabelSurfacesTest {
             new Case("Heatmap", new com.sirentide.ir.Heatmap(
                 List.of(sentinel), List.of(), null, "lo", "hi")),
             new Case("TensorNetwork", new com.sirentide.ir.TensorNetwork(
-                List.of(sentinel), false, null)));
+                List.of(sentinel), false, null)),
+            // StateDiagram was in NEITHER this battery nor the capability map. Marlow emptied
+            // its case body at sirentide/697 and every test stayed green -- removing all state
+            // labels from validation while the suite advertised itself as exhaustive.
+            //
+            // It could not be caught behaviourally either: state's surfaces are math-aware, so
+            // a probe expecting OK is indistinguishable from "no labels collected at all".
+            // Only a NON-VACUITY assertion separates those two, which is what this row is.
+            new Case("StateDiagram", new com.sirentide.ir.StateDiagram(
+                new Flowchart(List.of(new FlowNode("s1", sentinel, "rect", null)),
+                    List.of(), "TD", null, null, List.of()))));
 
         for (Case c : cases) {
             List<String> texts = LabelSurfaces.of(c.diagram()).stream()
@@ -155,6 +165,18 @@ class LabelSurfacesTest {
         assertTrue(LabelSurfaces.of(new com.sirentide.ir.Knot("trefoil", null)).isEmpty());
     }
 
+    /// SUPERSEDED MODEL, kept as a record of three wrong granularities.
+    ///
+    /// This test asserted a per-LAYOUT-FILE partition by scanning each layout's source for
+    /// `MathLabel`. Marlow retired that at sirentide/697: a single layout emits several label
+    /// surfaces through different paths, so a file-level boolean cannot describe it, and this
+    /// guard agreed with my own map while two bypasses were live.
+    ///
+    /// The live capability contract now lives in
+    /// `SemanticAnchorTest.everyEmittedLabelSurfaceBehavesAsItsEmitterImplies`, which probes
+    /// each surface through the PUBLIC API with a non-null renderer instead of describing the
+    /// code. What remains here is non-vacuity: that each type yields labels at all.
+    ///
     /// THE CAPABILITY GUARD, rebuilt as an EXHAUSTIVE PARTITION.
     ///
     /// The previous version asserted four named plain layouts and two named math layouts, and
