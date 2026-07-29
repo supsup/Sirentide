@@ -3,6 +3,7 @@ package com.sirentide;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Outcome;
@@ -64,13 +65,26 @@ class UnsupportedTokenDiagnosticsTest {
         assertDegradesNaming("flowchart TD\nA ~~~ B\n", "~~~", 2);
     }
 
+    /**
+     * PRECEDENCE (sirentide/725/726): a `<br/>` INSIDE a label span is CONTENT, and content
+     * belongs to the emission-point tag fence — it still FAILS CLOSED (inert shell), but it
+     * speaks through the fence (PARSE_ERROR + label identity), not through this detector's
+     * token+line naming, and the parse-level detector deliberately does NOT claim it (a
+     * parse-level claim on content refused a `$<br/>$` run a live math renderer legally
+     * consumes). Marlow's 726 ruling: token+line is load-bearing for STRUCTURAL syntax only.
+     */
     @Test
-    void brTagInLabelDegradesAndIsNamed() {
-        // A `<br/>` in a label baked as literal glyphs rather than a line break.
-        assertDegradesNaming("flowchart TD\nA[Line1<br/>Line2] --> B[End]\n", "<br/>", 2);
-        // The `<br>` and `<br />` spellings trip too.
-        assertTrue(DslParser.parse("flowchart TD\nA[a<br>b] --> B\n") instanceof Empty);
-        assertTrue(DslParser.parse("flowchart TD\nA[a<br />b] --> B\n") instanceof Empty);
+    void brTagInLabelFailsClosedThroughTheFenceNotTheDetector() {
+        String dsl = "flowchart TD\nA[Line1<br/>Line2] --> B[End]\n";
+        assertNull(DslParser.detectUnsupportedConstruct(dsl),
+            "in-label br is content — the parse detector must not claim it");
+        String rendered = Sirentide.render(dsl);
+        assertFalse(rendered.contains("<path"), "the fence still fails it closed: " + rendered);
+        RenderResult r = Sirentide.renderWithDiagnostics(dsl);
+        assertEquals(rendered, r.svg());
+        assertNotEquals(Outcome.UNSUPPORTED_CONSTRUCT, r.diagnostics().outcome(),
+            "classification belongs to the fence, not the token detector");
+        assertNotEquals(Outcome.OK, r.diagnostics().outcome(), "and it must not read as success");
     }
 
     /// Marlow sirentide/706 Finding 2 (HIGH): a BARE endpoint is a visible label too. `A<br/>B --> C`
@@ -83,13 +97,19 @@ class UnsupportedTokenDiagnosticsTest {
     }
 
     /// The safe-comparison control Finding 2 asked for: a bare `<` that is NOT a br-tag shape stays
-    /// legal at top level (matchesBrTag requires `<br` + optional `/` + `>`), so widening the walk to
-    /// the whole line cannot regress ordinary comparison prose. `<brave>` guards the near-miss too.
+    /// legal at top level (matchesBrTag requires `<br` + optional `/` + `>`), so the structural walk
+    /// cannot regress ordinary comparison prose.
     @Test
     void bareAngleBracketComparisonsStayLegalOutsideSpans() {
         assertRendersReal("flowchart TD\na<b --> C\n");
         assertRendersReal("flowchart TD\nA[x < y] --> B\n");
-        assertRendersReal("flowchart TD\nA<brave>B --> C\n");
+        // Combined semantics (725/726): the `<brave>` near-miss never trips THIS detector,
+        // but as a bare-endpoint label it is tag-shaped emitted content — the fence's call.
+        String brave = "flowchart TD\nA<brave>B --> C\n";
+        assertNull(DslParser.detectUnsupportedConstruct(brave),
+            "near-miss words are not the token detector's claim");
+        assertNotEquals(Outcome.UNSUPPORTED_CONSTRUCT,
+            Sirentide.renderWithDiagnostics(brave).diagnostics().outcome());
     }
 
     /// Marlow sirentide/706 Finding 3 (MEDIUM), line-provenance half: `detectUnsupportedConstruct`
@@ -160,10 +180,18 @@ class UnsupportedTokenDiagnosticsTest {
 
     @Test
     void lessThanAndBraveWordInLabelDoNotTripBrDetector() {
-        // A bare `<` (not `<br…>`) and a `<brave>`-style word (no `/`/`>` right after `br`) are legal
-        // label content — only the precise `<br>`/`<br/>`/`<br />` tag trips.
+        // A bare `<` (not `<br…>`) stays legal everywhere — matchesBrTag is precise.
         assertRendersReal("flowchart TD\nA[a < b] --> B[End]\n");
-        assertRendersReal("flowchart TD\nA[<brave> heart] --> B[End]\n");
+        // Combined semantics (725/726): a `<brave>`-style WORD never trips THIS detector
+        // (no UNSUPPORTED_CONSTRUCT claim) — but it IS tag-shaped markup, so the emission
+        // fence fails it closed. Both halves pinned: detector silence + fence authority.
+        String brave = "flowchart TD\nA[<brave> heart] --> B[End]\n";
+        assertNull(DslParser.detectUnsupportedConstruct(brave),
+            "a near-miss word is not this detector's claim");
+        assertNotEquals(Outcome.UNSUPPORTED_CONSTRUCT,
+            Sirentide.renderWithDiagnostics(brave).diagnostics().outcome());
+        assertFalse(Sirentide.render(brave).contains("<path"),
+            "tag-shaped markup fails closed through the fence");
     }
 
     // -- Marlow sirentide/712 HIGH 2: the detector's boundary is VISIBLE labels, not dropped rows --

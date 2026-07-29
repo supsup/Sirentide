@@ -1076,12 +1076,17 @@ public final class DslParser {
             } else if (c == '~' && i + 2 < n && line.charAt(i + 1) == '~' && line.charAt(i + 2) == '~') {
                 return "~~~";                       // a top-level `~~~` — invisible link
             }
-            // A `<br…>` line-break tag ANYWHERE on the statement line bakes as literal glyphs today —
-            // inside a span it is label content, and at TOP LEVEL a bare endpoint (`A<br/>B --> C`)
-            // is a parser-accepted visible label too (Marlow sirentide/706 Finding 2: the span was
-            // never the boundary that mattered). matchesBrTag is precise enough to widen safely:
-            // `a<b`, `x < y` and `<brave>` never trip.
-            if (matchesBrTag(line, i)) {
+            // A `<br…>` line-break tag trips ONLY at STRUCTURAL (top-level) positions — a bare
+            // endpoint (`A<br/>B --> C`, Marlow sirentide/706 Finding 2) or stray top-level
+            // token — where no later classifier will ever run, so token+line naming here is
+            // load-bearing. INSIDE a bracket/pipe span it is label CONTENT, and content belongs
+            // to the emission-point tag fence (LabelMarkup + guardPlainGlyphs): the fence checks
+            // the string that is ACTUALLY emitted (TOCTOU-free), speaks with the label identity,
+            // and correctly exempts a `$…$` run consumed by a live math renderer — a parse-level
+            // claim on content refused that exact legal case. Precedence agreed at
+            // sirentide/725 (proposal) and 726 (Marlow's typed ruling). matchesBrTag stays
+            // precise: `a<b` and `x < y` never trip.
+            if (bracketClose == 0 && !inPipe && matchesBrTag(line, i)) {
                 return "<br/>";
             }
             i++;
