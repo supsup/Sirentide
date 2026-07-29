@@ -165,80 +165,29 @@ class LabelSurfacesTest {
         assertTrue(LabelSurfaces.of(new com.sirentide.ir.Knot("trefoil", null)).isEmpty());
     }
 
-    /// SUPERSEDED MODEL, kept as a record of three wrong granularities.
+    /// REMOVED: the per-layout-file capability map.
     ///
-    /// This test asserted a per-LAYOUT-FILE partition by scanning each layout's source for
-    /// `MathLabel`. Marlow retired that at sirentide/697: a single layout emits several label
-    /// surfaces through different paths, so a file-level boolean cannot describe it, and this
-    /// guard agreed with my own map while two bypasses were live.
+    /// It asserted that a type's `mathAware` matched whether its LAYOUT FILE contained the
+    /// string `MathLabel`. Marlow retired it in two steps and the second is the instructive
+    /// one:
     ///
-    /// The live capability contract now lives in
+    ///  - sirentide/697: a single layout emits several surfaces through different paths, so a
+    ///    file-level boolean cannot describe it (Flowchart cluster titles, Sequence notes).
+    ///  - sirentide/699: capability can depend on RUNTIME MODE. This test sampled a
+    ///    `Pie(legend=true)`, saw `MathLabel` somewhere in PieLayout.java, and CERTIFIED the
+    ///    legend label math-aware -- while `layoutLegend` never touches the math renderer.
+    ///    A load-bearing false green, produced by the test that existed to prevent exactly
+    ///    that.
+    ///
+    /// It is deleted rather than repaired because its METHOD was the defect: it described the
+    /// source instead of exercising the behaviour, so it could only ever agree with whatever
+    /// I had written. The live contract is
     /// `SemanticAnchorTest.everyEmittedLabelSurfaceBehavesAsItsEmitterImplies`, which probes
-    /// each surface through the PUBLIC API with a non-null renderer instead of describing the
-    /// code. What remains here is non-vacuity: that each type yields labels at all.
+    /// each surface AND MODE through the public API with a non-null renderer.
     ///
-    /// THE CAPABILITY GUARD, rebuilt as an EXHAUSTIVE PARTITION.
-    ///
-    /// The previous version asserted four named plain layouts and two named math layouts, and
-    /// Marlow's verdict names exactly why that was worthless (sirentide/693): "checking only
-    /// six names repeats the incompleteness problem". It could not see the four layouts that
-    /// were ALREADY misclassified -- Journey, Sankey, Heatmap, TensorNetwork -- because they
-    /// were in neither list. A spot-check cannot find what it does not enumerate.
-    ///
-    /// So this derives the answer instead of sampling it: for EVERY label-bearing diagram
-    /// type, the surfaces LabelSurfaces produces must carry `mathAware` iff that type's layout
-    /// routes through `MathLabel`. A new diagram type, or a layout that starts or stops
-    /// rendering math, breaks this test rather than silently inheriting a default.
-    ///
-    /// I had this derivation available when I wrote the six-name version -- I had already
-    /// scanned which layouts use MathLabel -- and hand-enumerated anyway. That is the whole
-    /// error: a derivation in hand, and a list shipped.
-    @Test
-    @DisplayName("EXHAUSTIVE: every label-bearing type's mathAware matches its layout's MathLabel use")
-    void everyLabelBearingTypeMatchesItsLayoutMathCapability() throws Exception {
-        java.nio.file.Path dir = java.nio.file.Path.of("src/main/java/com/sirentide/layout");
-        assertTrue(java.nio.file.Files.isDirectory(dir), "layout sources readable: " + dir);
-
-        // surface-id prefix -> the layout that renders it. Every entry is checked against that
-        // layout's ACTUAL MathLabel usage, so this map cannot drift silently: if it is wrong,
-        // the assertion below fails.
-        record Surface(String idPrefix, String layout, Diagram sample) {}
-        List<Surface> surfaces = List.of(
-            new Surface("node:",     "FlowchartLayout",      reproFlowchart()),
-            new Surface("matrix.",   "MatrixLayout",         sampleMatrix()),
-            new Surface("journey.",  "JourneyLayout",        sampleJourney()),
-            new Surface("sankey.",   "SankeyLayout",         sampleSankey()),
-            new Surface("heatmap.",  "HeatmapLayout",        sampleHeatmap()),
-            new Surface("tensor.",   "TensorNetworkLayout",  sampleTensor()),
-            new Surface("gitgraph.", "GitGraphLayout",       sampleGitGraph()),
-            new Surface("mindmap",   "MindmapLayout",        sampleMindmap()),
-            new Surface("pie",       "PieLayout",            samplePie()),
-            new Surface("timeline",  "TimelineLayout",       sampleTimeline()),
-            new Surface("gantt.",    "GanttLayout",          sampleGantt()),
-            new Surface("sequence.", "SequenceLayout",       sampleSequence()),
-            new Surface("quadrant.", "QuadrantChartLayout",  sampleQuadrant()),
-            new Surface("class",     "ClassDiagramLayout",   sampleClassDiagram()),
-            new Surface("er",        "ErDiagramLayout",      sampleErDiagram()),
-            new Surface("xychart",   "XyChartLayout",        sampleXyChart()));
-
-        for (Surface sf : surfaces) {
-            boolean layoutRendersMath = java.nio.file.Files
-                .readString(dir.resolve(sf.layout() + ".java")).contains("MathLabel");
-            List<LabelSurfaces.Labeled> got = LabelSurfaces.of(sf.sample()).stream()
-                .filter(l -> l.id().startsWith(sf.idPrefix())).toList();
-            assertFalse(got.isEmpty(),
-                sf.layout() + ": fixture produced no '" + sf.idPrefix() + "' labels, so this "
-                    + "row proves nothing -- the map or the fixture is wrong");
-            for (LabelSurfaces.Labeled l : got) {
-                assertEquals(layoutRendersMath, l.mathAware(),
-                    l.id() + " is rendered by " + sf.layout() + ", which "
-                        + (layoutRendersMath ? "DOES" : "does NOT") + " route through MathLabel, "
-                        + "so mathAware must be " + layoutRendersMath
-                        + ". Misclassifying plain as math re-opens the dollar-wrap bypass; "
-                        + "misclassifying math as plain deletes valid formulas.");
-            }
-        }
-    }
+    /// What remains here is non-vacuity: that each type yields labels at all. That is the one
+    /// property a behavioural probe cannot supply for a math-aware surface, because there OK
+    /// is the same observable for "correctly exempt" and "never validated".
 
     private static Diagram sampleMatrix() {
         return new com.sirentide.ir.Matrix(List.of("$c$"),

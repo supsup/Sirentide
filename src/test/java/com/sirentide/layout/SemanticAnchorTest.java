@@ -742,6 +742,12 @@ class SemanticAnchorTest {
             new Row("sankey endpoint",     false, "sankey\n  $<br/>$,Electricity,25\n"),
             new Row("heatmap column",      false, "heatmap\ncols: $<br/>$\n\"row\" : 1"),
             new Row("tensor core",         false, "tensornetwork\n  mps $<br/>$ B\n"),
+            // --- PIE: capability depends on RUNTIME MODE, not just surface (sirentide/699).
+            // Both sides of the 15-degree THIN_SLICE boundary are probed, because the mirror
+            // of that constant in LabelSurfaces is the drift-prone part.
+            new Row("pie legend",          false, "pie legend\n  \"$<br/>$\" : 60\n  \"Rest\" : 40"),
+            new Row("pie thin slice",      false, "pie\n  \"$<br/>$\" : 1\n  \"Rest\" : 99"),
+            new Row("pie comfortable",     true,  "pie\n  \"$<br/>$\" : 60\n  \"Rest\" : 40"),
             // --- MATH: emitter routes through MathLabel, so a real math run is exempt ---
             new Row("flowchart node",      true,  "flowchart TD\n  A[$<br/>$] --> B[b]"),
             new Row("flowchart edge",      true,  "flowchart TD\n  A[a] -->|$<br/>$| B[b]"),

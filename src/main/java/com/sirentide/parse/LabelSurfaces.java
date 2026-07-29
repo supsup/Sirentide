@@ -110,7 +110,7 @@ public final class LabelSurfaces {
             case StateDiagram s -> flowchart(s.graph(), "state.", out);
             case Matrix m -> matrix(m, out);
 
-            case com.sirentide.ir.Pie p -> slices(nz(p.slices()), "pie", out);
+            case com.sirentide.ir.Pie p -> pie(p, out);
             case com.sirentide.ir.Timeline t -> slices(nz(t.events()), "timeline", out);
             case com.sirentide.ir.XyChart x -> {
                 slices(nz(x.bars()), "xychart.bar", out);
@@ -293,6 +293,53 @@ public final class LabelSurfaces {
             addPlain(out, prefix + "cluster:" + c.id(), c.title());  // TITLE only, never c.id()
         }
     }
+
+    /// Pie's capability is CONDITIONAL ON RUNTIME MODE, which is the fourth granularity this
+    /// class has needed. Marlow found it at sirentide/699.
+    ///
+    /// `PieLayout` has three emit paths, not one:
+    ///  - `pie.legend()` true  -> `layoutLegend` runs WITHOUT the math renderer entirely and
+    ///    emits label+value rows through `FONT.ellipsize`/`textPathD`. PLAIN.
+    ///  - non-legend, `sweep <  THIN_SLICE` (15 degrees) -> bypasses `MathLabel` and keeps an
+    ///    ellipsized OUTSIDE label. PLAIN.
+    ///  - non-legend, `sweep >= THIN_SLICE` -> bakes through `MathLabel`. MATH.
+    ///
+    /// So `pie legend` with `"$<br/>$" : 60`, and a 1-of-100 thin slice, both returned OK with
+    /// the renderer called ZERO times. My previous guard sampled a `legend=true` Pie, saw the
+    /// string `MathLabel` somewhere in PieLayout.java, and certified the legend label
+    /// math-aware -- a load-bearing false green, and exactly the file-level reasoning I had
+    /// already been told twice was too coarse.
+    ///
+    /// Both conditions are derivable from the IR: `legend` is a field, and the sweep follows
+    /// from the slice value over the POSITIVE-magnitude total, mirroring PieLayout's own
+    /// denominator choice. THIS IS A MIRROR OF A LAYOUT CONSTANT and therefore drift-prone;
+    /// it is pinned by behavioural probes on BOTH sides of the 15-degree boundary rather than
+    /// by trusting the arithmetic.
+    private static void pie(com.sirentide.ir.Pie p, List<Labeled> out) {
+        List<com.sirentide.ir.Slice> slices = nz(p.slices());
+        // PieLayout's denominator is POSITIVE magnitudes only -- summing negatives shrinks it
+        // and corrupts every sweep, which that layout documents as a fixed bug. Mirrored here
+        // so the boundary lands in the same place.
+        double positiveTotal = 0;
+        for (com.sirentide.ir.Slice sl : slices) {
+            if (sl.value() > 0) {
+                positiveTotal += sl.value();
+            }
+        }
+        for (int i = 0; i < slices.size(); i++) {
+            com.sirentide.ir.Slice sl = slices.get(i);
+            double sweepDegrees = positiveTotal <= 0 ? 0
+                : (Math.max(sl.value(), 0) / positiveTotal) * 360.0;
+            boolean mathAware = !p.legend() && sweepDegrees >= PIE_THIN_SLICE_DEGREES;
+            addLabel(out, "pie[" + i + "]", sl.label(), mathAware);
+            // the value label rides the same emitter as its slice label
+            addLabel(out, "pie[" + i + "].valueLabel", sl.valueLabel(), mathAware);
+        }
+    }
+
+    /// Mirrors `PieLayout.THIN_SLICE` (15 degrees). A slice narrower than this keeps an
+    /// ellipsized outside label and never reaches the MathLabel seam.
+    private static final double PIE_THIN_SLICE_DEGREES = 15.0;
 
     /// Slice-backed diagrams (pie, timeline, xychart bars) share one shape, so they share
     /// one walker rather than three copies that could drift apart.
