@@ -71,7 +71,7 @@ public final class LabelMarkup {
     public static void validate(com.sirentide.ir.Diagram diagram,
             com.sirentide.ir.DiagramConfig config) {
         for (LabelSurfaces.Labeled labeled : LabelSurfaces.of(diagram)) {
-            String tag = offendingTag(labeled.text());
+            String tag = offendingTag(labeled.text(), labeled.mathAware());
             if (tag != null) {
                 // The token arrives already bounded and control-sanitized from offendingTag, so
                 // a hostile label cannot pump or escape the diagnostic it lands in.
@@ -79,7 +79,9 @@ public final class LabelMarkup {
             }
         }
         if (config != null) {
-            String tag = offendingTag(config.caption());
+            // The caption is PLAIN: CaptionLayout renders it through FontMetrics glyph paths
+            // with no math renderer, so `$…$` there is literal text, not a formula.
+            String tag = offendingTag(config.caption(), false);
             if (tag != null) {
                 // Stable identity "caption", per the ruling: it is a single named field, so
                 // there is no index to carry and the name IS the location.
@@ -92,13 +94,37 @@ public final class LabelMarkup {
     ///
     /// Returned already bounded and control-sanitized, so callers may place it directly into a
     /// diagnostic message without re-checking it.
+    /// PLAIN-surface scan: the whole authored string. Kept as the one-argument form because
+    /// plain is the safe default and most surfaces are plain.
     public static String offendingTag(String label) {
+        return offendingTag(label, false);
+    }
+
+    /// @param mathAware whether the SURFACE this label renders on actually interprets `$…$`.
+    ///
+    /// ## Why this parameter exists
+    ///
+    /// The first version skipped `MathRun`s unconditionally and I called that "structural
+    /// rather than a special case". It was structural about the LABEL and blind about the
+    /// SURFACE. On a plain surface `$…$` carries no math semantics — the dollars and everything
+    /// between them are emitted as ordinary glyphs — so skipping that span just handed an
+    /// attacker a delimiter. Marlow proved it three ways at sirentide/680; wrapping the tag in
+    /// dollars restored OK/emit with a non-inert SVG on caption, GitGraph and mindmap.
+    ///
+    /// Math-aware surfaces still skip math runs, which keeps the inline-math positive control
+    /// real rather than removing the feature to make the guard easy.
+    public static String offendingTag(String label, boolean mathAware) {
         if (label == null || label.indexOf('<') < 0) {
             return null;                 // fast path: no bracket at all, nothing to scan
         }
+        if (!mathAware) {
+            // PLAIN surface: there are no math runs here, only text that happens to contain
+            // dollar signs. Scan all of it.
+            return scanLiteral(label);
+        }
         for (LabelRuns.Run run : LabelRuns.split(label)) {
             if (!(run instanceof LabelRuns.Text text)) {
-                continue;                // math runs are not markup surfaces
+                continue;                // a real math run on a math-rendering surface
             }
             String found = scanLiteral(text.s());
             if (found != null) {

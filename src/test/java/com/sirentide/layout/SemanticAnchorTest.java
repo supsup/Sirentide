@@ -663,6 +663,54 @@ class SemanticAnchorTest {
         assertEquals(nodeIds.size(), nodeIds.stream().distinct().count(), "core ids are all distinct");
     }
 
+    /// Marlow's HIGH finding at sirentide/680, as his exact discriminators.
+    ///
+    /// The math-run exemption was global, so wrapping the tag in `$…$` restored the original
+    /// defect on every surface that does not render math. On caption, GitGraph and mindmap the
+    /// dollars are ordinary glyphs, so skipping that span just handed an attacker a delimiter.
+    @Test
+    void dollarWrappingCannotSmuggleMarkupOntoPlainOnlySurfaces() {
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("caption",  "%% caption: unsafe $<br/>$\npie\n \"A\" : 1"),
+                new Probe("gitgraph", "gitGraph\n commit id: \"$<br/>$\""),
+                new Probe("mindmap",  "mindmap\n root $<br/>$"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source());
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+                pr.what() + " is a PLAIN surface — $…$ is literal there, so the tag must still "
+                    + "fail closed: " + result.diagnostics());
+            assertFalse(Sirentide.render(pr.source()).contains("<br/>"),
+                pr.what() + " must not emit the markup");
+        }
+    }
+
+    /// THE POSITIVE CONTROL Marlow required, and the reason the fix is surface-aware rather
+    /// than "delete the math exemption": on a flowchart NODE label — the one surface the API
+    /// documents as math-capable — inline math must stay legal.
+    @Test
+    void inlineMathStaysLegalOnTheOneMathAwareSurface() {
+        var result = Sirentide.renderWithDiagnostics("flowchart TD\n A[$0<x+y>1$]");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "a real math run on a math-aware surface stays legal: " + result.diagnostics());
+    }
+
+    /// Marlow's MEDIUM finding: the FRAME validation calls were unguarded. He proved it by
+    /// passing DiagramConfig.DEFAULT at only those two sites — all 919 tests still passed,
+    /// while a direct probe gave STATIC=PARSE_ERROR but FRAMES=OK.
+    ///
+    /// So this asserts the frames path independently, not by implication from the static path.
+    @Test
+    void theFramesPathFailsClosedOnACaptionToo() {
+        String source = "%% caption: unsafe<br/>\npie\n \"A\" : 1";
+        var frames = Sirentide.renderFramesWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, frames.diagnostics().outcome(),
+            "renderFrames validates the caption on its OWN path: " + frames.diagnostics());
+        // parity with the static path, which is the property 667 required
+        var stat = Sirentide.renderWithDiagnostics(source);
+        assertEquals(stat.diagnostics().outcome(), frames.diagnostics().outcome(),
+            "frames and static must agree on the same source");
+    }
+
     /// Marlow's finding 1 (sirentide/676): the visible config CAPTION bypassed the seam.
     /// His discriminator, verbatim, through the public API -- it used to return OK at emit.
     @Test

@@ -51,7 +51,28 @@ public final class LabelSurfaces {
     ///
     /// `id` is a node id where one exists, else the diagram type plus a stable index — never
     /// the label text itself, which is unbounded and attacker-influenced.
-    public record Labeled(String id, String text) {}
+    /// One display label, with the stable identity the diagnostic needs and the rendering
+    /// capability of the surface it came from.
+    ///
+    /// `id` is a node id where one exists, else the diagram type plus a stable index — never
+    /// the label text itself, which is unbounded and attacker-influenced.
+    ///
+    /// ## mathAware is the fix for a defect the first version shipped
+    ///
+    /// `LabelMarkup` used to skip every `MathRun` GLOBALLY, which I described as exempting
+    /// inline math "structurally rather than by a special case". That reasoning was wrong in a
+    /// way that reopened the original defect: it assumed every display surface RENDERS math.
+    /// Most do not. Marlow's discriminators (sirentide/680): `%% caption: unsafe $<br/>$`,
+    /// `gitGraph commit id: "$<br/>$"` and `mindmap root $<br/>$` all came back OK/emit with a
+    /// non-inert SVG, because on those surfaces `$…$` has no math semantics and the WHOLE
+    /// authored string is emitted as plain glyph text. Wrapping the tag in dollars restored the
+    /// exact failure this plan exists to close.
+    ///
+    /// So the exemption now follows RENDERING SEMANTICS, and the default is PLAIN — a surface
+    /// is treated as math-capable only where the API documents it. Getting this wrong in the
+    /// plain direction over-rejects loudly; getting it wrong in the math direction re-opens a
+    /// silent bypass, so the default fails closed.
+    public record Labeled(String id, String text, boolean mathAware) {}
 
     /// Diagram types whose display-vs-identifier field split has NOT yet been audited.
     ///
@@ -260,7 +281,8 @@ public final class LabelSurfaces {
         for (int i = 0; i < nz(f.nodes()).size(); i++) {
             var n = nz(f.nodes()).get(i);
             // A node has a real id, so use it: a stable identity a human can find in source.
-            add(out, prefix + "node:" + n.id(), n.label());
+            // THE one documented math surface: `$…$` in a flowchart node label.
+            addMathAware(out, prefix + "node:" + n.id(), n.label());
         }
         for (int i = 0; i < nz(f.edges()).size(); i++) {
             var e = nz(f.edges()).get(i);
@@ -326,9 +348,25 @@ public final class LabelSurfaces {
         return list == null ? List.of() : list;
     }
 
+    /// PLAIN-only surface: the whole authored string is scanned. This is the default because
+    /// only one surface in the product documents math support.
     private static void add(List<Labeled> out, String id, String text) {
+        addLabel(out, id, text, false);
+    }
+
+    /// MATH-AWARE surface. `Sirentide.render(dsl, math)` documents `$…$` as a FLOWCHART NODE
+    /// LABEL feature specifically, and `MatrixLayout` states cells are a closed verdict
+    /// vocabulary with no math — so this is deliberately narrow rather than "anything that
+    /// accepts a MathFragmentRenderer parameter". Several layouts take that parameter and
+    /// ignore it (GitGraphLayout and MindmapLayout both say so in their javadoc), which is
+    /// exactly the false signal that would re-introduce the bypass.
+    private static void addMathAware(List<Labeled> out, String id, String text) {
+        addLabel(out, id, text, true);
+    }
+
+    private static void addLabel(List<Labeled> out, String id, String text, boolean mathAware) {
         if (text != null && !text.isEmpty()) {
-            out.add(new Labeled(id, text));
+            out.add(new Labeled(id, text, mathAware));
         }
     }
 }
