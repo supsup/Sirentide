@@ -155,41 +155,138 @@ class LabelSurfacesTest {
         assertTrue(LabelSurfaces.of(new com.sirentide.ir.Knot("trefoil", null)).isEmpty());
     }
 
-    /// THE CAPABILITY MIRROR IS NOW GUARDED, which is what Marlow actually asked for
-    /// (sirentide/685: "preferably derive it from shared rendering metadata rather than a
-    /// parser-side hand-maintained mirror").
+    /// THE CAPABILITY GUARD, rebuilt as an EXHAUSTIVE PARTITION.
     ///
-    /// I cannot make the parser ask the layout at runtime without a bigger refactor, so
-    /// instead this pins my classification against the rendering reality it claims to
-    /// describe: a surface is math-aware iff its layout routes through `MathLabel`.
+    /// The previous version asserted four named plain layouts and two named math layouts, and
+    /// Marlow's verdict names exactly why that was worthless (sirentide/693): "checking only
+    /// six names repeats the incompleteness problem". It could not see the four layouts that
+    /// were ALREADY misclassified -- Journey, Sankey, Heatmap, TensorNetwork -- because they
+    /// were in neither list. A spot-check cannot find what it does not enumerate.
     ///
-    /// If a layout starts or stops using MathLabel, this goes RED and forces the
-    /// classification to be revisited — which is the same drift-guard shape I am building for
-    /// the agent vocabulary in Stafficy, applied to my own mirror. Without it, my set is
-    /// exactly the kind of hand-maintained copy that went wrong twice in two rounds.
+    /// So this derives the answer instead of sampling it: for EVERY label-bearing diagram
+    /// type, the surfaces LabelSurfaces produces must carry `mathAware` iff that type's layout
+    /// routes through `MathLabel`. A new diagram type, or a layout that starts or stops
+    /// rendering math, breaks this test rather than silently inheriting a default.
+    ///
+    /// I had this derivation available when I wrote the six-name version -- I had already
+    /// scanned which layouts use MathLabel -- and hand-enumerated anyway. That is the whole
+    /// error: a derivation in hand, and a list shipped.
     @Test
-    @DisplayName("the plain/math classification matches which layouts actually use MathLabel")
-    void theCapabilitySetMatchesTheLayoutsThatRenderMath() throws Exception {
+    @DisplayName("EXHAUSTIVE: every label-bearing type's mathAware matches its layout's MathLabel use")
+    void everyLabelBearingTypeMatchesItsLayoutMathCapability() throws Exception {
         java.nio.file.Path dir = java.nio.file.Path.of("src/main/java/com/sirentide/layout");
-        assertTrue(java.nio.file.Files.isDirectory(dir), "layout sources must be readable: " + dir);
+        assertTrue(java.nio.file.Files.isDirectory(dir), "layout sources readable: " + dir);
 
-        // The four surfaces LabelSurfaces marks PLAIN must have no MathLabel in their layout.
-        for (String plain : java.util.List.of("CaptionLayout", "GitGraphLayout",
-                "MindmapLayout", "MatrixLayout")) {
-            String src = java.nio.file.Files.readString(dir.resolve(plain + ".java"));
-            assertFalse(src.contains("MathLabel"),
-                plain + " is classified PLAIN but routes through MathLabel — the classification "
-                    + "would then reject valid formulas on a surface that renders them");
-        }
+        // surface-id prefix -> the layout that renders it. Every entry is checked against that
+        // layout's ACTUAL MathLabel usage, so this map cannot drift silently: if it is wrong,
+        // the assertion below fails.
+        record Surface(String idPrefix, String layout, Diagram sample) {}
+        List<Surface> surfaces = List.of(
+            new Surface("node:",     "FlowchartLayout",      reproFlowchart()),
+            new Surface("matrix.",   "MatrixLayout",         sampleMatrix()),
+            new Surface("journey.",  "JourneyLayout",        sampleJourney()),
+            new Surface("sankey.",   "SankeyLayout",         sampleSankey()),
+            new Surface("heatmap.",  "HeatmapLayout",        sampleHeatmap()),
+            new Surface("tensor.",   "TensorNetworkLayout",  sampleTensor()),
+            new Surface("gitgraph.", "GitGraphLayout",       sampleGitGraph()),
+            new Surface("mindmap",   "MindmapLayout",        sampleMindmap()),
+            new Surface("pie",       "PieLayout",            samplePie()),
+            new Surface("timeline",  "TimelineLayout",       sampleTimeline()),
+            new Surface("gantt.",    "GanttLayout",          sampleGantt()),
+            new Surface("sequence.", "SequenceLayout",       sampleSequence()),
+            new Surface("quadrant.", "QuadrantChartLayout",  sampleQuadrant()),
+            new Surface("class",     "ClassDiagramLayout",   sampleClassDiagram()),
+            new Surface("er",        "ErDiagramLayout",      sampleErDiagram()),
+            new Surface("xychart",   "XyChartLayout",        sampleXyChart()));
 
-        // ...and the surfaces it marks MATH-AWARE must actually render math. These are the two
-        // Marlow proved were misclassified, plus the node control.
-        for (String mathy : java.util.List.of("FlowchartLayout", "SequenceLayout")) {
-            String src = java.nio.file.Files.readString(dir.resolve(mathy + ".java"));
-            assertTrue(src.contains("MathLabel"),
-                mathy + " is classified MATH-AWARE but does not route through MathLabel — the "
-                    + "classification would then scan a real formula as markup");
+        for (Surface sf : surfaces) {
+            boolean layoutRendersMath = java.nio.file.Files
+                .readString(dir.resolve(sf.layout() + ".java")).contains("MathLabel");
+            List<LabelSurfaces.Labeled> got = LabelSurfaces.of(sf.sample()).stream()
+                .filter(l -> l.id().startsWith(sf.idPrefix())).toList();
+            assertFalse(got.isEmpty(),
+                sf.layout() + ": fixture produced no '" + sf.idPrefix() + "' labels, so this "
+                    + "row proves nothing -- the map or the fixture is wrong");
+            for (LabelSurfaces.Labeled l : got) {
+                assertEquals(layoutRendersMath, l.mathAware(),
+                    l.id() + " is rendered by " + sf.layout() + ", which "
+                        + (layoutRendersMath ? "DOES" : "does NOT") + " route through MathLabel, "
+                        + "so mathAware must be " + layoutRendersMath
+                        + ". Misclassifying plain as math re-opens the dollar-wrap bypass; "
+                        + "misclassifying math as plain deletes valid formulas.");
+            }
         }
+    }
+
+    private static Diagram sampleMatrix() {
+        return new com.sirentide.ir.Matrix(List.of("$c$"),
+            List.of(new com.sirentide.ir.Matrix.Row("$r$",
+                List.of(new com.sirentide.ir.Matrix.Cell("$x$", null)))), null);
+    }
+
+    private static Diagram sampleJourney() {
+        return new com.sirentide.ir.Journey("$t$", List.of(), null);
+    }
+
+    private static Diagram sampleSankey() {
+        return new com.sirentide.ir.Sankey(
+            List.of(new com.sirentide.ir.SankeyFlow("$a$", "$b$", 1)), null);
+    }
+
+    private static Diagram sampleHeatmap() {
+        return new com.sirentide.ir.Heatmap(List.of("$c$"), List.of(), null, "$lo$", "$hi$");
+    }
+
+    private static Diagram sampleTensor() {
+        return new com.sirentide.ir.TensorNetwork(List.of("$core$"), false, null);
+    }
+
+    private static Diagram sampleGitGraph() {
+        return new com.sirentide.ir.GitGraph(
+            List.of(new com.sirentide.ir.GitOp.Branch("$b$")), null);
+    }
+
+    private static Diagram sampleMindmap() {
+        return new com.sirentide.ir.Mindmap(
+            new com.sirentide.ir.MindmapNode("$m$", List.of()), null);
+    }
+
+    private static Diagram samplePie() {
+        return new com.sirentide.ir.Pie(
+            List.of(new com.sirentide.ir.Slice("$p$", 1, null, null)), true, null);
+    }
+
+    private static Diagram sampleTimeline() {
+        return new com.sirentide.ir.Timeline(
+            List.of(new com.sirentide.ir.Slice("$e$", 1, null, null)), null);
+    }
+
+    private static Diagram sampleGantt() {
+        return new com.sirentide.ir.Gantt(
+            List.of(new com.sirentide.ir.Task("$g$", 0, 1, null)), null);
+    }
+
+    private static Diagram sampleSequence() {
+        return new com.sirentide.ir.Sequence(List.of("$actor$"), List.of(), null, null,
+            true, List.of(), List.of(), List.of());
+    }
+
+    private static Diagram sampleQuadrant() {
+        return new com.sirentide.ir.QuadrantChart("$q$", "b", "c", "d", null, List.of(), null);
+    }
+
+    private static Diagram sampleClassDiagram() {
+        return new com.sirentide.ir.ClassDiagram(
+            List.of(new com.sirentide.ir.ClassBox("$C$", List.of(), List.of())), List.of(), null);
+    }
+
+    private static Diagram sampleErDiagram() {
+        return new com.sirentide.ir.ErDiagram(
+            List.of(new com.sirentide.ir.ErEntity("$E$", List.of())), List.of(), null);
+    }
+
+    private static Diagram sampleXyChart() {
+        return new com.sirentide.ir.XyChart(List.of(), List.of(), List.of("$s$"), "bar", true, null);
     }
 
     /// The exact repro from the defect this plan closes, plus an identifier that MUST survive:

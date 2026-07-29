@@ -705,6 +705,37 @@ class SemanticAnchorTest {
         }
     }
 
+    /// Marlow's BLOCKER at sirentide/693, as public-API regressions with a NON-NULL renderer.
+    ///
+    /// Journey, Sankey, Heatmap and TensorNetwork render labels as plain glyph paths -- three
+    /// document that their math argument is unused, and TensorNetworkLayout emits directly via
+    /// FontMetrics. My math-aware DEFAULT swept all four in, so `$<br/>$` on those surfaces
+    /// returned OK while the renderer was never called: the tag pretended to be math on a
+    /// surface that cannot render math.
+    ///
+    /// The renderer is non-null deliberately -- with a null renderer the bug is invisible,
+    /// which is why the existing suite stayed green through two rounds.
+    @Test
+    void dollarWrappingCannotSmuggleMarkupOntoTheFourPlainGlyphLayouts() {
+        java.util.concurrent.atomic.AtomicInteger calls =
+            new java.util.concurrent.atomic.AtomicInteger();
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> {
+            calls.incrementAndGet();
+            return null;
+        };
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("journey", "journey\n  title $<br/>$\n  section Go\n    Make tea: 5: Me"),
+                new Probe("sankey",  "sankey\n  $<br/>$,Electricity,25\n"),
+                new Probe("heatmap", "heatmap\ncols: $<br/>$\n\"row\" : 1"),
+                new Probe("tensor",  "tensornetwork\n  mps $<br/>$ B\n"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), math);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+                pr.what() + " renders plain glyph paths, so $…$ is literal there and the tag "
+                    + "must fail closed: " + result.diagnostics());
+        }
+    }
+
     /// THE POSITIVE CONTROL Marlow required, and the reason the fix is surface-aware rather
     /// than "delete the math exemption": on a flowchart NODE label — the one surface the API
     /// documents as math-capable — inline math must stay legal.

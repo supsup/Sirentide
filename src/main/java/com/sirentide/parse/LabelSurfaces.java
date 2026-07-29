@@ -211,15 +211,15 @@ public final class LabelSurfaces {
                 }
             }
             case com.sirentide.ir.Journey j -> {
-                add(out, "journey.title", j.title());
+                addPlain(out, "journey.title", j.title());
                 for (int si = 0; si < nz(j.sections()).size(); si++) {
                     var sec = nz(j.sections()).get(si);
-                    add(out, "journey.section[" + si + "]", sec.name());
+                    addPlain(out, "journey.section[" + si + "]", sec.name());
                     for (int ti = 0; ti < nz(sec.tasks()).size(); ti++) {
                         var task = nz(sec.tasks()).get(ti);
-                        add(out, "journey.section[" + si + "].task[" + ti + "]", task.name());
+                        addPlain(out, "journey.section[" + si + "].task[" + ti + "]", task.name());
                         for (int ai = 0; ai < nz(task.actors()).size(); ai++) {
-                            add(out, "journey.section[" + si + "].task[" + ti + "].actor[" + ai + "]",
+                            addPlain(out, "journey.section[" + si + "].task[" + ti + "].actor[" + ai + "]",
                                 nz(task.actors()).get(ai));
                         }
                     }
@@ -231,8 +231,8 @@ public final class LabelSurfaces {
                     // In a sankey the endpoint NAMES are the rendered node labels; there is
                     // no separate label field, so these are display text, not references.
                     var flow = nz(sk.flows()).get(i);
-                    add(out, "sankey.flow[" + i + "].source", flow.source());
-                    add(out, "sankey.flow[" + i + "].target", flow.target());
+                    addPlain(out, "sankey.flow[" + i + "].source", flow.source());
+                    addPlain(out, "sankey.flow[" + i + "].target", flow.target());
                 }
             }
             case com.sirentide.ir.Heatmap h -> {
@@ -240,22 +240,22 @@ public final class LabelSurfaces {
                 // first pass and only caught them by reading the full record signature
                 // rather than the first line -- an omission the compiler cannot see,
                 // because a missing FIELD is not a missing CASE.
-                add(out, "heatmap.lowLabel", h.lowLabel());
-                add(out, "heatmap.highLabel", h.highLabel());
+                addPlain(out, "heatmap.lowLabel", h.lowLabel());
+                addPlain(out, "heatmap.highLabel", h.highLabel());
                 for (int i = 0; i < nz(h.columns()).size(); i++) {
-                    add(out, "heatmap.column[" + i + "]", nz(h.columns()).get(i));
+                    addPlain(out, "heatmap.column[" + i + "]", nz(h.columns()).get(i));
                 }
                 for (int r = 0; r < nz(h.rows()).size(); r++) {
                     var row = nz(h.rows()).get(r);
-                    add(out, "heatmap.row[" + r + "]", row.label());
+                    addPlain(out, "heatmap.row[" + r + "]", row.label());
                     for (int c = 0; c < nz(row.cells()).size(); c++) {
-                        add(out, "heatmap.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
+                        addPlain(out, "heatmap.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
                     }
                 }
             }
             case com.sirentide.ir.TensorNetwork tn -> {
                 for (int i = 0; i < nz(tn.cores()).size(); i++) {
-                    add(out, "tensor.core[" + i + "]", nz(tn.cores()).get(i));
+                    addPlain(out, "tensor.core[" + i + "]", nz(tn.cores()).get(i));
                 }
             }
 
