@@ -11,9 +11,9 @@ package com.sirentide.api;
 ///   caveat just names the offending `U+XXXX` points. A fully-covered source carries no caveat.
 /// - {@link #PARSE_ERROR} — the source didn't parse into a recognized diagram (unknown type keyword
 ///   on line 1, or an over-cap / unparseable header) and degraded to the empty shell.
-/// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the baked SVG passed the
-///   {@link Sirentide#MAX_OUTPUT_BYTES} cap (the emitter's incremental guard or the post-emit
-///   check), so it degraded to the inert shell rather than emit a runaway document.
+/// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the bake passed an output-size/frame
+///   cap or a deterministic layout-work cap, so it degraded to the inert shell rather than build or
+///   emit a runaway document.
 /// - {@link #UNSUPPORTED_CONSTRUCT} — a construct the parser recognizes-but-cannot render. Populated
 ///   (plan 933eed50 F2) for FLOWCHART sources carrying an unsupported Mermaid token at a statement-
 ///   level position — a top-level `&` edge fan-out, a `~~~` invisible link, a `<br/>` in a label, or a

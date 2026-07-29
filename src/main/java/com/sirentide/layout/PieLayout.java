@@ -57,6 +57,23 @@ public final class PieLayout {
     private static final double KEY_TEXT_MAX =
         KEY_WIDTH - KEY_PAD_LEFT - SWATCH - SWATCH_TEXT_GAP - KEY_PAD_RIGHT;
 
+    /// SIR-04 finite-geometry contract for the pie's angular denominator. `positiveTotal()` sums the
+    /// positive slice magnitudes; with legal-but-huge FINITE slices (two `1e308`) that sum OVERFLOWS to
+    /// +Infinity. Unlike the axis case, the overflow does NOT leak a non-finite COORDINATE — each sweep
+    /// is `value / Infinity == 0`, collapsing every wedge to a finite zero-angle blank that the emitter
+    /// (and its `fmt` waist) sees as perfectly valid. So this class of defect is INVISIBLE downstream
+    /// and must be caught HERE, at the aggregation point. A `total <= 0` blank stays a legitimate quiet
+    /// degrade (an all-zero pie really is empty); a NON-FINITE total is a loud degrade — throw so the
+    /// bake guard degrades to the inert shell (RENDER_BUG), never a silently-blank pie returned as
+    /// success (DESIGN §6 loud-never-silent). The message omits "MAX_OUTPUT_BYTES" (not the cap path).
+    private static void requireFiniteTotal(double total) {
+        if (!Double.isFinite(total)) {
+            throw new IllegalStateException(
+                "pie slice magnitudes overflow to a non-finite total (" + total + "): the angular "
+                    + "denominator would silently collapse every wedge to a 0-angle blank (SIR-04).");
+        }
+    }
+
     public static LaidOut layout(Pie pie) {
         return layout(pie, null);
     }
@@ -77,6 +94,7 @@ public final class PieLayout {
         // denominator while the loop skipped the negative slice, inflating every other slice's sweep
         // past a full 360° turn. A negative value now cannot corrupt any other slice's angle.
         double total = pie.positiveTotal();
+        requireFiniteTotal(total);
         double cx = SIZE / 2;
         double cy = SIZE / 2;
         if (total <= 0) {
@@ -228,6 +246,7 @@ public final class PieLayout {
     /// widens to `KEY_WIDTH + KEY_GAP + pieDiameter`.
     private static LaidOut layoutLegend(Pie pie) {
         double total = pie.positiveTotal();
+        requireFiniteTotal(total);
         // Legend rows sit on the page background → page-background text colour (default currentColor).
         String textColor = pie.textColor();
         List<Slice> slices = pie.slices();

@@ -44,6 +44,10 @@ class ContainmentTest {
         "xychart scatter\n  \"A\" : 5 8\n  \"B\" : -3 2\n",       // scatter, multi-series, negative
         // timeline
         "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n",
+        // generalized rows + endpoint clamps: three coincident labels at each end of the axis.
+        "timeline\n  \"Left alpha label long\" : 0\n  \"Left bravo label long\" : 0\n"
+            + "  \"Left charlie label long\" : 0\n  \"Right delta label long\" : 100\n"
+            + "  \"Right echo label long\" : 100\n  \"Right foxtrot label\" : 100\n",
         "timeline\n",                                             // axis only
         // gantt
         "gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n  \"Test\" : 7-10\n",
@@ -193,6 +197,10 @@ class ContainmentTest {
         "gitGraph\n  commit\n  commit id: \"fix\"\n  checkout ghost\n  branch develop\n"
             + "  branch develop\n  checkout develop\n  commit\n  commit id: \"wip\"\n  checkout main\n"
             + "  merge develop\n  merge main\n  commit\n",
+        // adjacent long IDs force per-lane rows; the crowded main-lane depth prefixes into develop.
+        "gitGraph\n  commit id: \"aaaaaaaaaaaa\"\n  commit id: \"bbbbbbbbbbbb\"\n"
+            + "  commit id: \"cccccccccccc\"\n  branch develop\n  commit id: \"dev\"\n"
+            + "  checkout main\n  merge develop\n  commit id: \"dddddddddddd\"\n",
         "gitGraph\n",   // empty body → minimal empty canvas (round-trips, never the inert shell)
         // journey (13th type): a title, two sections, several scored tasks, a MULTI-ACTOR task, plus
         // MALFORMED cases — an OUT-OF-RANGE score (clamped 1..5), a NON-NUMERIC score (dropped), a task
@@ -224,6 +232,14 @@ class ContainmentTest {
             + "  ,Homes,10\n  Loop,Loop,5\n",
         "sankey-beta\n  A,B,10\n  B,C,10\n",   // the `sankey-beta` alias + a 3-node chain
         "sankey\n",                            // empty body → minimal inert canvas (round-trips, never the shell)
+        // root-system Coxeter-plane projection: guide-ring stroked paths, POINT groups, bounded EDGE
+        // groups, the full under-cap E8 web, and A24's all-or-none edge-cap degrade. This is the new
+        // type's direct producer⊆contract proof on the existing svg/g/path/line alphabet.
+        "rootsystem\n  type: A2\n  edges: minimal\n",
+        "rootsystem\n  type: G2\n  edges: none\n",
+        "rootsystem\n  type: E8\n  edges: minimal\n",
+        "rootsystem\n  type: A24\n  edges: minimal\n",   // edge cap → points/rings, zero partial links
+        "rootsystem\n  type: A25\n  edges: minimal\n",   // rank cap → universal inert shell
         // knot diagram (plan sirentide-knot-diagram-primitive): the built-in classical knots —
         // one closed smooth curve of stroked M/L polyline strand arcs (fill=none) with over/under
         // crossings, each under strand broken by a gap. Exercises the arc <path> geometry + the EDGE
@@ -337,6 +353,19 @@ class ContainmentTest {
         String pie = Sirentide.render("pie\n  \"Reviews\" : 40\n  \"Builds\" : 60\n");
         assertTrue(pie.contains("data-sirentide-role=\"slice\""), "a slice anchor was baked: " + pie);
         checkElement(parse(pie).getDocumentElement(), "pie-anchors");
+
+        // The S2 structural roles are producer-covered too: a subgraph frame emits cluster and the
+        // two xychart spines emit axis, through the exact same closed attribute/value grammar.
+        String cluster = Sirentide.render(
+            "flowchart TD\n  subgraph grp [Group]\n    A --> B\n  end\n");
+        String axes = Sirentide.render("xychart\n  \"A\" : 1\n");
+        String structural = cluster + axes;
+        assertTrue(structural.contains("data-sirentide-role=\"cluster\""),
+            "a cluster anchor was baked: " + structural);
+        assertTrue(structural.contains("data-sirentide-role=\"axis\""),
+            "an axis anchor was baked: " + structural);
+        checkElement(parse(cluster).getDocumentElement(), "cluster-anchors");
+        checkElement(parse(axes).getDocumentElement(), "axis-anchors");
     }
 
     /// The allowlist stays NON-VACUOUS for the anchor widen: a `<g>` carrying a FOREIGN data-* (the

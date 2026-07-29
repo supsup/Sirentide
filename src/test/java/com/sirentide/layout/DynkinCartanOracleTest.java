@@ -2,9 +2,12 @@ package com.sirentide.layout;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.contract.SirentideRole;
 import com.sirentide.ir.Dynkin;
+import com.sirentide.ir.DynkinCartan;
 import com.sirentide.parse.DslParser;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +33,30 @@ import org.junit.jupiter.api.Test;
 class DynkinCartanOracleTest {
 
     private static final double EPS = 1e-6;
+
+    @Test
+    void sharedCatalogRejectsHugeRanksBeforeArithmeticOrAllocation() {
+        assertEquals(200, DynkinCartan.MAX_RANK);
+        assertTrue(DynkinCartan.isFiniteType('A', 200));
+        assertEquals(40_200, DynkinCartan.rootCount('A', 200));
+        assertEquals(201, DynkinCartan.coxeterNumber('A', 200));
+        assertEquals("sl201", DynkinCartan.algebraLabel('A', 200));
+        assertEquals(200, DynkinCartan.matrix('A', 200).length);
+
+        for (int unsupported : new int[] {201, 65_536, Integer.MAX_VALUE}) {
+            assertFalse(DynkinCartan.isFiniteType('A', unsupported));
+            assertEquals(List.of(), DynkinCartan.bonds('A', unsupported),
+                "no huge-rank bond allocation for A" + unsupported);
+            assertEquals(0, DynkinCartan.matrix('A', unsupported).length,
+                "no huge-rank matrix allocation for A" + unsupported);
+            assertEquals(0, DynkinCartan.rootCount('A', unsupported),
+                "no silently wrapped root count for A" + unsupported);
+            assertEquals(0, DynkinCartan.coxeterNumber('A', unsupported),
+                "no silently wrapped Coxeter number for A" + unsupported);
+            assertEquals("", DynkinCartan.algebraLabel('A', unsupported),
+                "no silently wrapped algebra label for A" + unsupported);
+        }
+    }
 
     // -------------------------------------------------------- the fixtures --------
 
@@ -163,8 +190,13 @@ class DynkinCartanOracleTest {
 
     private void assertCartan(String dsl, int[][] expected, int expectedDet) {
         int[][] recon = reconstruct(dsl);
+        Dynkin parsed = (Dynkin) DslParser.parse(dsl);
+        int[][] shared = DynkinCartan.matrix(parsed.family(), parsed.rank());
         assertEquals(expected.length, recon.length, "node count: " + dsl);
         for (int i = 0; i < expected.length; i++) {
+            assertArrayEquals(expected[i], shared[i],
+                "the shared DynkinCartan authority must equal the independently typed textbook "
+                    + "matrix; rootsystem reflection math consumes this exact row");
             assertArrayEquals(expected[i], recon[i],
                 "Cartan row " + i + " reconstructed from geometry must equal the textbook matrix for "
                     + dsl.replace("\n", " ") + " — a wrong bond count, flipped arrow, or wrong branch "

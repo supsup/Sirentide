@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
 /// <p>Every assertion parses EMITTED geometry (no layout re-implementation), the {@link
 /// FlowchartGeometryTest} / {@link FlowchartRouterNodeCollisionTest} idiom. A cluster FRAME is a
 /// stroke-only border (four {@code <line>}s) plus a filled title BAND ({@code <rect fill="#eef2ff"}),
-/// all emitted at the TOP LEVEL (before any {@code <g role=…>} group — frames draw under the content),
-/// so the frame geometry is exactly the SVG prefix up to the first group.
+/// all emitted inside one {@code <g role="cluster">}. The group still precedes edge/node groups, so
+/// frames draw under the content; the wrapper is semantic-only and carries no geometry.
 ///
 /// <p>Non-vacuous: the repro/TD/three-component cases FAIL pre-fix (the frames overlap — verified by
 /// rendering from main's jar: the two repro frames were [24,24,417.48,102] and [39.726,88,430.932,166],
@@ -341,32 +341,30 @@ class FlowchartSubgraphOverlapTest {
         "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"14\" fill=\"#eef2ff\"");
     private static final Pattern LINE = Pattern.compile(
         "<line x1=\"([-0-9.]+)\" y1=\"([-0-9.]+)\" x2=\"([-0-9.]+)\" y2=\"([-0-9.]+)\" stroke=\"#94a3b8\"");
+    private static final Pattern CLUSTER_GROUP = Pattern.compile(
+        "<g data-sirentide-role=\"cluster\"[^>]*>(.*?)</g>", Pattern.DOTALL);
     private static final Pattern NODE_GROUP = Pattern.compile(
         "<g data-sirentide-role=\"node\"[^>]*>(.*?)</g>", Pattern.DOTALL);
     private static final Pattern RECT = Pattern.compile(
         "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\"");
 
-    /// Every subgraph cluster frame, reconstructed from the TOP-LEVEL geometry (the SVG prefix before
-    /// the first `<g …>` group — cluster frames draw under the content, so they are all emitted first).
-    /// The band rect gives left/top/right; the frame's BOTTOM is the left border line (vertical, x == left)
-    /// whose top == the band top — pairing by top disambiguates frames that share a left edge (stacked
-    /// LR components all start at the same x).
+    /// Every subgraph cluster frame, reconstructed from its semantic cluster group. The band rect gives
+    /// left/top/right; the frame's BOTTOM is the left border line (vertical, x == left) whose top equals
+    /// the band top. Reading one group at a time disambiguates frames that share a left edge.
     private static List<Box> clusterFrames(String svg) {
-        int firstGroup = svg.indexOf("<g ");
-        String top = firstGroup < 0 ? svg : svg.substring(0, firstGroup);
-        List<double[]> lines = new ArrayList<>();
-        Matcher l = LINE.matcher(top);
-        while (l.find()) {
-            lines.add(new double[] {num(l, 1), num(l, 2), num(l, 3), num(l, 4)});
-        }
         List<Box> out = new ArrayList<>();
-        Matcher m = BAND.matcher(top);
-        while (m.find()) {
-            double left = num(m, 1);
-            double bandTop = num(m, 2);
-            double right = left + num(m, 3);
+        Matcher group = CLUSTER_GROUP.matcher(svg);
+        while (group.find()) {
+            String body = group.group(1);
+            Matcher band = BAND.matcher(body);
+            assertTrue(band.find(), "cluster group has no title-band rect: " + body);
+            double left = num(band, 1);
+            double bandTop = num(band, 2);
+            double right = left + num(band, 3);
             double bottom = Double.NaN;
-            for (double[] s : lines) {
+            Matcher line = LINE.matcher(body);
+            while (line.find()) {
+                double[] s = {num(line, 1), num(line, 2), num(line, 3), num(line, 4)};
                 boolean vertical = Math.abs(s[0] - s[2]) < 0.01;
                 if (!vertical || Math.abs(s[0] - left) > 0.01) {
                     continue;   // not the left border line

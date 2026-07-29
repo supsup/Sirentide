@@ -10,7 +10,11 @@ group = "com.sirentide"
 // pinned consumer can never silently go stale. Bump on each downstream-relevant release.
 // 0.4.0: the heatmap type (21 → 22) — continuous-score grid on a single-hue sequential
 // ramp + legend; to be vendored into stafficy /docs as sirentide-0.4.0.jar (part B).
-version = "0.4.0"
+// 0.5.0 (IN PROGRESS, unreleased): bumped the moment post-0.4.0 work changed public CLI
+// behavior (the `render` verb's exit-code/atomic-write contract, review sirentide/471), so a
+// jar built from post-release main can never masquerade as the immutable, already-vendored
+// 0.4.0. The 0.5.0 release notes finalize at cut time.
+version = "0.5.0"
 
 java {
     toolchain {

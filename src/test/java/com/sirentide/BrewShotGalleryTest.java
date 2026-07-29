@@ -8,10 +8,27 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Sirentide;
+import com.sirentide.ir.Diagram;
+import com.sirentide.ir.Empty;
+import com.sirentide.layout.GlyphRun;
+import com.sirentide.layout.Group;
+import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Shape;
+import com.sirentide.layout.TimelineLayout;
+import com.sirentide.layout.Wedge;
 import com.sirentide.math.LatteXMathFragmentRenderer;
+import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -31,6 +48,10 @@ import org.junit.jupiter.api.Test;
  * not byte-goldens — regenerate freely. Skips clean (never fails) when no local Chrome.
  */
 class BrewShotGalleryTest {
+
+    /** Coordinate-pair scanner for FontMetrics glyph paths (the M/L/Q/Z command alphabet). */
+    private static final Pattern PATH_NUMBER = Pattern.compile(
+        "-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?");
 
     /** JS audit: collect every drawn element whose client bbox escapes the root svg box. */
     private static final String CONTAINMENT_AUDIT = """
@@ -67,6 +88,37 @@ class BrewShotGalleryTest {
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
 
+    /// One canonical BrewShot reference per production IR type. The sealed {@link Diagram} hierarchy
+    /// is authoritative; the headless coverage test below makes a newly permitted type fail until this
+    /// mapping, its declared gallery case, its committed PNG, and the generated gallery page all agree.
+    /// Aliases intentionally map through the representative DSL's parsed IR rather than growing a
+    /// second parser-keyword inventory here.
+    private static final Map<Class<? extends Diagram>, String> TYPE_COVERAGE = Map.ofEntries(
+        Map.entry(com.sirentide.ir.Pie.class, "pie"),
+        Map.entry(com.sirentide.ir.XyChart.class, "xychart"),
+        Map.entry(com.sirentide.ir.Timeline.class, "timeline"),
+        Map.entry(com.sirentide.ir.Gantt.class, "gantt"),
+        Map.entry(com.sirentide.ir.Flowchart.class, "flowchart"),
+        Map.entry(com.sirentide.ir.Sequence.class, "sequence"),
+        Map.entry(com.sirentide.ir.StateDiagram.class, "state"),
+        Map.entry(com.sirentide.ir.QuadrantChart.class, "quadrant"),
+        Map.entry(com.sirentide.ir.ClassDiagram.class, "classDiagram"),
+        Map.entry(com.sirentide.ir.ErDiagram.class, "erDiagram"),
+        Map.entry(com.sirentide.ir.MathBlock.class, "mathblock"),
+        Map.entry(com.sirentide.ir.GitGraph.class, "gitGraph"),
+        Map.entry(com.sirentide.ir.Journey.class, "journey"),
+        Map.entry(com.sirentide.ir.Mindmap.class, "mindmap"),
+        Map.entry(com.sirentide.ir.Sankey.class, "sankey"),
+        Map.entry(com.sirentide.ir.Matrix.class, "matrix"),
+        Map.entry(com.sirentide.ir.Heatmap.class, "heatmap"),
+        Map.entry(com.sirentide.ir.Snake.class, "snake-sqrt2"),
+        Map.entry(com.sirentide.ir.TensorNetwork.class, "tensornetwork"),
+        Map.entry(com.sirentide.ir.YoungDiagram.class, "young"),
+        Map.entry(com.sirentide.ir.Knot.class, "knot-trefoil"),
+        Map.entry(com.sirentide.ir.Dynkin.class, "dynkin-b3"),
+        Map.entry(com.sirentide.ir.RootSystem.class, "rootsystem-a2")
+    );
+
     /// A class with more members than the display cap, so the box shows MAX_DISPLAYED_ROWS-1 rows
     /// plus a synthesized "… (N more)" row instead of an unreadable, canvas-blowing tower
     /// (robustness plan fe8c5bbc #2). The BrewShot containment audit proves the capped box + the
@@ -93,6 +145,22 @@ class BrewShotGalleryTest {
                 + "\"Q3\" : 3 6\n\"Q4\" : 9 2"),
         new Case("timeline", "Timeline (proportional)",
             "timeline\n\"Founded\" : 2000\n\"Series A\" : 2005\n\"Launch\" : 2020"),
+        // The INTERVAL-PACKER case. Eight long event labels inside one month: each label is wider
+        // than the axis pitch between neighbours, so the legacy two-row stagger would overprint and
+        // TimelineLayout's compatibility gate hands the band to LabelIntervalPacker. Every other
+        // committed timeline (the `timeline` case above, `timeline-endpoints`, the golden fixture and
+        // the showcase card) clears the gate and takes the legacy path, so before this case the
+        // packer rendered in the gallery exactly zero times. Pinned headlessly by
+        // theClusteredTimelineCaseActuallyReachesTheIntervalPacker below.
+        new Case("timeline-packed", "Timeline label interval-packing (crowded month)",
+            "timeline\n\"Charter signed by founders\" : 2026-03-02\n"
+                + "\"Seed round closed early\" : 2026-03-05\n"
+                + "\"Prototype demo to board\" : 2026-03-09\n"
+                + "\"Design freeze declared\" : 2026-03-13\n"
+                + "\"Beta invitations mailed\" : 2026-03-17\n"
+                + "\"Security review passed\" : 2026-03-21\n"
+                + "\"Release candidate cut\" : 2026-03-25\n"
+                + "\"Public launch announced\" : 2026-03-30"),
         new Case("gantt", "Gantt",
             "gantt\n\"Design\" : 0-3\n\"Build\" : 3-8\n\"Test\" : 7-11\n\"Ship\" : 11-13"),
         new Case("flowchart", "Flowchart (layered, custom node colour)",
@@ -197,6 +265,8 @@ class BrewShotGalleryTest {
             "tensornetwork\nmps A B C D"),
         new Case("tensornetwork-mpo", "Tensor network (MPO — second operator leg per core)",
             "tensornetwork\nmpo A B C D"),
+        new Case("young", "Young diagram — partition 8 + 6 + 4 + 3 + 1",
+            "young\nrows: 8, 6, 4, 3, 1"),
         // Dynkin diagrams (finite-type semisimple-Lie-algebra classification, plan 8e13b196). Node
         // discs on a baseline (fork/branch nodes offset), 1/2/3 parallel bonds, an arrow on a
         // multi-bond pointing from the longer to the shorter root. The Cartan-matrix oracle proves the
@@ -207,6 +277,17 @@ class BrewShotGalleryTest {
         new Case("dynkin-d4", "Dynkin — D₄ (a fork of two terminal nodes)", "dynkin\ntype: D4"),
         new Case("dynkin-e8", "Dynkin — E₈ (a line with a branch off the 3rd node)", "dynkin\ntype: E8"),
         new Case("dynkin-g2", "Dynkin — G₂ (a triple bond with an arrow)", "dynkin\ntype: G2"),
+        // Root-system Coxeter/Petrie projections: readable rank-two A2/G2 discriminators plus the
+        // intended E8 showpiece. The A2 receipt pins semantic minimal links; G2 exposes its two root
+        // lengths without a line web. E8's full 6,720-line minimal root-polytope graph is below the
+        // independent 10,000-edge and emitter-byte caps; eight orbit rings + 240 points remain
+        // visible over the graph. Every case below loads its TRACKED generated example page.
+        new Case("rootsystem-a2", "Root system — A₂ hexagon (6 roots, 6 minimal links)",
+            "rootsystem\ntype: A2\nedges: minimal"),
+        new Case("rootsystem-g2", "Root system — G₂ short/long roots (12 roots, rings only)",
+            "rootsystem\ntype: G2\nedges: none"),
+        new Case("rootsystem-e8", "Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)",
+            "rootsystem\ntype: E8\nedges: minimal"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
         new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
@@ -244,6 +325,152 @@ class BrewShotGalleryTest {
         return Path.of("examples", "gallery").toAbsolutePath();
     }
 
+    /// The SHIPPED DSL of a registered case — never a second copy of it, so a pin below can never
+    /// drift from the diagram the gallery actually captures.
+    private static String galleryDsl(String name) {
+        for (Case c : GALLERY) {
+            if (c.name().equals(name)) {
+                return c.dsl();
+            }
+        }
+        throw new AssertionError("no gallery case named " + name);
+    }
+
+    /// The Timeline interval packer is COMPATIBILITY-GATED: {@code TimelineLayout} keeps the legacy
+    /// two-row stagger byte-for-byte whenever the ACTUAL emitted boxes already clear pairwise, and
+    /// only a failing band reaches {@link com.sirentide.layout.LabelIntervalPacker}. A screenshot
+    /// cannot tell the two paths apart, so this pins which path the `timeline-packed` case took,
+    /// from the emitted scene, HEADLESSLY (no Chrome, so it can never assume-skip).
+    ///
+    /// THE SIGNAL IS STRUCTURAL, not a tuned threshold. The legacy path has exactly TWO event-label
+    /// baselines (-14 and -14-ROW_STAGGER), and every non-empty label's ink covers the x-height band
+    /// immediately above its own baseline — so all labels sharing a baseline merge into ONE vertical
+    /// band, and a legacy render can show AT MOST TWO disjoint event-label bands for any input.
+    /// Three or more bands is reachable only through {@code LabelIntervalPacker.baselinesUp}. Force
+    /// the gate open (`topClean = true`) and this case collapses to two bands and fails here.
+    @Test
+    void theClusteredTimelineCaseActuallyReachesTheIntervalPacker() {
+        LaidOut laid = TimelineLayout.layout(
+            (com.sirentide.ir.Timeline) DslParser.parse(galleryDsl("timeline-packed")));
+        List<Shape> flat = new ArrayList<>();
+        flatten(laid.shapes(), flat);
+        double axisY = flat.stream().filter(s -> s instanceof Wedge)
+            .mapToDouble(s -> ((Wedge) s).cy()).max().orElseThrow();
+
+        List<double[]> eventLabels = new ArrayList<>();     // {minX, minY, maxX, maxY}, absolute
+        for (Shape s : flat) {
+            if (s instanceof GlyphRun run) {
+                double[] box = glyphBounds(run.pathD());
+                if (box != null && box[3] < axisY) {        // drawn above the axis → an EVENT label
+                    eventLabels.add(box);
+                }
+            }
+        }
+        assertEquals(8, eventLabels.size(),
+            "all eight declared event labels must be drawn above the axis");
+
+        assertTrue(bandCount(eventLabels) >= 3,
+            "timeline-packed must reach the interval partitioner: the legacy two-baseline stagger "
+                + "can emit at most two disjoint event-label bands, and this render shows "
+                + bandCount(eventLabels));
+
+        for (int i = 0; i < eventLabels.size(); i++) {
+            for (int j = i + 1; j < eventLabels.size(); j++) {
+                double[] a = eventLabels.get(i);
+                double[] b = eventLabels.get(j);
+                assertTrue(a[0] >= b[2] || b[0] >= a[2] || a[1] >= b[3] || b[1] >= a[3],
+                    "packed event labels must not overprint: " + Arrays.toString(a)
+                        + " vs " + Arrays.toString(b));
+            }
+        }
+    }
+
+    private static void flatten(List<Shape> shapes, List<Shape> into) {
+        for (Shape s : shapes) {
+            if (s instanceof Group g) {
+                flatten(g.members(), into);
+            } else {
+                into.add(s);
+            }
+        }
+    }
+
+    /// Exact bounds of a FontMetrics glyph path (the M/L/Q/Z alphabet is pure coordinate pairs).
+    private static double[] glyphBounds(String pathD) {
+        Matcher m = PATH_NUMBER.matcher(pathD);
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        boolean sawPair = false;
+        while (m.find()) {
+            double x = Double.parseDouble(m.group());
+            if (!m.find()) {
+                break;
+            }
+            double y = Double.parseDouble(m.group());
+            sawPair = true;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        return sawPair ? new double[] {minX, minY, maxX, maxY} : null;
+    }
+
+    /// Distinct label ROWS, read back as the connected components of the vertical-interval overlap
+    /// graph. Labels on one baseline always overlap vertically; rows produced by the packer are
+    /// separated by its exact envelope gap.
+    private static int bandCount(List<double[]> boxes) {
+        List<double[]> bands = new ArrayList<>();
+        for (double[] box : boxes) {
+            double lo = box[1];
+            double hi = box[3];
+            List<double[]> keep = new ArrayList<>();
+            for (double[] band : bands) {
+                if (band[0] <= hi && lo <= band[1]) {
+                    lo = Math.min(lo, band[0]);
+                    hi = Math.max(hi, band[1]);
+                } else {
+                    keep.add(band);
+                }
+            }
+            keep.add(new double[] {lo, hi});
+            bands = keep;
+        }
+        return bands.size();
+    }
+
+    @Test
+    void everyShippedDiagramTypeHasADeclaredGalleryCaseAndCommittedReference() throws Exception {
+        Set<Class<?>> shipped = new LinkedHashSet<>(Arrays.asList(Diagram.class.getPermittedSubclasses()));
+        shipped.remove(Empty.class);
+        assertEquals(shipped, TYPE_COVERAGE.keySet(),
+            "the explicit BrewShot type mapping must equal Diagram's sealed production inventory");
+
+        Map<String, Case> casesByName = new LinkedHashMap<>();
+        for (Case c : GALLERY) {
+            assertTrue(casesByName.put(c.name(), c) == null, "duplicate gallery case name: " + c.name());
+        }
+
+        Path dir = galleryDir();
+        String galleryPage = Files.readString(dir.resolve("GALLERY.md"));
+        for (Map.Entry<Class<? extends Diagram>, String> coverage : TYPE_COVERAGE.entrySet()) {
+            String caseName = coverage.getValue();
+            Case representative = casesByName.get(caseName);
+            assertTrue(representative != null,
+                coverage.getKey().getSimpleName() + " maps to missing gallery case " + caseName);
+            assertEquals(coverage.getKey(), DslParser.parse(representative.dsl()).getClass(),
+                caseName + " must parse to the mapped production IR type");
+
+            Path image = dir.resolve(caseName + ".png");
+            assertTrue(Files.isRegularFile(image) && Files.size(image) > 0,
+                coverage.getKey().getSimpleName() + " has no committed BrewShot image " + image);
+            assertTrue(galleryPage.contains("](" + caseName + ".png)"),
+                coverage.getKey().getSimpleName() + " has no generated GALLERY.md image entry");
+        }
+    }
+
     @Test
     void everyDiagramStaysInsideItsCanvasAndWritesAReferenceScreenshot() throws Exception {
         assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
@@ -259,8 +486,20 @@ class BrewShotGalleryTest {
                 String svg = c.renderer() == null
                     ? Sirentide.render(c.dsl())
                     : Sirentide.render(c.dsl(), c.renderer());
-                shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
-                    + svg + "</body></html>");
+                // Root-system receipts load TRACKED generated pages, not test-only wrappers, proving
+                // the committed examples really embed the A2/G2/E8 bakes. Every other long-standing
+                // gallery case keeps the minimal wrapper it has always used.
+                String browserHtml = switch (c.name()) {
+                    case "rootsystem-a2" -> Files.readString(
+                        Path.of("examples", "rootsystem-a2.html").toAbsolutePath());
+                    case "rootsystem-g2" -> Files.readString(
+                        Path.of("examples", "rootsystem-g2.html").toAbsolutePath());
+                    case "rootsystem-e8" -> Files.readString(
+                        Path.of("examples", "rootsystem.html").toAbsolutePath());
+                    default -> "<!doctype html><html><body style=\"margin:20px;background:#fff\">"
+                        + svg + "</body></html>";
+                };
+                shot.html(browserHtml);
                 shot.settle(120);
 
                 @SuppressWarnings("unchecked")

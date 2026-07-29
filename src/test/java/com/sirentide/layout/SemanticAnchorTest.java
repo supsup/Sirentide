@@ -19,8 +19,7 @@ import org.junit.jupiter.api.Test;
 /// The SEMANTIC-ANCHOR infrastructure (plan sirentide-semantic-anchor-g, contract sirentide/67): the
 /// closed role enum, the deterministic charset-safe id sanitizer, the per-diagram unique-id + emit-
 /// order-seq assigner, and the proof that a real FLOWCHART wraps each node/edge (and a PIE each slice)
-/// in ONE `<g data-sirentide-*>`. The OTHER types stay un-anchored this slice (covered by their own
-/// byte-identical goldens / shape-count tests).
+/// in ONE `<g data-sirentide-*>`. Per-type tests pin the remaining element and structural roles.
 class SemanticAnchorTest {
 
     /// Matches ONE emitted anchor group open-tag → (role, id, seq).
@@ -222,6 +221,33 @@ class SemanticAnchorTest {
         assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
     }
 
+    /// S2 cluster coverage: each drawn subgraph frame is one `role=cluster` group, keyed by the raw
+    /// subgraph id rather than its display title. Clusters emit under/before edges and nodes, and all
+    /// three roles share one unique-id/seq namespace.
+    @Test
+    void flowchartEmitsAClusterAnchorPerDrawnSubgraphFrame() {
+        List<Anc> a = anchors(Sirentide.render(
+            "flowchart TD\n  subgraph outer<unsafe> [Outer title]\n"
+                + "    A[outerunsafe] --> B[End]\n    subgraph inner [Inner title]\n"
+                + "      B --> C[Ship]\n    end\n  end\n"));
+        // 2 clusters + 2 edges + 3 nodes.
+        assertWellFormed(a, 7);
+        assertEquals(2, countRole(a, "cluster"), "one cluster anchor per frame: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("cluster")
+                && x.id().equals("outerunsafe")),
+            "cluster id comes from sanitized subgraph id, not its display title: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node")
+                && x.id().equals("outerunsafe-1")),
+            "cluster and node share one collision namespace: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("cluster") && x.id().equals("inner")),
+            "nested cluster retains its stable id: " + a);
+        int maxClusterSeq = a.stream().filter(x -> x.role().equals("cluster"))
+            .mapToInt(Anc::seq).max().orElse(-1);
+        int minEdgeSeq = a.stream().filter(x -> x.role().equals("edge"))
+            .mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxClusterSeq < minEdgeSeq, "cluster frames emit before edges/nodes: " + a);
+    }
+
     // -- the PIE proof (slices) ---------------------------------------------------------------------
 
     @Test
@@ -324,15 +350,21 @@ class SemanticAnchorTest {
     void quadrantEmitsPointAnchors() {
         List<Anc> a = anchors(Sirentide.render(
             "quadrant\n  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.7, 0.2]\n"));
-        assertWellFormed(a, 2);
+        assertWellFormed(a, 4);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(2, countRole(a, "point"), "two point anchors: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("x")),
+            "x-axis has stable id x: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("y")),
+            "y-axis has stable id y: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("FeatureA")), "point id from label: " + a);
     }
 
     @Test
     void xychartEmitsBarAnchorPerBar() {
         List<Anc> a = anchors(Sirentide.render("xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 5);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(3, countRole(a, "bar"), "one bar anchor per bar: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Mon")), "bar id from category: " + a);
     }
@@ -342,14 +374,18 @@ class SemanticAnchorTest {
         // 2 series × 2 categories, all present → 4 point discs, each role=bar (id = category, uniquified).
         List<Anc> a = anchors(Sirentide.render(
             "xychart line\n  series: R, C\n  \"Q1\" : 5 3\n  \"Q2\" : 8 6\n"));
-        assertWellFormed(a, 4);
+        assertWellFormed(a, 6);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(4, countRole(a, "bar"), "one bar anchor per present point: " + a);
     }
 
     @Test
     void ganttEmitsBarAnchorPerTask() {
         List<Anc> a = anchors(Sirentide.render("gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n"));
-        assertWellFormed(a, 2);
+        assertWellFormed(a, 3);
+        assertEquals(1, countRole(a, "axis"), "one time-axis anchor: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("time")),
+            "time axis has stable id time: " + a);
         assertEquals(2, countRole(a, "bar"), "one bar anchor per task: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Design")), "bar id from task label: " + a);
     }
@@ -358,7 +394,10 @@ class SemanticAnchorTest {
     void timelineEmitsEventAnchorPerEvent() {
         List<Anc> a = anchors(Sirentide.render(
             "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 4);
+        assertEquals(1, countRole(a, "axis"), "one time-axis anchor: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("time")),
+            "time axis has stable id time: " + a);
         assertEquals(3, countRole(a, "event"), "one event anchor per event: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Founded")), "event id from label: " + a);
     }
@@ -411,16 +450,17 @@ class SemanticAnchorTest {
     }
 
     /// journey (receipt #2): every task's point + name + actor labels wrap in ONE `<g role="task">`
-    /// (id = the task name, uniquified), seq 0..N-1 in declaration order across all sections. A journey
-    /// with 2 sections × (2 + 1) = 3 tasks → exactly 3 task anchors; the section brackets, satisfaction
-    /// line, and axes stay bare. Proves a task emits role="task". DROP the `<g>` wrapper in
+    /// (id = the task name, uniquified), seq follows the two axes in declaration order. A journey
+    /// with 2 sections × (2 + 1) = 3 tasks → 3 task anchors plus x/y axis anchors; the section brackets
+    /// and satisfaction line stay bare. Proves a task emits role="task". DROP the `<g>` wrapper in
     /// JourneyLayout (emit the shapes bare) and the count falls to 0 → RED.
     @Test
     void journeyEmitsATaskAnchorPerTask() {
         List<Anc> a = anchors(Sirentide.render(
             "journey\n  title Day\n  section Go to work\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n"
                 + "  section Do work\n    Code: 5: Me\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 5);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(3, countRole(a, "task"), "one task anchor per task: " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("task") && x.id().equals("Maketea")),
             "task id is the sanitized task name (Maketea): " + a);
@@ -506,6 +546,23 @@ class SemanticAnchorTest {
         assertEquals(3, seqOf(a, "r1c0"));
         assertEquals(4, seqOf(a, "r1c1"));
         assertEquals(5, seqOf(a, "r1c2"));
+    }
+
+    @Test
+    void rootSystemEmitsMinimalEdgesBeforeOnePointAnchorPerRoot() {
+        List<Anc> a = anchors(Sirentide.render(
+            "rootsystem\n  type: A2\n  edges: minimal\n"));
+        // A2 is a six-root hexagon with six minimal root-polytope edges.
+        assertWellFormed(a, 12);
+        assertEquals(6, countRole(a, "edge"), "one anchor per bounded minimal edge: " + a);
+        assertEquals(6, countRole(a, "point"), "one point anchor per mathematical root: " + a);
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge"))
+            .mapToInt(Anc::seq).max().orElse(-1);
+        int minPointSeq = a.stream().filter(x -> x.role().equals("point"))
+            .mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minPointSeq, "polytope edges draw/sequence before root points: " + a);
+        assertTrue(a.stream().filter(x -> x.role().equals("point"))
+            .allMatch(x -> x.id().startsWith("root-")), "root ids are deterministic indices: " + a);
     }
 
     private static int seqOf(List<Anc> a, String id) {
