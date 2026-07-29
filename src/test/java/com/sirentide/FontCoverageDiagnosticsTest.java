@@ -49,6 +49,42 @@ class FontCoverageDiagnosticsTest {
         assertFalse(d.message().contains("U+"), "no U+ code points named for pure Latin");
     }
 
+    /// Marlow sirentide/706 Finding 1 (HIGH): coverage warnings must correspond to glyph text
+    /// ACTUALLY EMITTED, never to source text that does not render. The old okDiagnostics scanned the
+    /// raw DSL, so a rocket in a COMMENT produced a U+1F680 coverage detail while the SVG stayed
+    /// byte-identical to the ASCII control — a warning about glyphs that do not exist.
+    @Test
+    void emojiInAnIgnoredCommentProducesNoCoverageSignal() {
+        String withComment = "%% ignored: 🚀\nflowchart TD\n  A[Ship it] --> B[Done]\n";
+        assertEquals(Sirentide.render(LATIN).replace("flowchart", "flowchart"),
+            Sirentide.render(LATIN), "self-check: control renders");
+        RenderResult r = Sirentide.renderWithDiagnostics(withComment);
+        Diagnostics d = r.diagnostics();
+        assertEquals(Outcome.OK, d.outcome());
+        assertFalse(d.detail().contains("U+1F680"),
+            "a comment never bakes as glyphs, so it must not warn: " + d.detail());
+        assertEquals("", d.detail(), "no rendered out-of-coverage text → empty detail");
+    }
+
+    /// Finding 1, second reproducer: `accDescr` feeds the ARIA description, not glyph emission —
+    /// an emoji there must not generate a coverage caveat either.
+    @Test
+    void emojiInAccDescrProducesNoCoverageSignal() {
+        String withAccDescr = "flowchart TD\n  accDescr: launch 🚀\n  A[Ship it] --> B[Done]\n";
+        Diagnostics d = Sirentide.renderWithDiagnostics(withAccDescr).diagnostics();
+        assertFalse(d.detail().contains("U+1F680"),
+            "accDescr is a11y metadata, never glyphs — no coverage warning: " + d.detail());
+    }
+
+    /// The POSITIVE control that keeps the two tests above honest: the same emoji in a RENDERED label
+    /// still warns (already pinned by emojiLabelStillRendersUnchangedAndNamesTheCodePoint, restated
+    /// here so the ignored-source pair cannot pass by the caveat being dead entirely).
+    @Test
+    void renderedEmojiStillWarnsWhileIgnoredEmojiDoesNot() {
+        assertTrue(Sirentide.renderWithDiagnostics(EMOJI).diagnostics().detail().contains("U+1F680"),
+            "the caveat mechanism itself must stay alive");
+    }
+
     @Test
     void fontCoverageOracleAgreesWithGlyphLookup() {
         FontMetrics fm = FontMetrics.bundled();
