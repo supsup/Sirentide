@@ -153,6 +153,42 @@ class FontCoverageDiagnosticsTest {
                 + d.detail());
     }
 
+    /**
+     * MARLOW DISCRIMINATOR (sirentide/720, replayed at 729; red before the sink stack): a
+     * MathFragmentRenderer is an application callback with NO non-reentrancy restriction, so
+     * an inner renderWithDiagnostics call must not erase the outer render's emission capture.
+     * Both required directions: the OUTER sink resumes after the inner render (outer detail
+     * still names its own rocket), and INNER glyphs never contaminate the outer corpus (the
+     * saucer stays out of the outer detail — and vice versa).
+     */
+    @Test
+    void nestedDiagnosticsRenderDoesNotEraseOrContaminateTheOuterCapture() {
+        String innerDsl = "flowchart TD\n  A[probe 🛸]\n";   // U+1F6F8 FLYING SAUCER
+        java.util.concurrent.atomic.AtomicReference<Diagnostics> inner =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        com.sirentide.api.MathFragmentRenderer nesting = (latex, fontSizePx) -> {
+            inner.set(Sirentide.renderWithDiagnostics(innerDsl).diagnostics());
+            return java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g><path d=\"M0 0\"/></g>", 10, 10, 0));
+        };
+        String outerDsl = "flowchart TD\n  A[$x$ 🚀]\n";     // live math run, then U+1F680
+
+        RenderResult outer = Sirentide.renderWithDiagnostics(outerDsl, nesting);
+
+        assertEquals(Sirentide.render(outerDsl, nesting), outer.svg(),
+            "identity control: the nested render must not perturb the outer bake");
+        assertEquals(Outcome.OK, outer.diagnostics().outcome());
+        assertTrue(inner.get().detail().contains("U+1F6F8"),
+            "control: the inner render names its own saucer: " + inner.get().detail());
+        assertTrue(outer.diagnostics().detail().contains("U+1F680"),
+            "the OUTER sink must resume after the inner render — its rocket was emitted: "
+                + outer.diagnostics().detail());
+        assertFalse(outer.diagnostics().detail().contains("U+1F6F8"),
+            "inner glyphs must never contaminate the outer corpus: " + outer.diagnostics().detail());
+        assertFalse(inner.get().detail().contains("U+1F680"),
+            "and the outer corpus must not leak inward: " + inner.get().detail());
+    }
+
     @Test
     void fontCoverageOracleAgreesWithGlyphLookup() {
         FontMetrics fm = FontMetrics.bundled();
