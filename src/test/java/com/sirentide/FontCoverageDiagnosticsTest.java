@@ -2,6 +2,7 @@ package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Diagnostics;
@@ -187,6 +188,61 @@ class FontCoverageDiagnosticsTest {
             "inner glyphs must never contaminate the outer corpus: " + outer.diagnostics().detail());
         assertFalse(inner.get().detail().contains("U+1F680"),
             "and the outer corpus must not leak inward: " + inner.get().detail());
+    }
+
+    /**
+     * Marlow sirentide/733 HIGH, his probe promoted verbatim: a {@code MathFragmentRenderer}
+     * callback that calls ORDINARY {@code Sirentide.render} (not the diagnostics twin) on the
+     * same thread must not inject the inner render's glyphs into the outer diagnostic corpus.
+     * The 720/729 repair only pushed a fresh frame when the nested call was itself a
+     * diagnostics entrypoint — an equally legal plain re-entry appended to the still-armed
+     * outer sink, so a clean outer SVG reported out-of-coverage for glyphs that exist only in
+     * an unrelated inner render.
+     */
+    @Test
+    void plainRenderInsideMathCallbackDoesNotContaminateTheOuterDiagnostics() {
+        String innerDsl = "flowchart TD\n  A[probe 🛸]\n";   // U+1F6F8 FLYING SAUCER
+        java.util.concurrent.atomic.AtomicReference<String> innerSvg =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        com.sirentide.api.MathFragmentRenderer nesting = (latex, fontSizePx) -> {
+            innerSvg.set(Sirentide.render(innerDsl));       // ORDINARY render — no diagnostics
+            return java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g><path d=\"M0 0\"/></g>", 10, 10, 0));
+        };
+        String outerDsl = "flowchart TD\n  A[$x$ plain]\n";  // no unsupported glyphs of its own
+
+        RenderResult outer = Sirentide.renderWithDiagnostics(outerDsl, nesting);
+
+        // POSITIVE CONTROL: the nested plain render really ran and produced a real bake.
+        // Without it, a callback that silently failed would pass the contamination
+        // assertions below vacuously.
+        assertNotNull(innerSvg.get(), "the nested plain render must have run");
+        assertTrue(innerSvg.get().contains("<svg"),
+            "control: the nested plain render must produce a real bake");
+        assertEquals(Outcome.OK, outer.diagnostics().outcome(),
+            "outer diagram has no unsupported glyphs of its own: " + outer.diagnostics());
+        assertFalse(outer.diagnostics().detail().contains("U+1F6F8"),
+            "an inner PLAIN render's glyphs must never reach the outer diagnostic corpus: "
+                + outer.diagnostics().detail());
+    }
+
+    /** The frames twin of the plain-re-entry discriminator — BOTH diagnostic twins scope. */
+    @Test
+    void plainRenderInsideMathCallbackDoesNotContaminateTheOuterFramesDiagnostics() {
+        String innerDsl = "flowchart TD\n  A[probe 🛸]\n";
+        com.sirentide.api.MathFragmentRenderer nesting = (latex, fontSizePx) -> {
+            Sirentide.render(innerDsl);
+            return java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g><path d=\"M0 0\"/></g>", 10, 10, 0));
+        };
+        com.sirentide.api.FramesResult outer =
+            Sirentide.renderFramesWithDiagnostics("flowchart TD\n  A[$x$ plain]\n", nesting);
+
+        assertEquals(Outcome.OK, outer.diagnostics().outcome(),
+            "outer frames diagram is clean: " + outer.diagnostics());
+        assertFalse(outer.diagnostics().detail().contains("U+1F6F8"),
+            "frames twin: inner plain glyphs must not contaminate: "
+                + outer.diagnostics().detail());
     }
 
     @Test

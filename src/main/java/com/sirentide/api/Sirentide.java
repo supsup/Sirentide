@@ -79,6 +79,12 @@ public final class Sirentide {
     /// Same malformed→inert invariant; a throwing renderer is caught per-fragment (degrades that
     /// run to raw text) and never propagates a bake.
     public static String render(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // PLAIN RENDER BOUNDARY (Marlow sirentide/733 HIGH): a MathFragmentRenderer callback
+        // may legally re-enter plain render on the diagnostics thread; beneath an armed frame
+        // this suspends capture so THIS render's glyphs reach no corpus — only the render
+        // actually executing contributes to a corpus, and a plain render contributes to none.
+        // A top-level plain render takes the no-allocation fast path (suspended == false).
+        boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
         try {
             // The leading config block (%% title/theme/direction) — read independently of the body
             // parse; DiagramConfig.DEFAULT (no config) threads a byte-identical bake (no title
@@ -114,6 +120,8 @@ public final class Sirentide {
             // genuine heap exhaustion. The emitter's incremental MAX_OUTPUT_BYTES cap plus the label
             // ellipsization in every layout keep normal operation from ever reaching that point (H2).
             return INERT_SHELL;
+        } finally {
+            com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
 
@@ -138,6 +146,11 @@ public final class Sirentide {
     /// through). Honors the same never-throw invariant as `render`: ANY failure degrades to a single
     /// frame == the guarded `render` output, never a propagated bake.
     public static java.util.List<String> renderFrames(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        // PLAIN RENDER BOUNDARY — same scoping as render(dsl, math) (Marlow sirentide/733
+        // HIGH): a plain frames render beneath an armed diagnostic frame contributes to no
+        // corpus; top-level takes the no-allocation fast path. The degrade path's nested
+        // render(dsl, math) call manages its own boundary (nested suspensions stack safely).
+        boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
@@ -210,6 +223,8 @@ public final class Sirentide {
             // Never throw (DESIGN §6/§7): degrade to a single frame == the guarded static render. A
             // malformed/no-seq source thus always yields exactly [render(dsl, math)].
             return java.util.List.of(render(dsl, math));
+        } finally {
+            com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
 
