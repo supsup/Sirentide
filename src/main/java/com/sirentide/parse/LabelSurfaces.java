@@ -196,7 +196,7 @@ public final class LabelSurfaces {
                     var op = nz(gg.ops()).get(i);
                     // Branch.name labels a lane and IS display text.
                     if (op instanceof com.sirentide.ir.GitOp.Branch b) {
-                        add(out, "gitgraph.branch[" + i + "]", b.name());
+                        addPlain(out, "gitgraph.branch[" + i + "]", b.name());
                     }
                     // Commit.id IS display text too. I excluded it as an identifier and
                     // Marlow overturned that with evidence (sirentide/676): the IR contract
@@ -206,7 +206,7 @@ public final class LabelSurfaces {
                     // exempt the text it visibly renders -- which is precisely the direction
                     // I warned was under-validated, and was.
                     if (op instanceof com.sirentide.ir.GitOp.Commit c2) {
-                        add(out, "gitgraph.commit[" + i + "]", c2.id());
+                        addPlain(out, "gitgraph.commit[" + i + "]", c2.id());
                     }
                 }
             }
@@ -281,8 +281,7 @@ public final class LabelSurfaces {
         for (int i = 0; i < nz(f.nodes()).size(); i++) {
             var n = nz(f.nodes()).get(i);
             // A node has a real id, so use it: a stable identity a human can find in source.
-            // THE one documented math surface: `$…$` in a flowchart node label.
-            addMathAware(out, prefix + "node:" + n.id(), n.label());
+            add(out, prefix + "node:" + n.id(), n.label());
         }
         for (int i = 0; i < nz(f.edges()).size(); i++) {
             var e = nz(f.edges()).get(i);
@@ -311,7 +310,7 @@ public final class LabelSurfaces {
         if (node == null) {
             return;
         }
-        add(out, path, node.text());
+        addPlain(out, path, node.text());
         for (int i = 0; i < nz(node.children()).size(); i++) {
             mindmap(nz(node.children()).get(i), path + "." + i, out);
         }
@@ -320,13 +319,13 @@ public final class LabelSurfaces {
     /// Matrix display surfaces: column headers (the legend), row labels, and cell text.
     private static void matrix(Matrix m, List<Labeled> out) {
         for (int i = 0; i < nz(m.columns()).size(); i++) {
-            add(out, "matrix.column[" + i + "]", nz(m.columns()).get(i));
+            addPlain(out, "matrix.column[" + i + "]", nz(m.columns()).get(i));
         }
         for (int r = 0; r < nz(m.rows()).size(); r++) {
             var row = nz(m.rows()).get(r);
-            add(out, "matrix.row[" + r + "]", row.label());
+            addPlain(out, "matrix.row[" + r + "]", row.label());
             for (int c = 0; c < nz(row.cells()).size(); c++) {
-                add(out, "matrix.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
+                addPlain(out, "matrix.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
             }
         }
     }
@@ -348,20 +347,36 @@ public final class LabelSurfaces {
         return list == null ? List.of() : list;
     }
 
-    /// PLAIN-only surface: the whole authored string is scanned. This is the default because
-    /// only one surface in the product documents math support.
+    /// MATH-AWARE surface -- the DEFAULT, because that is the product's actual contract.
+    ///
+    /// ## I had this backwards, and the correction is instructive
+    ///
+    /// The first version made only flowchart NODE labels math-aware, derived from one javadoc
+    /// line on `render(dsl, math)`. Marlow showed that contradicts the shipped product
+    /// (sirentide/685): README says a math fragment inside ANY label typesets; DESIGN.md says
+    /// real baked LaTeX renders in EVERY label-bearing type, naming node, edge, message, state
+    /// and quadrant; `FlowchartLayout` routes EDGE labels through `MathLabel`;
+    /// `SequenceLayout` routes MESSAGE labels through it; and a test literally called
+    /// `MathInAllLabelsRealRenderTest` is the cross-type contract.
+    ///
+    /// So `$0<x>1$` on a sequence message -- a VALID formula on a surface that renders math --
+    /// was rejected at parse. My conservative default did not merely record a cautious
+    /// internal assumption; it REMOVED SUPPORTED INPUT.
+    ///
+    /// The derivation that actually holds: a surface is math-aware iff its layout routes
+    /// through `MathLabel`. Twelve layouts do. The four that do not -- Caption, GitGraph,
+    /// Mindmap, Matrix -- each say so in their own javadoc, and those are exactly the surfaces
+    /// Marlow used for the dollar-wrap bypass at sirentide/680.
     private static void add(List<Labeled> out, String id, String text) {
-        addLabel(out, id, text, false);
+        addLabel(out, id, text, true);
     }
 
-    /// MATH-AWARE surface. `Sirentide.render(dsl, math)` documents `$…$` as a FLOWCHART NODE
-    /// LABEL feature specifically, and `MatrixLayout` states cells are a closed verdict
-    /// vocabulary with no math — so this is deliberately narrow rather than "anything that
-    /// accepts a MathFragmentRenderer parameter". Several layouts take that parameter and
-    /// ignore it (GitGraphLayout and MindmapLayout both say so in their javadoc), which is
-    /// exactly the false signal that would re-introduce the bypass.
-    private static void addMathAware(List<Labeled> out, String id, String text) {
-        addLabel(out, id, text, true);
+    /// PLAIN surface: no `MathLabel` in its layout, so `$…$` is literal glyph text there and
+    /// the whole authored string must be scanned. Restricted to the four layouts that document
+    /// themselves as plain -- widening this set silently re-opens the dollar-wrap bypass,
+    /// narrowing it rejects valid formulas.
+    private static void addPlain(List<Labeled> out, String id, String text) {
+        addLabel(out, id, text, false);
     }
 
     private static void addLabel(List<Labeled> out, String id, String text, boolean mathAware) {

@@ -684,6 +684,27 @@ class SemanticAnchorTest {
         }
     }
 
+    /// Marlow's HIGH finding at sirentide/685, as his exact discriminators. My capability set
+    /// was too NARROW and rejected valid formulas on surfaces that genuinely render math.
+    ///
+    /// These use a real MathFragmentRenderer, because the bug only shows with math enabled:
+    /// validation runs BEFORE layout, so a wrong classification removes supported input
+    /// rather than merely recording a cautious internal default.
+    @Test
+    void relationalMathIsLegalOnEverySurfaceThatActuallyRendersIt() {
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> null;
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("sequence message", "sequence\n  Alice ->> Bob : $0<x>1$"),
+                new Probe("flowchart edge",   "flowchart TD\n  A[a] -->|$0<x>1$| B[b]"),
+                new Probe("flowchart node",   "flowchart TD\n  A[$0<x>1$] --> B[b]"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), math);
+            assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+                pr.what() + " routes through MathLabel, so a relational formula is VALID "
+                    + "input and must not be rejected: " + result.diagnostics());
+        }
+    }
+
     /// THE POSITIVE CONTROL Marlow required, and the reason the fix is surface-aware rather
     /// than "delete the math exemption": on a flowchart NODE label — the one surface the API
     /// documents as math-capable — inline math must stay legal.

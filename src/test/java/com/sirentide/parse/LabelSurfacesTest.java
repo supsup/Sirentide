@@ -155,6 +155,43 @@ class LabelSurfacesTest {
         assertTrue(LabelSurfaces.of(new com.sirentide.ir.Knot("trefoil", null)).isEmpty());
     }
 
+    /// THE CAPABILITY MIRROR IS NOW GUARDED, which is what Marlow actually asked for
+    /// (sirentide/685: "preferably derive it from shared rendering metadata rather than a
+    /// parser-side hand-maintained mirror").
+    ///
+    /// I cannot make the parser ask the layout at runtime without a bigger refactor, so
+    /// instead this pins my classification against the rendering reality it claims to
+    /// describe: a surface is math-aware iff its layout routes through `MathLabel`.
+    ///
+    /// If a layout starts or stops using MathLabel, this goes RED and forces the
+    /// classification to be revisited — which is the same drift-guard shape I am building for
+    /// the agent vocabulary in Stafficy, applied to my own mirror. Without it, my set is
+    /// exactly the kind of hand-maintained copy that went wrong twice in two rounds.
+    @Test
+    @DisplayName("the plain/math classification matches which layouts actually use MathLabel")
+    void theCapabilitySetMatchesTheLayoutsThatRenderMath() throws Exception {
+        java.nio.file.Path dir = java.nio.file.Path.of("src/main/java/com/sirentide/layout");
+        assertTrue(java.nio.file.Files.isDirectory(dir), "layout sources must be readable: " + dir);
+
+        // The four surfaces LabelSurfaces marks PLAIN must have no MathLabel in their layout.
+        for (String plain : java.util.List.of("CaptionLayout", "GitGraphLayout",
+                "MindmapLayout", "MatrixLayout")) {
+            String src = java.nio.file.Files.readString(dir.resolve(plain + ".java"));
+            assertFalse(src.contains("MathLabel"),
+                plain + " is classified PLAIN but routes through MathLabel — the classification "
+                    + "would then reject valid formulas on a surface that renders them");
+        }
+
+        // ...and the surfaces it marks MATH-AWARE must actually render math. These are the two
+        // Marlow proved were misclassified, plus the node control.
+        for (String mathy : java.util.List.of("FlowchartLayout", "SequenceLayout")) {
+            String src = java.nio.file.Files.readString(dir.resolve(mathy + ".java"));
+            assertTrue(src.contains("MathLabel"),
+                mathy + " is classified MATH-AWARE but does not route through MathLabel — the "
+                    + "classification would then scan a real formula as markup");
+        }
+    }
+
     /// The exact repro from the defect this plan closes, plus an identifier that MUST survive:
     /// `A[TRUE NEGATIVE<br/>safe to act on]` rendered `<br/>` as visible text with exit 0.
     private static Diagram reproFlowchart() {
