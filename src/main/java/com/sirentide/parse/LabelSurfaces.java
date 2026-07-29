@@ -63,9 +63,11 @@ public final class LabelSurfaces {
     /// TWO FIELDS WERE EXCLUDED AS IDENTIFIERS, and both are judgement calls rather than
     /// obvious ones, so they are named here instead of buried:
     ///
-    ///  - `GitOp.Commit.id` — rendered near the commit dot, but it is an *id* by name and by
-    ///    role. Marlow's ruling says not to reject raw identifiers merely because they are
-    ///    later sanitized. `GitOp.Branch.name` IS collected, because it labels a lane.
+    ///  - ~~`GitOp.Commit.id`~~ — I excluded this and was WRONG; it is now collected. Marlow
+    ///    overturned it at sirentide/676 with three citations: the IR contract calls it the
+    ///    optional author label, the parser documents it as an optional id label, and
+    ///    GitGraphLayout emits it as glyph paths. Kept here as a record that the
+    ///    identifier-vs-label judgement failed in the UNDER-validating direction.
     ///  - `Knot.type` — a selector naming which knot to draw (`trefoil`, `figure8`), not
     ///    free author text. A tag-shaped value here would fail the knot lookup long before
     ///    it could reach a label surface.
@@ -170,10 +172,20 @@ public final class LabelSurfaces {
             }
             case com.sirentide.ir.GitGraph gg -> {
                 for (int i = 0; i < nz(gg.ops()).size(); i++) {
-                    // Branch.name labels a lane and IS display text. Commit.id is excluded
-                    // as an identifier -- see UNAUDITED for that judgement call.
-                    if (nz(gg.ops()).get(i) instanceof com.sirentide.ir.GitOp.Branch b) {
+                    var op = nz(gg.ops()).get(i);
+                    // Branch.name labels a lane and IS display text.
+                    if (op instanceof com.sirentide.ir.GitOp.Branch b) {
                         add(out, "gitgraph.branch[" + i + "]", b.name());
+                    }
+                    // Commit.id IS display text too. I excluded it as an identifier and
+                    // Marlow overturned that with evidence (sirentide/676): the IR contract
+                    // calls it the optional author LABEL, the parser documents it as an
+                    // optional id label, and GitGraphLayout emits it as glyph paths. It
+                    // doubles as an anchor identity, but a field being an identity does not
+                    // exempt the text it visibly renders -- which is precisely the direction
+                    // I warned was under-validated, and was.
+                    if (op instanceof com.sirentide.ir.GitOp.Commit c2) {
+                        add(out, "gitgraph.commit[" + i + "]", c2.id());
                     }
                 }
             }

@@ -663,6 +663,44 @@ class SemanticAnchorTest {
         assertEquals(nodeIds.size(), nodeIds.stream().distinct().count(), "core ids are all distinct");
     }
 
+    /// Marlow's finding 1 (sirentide/676): the visible config CAPTION bypassed the seam.
+    /// His discriminator, verbatim, through the public API -- it used to return OK at emit.
+    @Test
+    void aTagShapedConfigCaptionFailsClosedLikeAnyOtherDisplayLabel() {
+        String source = "%% caption: unsafe<br/>\npie\n \"A\" : 1";
+
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "the caption is a DISPLAY surface and must fail closed: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(), "classified at parse, not emit");
+        assertTrue(result.diagnostics().message().contains("caption"),
+            "the stable identity for a single named field IS its name: "
+                + result.diagnostics().message());
+        // render() takes the same degrade, and the markup never reaches output.
+        String svg = Sirentide.render(source);
+        assertFalse(svg.contains("<br/>"), "caption markup must not reach the SVG: " + svg);
+    }
+
+    /// POSITIVE CONTROL for the same surface: a LEGAL caption must still render, or the fix
+    /// above would be indistinguishable from breaking captions entirely.
+    @Test
+    void aLegalConfigCaptionStillRenders() {
+        var result = Sirentide.renderWithDiagnostics("%% caption: a < b holds\npie\n \"A\" : 1");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "an ordinary comparison in a caption stays legal: " + result.diagnostics());
+    }
+
+    /// Marlow's finding 2 (sirentide/676): gitGraph commit ids ARE authored display labels.
+    /// I excluded them as identifiers and he overturned it with the layout's glyph emission.
+    @Test
+    void aTagShapedGitCommitLabelFailsClosed() {
+        var result = Sirentide.renderWithDiagnostics("gitGraph\n commit id: \"<br/>\"");
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "a rendered commit label is a display surface: " + result.diagnostics());
+        assertTrue(result.diagnostics().message().contains("gitgraph.commit"),
+            "stable identity names the op index: " + result.diagnostics().message());
+    }
+
     /// COORDINATE-ID COVERAGE, preserved on a LEGAL label (Marlow's ruling point 4,
     /// sirentide/671). The original version of this test used a tag-shaped label, which is
     /// intentionally INVALID under the fail-closed contract — so keeping it here would have

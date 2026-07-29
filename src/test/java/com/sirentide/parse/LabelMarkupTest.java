@@ -73,6 +73,31 @@ class LabelMarkupTest {
         assertTrue(sanitized.indexOf('\u001b') < 0, "escape must not survive: " + sanitized);
     }
 
+    /// Marlow's finding 3 (sirentide/676), as his exact discriminator.
+    ///
+    /// The scanner used to accept `<`, an optional `/`, ONE ascii letter, and then any later
+    /// `>`. That is bracket-pairing, not tag grammar, so `0<x+y>1` was reported as the tag
+    /// `<x+y>` -- ordinary mathematical comparison prose rejected as markup.
+    ///
+    /// My original positive controls could not catch it: every one put a SPACE or a
+    /// non-letter after the bracket (`x < y`, `a <- b`, `3<5`), and only a letter directly
+    /// after `<` reaches the name branch at all. So the controls tested the arm that was
+    /// already safe.
+    @Test
+    @DisplayName("POSITIVE CONTROL: variable comparisons with a letter straight after < stay legal")
+    void variableComparisonsAreNotMarkup() {
+        assertNull(LabelMarkup.offendingTag("0<x+y>1"), "Marlow's exact discriminator");
+        assertNull(LabelMarkup.offendingTag("a<b+c>d"));
+        assertNull(LabelMarkup.offendingTag("n<x*y>m"));
+        assertNull(LabelMarkup.offendingTag("f<g=h>i"));
+        // the name may run several chars and still fail at a non-boundary
+        assertNull(LabelMarkup.offendingTag("lo<hi+1>mid"));
+        // ...while a name that TERMINATES legally is still caught
+        assertEquals("<br/>", LabelMarkup.offendingTag("0<br/>1"));
+        assertEquals("<b>", LabelMarkup.offendingTag("0<b>1"));
+        assertEquals("<span x=1>", LabelMarkup.offendingTag("0<span x=1>1"));
+    }
+
     @Test
     @DisplayName("a label with no bracket at all is untouched")
     void plainLabelsPass() {

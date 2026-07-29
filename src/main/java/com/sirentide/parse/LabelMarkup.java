@@ -54,14 +54,36 @@ public final class LabelMarkup {
     /// at stage `parse` — provided the call happens BEFORE the stage advances past parse, which
     /// is why the call site sits immediately after {@code DslParser.parse}.
     ///
+    /// ## The config caption is part of the input, not a separate concern
+    ///
+    /// `DiagramConfig.caption` is a visible annotation for EVERY diagram type, and
+    /// `CaptionLayout.withCaption` turns it into glyph paths. The first version of this seam
+    /// validated only the parsed `Diagram` and every entry point then applied the caption
+    /// AFTERWARD, so `%% caption: unsafe&lt;br/&gt;` rendered with an OK diagnostic -- the
+    /// original defect, on a surface the ruling named explicitly, reached through a field I
+    /// simply never looked at. Marlow's discriminator at sirentide/676.
+    ///
+    /// So the unit of validation is the whole RENDER INPUT (diagram + config), not the IR
+    /// alone. Taking both parameters is what stops a future visible field being added beside
+    /// the diagram and silently bypassing the policy again.
+    ///
     /// @throws LabelMarkupException on the first display label containing tag-shaped markup
-    public static void validate(com.sirentide.ir.Diagram diagram) {
+    public static void validate(com.sirentide.ir.Diagram diagram,
+            com.sirentide.ir.DiagramConfig config) {
         for (LabelSurfaces.Labeled labeled : LabelSurfaces.of(diagram)) {
             String tag = offendingTag(labeled.text());
             if (tag != null) {
                 // The token arrives already bounded and control-sanitized from offendingTag, so
                 // a hostile label cannot pump or escape the diagnostic it lands in.
                 throw new LabelMarkupException(labeled.id(), tag);
+            }
+        }
+        if (config != null) {
+            String tag = offendingTag(config.caption());
+            if (tag != null) {
+                // Stable identity "caption", per the ruling: it is a single named field, so
+                // there is no index to carry and the name IS the location.
+                throw new LabelMarkupException("caption", tag);
             }
         }
     }
@@ -88,6 +110,23 @@ public final class LabelMarkup {
 
     /// Scans one literal run for a tag-shaped sequence: `<`, an optional `/`, an ASCII letter,
     /// then name characters, then anything up to the closing `>`.
+    /// Scans one literal run for a tag-shaped sequence.
+    ///
+    /// ## The name must END somewhere, and that is the whole fix
+    ///
+    /// The first version accepted `<`, an optional `/`, one ASCII letter, and then ANY later
+    /// `>`. That is not tag grammar, it is bracket-pairing, and Marlow caught what it costs
+    /// (sirentide/676): `0<x+y>1` was reported as the tag `<x+y>`. That is ordinary
+    /// mathematical comparison prose, and rejecting it turns an under-detecting renderer into
+    /// an over-rejecting one -- the exact trade the positive controls exist to prevent.
+    ///
+    /// My controls missed it because every one of them put a SPACE or a non-letter after the
+    /// bracket (`x < y`, `a <- b`, `3<5`). None used a letter directly after `<` inside a
+    /// comparison, which is the only shape that reaches the name branch at all.
+    ///
+    /// So the name is now consumed properly and must TERMINATE at a real tag boundary:
+    /// whitespace, `/`, or `>`. `<x+y>` stops at `+`, which is not a boundary, so it is not a
+    /// tag. `<br/>`, `<b>`, `<span class="x">` and `</b>` all terminate legally.
     private static String scanLiteral(String s) {
         for (int i = s.indexOf('<'); i >= 0; i = s.indexOf('<', i + 1)) {
             int j = i + 1;
@@ -95,15 +134,37 @@ public final class LabelMarkup {
                 j++;                     // closing tag
             }
             if (j >= s.length() || !isNameStart(s.charAt(j))) {
-                continue;                // "x < y", "a <- b", "3 <5" — not tag-shaped
+                continue;                // "x < y", "a <- b", "3 <5" -- not tag-shaped
             }
-            int close = s.indexOf('>', j);
+            int nameEnd = j;
+            while (nameEnd < s.length() && isNameChar(s.charAt(nameEnd))) {
+                nameEnd++;
+            }
+            if (nameEnd >= s.length() || !isTagBoundary(s.charAt(nameEnd))) {
+                continue;                // "0<x+y>1" -- the name never terminates as a tag
+            }
+            int close = s.indexOf('>', nameEnd);
             if (close < 0) {
                 continue;                // an unclosed bracket is not a tag
             }
             return sanitize(s.substring(i, close + 1));
         }
         return null;
+    }
+
+    /// Characters that may continue an element name once it has started. Deliberately narrow:
+    /// letters, digits and hyphen cover HTML and custom-element names without admitting the
+    /// operators that appear in comparison prose.
+    private static boolean isNameChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '-';
+    }
+
+    /// What may legally FOLLOW a complete element name: attributes (whitespace), a
+    /// self-closing solidus, or the tag close. Anything else -- `+`, `*`, `=`, a digit-run
+    /// after an operator -- means the span was never a tag.
+    private static boolean isTagBoundary(char c) {
+        return Character.isWhitespace(c) || c == '/' || c == '>';
     }
 
     private static boolean isNameStart(char c) {

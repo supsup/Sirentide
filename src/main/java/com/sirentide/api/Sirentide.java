@@ -91,7 +91,7 @@ public final class Sirentide {
             // looking at the picture could tell. Throwing reuses the catch below, so the
             // never-throw contract (DESIGN §6/§7) holds and the degrade is the same
             // byte-stable inert shell every other failure takes.
-            com.sirentide.parse.LabelMarkup.validate(ir);
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             LaidOut laid = layout(ir, math);
             // A `%% caption:`/`note:` directive adds a centered, wrapped annotation band below the
             // diagram (plan sirentide-caption-note-directive). No-caption returns `laid` unchanged.
@@ -143,7 +143,7 @@ public final class Sirentide {
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             // The FRAMES path needs the same gate: wiring only render() would let a
             // play-through emit the markup as visible text, which is the defect verbatim.
-            com.sirentide.parse.LabelMarkup.validate(ir);
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             // Layout ONCE — every frame re-emits THIS scene with a different emphasis map, so the
             // geometry can never drift between frames (only fills/strokes differ). Deterministic.
             LaidOut laid = layout(ir, math);
@@ -218,7 +218,7 @@ public final class Sirentide {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             // BEFORE the stage advances, same as renderWithDiagnostics.
-            com.sirentide.parse.LabelMarkup.validate(ir);
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
@@ -349,7 +349,7 @@ public final class Sirentide {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
             // BEFORE the stage advances: a throw must classify at STAGE_PARSE, not layout.
-            com.sirentide.parse.LabelMarkup.validate(ir);
+            com.sirentide.parse.LabelMarkup.validate(ir, config);
             stage = STAGE_LAYOUT;
             LaidOut laid = layout(ir, math);
             laid = com.sirentide.layout.CaptionLayout.withCaption(laid, config.caption());
