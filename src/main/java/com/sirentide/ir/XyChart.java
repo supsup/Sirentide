@@ -53,7 +53,7 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
 
     /// Record value equality with content semantics for the nested primitive arrays.
     @Override
-    public boolean equals(Object other) {
+    public final boolean equals(Object other) {
         if (this == other) {
             return true;
         }
@@ -70,7 +70,7 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
 
     /// Hashes the same nested-array contents compared by {@link #equals(Object)}.
     @Override
-    public int hashCode() {
+    public final int hashCode() {
         int result = Objects.hashCode(bars);
         result = 31 * result + seriesHashCode(series);
         result = 31 * result + Objects.hashCode(seriesNames);

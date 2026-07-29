@@ -344,6 +344,13 @@ class IrImmutabilityTest {
         assertEquals(left.hashCode(), right.hashCode());
         assertNotEquals(left, new XyChart(
             right.bars(),
+            List.of(new double[0], new double[] {1}),
+            right.seriesNames(),
+            right.mode(),
+            right.legend(),
+            right.textColor()));
+        assertNotEquals(left, new XyChart(
+            right.bars(),
             List.of(new double[0], new double[] {1}, new double[] {2, 3, 0}),
             right.seriesNames(),
             right.mode(),
