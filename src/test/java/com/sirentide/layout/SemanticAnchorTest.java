@@ -692,7 +692,15 @@ class SemanticAnchorTest {
     /// rather than merely recording a cautious internal default.
     @Test
     void relationalMathIsLegalOnEverySurfaceThatActuallyRendersIt() {
-        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> null;
+        // A WORKING renderer. This test previously used `(tex, display) -> null` -- a FAILING
+        // renderer -- and asserted OK. Under the old surface-classification design that passed
+        // because the SURFACE was exempt whether or not math actually rendered. Under the
+        // emission-boundary gate (Marlow, sirentide/703) it is exactly wrong: a failed math run
+        // DEGRADES to literal glyphs, so `$0<x>1$` reaches the plain-glyph primitive carrying a
+        // complete tag and must refuse. The test's own name says "that actually renders it" --
+        // with a null renderer, nothing renders it. The premise was wrong, not the gate.
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
         record Probe(String what, String source) {}
         for (Probe pr : java.util.List.of(
                 new Probe("sequence message", "sequence\n  Alice ->> Bob : $0<x>1$"),
@@ -724,7 +732,13 @@ class SemanticAnchorTest {
     /// against my own source-scan and agreed with itself while two bypasses were live.
     @Test
     void everyEmittedLabelSurfaceBehavesAsItsEmitterImplies() {
-        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> null;
+        // WORKING renderer -- see relationalMathIsLegalOnEverySurfaceThatActuallyRendersIt.
+        // The math-aware rows below assert OK because a SUCCESSFUL fragment is placed as a
+        // MathBox and never reaches the plain-glyph gate; with a null renderer they would
+        // (correctly) refuse, which is asserted separately by
+        // degradedMathCarryingATagRefusesAtTheEmissionBoundary.
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
         record Row(String surface, boolean mathAware, String source) {}
         List<Row> rows = List.of(
             // --- PLAIN: emitter is FONT.runWidth/textPathD/ellipsize, no MathLabel ---
@@ -764,6 +778,99 @@ class SemanticAnchorTest {
                     + "literal there and the tag must fail closed")
                 + ". Got " + got + " for: " + r.source());
         }
+    }
+
+
+    /// THE CASE MARLOW'S RULING CREATES, and the one the old design could not express:
+    /// "failed math that degrades to literal glyphs must pass [the plain-glyph guard] too."
+    ///
+    /// The same source that is LEGAL with a working renderer must REFUSE with a failing one,
+    /// because the degraded output is literal `$…$` text carrying a complete tag. The two
+    /// assertions differ ONLY in the renderer, which is what makes this a discriminator rather
+    /// than a restatement: it isolates the emission decision as the cause.
+    @Test
+    void degradedMathCarryingATagRefusesAtTheEmissionBoundary() {
+        String source = "flowchart TD\n  A[a] -->|$<br/>$| B[b]";
+        com.sirentide.api.MathFragmentRenderer working = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        com.sirentide.api.MathFragmentRenderer failing = (tex, display) -> null;
+
+        assertEquals(com.sirentide.api.Outcome.OK,
+            Sirentide.renderWithDiagnostics(source, working).diagnostics().outcome(),
+            "a SUCCESSFUL fragment is placed as a MathBox and never reaches the plain-glyph "
+                + "gate, so real inline math stays legal");
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+            Sirentide.renderWithDiagnostics(source, failing).diagnostics().outcome(),
+            "the SAME source with a failing renderer degrades to literal glyphs carrying a "
+                + "complete tag, and the emission-boundary gate must refuse it -- the old "
+                + "surface-classification design returned OK here, which was the bypass");
+    }
+
+
+    /// MARLOW'S THREE 701 FINDINGS, as public-API regressions against the emission-boundary
+    /// gate. These are the reason the redesign exists, so they are the test that decides
+    /// whether it worked. Each previously returned OK with a non-inert SVG.
+    ///
+    /// Requirement 2 of his ruling — "at least two runtime-dependent branches must prove the
+    /// same exact-string gate is reached" — is satisfied by the xychart LEGEND row (a locally
+    /// computed showLegend the static scan could not see) and the pie THIN-SLICE row (a
+    /// width/sweep branch), which reach the gate through completely different decisions.
+    @Test
+    void marlowsThreeRuntimeDependentBypassesAllRefuseAtTheGate() {
+        com.sirentide.api.MathFragmentRenderer working = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                // 701 finding 1 — XyChart series key, reached via a LOCAL showLegend boolean
+                new Probe("xychart legend",
+                    "xychart legend\n  series: $<br/>$, Safe\n  \"A\" : 1 2"),
+                // 701 finding 3 — Class relation: ellipsized BEFORE the math decision, so the
+                // closing delimiter is lost while the complete tag survives
+                new Probe("class relation ellipsized",
+                    "classDiagram\n  A --> B : $<span xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>$iii"),
+                new Probe("er relation ellipsized",
+                    "erDiagram\n  A ||--o{ B : $<span xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>$iii"),
+                // a RUNTIME WIDTH branch, distinct from the mode branch above
+                new Probe("pie thin slice",
+                    "pie\n  \"$<br/>$\" : 1\n  \"Rest\" : 99"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), working);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+                result.diagnostics().outcome(),
+                pr.what() + " reaches plain-glyph emission through a RUNTIME decision the "
+                    + "static surface map could not see; the exact emitted string must be "
+                    + "gated: " + result.diagnostics());
+        }
+    }
+
+    /// CONTAINMENT (Marlow requirement 3): no production glyph path may reach the outline
+    /// primitive without passing the gate. textPathD is the only caller of the private
+    /// appendGlyph and the only production caller of sfnt.glyphContours, so the guard cannot
+    /// be routed around -- this asserts that structurally at SOURCE rather than trusting it.
+    @Test
+    void noProductionGlyphPathBypassesTheEmissionGate() throws Exception {
+        java.nio.file.Path root = java.nio.file.Path.of("src/main/java");
+        java.util.List<String> offenders = new java.util.ArrayList<>();
+        try (var walk = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path f : walk.filter(x -> x.toString().endsWith(".java")).toList()) {
+                String src = java.nio.file.Files.readString(f);
+                boolean isFontMetrics = f.getFileName().toString().equals("FontMetrics.java");
+                boolean isSfnt = f.getFileName().toString().equals("SfntMetrics.java");
+                if (!isFontMetrics && !isSfnt && src.contains("glyphContours")) {
+                    offenders.add(f + " calls glyphContours outside the guarded primitive");
+                }
+            }
+        }
+        assertEquals(java.util.List.of(), offenders,
+            "any direct use of the glyph outline primitive outside FontMetrics would be an "
+                + "unguarded path to plain-glyph emission");
+        // POSITIVE CONTROL for the scan itself: the guarded primitive must still be found,
+        // or this test would pass simply because the search was broken.
+        String fm = java.nio.file.Files.readString(
+            root.resolve("com/sirentide/font/FontMetrics.java"));
+        assertTrue(fm.contains("guardPlainGlyphs(text)"),
+            "the gate must be present in textPathD, or this containment test is vacuous");
+        assertTrue(fm.contains("sfnt.glyphContours"),
+            "the scan must be able to see glyphContours at all");
     }
 
     /// Marlow's BLOCKER at sirentide/693, as public-API regressions with a NON-NULL renderer.
