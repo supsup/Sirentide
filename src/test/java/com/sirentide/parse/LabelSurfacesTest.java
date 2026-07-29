@@ -93,6 +93,68 @@ class LabelSurfacesTest {
                 + "indistinguishable from having no labels at all");
     }
 
+    /// THE VACUITY BATTERY. The compiler proves every diagram type has a `case`; it cannot
+    /// prove that case COLLECTS anything. Fifteen branches were written in one pass, and a
+    /// branch that quietly gathers nothing is indistinguishable from a type with no labels —
+    /// this file's own subject, one level in.
+    ///
+    /// So each label-bearing type gets a fixture carrying a sentinel, and the sentinel must
+    /// come back. A branch that forgets an `add(...)` fails here.
+    ///
+    /// The two types deliberately excluded are asserted EMPTY rather than skipped, so the
+    /// exclusion is a checked claim and not an oversight.
+    @Test
+    @DisplayName("VACUITY BATTERY: every audited type actually yields its display labels")
+    void everyAuditedTypeIsNonVacuous() {
+        var sentinel = "SENTINEL";
+        record Case(String name, Diagram diagram) {}
+        List<Case> cases = List.of(
+            new Case("Pie", new com.sirentide.ir.Pie(
+                List.of(new com.sirentide.ir.Slice(sentinel, 1, null, null)), true, null)),
+            new Case("Timeline", new com.sirentide.ir.Timeline(
+                List.of(new com.sirentide.ir.Slice(sentinel, 1, null, null)), null)),
+            new Case("XyChart", new com.sirentide.ir.XyChart(
+                List.of(), List.of(), List.of(sentinel), "bar", true, null)),
+            new Case("Gantt", new com.sirentide.ir.Gantt(
+                List.of(new com.sirentide.ir.Task(sentinel, 0, 1, null)), null)),
+            new Case("QuadrantChart", new com.sirentide.ir.QuadrantChart(
+                sentinel, "b", "c", "d", null, List.of(), null)),
+            new Case("ClassDiagram", new com.sirentide.ir.ClassDiagram(
+                List.of(new com.sirentide.ir.ClassBox(sentinel, List.of(), List.of())),
+                List.of(), null)),
+            new Case("ErDiagram", new com.sirentide.ir.ErDiagram(
+                List.of(new com.sirentide.ir.ErEntity(sentinel, List.of())), List.of(), null)),
+            new Case("GitGraph", new com.sirentide.ir.GitGraph(
+                List.of(new com.sirentide.ir.GitOp.Branch(sentinel)), null)),
+            new Case("Journey", new com.sirentide.ir.Journey(sentinel, List.of(), null)),
+            new Case("Mindmap", new com.sirentide.ir.Mindmap(
+                new com.sirentide.ir.MindmapNode(sentinel, List.of()), null)),
+            new Case("Sankey", new com.sirentide.ir.Sankey(
+                List.of(new com.sirentide.ir.SankeyFlow(sentinel, "t", 1)), null)),
+            new Case("Heatmap", new com.sirentide.ir.Heatmap(
+                List.of(sentinel), List.of(), null, "lo", "hi")),
+            new Case("TensorNetwork", new com.sirentide.ir.TensorNetwork(
+                List.of(sentinel), false, null)));
+
+        for (Case c : cases) {
+            List<String> texts = LabelSurfaces.of(c.diagram()).stream()
+                .map(LabelSurfaces.Labeled::text).toList();
+            assertTrue(texts.contains(sentinel),
+                c.name() + " collected no display label — its case is present but vacuous. "
+                    + "Got: " + texts);
+        }
+    }
+
+    @Test
+    @DisplayName("types with no display text are asserted EMPTY, not merely skipped")
+    void typesWithoutDisplayTextYieldNothing() {
+        // Asserting empty makes the exclusion a CHECKED claim. Skipping them would let a
+        // genuine label surface hide behind "we decided it has none".
+        assertTrue(LabelSurfaces.of(new com.sirentide.ir.Empty()).isEmpty());
+        assertTrue(LabelSurfaces.of(new com.sirentide.ir.MathBlock("x^2")).isEmpty());
+        assertTrue(LabelSurfaces.of(new com.sirentide.ir.Knot("trefoil", null)).isEmpty());
+    }
+
     /// The exact repro from the defect this plan closes, plus an identifier that MUST survive:
     /// `A[TRUE NEGATIVE<br/>safe to act on]` rendered `<br/>` as visible text with exit 0.
     private static Diagram reproFlowchart() {

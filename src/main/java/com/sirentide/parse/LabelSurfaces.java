@@ -55,13 +55,24 @@ public final class LabelSurfaces {
 
     /// Diagram types whose display-vs-identifier field split has NOT yet been audited.
     ///
-    /// Pinned red by {@code LabelSurfacesTest.everyDiagramTypeIsAudited} — this set must reach
-    /// empty before the slice can be handed over. Listing them beats returning empty silently:
-    /// a caller can see that these are unchecked rather than checked-and-clean.
-    static final Set<String> UNAUDITED = Set.of(
-        "Pie", "XyChart", "Timeline", "Gantt", "Sequence", "QuadrantChart", "ClassDiagram",
-        "ErDiagram", "GitGraph", "Journey", "Mindmap", "Sankey", "Heatmap", "TensorNetwork",
-        "Knot");
+    /// Now EMPTY: every permitted type has been walked field by field. Kept (rather than
+    /// deleted with its test) because it is the honest shape for this class — if a future
+    /// type arrives whose fields are ambiguous, the author can park it here and the
+    /// accompanying test goes red rather than the type silently contributing no labels.
+    ///
+    /// TWO FIELDS WERE EXCLUDED AS IDENTIFIERS, and both are judgement calls rather than
+    /// obvious ones, so they are named here instead of buried:
+    ///
+    ///  - `GitOp.Commit.id` — rendered near the commit dot, but it is an *id* by name and by
+    ///    role. Marlow's ruling says not to reject raw identifiers merely because they are
+    ///    later sanitized. `GitOp.Branch.name` IS collected, because it labels a lane.
+    ///  - `Knot.type` — a selector naming which knot to draw (`trefoil`, `figure8`), not
+    ///    free author text. A tag-shaped value here would fail the knot lookup long before
+    ///    it could reach a label surface.
+    ///
+    /// If either judgement is wrong the fix is one line each, and the cost of being wrong is
+    /// an under-validated surface — so they are called out for review rather than assumed.
+    static final Set<String> UNAUDITED = Set.of();
 
     /// Every display label in `diagram`, in a stable order.
     ///
@@ -76,31 +87,153 @@ public final class LabelSurfaces {
             case StateDiagram s -> flowchart(s.graph(), "state.", out);
             case Matrix m -> matrix(m, out);
 
-            // --- No free display text: nothing to validate, and that is a fact about the
-            // --- type rather than an unaudited gap.
+            case com.sirentide.ir.Pie p -> slices(p.slices(), "pie", out);
+            case com.sirentide.ir.Timeline t -> slices(t.events(), "timeline", out);
+            case com.sirentide.ir.XyChart x -> {
+                slices(x.bars(), "xychart.bar", out);
+                // seriesNames IS the legend, which Marlow's list names explicitly.
+                for (int i = 0; i < x.seriesNames().size(); i++) {
+                    add(out, "xychart.series[" + i + "]", x.seriesNames().get(i));
+                }
+            }
+            case com.sirentide.ir.Gantt g -> {
+                for (int i = 0; i < g.tasks().size(); i++) {
+                    add(out, "gantt.task[" + i + "]", g.tasks().get(i).label());
+                }
+            }
+            case com.sirentide.ir.Sequence sq -> {
+                // actors ARE the displayed lifeline captions. SeqMessage.from/to and
+                // SeqLifecycle.actor merely REFERENCE them, so validating the actor list
+                // covers the text exactly once instead of three times.
+                for (int i = 0; i < sq.actors().size(); i++) {
+                    add(out, "sequence.actor[" + i + "]", sq.actors().get(i));
+                }
+                for (int i = 0; i < sq.messages().size(); i++) {
+                    add(out, "sequence.message[" + i + "]", sq.messages().get(i).label());
+                }
+                for (int i = 0; i < sq.notes().size(); i++) {
+                    add(out, "sequence.note[" + i + "]", sq.notes().get(i).text());
+                }
+                for (int i = 0; i < sq.blocks().size(); i++) {
+                    // .kind is a keyword (alt/opt/loop); .label is the author's text.
+                    var blk = sq.blocks().get(i);
+                    add(out, "sequence.block[" + i + "]", blk.label());
+                    // Dividers inside a block carry their own author text -- also missed on
+                    // the first pass, same cause as the heatmap legend.
+                    for (int d = 0; d < blk.dividers().size(); d++) {
+                        add(out, "sequence.block[" + i + "].divider[" + d + "]",
+                            blk.dividers().get(d).label());
+                    }
+                }
+            }
+            case com.sirentide.ir.QuadrantChart q -> {
+                add(out, "quadrant.xLo", q.xLo());
+                add(out, "quadrant.xHi", q.xHi());
+                add(out, "quadrant.yLo", q.yLo());
+                add(out, "quadrant.yHi", q.yHi());
+                String[] ql = q.quadrantLabels();
+                for (int i = 0; ql != null && i < ql.length; i++) {
+                    add(out, "quadrant.label[" + i + "]", ql[i]);
+                }
+                for (int i = 0; i < q.points().size(); i++) {
+                    add(out, "quadrant.point[" + i + "]", q.points().get(i).label());
+                }
+            }
+            case com.sirentide.ir.ClassDiagram c -> {
+                for (var box : c.classes()) {
+                    add(out, "class:" + box.name(), box.name());
+                    for (int i = 0; i < box.attributes().size(); i++) {
+                        add(out, "class:" + box.name() + ".attr[" + i + "]", box.attributes().get(i));
+                    }
+                    for (int i = 0; i < box.methods().size(); i++) {
+                        add(out, "class:" + box.name() + ".method[" + i + "]", box.methods().get(i));
+                    }
+                }
+                for (var rel : c.relations()) {
+                    // left/right name existing classes -> references, not new display text.
+                    add(out, "class-rel:" + rel.left() + "->" + rel.right(), rel.label());
+                }
+            }
+            case com.sirentide.ir.ErDiagram er -> {
+                for (var ent : er.entities()) {
+                    add(out, "er:" + ent.name(), ent.name());
+                    for (int i = 0; i < ent.attributes().size(); i++) {
+                        var a = ent.attributes().get(i);
+                        // type and name both render inside the entity box; key is a marker.
+                        add(out, "er:" + ent.name() + ".attr[" + i + "].type", a.type());
+                        add(out, "er:" + ent.name() + ".attr[" + i + "].name", a.name());
+                    }
+                }
+                for (var rel : er.relations()) {
+                    add(out, "er-rel:" + rel.left() + "->" + rel.right(), rel.label());
+                }
+            }
+            case com.sirentide.ir.GitGraph gg -> {
+                for (int i = 0; i < gg.ops().size(); i++) {
+                    // Branch.name labels a lane and IS display text. Commit.id is excluded
+                    // as an identifier -- see UNAUDITED for that judgement call.
+                    if (gg.ops().get(i) instanceof com.sirentide.ir.GitOp.Branch b) {
+                        add(out, "gitgraph.branch[" + i + "]", b.name());
+                    }
+                }
+            }
+            case com.sirentide.ir.Journey j -> {
+                add(out, "journey.title", j.title());
+                for (int si = 0; si < j.sections().size(); si++) {
+                    var sec = j.sections().get(si);
+                    add(out, "journey.section[" + si + "]", sec.name());
+                    for (int ti = 0; ti < sec.tasks().size(); ti++) {
+                        var task = sec.tasks().get(ti);
+                        add(out, "journey.section[" + si + "].task[" + ti + "]", task.name());
+                        for (int ai = 0; ai < task.actors().size(); ai++) {
+                            add(out, "journey.section[" + si + "].task[" + ti + "].actor[" + ai + "]",
+                                task.actors().get(ai));
+                        }
+                    }
+                }
+            }
+            case com.sirentide.ir.Mindmap mm -> mindmap(mm.root(), "mindmap", out);
+            case com.sirentide.ir.Sankey sk -> {
+                for (int i = 0; i < sk.flows().size(); i++) {
+                    // In a sankey the endpoint NAMES are the rendered node labels; there is
+                    // no separate label field, so these are display text, not references.
+                    var flow = sk.flows().get(i);
+                    add(out, "sankey.flow[" + i + "].source", flow.source());
+                    add(out, "sankey.flow[" + i + "].target", flow.target());
+                }
+            }
+            case com.sirentide.ir.Heatmap h -> {
+                // lowLabel/highLabel are the SCALE LEGEND captions. I missed these on the
+                // first pass and only caught them by reading the full record signature
+                // rather than the first line -- an omission the compiler cannot see,
+                // because a missing FIELD is not a missing CASE.
+                add(out, "heatmap.lowLabel", h.lowLabel());
+                add(out, "heatmap.highLabel", h.highLabel());
+                for (int i = 0; i < h.columns().size(); i++) {
+                    add(out, "heatmap.column[" + i + "]", h.columns().get(i));
+                }
+                for (int r = 0; r < h.rows().size(); r++) {
+                    var row = h.rows().get(r);
+                    add(out, "heatmap.row[" + r + "]", row.label());
+                    for (int c = 0; c < row.cells().size(); c++) {
+                        add(out, "heatmap.cell[" + r + "][" + c + "]", row.cells().get(c).text());
+                    }
+                }
+            }
+            case com.sirentide.ir.TensorNetwork tn -> {
+                for (int i = 0; i < tn.cores().size(); i++) {
+                    add(out, "tensor.core[" + i + "]", tn.cores().get(i));
+                }
+            }
+
+            // --- No free display text. A fact about the type, not an unaudited gap.
             case com.sirentide.ir.Empty e -> { }                 // renders nothing
             case com.sirentide.ir.MathBlock mb -> { }            // latex, exempt by design
             case com.sirentide.ir.Snake sn -> { }                // integer quotients only
             case com.sirentide.ir.YoungDiagram y -> { }          // integer row lengths only
             case com.sirentide.ir.Dynkin d -> { }                // family char + rank
             case com.sirentide.ir.RootSystem r -> { }            // family char + rank
-
-            // --- Not yet audited. See UNAUDITED above; a test is red until these are done.
-            case com.sirentide.ir.Pie p -> { }
-            case com.sirentide.ir.XyChart x -> { }
-            case com.sirentide.ir.Timeline t -> { }
-            case com.sirentide.ir.Gantt g -> { }
-            case com.sirentide.ir.Sequence sq -> { }
-            case com.sirentide.ir.QuadrantChart q -> { }
-            case com.sirentide.ir.ClassDiagram c -> { }
-            case com.sirentide.ir.ErDiagram er -> { }
-            case com.sirentide.ir.GitGraph gg -> { }
-            case com.sirentide.ir.Journey j -> { }
-            case com.sirentide.ir.Mindmap mm -> { }
-            case com.sirentide.ir.Sankey sk -> { }
-            case com.sirentide.ir.Heatmap h -> { }
-            case com.sirentide.ir.TensorNetwork tn -> { }
-            case com.sirentide.ir.Knot k -> { }
+            case com.sirentide.ir.Knot k -> { }                  // selector, see UNAUDITED
         }
         return out;
     }
@@ -125,6 +258,28 @@ public final class LabelSurfaces {
         for (int i = 0; i < f.clusters().size(); i++) {
             var c = f.clusters().get(i);
             add(out, prefix + "cluster:" + c.id(), c.title());   // TITLE only, never c.id()
+        }
+    }
+
+    /// Slice-backed diagrams (pie, timeline, xychart bars) share one shape, so they share
+    /// one walker rather than three copies that could drift apart.
+    private static void slices(List<com.sirentide.ir.Slice> slices, String kind, List<Labeled> out) {
+        for (int i = 0; i < slices.size(); i++) {
+            var sl = slices.get(i);
+            add(out, kind + "[" + i + "]", sl.label());
+            add(out, kind + "[" + i + "].valueLabel", sl.valueLabel());
+        }
+    }
+
+    /// Mindmap nodes nest arbitrarily, so the walk is recursive and the identity encodes the
+    /// PATH — a bare index would not locate a node three levels down.
+    private static void mindmap(com.sirentide.ir.MindmapNode node, String path, List<Labeled> out) {
+        if (node == null) {
+            return;
+        }
+        add(out, path, node.text());
+        for (int i = 0; i < node.children().size(); i++) {
+            mindmap(node.children().get(i), path + "." + i, out);
         }
     }
 
