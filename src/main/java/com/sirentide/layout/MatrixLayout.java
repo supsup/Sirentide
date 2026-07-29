@@ -116,7 +116,7 @@ public final class MatrixLayout {
         // is wrapped in ONE `<g data-sirentide-role="cell">` so the play-through/FX layer can reveal the
         // grid. Seq runs in ROW-MAJOR reading order (top-to-bottom rows, left-to-right columns) — no
         // edges-before-nodes quirk here, the matrix simply reveals as you'd read it. The header band and
-        // the row-label column are structural (like flowchart cluster frames), so they stay un-anchored;
+        // the row-label column are structural chrome, so they stay un-anchored;
         // an N-row × M-col matrix emits exactly N·M cell groups. The base id is COORDINATE-derived
         // (`r<row>c<col>`, always charset-legal), NEVER the cell/row/col text — so a hostile label can't
         // place an illegal char into an anchor id (mirrors FlowchartLayout's stable base ids).

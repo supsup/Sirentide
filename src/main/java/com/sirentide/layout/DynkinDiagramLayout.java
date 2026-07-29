@@ -2,6 +2,7 @@ package com.sirentide.layout;
 
 import com.sirentide.contract.SirentideRole;
 import com.sirentide.ir.Dynkin;
+import com.sirentide.ir.DynkinCartan;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -64,10 +65,6 @@ public final class DynkinDiagramLayout {
     private static final String BOND_STROKE = "#334155";
     private static final double BOND_WIDTH = 1.4;
 
-    /// A canonical bond: the two node indices it joins, its bond COUNT (1/2/3), and the node index the
-    /// arrow points to (the SHORTER root) — or −1 for a single bond (no arrow, no length difference).
-    private record Bond(int a, int b, int count, int arrowToward) {}
-
     public static LaidOut layout(Dynkin d) {
         int n = d.nodeCount();
         if (n == 0) {
@@ -75,61 +72,33 @@ public final class DynkinDiagramLayout {
             return LaidOut.of(2 * MARGIN, 2 * MARGIN);
         }
 
-        // 1. Canonical node CENTRES (baseline coords, pre-normalization) + the canonical BOND list.
+        // 1. Canonical node CENTRES (baseline coords, pre-normalization). The canonical BOND list now
+        //    comes from the shared DynkinCartan authority; root-system reflection math consumes the
+        //    matrix derived from these exact same records.
         double[][] c = new double[n][2];   // {x, y}
         for (int i = 0; i < n; i++) {
             c[i][0] = i * SPACING;
             c[i][1] = 0;
         }
-        List<Bond> bonds = new ArrayList<>();
         char fam = d.family();
         switch (fam) {
-            case 'A' -> {
-                for (int i = 0; i < n - 1; i++) {
-                    bonds.add(new Bond(i, i + 1, 1, -1));
-                }
-            }
-            case 'B', 'C' -> {
-                for (int i = 0; i < n - 2; i++) {
-                    bonds.add(new Bond(i, i + 1, 1, -1));
-                }
-                // Last bond double: B_n arrow → the last (short) node; C_n arrow → node n−2 (last is long).
-                int shortNode = fam == 'B' ? n - 1 : n - 2;
-                bonds.add(new Bond(n - 2, n - 1, 2, shortNode));
-            }
             case 'D' -> {
                 // Spine 0…n−3 on the baseline; node n−3 forks to terminals n−2 (up) and n−1 (down),
                 // one step to its right.
-                for (int i = 0; i < n - 3; i++) {
-                    bonds.add(new Bond(i, i + 1, 1, -1));
-                }
                 double forkX = (n - 2) * SPACING;
                 c[n - 2][0] = forkX;
                 c[n - 2][1] = -FORK_DY;
                 c[n - 1][0] = forkX;
                 c[n - 1][1] = FORK_DY;
-                bonds.add(new Bond(n - 3, n - 2, 1, -1));
-                bonds.add(new Bond(n - 3, n - 1, 1, -1));
             }
             case 'E' -> {
                 // Main line 0…n−2 on the baseline; branch node n−1 hangs below main-line node 2.
-                for (int i = 0; i < n - 2; i++) {
-                    bonds.add(new Bond(i, i + 1, 1, -1));
-                }
                 c[n - 1][0] = 2 * SPACING;
                 c[n - 1][1] = BRANCH_DY;
-                bonds.add(new Bond(2, n - 1, 1, -1));
             }
-            case 'F' -> {
-                bonds.add(new Bond(0, 1, 1, -1));
-                bonds.add(new Bond(1, 2, 2, 2));   // middle double, arrow → node 2 (short)
-                bonds.add(new Bond(2, 3, 1, -1));
-            }
-            case 'G' -> {
-                bonds.add(new Bond(0, 1, 3, 0));   // triple, arrow → node 0 (node 1 is long)
-            }
-            default -> { /* unreachable: nodeCount()==0 for an invalid family */ }
+            default -> { /* every other finite family stays on the baseline */ }
         }
+        List<DynkinCartan.Bond> bonds = DynkinCartan.bonds(fam, n);
 
         // 2. Normalize so the whole figure sits at (MARGIN, MARGIN) with a grow-to-fit canvas.
         double minX = Double.POSITIVE_INFINITY;
@@ -156,7 +125,7 @@ public final class DynkinDiagramLayout {
 
         // 3. Bond edges FIRST (lower seq range → play before nodes; drawn behind the discs). Each is
         //    ONE `<g role="edge">` of its 1–3 parallel segments + an arrow triangle for a multi-bond.
-        for (Bond bond : bonds) {
+        for (DynkinCartan.Bond bond : bonds) {
             double ax = c[bond.a()][0];
             double ay = c[bond.a()][1];
             double bx = c[bond.b()][0];

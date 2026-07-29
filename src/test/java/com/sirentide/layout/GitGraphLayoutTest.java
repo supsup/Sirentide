@@ -8,6 +8,8 @@ import com.sirentide.ir.GitGraph;
 import com.sirentide.parse.DslParser;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
@@ -132,5 +134,188 @@ class GitGraphLayoutTest {
         List<Wedge> dots = dots(shapes(
             "gitGraph\n  commit\n  merge ghost\n  merge main\n  commit\n"));
         assertEquals(2, dots.size(), "no merge commit from an unknown/self merge: " + dots.size());
+    }
+
+    /// Adjacent columns are 46px apart while a displayed commit ID may be wider. The legacy
+    /// one-baseline lane therefore overprints adjacent long IDs. Audit each commit group's ACTUAL
+    /// glyph path and require disjoint boxes. RED on current main.
+    @Test
+    void adjacentLongCommitIdsHaveDisjointRenderedGlyphBoxes() {
+        GitGraph graph = (GitGraph) DslParser.parse("""
+            gitGraph
+              commit id: "aaaaaaaaaaaa"
+              commit id: "bbbbbbbbbbbb"
+              commit id: "cccccccccccc"
+            """);
+        LaidOut laid = GitGraphLayout.layout(graph);
+        List<double[]> boxes = laid.shapes().stream()
+            .filter(Group.class::isInstance)
+            .map(Group.class::cast)
+            .filter(g -> g.anchor().role() == com.sirentide.contract.SirentideRole.COMMIT)
+            .map(g -> g.members().stream()
+                .filter(GlyphRun.class::isInstance)
+                .map(GlyphRun.class::cast)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("labeled commit omitted its glyph path")))
+            .map(g -> pathBounds(g.pathD()))
+            .toList();
+
+        assertEquals(3, boxes.size(), "one rendered ID path per commit");
+        for (double[] box : boxes) {
+            assertTrue(box[0] >= 2 - 1e-6 && box[2] <= laid.width() - 2 + 1e-6,
+                "endpoint-clamped commit ID stays inside the canvas: "
+                    + java.util.Arrays.toString(box));
+        }
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] a = boxes.get(i);
+                double[] b = boxes.get(j);
+                boolean overlap = a[0] < b[2] && b[0] < a[2]
+                    && a[1] < b[3] && b[1] < a[3];
+                assertTrue(!overlap, "GitGraph commit-ID boxes overlap at " + i + "-" + j
+                    + ": " + java.util.Arrays.toString(a) + " vs "
+                    + java.util.Arrays.toString(b));
+            }
+        }
+    }
+
+    @Test
+    void rightEndpointCombiningMarkOverhangUsesTheActualCommitIdBoxForClamp() {
+        String rightOverhanging = "!".repeat(26) + "\u20e4";
+        GitGraph graph = (GitGraph) DslParser.parse(
+            "gitGraph\n  commit\n  commit id: \"" + rightOverhanging + "\"\n");
+
+        LaidOut laid = GitGraphLayout.layout(graph);
+        double[] box = laid.shapes().stream()
+            .filter(Group.class::isInstance)
+            .map(Group.class::cast)
+            .filter(g -> g.anchor().role() == com.sirentide.contract.SirentideRole.COMMIT)
+            .flatMap(g -> g.members().stream())
+            .filter(GlyphRun.class::isInstance)
+            .map(GlyphRun.class::cast)
+            .map(g -> pathBounds(g.pathD()))
+            .findFirst()
+            .orElseThrow();
+
+        assertTrue(box[0] >= 2 - 1e-6 && box[2] <= laid.width() - 2 + 1e-6,
+            "actual commit-ID ink stays inside the horizontal canvas: "
+                + java.util.Arrays.toString(box) + " in width " + laid.width());
+    }
+
+    @Test
+    void crowdedEarlierLaneOffsetsLaterLaneAndKeepsConnectorsAttached() {
+        String dsl = """
+            gitGraph
+              commit id: "aaaaaaaaaaaa"
+              commit id: "bbbbbbbbbbbb"
+              commit id: "cccccccccccc"
+              branch develop
+              commit id: "dev"
+              checkout main
+              merge develop
+              commit id: "dddddddddddd"
+            """;
+        GitGraph graph = (GitGraph) DslParser.parse(dsl);
+        LaidOut laid = GitGraphLayout.layout(graph);
+        List<Shape> flat = Group.flatten(laid.shapes());
+        List<Wedge> dots = dots(flat);
+        double mainY = dots.get(0).cy();
+        double developY = dots.stream().map(Wedge::cy).filter(y -> !near(y, mainY))
+            .findFirst().orElseThrow();
+
+        assertEquals(42, mainY, 1e-9, "the first crowded lane keeps its legacy baseline");
+        assertTrue(developY > 90, "the later lane receives the crowded-main prefix offset: "
+            + developY);
+        List<Line> crossLane = lines(flat).stream()
+            .filter(l -> near(l.x1(), l.x2())
+                && (near(l.y1(), mainY) && near(l.y2(), developY)
+                    || near(l.y1(), developY) && near(l.y2(), mainY)))
+            .toList();
+        assertEquals(2, crossLane.size(),
+            "branch and merge connector endpoints consume the resolved lane baselines");
+
+        List<Group> commitGroups = laid.shapes().stream()
+            .filter(Group.class::isInstance).map(Group.class::cast)
+            .filter(g -> g.anchor().role() == com.sirentide.contract.SirentideRole.COMMIT)
+            .toList();
+        assertEquals(List.of("aaaaaaaaaaaa", "bbbbbbbbbbbb", "cccccccccccc"),
+            commitGroups.subList(0, 3).stream().map(g -> g.anchor().id()).toList(),
+            "packing never detaches a label from its commit anchor");
+        List<double[]> mainLabelBoxes = commitGroups.subList(0, 3).stream()
+            .map(g -> g.members().stream().filter(GlyphRun.class::isInstance)
+                .map(GlyphRun.class::cast).findFirst().orElseThrow())
+            .map(g -> pathBounds(g.pathD()))
+            .toList();
+        assertPairwiseDisjoint(mainLabelBoxes, "crowded main-lane IDs");
+        assertEquals(mainLabelBoxes.get(0)[1], mainLabelBoxes.get(2)[1], 1e-9,
+            "non-overlapping first/third IDs reuse the earliest-finishing row");
+        assertTrue(mainLabelBoxes.get(1)[1] > mainLabelBoxes.get(0)[1],
+            "the middle ID occupies the one additional row needed by the interval clique");
+        assertTrue(laid.height() >= developY + 30,
+            "resolved final lane and its labels remain inside the grown canvas");
+        assertEquals(laid, GitGraphLayout.layout(graph), "GitGraph placement is deterministic");
+    }
+
+    @Test
+    void crowdedLanesAccumulateEveryPrecedingPrefixOffset() {
+        GitGraph graph = (GitGraph) DslParser.parse("""
+            gitGraph
+              commit id: "aaaaaaaaaaaa"
+              commit id: "bbbbbbbbbbbb"
+              commit id: "cccccccccccc"
+              branch develop
+              commit id: "dddddddddddd"
+              commit id: "eeeeeeeeeeee"
+              commit id: "ffffffffffff"
+              branch feature
+              commit id: "feature"
+            """);
+
+        LaidOut laid = GitGraphLayout.layout(graph);
+        List<Double> laneYs = dots(Group.flatten(laid.shapes())).stream()
+            .map(Wedge::cy).distinct().sorted().toList();
+
+        assertEquals(3, laneYs.size(), "main, develop, and feature each draw one lane");
+        assertTrue(laneYs.get(1) - laneYs.get(0) > 48,
+            "develop includes crowded main's added label depth: " + laneYs);
+        assertTrue(laneYs.get(2) - laneYs.get(1) > 48,
+            "feature includes crowded develop's added label depth too: " + laneYs);
+        assertTrue(laid.height() >= laneYs.get(2) + 30,
+            "the accumulated final lane remains inside the grown canvas");
+    }
+
+    private static double[] pathBounds(String path) {
+        Matcher m = Pattern.compile("-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?").matcher(path);
+        java.util.ArrayList<Double> values = new java.util.ArrayList<>();
+        while (m.find()) {
+            values.add(Double.parseDouble(m.group()));
+        }
+        double minX = Double.POSITIVE_INFINITY;
+        double minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY;
+        double maxY = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i + 1 < values.size(); i += 2) {
+            double x = values.get(i);
+            double y = values.get(i + 1);
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    private static void assertPairwiseDisjoint(List<double[]> boxes, String subject) {
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] a = boxes.get(i);
+                double[] b = boxes.get(j);
+                boolean overlap = a[0] < b[2] && b[0] < a[2]
+                    && a[1] < b[3] && b[1] < a[3];
+                assertTrue(!overlap, subject + " overlap at " + i + "-" + j
+                    + ": " + java.util.Arrays.toString(a) + " vs "
+                    + java.util.Arrays.toString(b));
+            }
+        }
     }
 }

@@ -24,8 +24,9 @@ import java.util.List;
 /// Shapes: task points are full-circle {@link Wedge} discs (mirrors the xychart/timeline dot); the
 /// satisfaction line, axes, ticks, and section brackets are {@link Line} segments; the title, tick,
 /// task-name, actor, and section labels are glyph paths. Each task's disc + name + actor labels wrap
-/// in one `<g role="task">` (plan sirentide-semantic-anchor-g); the line/axes/brackets are decorative
-/// and un-anchored (a segment spans two tasks and belongs to neither, exactly like the xychart line).
+/// in one `<g role="task">` (plan sirentide-semantic-anchor-g); each x/y axis spine wraps in one
+/// `<g role="axis">`; the connecting line and section brackets remain decorative (a segment spans
+/// two tasks and belongs to neither, exactly like the xychart line).
 public final class JourneyLayout {
 
     private JourneyLayout() {}
@@ -104,8 +105,13 @@ public final class JourneyLayout {
         if (n == 0) {
             double w = MARGIN_LEFT + SLOT + MARGIN_RIGHT;
             List<Shape> only = new ArrayList<>();
-            only.add(new Line(MARGIN_LEFT, plotTop, MARGIN_LEFT, plotBottom, AXIS_STROKE, AXIS_W));
-            only.add(new Line(MARGIN_LEFT, plotBottom, w - MARGIN_RIGHT, plotBottom, AXIS_STROKE, AXIS_W));
+            AnchorAssigner assigner = new AnchorAssigner();
+            only.add(new Group(assigner.assign(SirentideRole.AXIS, "y"),
+                List.<Shape>of(new Line(MARGIN_LEFT, plotTop, MARGIN_LEFT, plotBottom,
+                    AXIS_STROKE, AXIS_W))));
+            only.add(new Group(assigner.assign(SirentideRole.AXIS, "x"),
+                List.<Shape>of(new Line(MARGIN_LEFT, plotBottom, w - MARGIN_RIGHT, plotBottom,
+                    AXIS_STROKE, AXIS_W))));
             return new LaidOut(w, plotBottom + BOTTOM_PAD, only);
         }
 
@@ -130,6 +136,7 @@ public final class JourneyLayout {
         double H = plotBottom + ACTOR_TOP_GAP + maxActors * ACTOR_STEP + BOTTOM_PAD;
 
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
 
         // 0) TITLE, centred at the top.
         if (hasTitle) {
@@ -138,8 +145,10 @@ public final class JourneyLayout {
         }
 
         // 1) AXES: the y-axis (full plot height) + the x-axis (baseline at the plot bottom).
-        shapes.add(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, AXIS_W));
-        shapes.add(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, AXIS_W));
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "y"),
+            List.<Shape>of(new Line(plotLeft, plotTop, plotLeft, plotBottom, AXIS_STROKE, AXIS_W))));
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "x"),
+            List.<Shape>of(new Line(plotLeft, plotBottom, plotRight, plotBottom, AXIS_STROKE, AXIS_W))));
 
         // 2) y-axis SATISFACTION ticks 1..5 (integer scale), tick marks + numeric labels.
         for (int score = 1; score <= 5; score++) {
@@ -178,8 +187,7 @@ public final class JourneyLayout {
         }
 
         // 5) TASK points + labels: one `<g role="task">` per task (disc + name + actor labels), seq
-        //    0..n-1 in declaration order; the anchor id is the task name.
-        AnchorAssigner assigner = new AnchorAssigner();
+        //    follows the y/x axes in declaration order; the anchor id is the task name.
         for (int i = 0; i < n; i++) {
             JourneyTask t = tasks.get(i);
             double cy = axis.project(t.score(), plotBottom, plotTop);

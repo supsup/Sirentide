@@ -42,6 +42,7 @@ public final class GanttLayout {
         double plotW = plotRight - plotLeft;
 
         List<Shape> shapes = new ArrayList<>();
+        AnchorAssigner assigner = new AnchorAssigner();
         // Task-name labels sit on the page background → page-background text colour (default
         // `currentColor`, legible on light AND dark).
         String textColor = gantt.textColor();
@@ -63,7 +64,6 @@ public final class GanttLayout {
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each task → ONE
         // `<g role="bar">` wrapping its bar rect + its name label (both emitted contiguously per task,
         // so the grouping preserves emit order exactly). seq runs 0..N-1 in task order; id from the label.
-        AnchorAssigner assigner = new AnchorAssigner();
         for (int i = 0; i < n; i++) {
             Task t = tasks.get(i);
             double rowY = TOP + i * ROW_H;
@@ -99,7 +99,8 @@ public final class GanttLayout {
             shapes.add(new Group(assigner.assign(SirentideRole.BAR, t.label()), bg));
         }
         double axisY = TOP + n * ROW_H + 6;
-        shapes.add(new Line(plotLeft, axisY, plotRight, axisY, AXIS_STROKE, 1));
+        shapes.add(new Group(assigner.assign(SirentideRole.AXIS, "time"),
+            List.<Shape>of(new Line(plotLeft, axisY, plotRight, axisY, AXIS_STROKE, 1))));
         return new LaidOut(W, height, shapes);
     }
 }

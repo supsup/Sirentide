@@ -4,9 +4,9 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 > **Status note.** Sirentide is early but real. What's **built**: the render pipeline
 > (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
-> glyphs, and **twenty-two diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
+> glyphs, and **twenty-three diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
 > `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
-> `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
+> `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `rootsystem`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
 > `classDef`/`class` **semantic colour classes** (incl. built-in `status-danger`/`-warn`/`-ok`/`-neutral`
 > **status roles** — a closed **theme-durable** palette (one fill/stroke set chosen to read on both the
@@ -31,6 +31,13 @@ standard sanitizer allow-list. Apache-2.0.
 It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTeX→SVG math
 renderer), and shares its discipline — and its font, so a diagram label can *contain* a real
 LaTeX formula, rendered at bake.
+
+> **Label font coverage.** Labels bake to `<path>` glyphs from the bundled **STIX Two Math** font,
+> which covers **Latin text and mathematical symbols**. Code points outside that coverage —
+> non-Latin scripts (CJK, Arabic, …) and emoji — have no glyph and bake today as empty `.notdef`
+> boxes. The bake never fails on them; it stays inert and deterministic. `renderWithDiagnostics`
+> surfaces the boundary as an `OK` result whose message/detail **names the out-of-coverage
+> `U+XXXX` code points**, so an unexplained box is a nameable signal rather than a silent surprise.
 
 ## 2. Render a diagram
 
@@ -149,7 +156,7 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-two** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-three** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `rootsystem`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
 | *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2). |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for

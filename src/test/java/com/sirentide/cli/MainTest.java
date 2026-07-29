@@ -123,6 +123,49 @@ class MainTest {
         assertEquals("", c.err, "a clean parse prints no stderr diagnostic");
     }
 
+    /// Marlow's MEDIUM finding (sirentide/680): the fence path had no tag-shaped case, so the
+    /// render-check's behaviour on an invalid display label was unproven at the CLI boundary —
+    /// the boundary the /docs bake actually goes through.
+    ///
+    /// Asserts the full contract, not just the exit code: exit 1, an ACTIONABLE stderr naming
+    /// the label and the token, and NO destination mutation. That last one matters most —
+    /// writing a shell and exiting 0 would claim a bake outcome /docs does not produce.
+    @Test
+    void aTagShapedLabelFailsTheFenceLoudlyAndWritesNothing() throws IOException {
+        Path md = writeMd("bad.md", """
+            # Title
+
+            ```sirentide
+            flowchart TD
+              A[TRUE NEGATIVE<br/>safe to act on]
+            ```
+            """);
+        Path out = md.resolveSibling("should-not-exist.svg");
+        Captured c = run("render", md.toString(), "-o", out.toString());
+
+        assertEquals(1, c.exitCode, "a fence that cannot render is a LOUD exit 1");
+        assertFalse(Files.exists(out),
+            "nothing may be written: /docs keeps the fence verbatim rather than embedding a shell");
+        assertTrue(c.err.contains("node:A"), "stderr names the stable label identity: " + c.err);
+        assertTrue(c.err.contains("<br/>"), "stderr names the bounded token: " + c.err);
+        assertEquals("", c.out, "no SVG on stdout for a failed fence");
+    }
+
+    /// POSITIVE CONTROL for the case above: an ordinary comparison must still render through
+    /// the same path, or the fence check would be indistinguishable from "brackets are banned".
+    @Test
+    void anOrdinaryComparisonStillRendersThroughTheFence() throws IOException {
+        Path md = writeMd("ok.md", """
+            ```sirentide
+            flowchart TD
+              A[x < y is legal]
+            ```
+            """);
+        Captured c = run("render", md.toString());
+        assertEquals(0, c.exitCode, "a legal comparison renders: " + c.err);
+        assertTrue(c.out.length() > 100, "a real SVG came back");
+    }
+
     @Test
     void minusOWritesToAFileInsteadOfStdout() throws IOException {
         Path md = writeMd("doc.md", """

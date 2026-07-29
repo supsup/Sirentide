@@ -31,11 +31,21 @@ import java.util.List;
 /// create/destroy events (M2 enrichment), both anchored into the flat message stream by `atMsg`.
 /// EMPTY for the legacy path, so a sequence with no notes / create / destroy lays out and bakes
 /// BYTE-IDENTICALLY to before (the note-box + lifeline-start/end + destroy-X emission is skipped when
-/// both lists are empty). Parse (declaration) order.
+/// both lists are empty). Parse (declaration) order. A normal, layout-accepted Sequence has at most
+/// {@link #MAX_NOTES} notes. The parser may deliberately return exactly {@code MAX_NOTES + 1}: its
+/// last note is the first valid excess note and the bounded count is the typed cap marker that layout
+/// rejects before producing geometry. The parser never retains later notes past that marker.
 public record Sequence(List<String> actors, List<SeqMessage> messages, String textColor,
                        String nodeColor, boolean bodyHadContent, List<SeqBlock> blocks,
                        List<SeqNote> notes, List<SeqLifecycle> lifecycles)
     implements Diagram {
+
+    /// Shared parser/direct-layout bound for author-visible note bands. Counts through this value are
+    /// accepted. The parser may construct exactly {@code MAX_NOTES + 1} only as the deliberate
+    /// overflow marker described on {@link #notes()}; layout rejects any count above this bound before
+    /// producing geometry. Kept on the IR type so the pure layout layer does not depend back on parser
+    /// internals.
+    public static final int MAX_NOTES = 10_000;
 
     public Sequence {
         actors = List.copyOf(actors);
