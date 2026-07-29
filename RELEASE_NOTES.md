@@ -16,6 +16,35 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Tag-shaped display labels now FAIL CLOSED
+
+A label like `A[TRUE NEGATIVE<br/>safe to act on]` used to render `<br/>` as **visible text**
+with exit 0, a well-formed SVG, and no diagnostic — every automated check passed and only a
+human looking at the picture could tell. Sirentide renders label text literally and has never
+supported HTML; the defect was that saying so silently is indistinguishable from succeeding.
+
+Tag-shaped markup in a **display label** is now a parse-level failure: `render` degrades to the
+inert shell, `renderWithDiagnostics` reports `PARSE_ERROR` at stage `parse` naming the label's
+stable identity and a bounded token, `renderFrames` behaves identically, and
+`sirentide render <file.md>` exits **1** and writes nothing — matching what the /docs bake
+already does with a fence that will not render.
+
+**Compatibility boundary, deliberately narrow.** Two things stay legal and are pinned by
+controls:
+
+- **Ordinary comparison prose.** `x < y`, `a <- b`, `3<5` and `0<x+y>1` all render. The check is
+  tag GRAMMAR — a name that terminates at whitespace, `/` or `>` — not "contains a bracket".
+- **Inline math on the surface that supports it.** `$…$` in a flowchart node label is still
+  rendered through the math renderer and is not scanned as markup.
+
+The math exemption follows **rendering semantics**, not the label text: surfaces that emit plain
+glyph paths (config caption, GitGraph labels, mindmap nodes) are scanned in full, because on
+those surfaces `$…$` has no math meaning and would otherwise be a delimiter that smuggles markup
+past the check.
+
+**Identifiers are unaffected.** `subgraph outer<unsafe> [Outer title]` still sanitizes the id to
+`outerunsafe`; only the visible `Outer title` is validated.
+
 ### Frame-deck packaging design and contract truth
 The reviewed `sirentide-frames` packaging RFC now specifies a trusted-consumer
 budget API that rejects a frame-count cap before emission and enforces exact

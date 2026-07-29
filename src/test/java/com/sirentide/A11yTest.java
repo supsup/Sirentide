@@ -84,6 +84,26 @@ class A11yTest {
             && svg.contains("&quot;"), "every metacharacter escaped in desc: " + svg);
         assertFalse(svg.contains("&amp;amp;"), "no double-escaping of '&': " + svg);
         parse(svg);   // must be well-formed XML
+
+        // STRENGTHENED with the exact script/img-onerror payloads (Marlow, sirentide/671
+        // point 4). This matters BECAUSE those strings are now rejected upstream: the
+        // fail-closed label policy means no parser path can deliver them here any more, so
+        // the LAST-LINE XML sink would lose its only proof that it escapes them. Driving the
+        // emitter directly keeps that proof without adding a public production seam, and
+        // without depending on which upstream happens to feed it.
+        A11y hostile = new A11y("<script>alert(1)</script>",
+            "<img src=x onerror=alert(1)> and </script> and <svg onload=alert(2)>");
+        String hostileSvg = SvgEmitter.emit(LaidOut.of(10, 10), hostile);
+        assertFalse(hostileSvg.contains("<script"), "no live script element: " + hostileSvg);
+        assertFalse(hostileSvg.contains("<img"), "no live img element: " + hostileSvg);
+        assertFalse(hostileSvg.contains("<svg onload"), "no live onload element: " + hostileSvg);
+        // NON-VACUITY: the payloads must be PRESENT-but-escaped, not silently dropped. A
+        // dropped payload satisfies every assertion above while proving nothing.
+        assertTrue(hostileSvg.contains("&lt;script&gt;"),
+            "the script payload reached the sink escaped, not dropped: " + hostileSvg);
+        assertTrue(hostileSvg.contains("&lt;img") && hostileSvg.contains("onerror"),
+            "the img/onerror payload reached the sink escaped: " + hostileSvg);
+        parse(hostileSvg);   // still well-formed XML with hostile input
     }
 
     /// The BLANK payload ({@link A11y#NONE}) emits NO role/title/desc — the inert/empty shell stays
