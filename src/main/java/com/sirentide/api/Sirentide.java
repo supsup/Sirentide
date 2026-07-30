@@ -254,8 +254,42 @@ public final class Sirentide {
         }
     }
 
+    /// Trusted-consumer variant of {@link #renderFramesWithDiagnostics(String,
+    /// MathFragmentRenderer)}. The validated {@code consumerBudget} only narrows Sirentide's
+    /// independent frame and aggregate-output defenses. Consumer frame-count excess is rejected
+    /// before any emphasized frame is emitted; exact UTF-8 bytes are checked before each completed
+    /// frame is retained. A final invariant fence applies the same limits to EVERY frame-bearing
+    /// return, including parse/unsupported diagnostics, producer-cap degrades, and caught fallback
+    /// frames. Either consumer-cap failure returns an empty, all-or-nothing deck with {@link
+    /// Outcome#OUTPUT_CAP_EXCEEDED}. Existing overloads do not use this path and retain their
+    /// byte-identical behavior and degrade shapes.
+    public static FramesResult renderFramesWithDiagnostics(
+            String dsl,
+            com.sirentide.api.MathFragmentRenderer math,
+            FrameBudget consumerBudget) {
+        java.util.Objects.requireNonNull(consumerBudget, "consumerBudget");
+        com.sirentide.font.EmittedText.arm();
+        try {
+            // The armed pipeline checks the normal single/multi-frame paths at their earliest safe
+            // retention points. This outer fence is deliberately ALSO present: the method has
+            // frame-bearing early diagnostic returns and a catch/fallback return, and a trusted
+            // cap is a property of the WHOLE bounded API, not only its successful control flow.
+            return enforceConsumerFrameBudget(
+                renderFramesWithDiagnosticsArmed(dsl, math, consumerBudget), consumerBudget);
+        } finally {
+            com.sirentide.font.EmittedText.disarm();
+        }
+    }
+
     private static FramesResult renderFramesWithDiagnosticsArmed(String dsl,
                                                                  com.sirentide.api.MathFragmentRenderer math) {
+        return renderFramesWithDiagnosticsArmed(dsl, math, null);
+    }
+
+    private static FramesResult renderFramesWithDiagnosticsArmed(
+            String dsl,
+            com.sirentide.api.MathFragmentRenderer math,
+            FrameBudget consumerBudget) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -301,9 +335,25 @@ public final class Sirentide {
             java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
             collectSeqs(laid.shapes(), seqs);
             if (seqs.size() <= 1) {
+                if (consumerBudget != null) {
+                    long baseUtf8Bytes = base.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    if (wouldExceedFrameBudget(0, baseUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes())) {
+                        return consumerUtf8CapExceeded(0, baseUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes());
+                    }
+                }
                 return new FramesResult(java.util.List.of(base),
                     okDiagnostics(STAGE_EMIT,
                         "Rendered successfully (single frame — the diagram has no play-through steps)."));
+            }
+            if (consumerBudget != null && seqs.size() > consumerBudget.maxFrames()) {
+                return new FramesResult(java.util.List.of(), new Diagnostics(
+                    Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                    "The play-through has " + seqs.size() + " frames, past the trusted consumer "
+                        + "budget of " + consumerBudget.maxFrames() + ", so no deck was retained.",
+                    -1, "consumer-frame-count: " + seqs.size() + " > "
+                        + consumerBudget.maxFrames()));
             }
             // SIR-01: frame-count cap — mirror renderFrames EXACTLY (inert-shell frame), classified as
             // the KNOWN bounded OUTPUT_CAP_EXCEEDED degrade (not a renderer bug), so the diagnostics
@@ -319,6 +369,7 @@ public final class Sirentide {
 
             java.util.List<String> frames = new java.util.ArrayList<>(seqs.size());
             long totalBytes = 0;
+            long consumerUtf8Bytes = 0;
             for (int k : seqs) {
                 String svg = SvgEmitter.emit(laid, a11y, config.theme(), Emphasis.cumulative(k));
                 if (svg.length() > MAX_OUTPUT_BYTES) {
@@ -327,6 +378,20 @@ public final class Sirentide {
                         "An emphasized play-through frame exceeded the " + MAX_OUTPUT_BYTES
                             + "-byte output cap, so the bake degraded to the empty shell.",
                         -1, "frame seq=" + k + " length " + svg.length() + " > MAX_OUTPUT_BYTES"));
+                }
+                long frameUtf8Bytes = 0;
+                if (consumerBudget != null) {
+                    // This prospective check must precede the legacy character-count aggregate
+                    // below. UTF-8 bytes are never fewer than Java characters and the trusted
+                    // ceiling cannot exceed MAX_TOTAL_OUTPUT_BYTES, so a deck crossing both limits
+                    // is first and truthfully classified as the consumer cap it hit.
+                    frameUtf8Bytes = svg.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    if (wouldExceedFrameBudget(consumerUtf8Bytes, frameUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes())) {
+                        return consumerUtf8CapExceeded(
+                            consumerUtf8Bytes, frameUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes());
+                    }
                 }
                 totalBytes += svg.length();
                 // SIR-01: aggregate byte budget — mirror renderFrames' inert-shell degrade, classified
@@ -338,6 +403,9 @@ public final class Sirentide {
                             + "-byte aggregate output cap, so it degraded to the empty shell. Reduce "
                             + "the number of steps or the scene size.",
                         -1, "aggregate frame bytes " + totalBytes + " > MAX_TOTAL_OUTPUT_BYTES"));
+                }
+                if (consumerBudget != null) {
+                    consumerUtf8Bytes += frameUtf8Bytes;
                 }
                 frames.add(svg);
             }
@@ -356,6 +424,52 @@ public final class Sirentide {
             }
             return new FramesResult(java.util.List.of(render(dsl, math)), classifyFailure(stage, e));
         }
+    }
+
+    private static FramesResult consumerUtf8CapExceeded(
+            long retainedBytes, long nextFrameBytes, long limit) {
+        return new FramesResult(java.util.List.of(), new Diagnostics(
+            Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+            "The next play-through frame would cross the trusted consumer UTF-8 budget of "
+                + limit + " bytes, so no deck was retained.",
+            -1, "consumer-utf8-bytes: retained=" + retainedBytes + ", next="
+                + nextFrameBytes + ", limit=" + limit));
+    }
+
+    /// Final trusted-consumer invariant fence. The normal emission path checks prospectively so an
+    /// over-budget multi-frame prefix is never retained; this check covers every OTHER return shape
+    /// too (early non-OK diagnostics, producer degrades, and caught fallback frames). It returns the
+    /// original result object unchanged when sufficient, preserving both frame bytes and diagnostics.
+    private static FramesResult enforceConsumerFrameBudget(
+            FramesResult result, FrameBudget consumerBudget) {
+        if (result.frames().size() > consumerBudget.maxFrames()) {
+            return new FramesResult(java.util.List.of(), new Diagnostics(
+                Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                "The returned play-through has " + result.frames().size()
+                    + " frames, past the trusted consumer budget of "
+                    + consumerBudget.maxFrames() + ", so no deck was retained.",
+                -1, "consumer-frame-count: " + result.frames().size() + " > "
+                    + consumerBudget.maxFrames()));
+        }
+        long retainedBytes = 0;
+        for (String frame : result.frames()) {
+            long frameBytes = frame.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (wouldExceedFrameBudget(
+                    retainedBytes, frameBytes, consumerBudget.maxUtf8Bytes())) {
+                return consumerUtf8CapExceeded(
+                    retainedBytes, frameBytes, consumerBudget.maxUtf8Bytes());
+            }
+            retainedBytes += frameBytes;
+        }
+        return result;
+    }
+
+    /// Overflow-safe prospective aggregate comparison. Package-private for the boundary receipt.
+    static boolean wouldExceedFrameBudget(long retained, long next, long limit) {
+        if (retained < 0 || next < 0 || limit < 0) {
+            throw new IllegalArgumentException("frame byte totals and limit must be non-negative");
+        }
+        return retained > limit || next > limit - retained;
     }
 
     /// Collect the distinct `seq` values stamped on the anchor {@link com.sirentide.layout.Group}s in a
