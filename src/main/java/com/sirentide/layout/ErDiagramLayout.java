@@ -74,7 +74,10 @@ public final class ErDiagramLayout {
     private static final String EDGE_STROKE = "#5eead4"; // relationship edge line
     private static final double BORDER_W = 1;
     private static final double EDGE_WIDTH = 1.5;
-    private static final double EDGE_LABEL_SIZE = 10;
+    /// Edge/self-loop label type size. Package-private because the self-loop geometry oracle derives the
+    /// label metric band (and the baseline it expects on each loop's top leg) from this SAME value, so the
+    /// placement and its receipts can never drift apart.
+    static final double EDGE_LABEL_SIZE = 10;
 
     // Crow-foot marker geometry (px). CROW_LEN = how far the fork convergence sits from the entity
     // border; CROW_HALF = half the fork's spread at the border. BAR_D = the inner-bar distance for a
@@ -108,8 +111,9 @@ public final class ErDiagramLayout {
     // legs) …
     private static final double SELF_LOOP_LANE = 14;
     // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
-    // border span) so the horizontal legs never overpaint either. Labels stack separately (see
-    // loopLabelBaseline), so an attach-clamp collapse can never merge them.
+    // border span) so the horizontal legs never overpaint either. Each lane's LABEL rides its own
+    // top leg (see loopLabelBaselines), with a METRIC floor so an attach-clamp collapse — or a label
+    // taller than the lane pitch — can never merge two labels.
     // DERIVED from the marker footprint, NOT a flat constant (sirentide 275): two adjacent same-side
     // markers sit one step apart perpendicular to their horizontal legs, each extending ±MAX_MARKER_HALF,
     // so the pitch must clear 2·MAX_MARKER_HALF + stroke clearance or the glyphs overprint AND a later
@@ -119,6 +123,21 @@ public final class ErDiagramLayout {
     private static final double SELF_LOOP_ATTACH_STEP = 2 * MAX_MARKER_HALF + SELF_LOOP_MARKER_CLEARANCE;
     // Gap between the outermost loop leg and its label's left edge.
     private static final double SELF_LOOP_LABEL_GAP = 4;
+    // Clear vertical gap the METRIC FLOOR leaves between two adjacent loop labels' OCCUPIED BANDS
+    // (Marlow sirentide/768 F2): the floor separates consecutive baselines by the upper label's
+    // DESCENT + the lower label's ASCENT + this gap, so the bands `[baseline−ascent, baseline+descent]`
+    // are disjoint BY CONSTRUCTION whatever the labels measure. The retired fixed EDGE_LABEL_SIZE+2
+    // slot ignored per-label metrics, so two tall math fragments emitted overlapping bands.
+    private static final double SELF_LOOP_LABEL_BAND_GAP = 2;
+
+    /// Minimum clear corridor between a self-loop label's text box and any NON-LOOP edge segment
+    /// crossing the label's x-band (eye-pass finding, plan 64cf1bae): half a label line-height plus a
+    /// small gap, so a loop label can never READ as a label ON a neighbour edge — misattribution,
+    /// worse than crowding, and invisible to every pure-disjointness receipt (non-overlap is not
+    /// unambiguity). {@link SelfLoopLabelColumn} moves each CONFLICTED label — and only those — the
+    /// minimum that honours it; the geometry oracle imports this SAME value so the corridor and its
+    /// test can never drift apart.
+    static final double SELF_LOOP_EDGE_CLEARANCE = FONT.lineHeight(EDGE_LABEL_SIZE) / 2 + 4;
 
     /// One placed entity table: its grid rectangle plus the pre-measured header height and the
     /// (ellipsized) display lines, so the emit pass draws band/rows/text without re-measuring.
@@ -223,7 +242,8 @@ public final class ErDiagramLayout {
 
         // Self-loop lane bookkeeping (Lattice re-review, seq 217): every self-relation on a table
         // occupies a LANE off its right edge — lane k's vertical leg sits k·SELF_LOOP_LANE further
-        // out — and each loop's (already-ellipsized) label rides beside the table's OUTERMOST leg.
+        // out — and each loop's (already-ellipsized) label rides ONE shared column past the table's
+        // OUTERMOST leg, at the height of its OWN loop's top leg (Marlow sirentide/761).
         // The row cursor below reserves the table's full lane extent, which is what keeps a loop
         // label from escaping the viewBox (the old grow-pass reserved only the legs) and from
         // running through the next table in the row.
@@ -312,12 +332,86 @@ public final class ErDiagramLayout {
         }
         double canvasH = Math.max(MIN_H, rowTop - ROW_GAP + MARGIN);
 
-        // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
-        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE): the label
-        // baseline is stacked above the lane-0 exit leg (the same {@link #loopLabelBaseline} +
-        // ascent-floor formula emitSelfLoop uses), so grow the BOTTOM when a bottom-row label's
-        // descent reaches past the margin.
+        // -- neighbour-edge corridor avoidance (eye-pass finding, plan 64cf1bae; the class twin's
+        // exact mechanism). A straight (or bent) neighbour edge can cross the x-band where a table's
+        // self-loop label fan rides — the reserved lane extent bounds tables, not edges — and the
+        // labels then READ as labels ON that edge (the g4 er-self-loop shape: "manages" sat touching
+        // the uses edge). Every non-self route is computed ONCE here and handed to the emit pass, so
+        // the corridor the fan avoids can never drift from the edge actually drawn;
+        // {@link SelfLoopLabelColumn} then places each table's labels INDIVIDUALLY — every label
+        // keeps {@link #SELF_LOOP_EDGE_CLEARANCE} from every segment and table crossing ITS OWN
+        // x-band, and a label nothing crosses does not move at all (Marlow sirentide/770). A label
+        // with no feasible position above its corridor drops below it, and the growth pass below
+        // grows the canvas.
+        EdgeRouter.Route[] routes = new EdgeRouter.Route[er.relations().size()];
+        List<double[]> edgeSegments = new ArrayList<>();
+        List<double[]> boxRects = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            boxRects.add(new double[] {px[k], py[k], boxW[k], boxH[k]});
+        }
         for (int e = 0; e < er.relations().size(); e++) {
+            ErRelation r = er.relations().get(e);
+            Integer li = index.get(r.left());
+            Integer ri = index.get(r.right());
+            if (li == null || ri == null || li.equals(ri)) {
+                continue;
+            }
+            double[] lb = clipToRect(px[li] + boxW[li] / 2, py[li] + boxH[li] / 2,
+                boxW[li], boxH[li], px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2);
+            double[] rb = clipToRect(px[ri] + boxW[ri] / 2, py[ri] + boxH[ri] / 2,
+                boxW[ri], boxH[ri], px[li] + boxW[li] / 2, py[li] + boxH[li] / 2);
+            List<double[]> others = new ArrayList<>();
+            for (int k = 0; k < n; k++) {
+                if (k != li && k != ri) {
+                    others.add(boxRects.get(k));
+                }
+            }
+            routes[e] = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+            if (routes[e].hasBend()) {
+                edgeSegments.add(new double[] {lb[0], lb[1], routes[e].wx(), routes[e].wy()});
+                edgeSegments.add(new double[] {routes[e].wx(), routes[e].wy(), rb[0], rb[1]});
+            } else {
+                edgeSegments.add(new double[] {lb[0], lb[1], rb[0], rb[1]});
+            }
+        }
+        // -- the ONE self-loop label-baseline computation (Marlow sirentide/768 F1+F2). Every loop
+        // label is measured ONCE here — width + ACTUAL ascent/descent, math fragments included — and
+        // the per-lane FINAL baselines are solved from that full set in ONE pass:
+        //
+        //   1. the METRIC FLOOR ({@link #loopLabelBaselines}) walks the lanes outermost-first (their
+        //      ideals descend that way) and separates consecutive baselines by the upper label's
+        //      descent + the lower label's ascent + SELF_LOOP_LABEL_BAND_GAP, so the occupied bands
+        //      are disjoint BY CONSTRUCTION — the retired fixed slot ignored metrics and let two tall
+        //      math labels emit OVERLAPPING bands (F2);
+        //   2. the CORRIDOR SOLVE ({@link SelfLoopLabelColumn}) then runs on the metric-floored
+        //      stack and returns a FINAL BASELINE PER LABEL. It is PER-LABEL, not one shift for the
+        //      set (Marlow sirentide/770): the labels share an x ORIGIN, not an x EXTENT, so a
+        //      crossing edge can conflict with a wide label and miss a narrow one entirely, and a
+        //      whole-fan dy dragged the unconflicted one off the leg it is supposed to ride. A
+        //      conflicted label now moves the MINIMUM that clears its own corridor, in whichever
+        //      direction is nearer and feasible; an unconflicted label whose ideal survives its
+        //      neighbours' final positions does not move at all. The move is a NAMED degradation of
+        //      the association contract, not a silent exception (F1) — a crossing neighbour edge
+        //      outranks exact leg-alignment for THAT label, and where clearing it downward forces
+        //      the labels below it down too (disjointness), that cascade is contract as well.
+        //      Solving over the FLOORED stack is what makes the two degradations compose in one
+        //      place — the retired shape re-derived a metrics-blind ideal at three separate sites.
+        //
+        // The result lands in `selfLabelBaseline[e]`, indexed by relation, and BOTH the canvas-growth
+        // reservation below and emitSelfLoop CONSUME it — emission recomputes nothing, so a
+        // reservation can never be smaller than the emission it covers.
+        int relCount = er.relations().size();
+        boolean[] selfLabeled = new boolean[relCount];
+        double[] selfLabelAsc = new double[relCount];
+        double[] selfLabelDesc = new double[relCount];
+        double[] selfLabelX0 = new double[relCount];
+        double[] selfLabelX1 = new double[relCount];
+        double[] selfLabelBaseline = new double[relCount];
+        double[][][] laneMetrics = new double[n][][];   // [node][lane] = {ascent, descent}, null = unlabeled
+        for (int k = 0; k < n; k++) {
+            laneMetrics[k] = new double[Math.max(selfLoops[k], 1)][];
+        }
+        for (int e = 0; e < relCount; e++) {
             ErRelation r = er.relations().get(e);
             Integer li = index.get(r.left());
             if (li == null || !li.equals(index.get(r.right()))
@@ -325,18 +419,70 @@ public final class ErDiagramLayout {
                 continue;
             }
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
+            double w;
             double asc;
             double desc;
             if (math != null && MathLabel.hasMath(lbl)) {
                 MathLabel.Measured m = MathLabel.measure(lbl, EDGE_LABEL_SIZE, FONT, math);
+                w = m.width();
                 asc = m.ascent();
                 desc = m.descent();
             } else {
+                w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
-            double baseline = Math.max(asc + 2, loopLabelBaseline(py[li], boxH[li], selfLane[e]));
-            canvasH = Math.max(canvasH, baseline + desc + 2);
+            double labelX = px[li] + boxW[li] + SELF_LOOP_OUT + (selfLoops[li] - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP;
+            double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
+            selfLabeled[e] = true;
+            selfLabelAsc[e] = asc;
+            selfLabelDesc[e] = desc;
+            selfLabelX0[e] = originX;
+            selfLabelX1[e] = originX + w;
+            laneMetrics[li][selfLane[e]] = new double[] {asc, desc};
+        }
+        double[][] laneBaseline = new double[n][];      // step 1: the metric-floored stack per node
+        for (int k = 0; k < n; k++) {
+            laneBaseline[k] = loopLabelBaselines(py[k], boxH[k], laneMetrics[k]);
+        }
+        List<List<SelfLoopLabelColumn.LoopLabel>> columns = new ArrayList<>();
+        List<List<Integer>> columnRel = new ArrayList<>();   // column entry → its relation index
+        for (int k = 0; k < n; k++) {
+            columns.add(new ArrayList<>());
+            columnRel.add(new ArrayList<>());
+        }
+        for (int e = 0; e < relCount; e++) {
+            if (selfLabeled[e]) {
+                int li = index.get(er.relations().get(e).left());
+                columns.get(li).add(new SelfLoopLabelColumn.LoopLabel(selfLane[e],
+                    selfLabelX0[e], selfLabelX1[e], selfLabelAsc[e], selfLabelDesc[e],
+                    laneBaseline[li][selfLane[e]]));
+                columnRel.get(li).add(e);
+            }
+        }
+        for (int i = 0; i < n; i++) {           // step 2: the per-label corridor solve on that stack
+            if (columns.get(i).isEmpty()) {
+                continue;
+            }
+            double[] solved = SelfLoopLabelColumn.place(columns.get(i), edgeSegments, boxRects,
+                SELF_LOOP_EDGE_CLEARANCE, SELF_LOOP_LABEL_BAND_GAP);
+            for (int j = 0; j < solved.length; j++) {
+                int e = columnRel.get(i).get(j);
+                selfLabelBaseline[e] = Math.max(selfLabelAsc[e] + 2, solved[j]);
+            }
+        }
+
+        // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
+        // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE), a
+        // metric-floored lane pushed below its ideal, or a corridor-shifted fan dropped below the
+        // bottom row — so the BOTTOM grows from the SAME per-lane baselines emitSelfLoop draws with
+        // (one carrier, no second copy) plus each label's own measured descent. Every labeled lane is
+        // visited, so the whole floored + shifted stack is covered.
+        for (int e = 0; e < relCount; e++) {
+            if (selfLabeled[e]) {
+                canvasH = Math.max(canvasH, selfLabelBaseline[e] + selfLabelDesc[e] + 2);
+            }
         }
 
         Placed[] placed = new Placed[n];
@@ -366,7 +512,7 @@ public final class ErDiagramLayout {
             }
             List<Shape> eg = new ArrayList<>();
             emitRelation(eg, placed, li, ri, r, er.textColor(), canvasW, canvasH, math,
-                selfLane[e], selfLoops[li]);
+                selfLane[e], selfLoops[li], routes[e], selfLabelBaseline[e]);
             shapes.add(new Group(assigner.assign(SirentideRole.EDGE, r.left() + "-" + r.right()), eg));
         }
 
@@ -525,10 +671,13 @@ public final class ErDiagramLayout {
     /// for a non-identifying `..` relation) + the crow-foot cardinality combo at EACH end + an optional
     /// `: label` at the edge midpoint. The edge line runs from each end's INNER-symbol attach point (the
     /// crow-foot convergence for a "many" end, the border for a "one" end) so the fork completes cleanly
-    /// to the border while the bars/circles sit on the line.
+    /// to the border while the bars/circles sit on the line. The `route` was computed ONCE in the layout
+    /// pre-pass — the SAME segments the label-fan corridor solver treated as obstacles, so avoided and
+    /// drawn geometry can never drift apart.
     private static void emitRelation(List<Shape> shapes, Placed[] placed, int li, int ri, ErRelation r,
                                      String textColor, double canvasW, double canvasH,
-                                     MathFragmentRenderer math, int lane, int laneCount) {
+                                     MathFragmentRenderer math, int lane, int laneCount,
+                                     EdgeRouter.Route route, double labelBaseline) {
         // Self-relation (`A ||--o{ A`): both endpoints are the same table. A zero-length straight edge
         // would put clipToRect at the table center for BOTH ends and draw the cardinality combos INSIDE
         // the table — and merely SKIPPING it erases a semantically-valid recursive relationship AND
@@ -536,29 +685,12 @@ public final class ErDiagramLayout {
         // self-LOOP off the right edge, with each end's cardinality combo on the loop, in this
         // relation's own lane (`lane` of the table's `laneCount`; layout reserved the extent).
         if (li == ri) {
-            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount);
+            emitSelfLoop(shapes, placed[li], r, textColor, canvasW, canvasH, math, lane, laneCount,
+                labelBaseline);
             return;
         }
-        Placed left = placed[li];
-        Placed right = placed[ri];
-        double lcx = left.centerX();
-        double lcy = left.centerY();
-        double rcx = right.centerX();
-        double rcy = right.centerY();
-        double[] lb = clipToRect(lcx, lcy, left.w(), left.h(), rcx, rcy);    // left table border point
-        double[] rb = clipToRect(rcx, rcy, right.w(), right.h(), lcx, lcy);  // right table border point
-
-        // Route the border-to-border span around any third table (placement removes most crossings;
-        // this bends the residual hub-skip through a single waypoint).
-        List<double[]> others = new ArrayList<>();
-        for (int k = 0; k < placed.length; k++) {
-            if (k == li || k == ri) {
-                continue;
-            }
-            Placed p = placed[k];
-            others.add(new double[] {p.x(), p.y(), p.w(), p.h()});
-        }
-        EdgeRouter.Route route = EdgeRouter.route(lb[0], lb[1], rb[0], rb[1], others, canvasW, canvasH);
+        double[] lb = {route.sx(), route.sy()};   // left table border point
+        double[] rb = {route.ex(), route.ey()};   // right table border point
 
         // Each end's dir points from its border ALONG the edge — toward the waypoint when bent, else
         // toward the other table. The cardinality markers and inner attach follow that dir.
@@ -615,9 +747,19 @@ public final class ErDiagramLayout {
     /// bottom — each on the border pointing outward (exactly like a normal edge to a table on the right),
     /// and the edge line runs from each end's inner-symbol attach (the fork convergence for a "many" end),
     /// reusing the SAME {@link #emitEdgeLine} primitive (honouring the identifying/dashed flag).
+    /// The LABEL is placed by Y-ASSOCIATION (Marlow sirentide/761): x in ONE constant column
+    /// {@code SELF_LOOP_LABEL_GAP} past the table's OUTERMOST leg — clear of every lane line by
+    /// construction, whatever the label's width — and its baseline the CARRIED `labelBaseline`: the
+    /// layout pre-pass solved the table's whole fan ONCE from the full label set (metric floor then
+    /// PER-LABEL corridor solve, {@link #loopLabelBaselines} + {@link SelfLoopLabelColumn}) and this pass CONSUMES
+    /// that value, recomputing nothing — the single carrier the growth reservation also read, so
+    /// avoided, reserved and drawn geometry cannot drift — and so the corridor degradation is stated
+    /// ONCE, as contract, instead of composing the association away unnoticed (Marlow sirentide/768
+    /// F1). The ascent floor and canvas clamps are re-applied here as belts, identically to the
+    /// reservation.
     private static void emitSelfLoop(List<Shape> shapes, Placed table, ErRelation r, String textColor,
                                      double canvasW, double canvasH, MathFragmentRenderer math,
-                                     int lane, int laneCount) {
+                                     int lane, int laneCount, double labelBaseline) {
         double x1 = table.x() + table.w();                  // right border
         double ay = loopExitY(table.y(), table.h(), lane);  // left-operand end attach (top)
         double by = loopReturnY(table.y(), table.h(), lane); // right-operand end attach (bottom)
@@ -633,15 +775,20 @@ public final class ErDiagramLayout {
         // Both cardinality combos, each at its own border attach, pointing OUTWARD (+x, away from table).
         shapes.addAll(cardinalityMarker(r.leftCard(), x1, ay, 1, 0, MARKER));
         shapes.addAll(cardinalityMarker(r.rightCard(), x1, by, 1, 0, MARKER));
-        // Optional `: label` — beside the table's OUTERMOST lane leg (never crossing an outer lane's
-        // vertical leg: every leg ends at x ≤ that leg, and the label starts past it), lane-STACKED
-        // upward from just above the lane-0 exit leg via {@link #loopLabelBaseline}. Above-the-legs
-        // keeps the label out of the TABLE-CENTER band, where a straight edge to a right neighbor
-        // (and that edge's own midpoint label) lives — at center height a loop label runs into the
-        // neighbor edge's label (caught by eye on the BrewShot capture). Attach-independent, so a
-        // short table clamping the attach nudges together can never collapse stacked labels. The
-        // canvas clamps are belts: layout already reserved the width and grew the height with the
-        // same baseline formula.
+        // Optional `: label` — Y-ASSOCIATION (Marlow sirentide/761; the old x-staircase put every label
+        // beyond the OUTERMOST leg in a detached block with no geometric tie to its own loop). X: ONE
+        // constant column for all of the table's loop labels, SELF_LOOP_LABEL_GAP past the outermost
+        // vertical leg — an x-band INSIDE a lane is impossible (a label runs up to MAX_LABEL_W, far
+        // wider than the lane pitch, so it would cross the outer legs), and out here every label clears
+        // every lane line AND every cardinality marker by construction. Y is what associates, and it
+        // is NOT computed here: the layout pre-pass solved the table's whole fan in one place — each
+        // lane's ideal (its own top leg, optically centred), the METRIC FLOOR that keeps adjacent
+        // occupied bands disjoint from the labels' actual ascent/descent, then ONE uniform corridor
+        // shift over that floored stack — and handed the answer down as `labelBaseline`. Re-deriving
+        // any part of it here is what let the contract compose away unnoticed (Marlow sirentide/768
+        // F1): with the ideal recomputed at three sites, "rides its own leg" and "clears the
+        // corridor" could not both be stated about the same number. The ascent floor and canvas
+        // clamps below are belts, applied identically at reservation.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -654,19 +801,64 @@ public final class ErDiagramLayout {
                 w = FONT.runWidth(lbl, EDGE_LABEL_SIZE);
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
             }
-            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE + SELF_LOOP_LABEL_GAP;
+            double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
+                + SELF_LOOP_LABEL_GAP;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
-            double baseline = Math.max(asc + 2, loopLabelBaseline(table.y(), table.h(), lane));
+            double baseline = Math.max(asc + 2, labelBaseline);
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, textColor, math);
         }
     }
 
-    /// Lane k's label BASELINE: just above the lane-0 EXIT leg (0.3·h), one line-slot further up per
-    /// lane. Above-the-legs keeps every label clear of the table-center band (a crossing edge to a
-    /// right neighbor + its midpoint label live there), and the formula is deliberately independent
-    /// of the attach-point CLAMPS so stacked labels stay ≥ one line apart on ANY table height.
-    private static double loopLabelBaseline(double boxY, double boxH, int lane) {
-        return boxY + boxH * 0.3 - 3 - lane * (EDGE_LABEL_SIZE + 2);
+    /// The label BASELINES of a table's self-loop lanes, indexed by lane — computed from the FULL
+    /// label set in the layout pre-pass and consumed unchanged by both the emit pass and the
+    /// reservation pass (Marlow sirentide/761: the old placement stacked every label in a detached
+    /// block with no geometric tie to its own loop, so a reader could not tell which label belonged
+    /// to which loop). The class twin carries the identical computation.
+    ///
+    /// Y-ASSOCIATION. Lane k's label rides ITS OWN loop's TOP HORIZONTAL LEG: that leg leaves the
+    /// border at {@link #loopExitY}(k) and runs out to lane k's vertical leg, so a baseline at
+    /// {@code ay_k + ascent·0.35} optically centres the text on that line and the label reads as
+    /// riding its own loop exactly like an edge label rides its edge. (The x-band cannot do the
+    /// associating — a label runs up to MAX_LABEL_W, many times the lane pitch, so an "inside its own
+    /// lane" column would cross every outer leg; emitSelfLoop therefore puts ALL of them in one
+    /// column past the outermost leg and lets Y carry the association.)
+    ///
+    /// METRIC FLOOR (Marlow sirentide/768 F2 — this REPLACES the retired fixed-slot floor, which
+    /// budgeted a flat {@code EDGE_LABEL_SIZE + 2} per lane and so could not see a label taller than
+    /// that: two math fragments with a 20px ascent and a 20px descent emitted OVERLAPPING occupied
+    /// bands while every fixed-slot receipt stayed green). Lane k's top leg sits one
+    /// {@link #SELF_LOOP_ATTACH_STEP} ABOVE lane k−1's, so the ideals run downward from the OUTERMOST
+    /// lane to lane 0; walking that order, each next label is pushed down until its band
+    /// {@code [baseline − ascent, baseline + descent]} clears the previous label's band by
+    /// {@link #SELF_LOOP_LABEL_BAND_GAP} — i.e. {@code baseline_k ≥ baseline_{k+1} + descent_{k+1} +
+    /// ascent_k + gap}, from each label's OWN measured metrics (math included). Disjointness is
+    /// therefore by construction at any label size, and order is preserved (the floor only ever
+    /// pushes a lower-ideal lane FURTHER down). A SHORT table whose attach nudges CLAMP together (all
+    /// ideals equal) degrades the same way instead of overprinting. `labelMetrics[lane]` is
+    /// {@code {ascent, descent}}, or null for a lane whose relation carries no label — an unlabeled
+    /// lane occupies no band, so it neither floors nor is floored.
+    ///
+    /// This is the IDEAL + DEGRADATION-2 half of the contract; {@link SelfLoopLabelColumn} composes
+    /// DEGRADATION 1 (the corridor) on top of the stack this returns, in the layout pre-pass — PER
+    /// LABEL, so what this method returns is both the starting point AND the target the corridor
+    /// solve stays as close to as the hard constraints allow.
+    static double[] loopLabelBaselines(double boxY, double boxH, double[][] labelMetrics) {
+        double[] baselines = new double[Math.max(labelMetrics.length, 1)];
+        double lift = FONT.ascent(EDGE_LABEL_SIZE) * 0.35;
+        double prev = Double.NEGATIVE_INFINITY;   // previous (higher) lane's baseline …
+        double prevDesc = 0;                      // … and the descent of the label riding it
+        for (int lane = baselines.length - 1; lane >= 0; lane--) {
+            double ideal = loopExitY(boxY, boxH, lane) + lift;
+            double[] m = lane < labelMetrics.length ? labelMetrics[lane] : null;
+            if (m == null) {
+                baselines[lane] = ideal;
+                continue;
+            }
+            baselines[lane] = Math.max(ideal, prev + prevDesc + m[0] + SELF_LOOP_LABEL_BAND_GAP);
+            prev = baselines[lane];
+            prevDesc = m[1];
+        }
+        return baselines;
     }
 
     /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
@@ -685,7 +877,9 @@ public final class ErDiagramLayout {
 
     /// Horizontal extent a table's self-loop lane adds past its right border: the outermost vertical
     /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
-    /// self-loops. The row cursor reserves exactly this, and emitSelfLoop stays within it.
+    /// self-loops. Every loop label now shares ONE column at that offset (Marlow sirentide/761 — the
+    /// per-lane x-staircase is gone, and with it the extra {@code (loops-1)·SELF_LOOP_LANE} this used
+    /// to reserve for it), so the row cursor reserves exactly the band emitSelfLoop writes into.
     private static double selfLaneExtent(int loops, double labelW) {
         if (loops == 0) {
             return 0;
