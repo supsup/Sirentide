@@ -730,7 +730,7 @@ public final class Sirentide {
             return null;
         }
         boolean one = dropped.size() == 1;
-        return new Diagnostics(Outcome.OK, STAGE_LAYOUT,
+        return new Diagnostics(Outcome.OK, STAGE_EMIT,
             "Rendered, but " + dropped.size() + " thin-slice label" + (one ? "" : "s")
                 + " had no room outside the pie and " + (one ? "was" : "were") + " dropped ("
                 + String.join(", ", dropped) + "). Use `pie legend` to show every label in a side key.",

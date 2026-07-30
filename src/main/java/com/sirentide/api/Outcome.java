@@ -8,7 +8,10 @@ package com.sirentide.api;
 /// - {@link #OK} — the bake succeeded; the SVG is real content. It MAY still ride a non-fatal
 ///   COVERAGE caveat in its {@code message}/{@code detail} (plan 933eed50 F1): source code points
 ///   outside the bundled label font's coverage bake as .notdef boxes — the render is unchanged, the
-///   caveat just names the offending `U+XXXX` points. A fully-covered source carries no caveat.
+///   caveat just names the offending `U+XXXX` points. A fully-covered source carries no caveat. A pie
+///   may likewise ride a dropped-thin-slice-label caveat (plan 86cee1d3) — a coloured wedge whose
+///   outside label had no room; both OK caveats compose onto one {@link Diagnostics}, classified at
+///   `stage` `"emit"` (the point of classification, not the layout-time fact each describes).
 /// - {@link #PARSE_ERROR} — the source didn't parse into a recognized diagram (unknown type keyword
 ///   on line 1, or an over-cap / unparseable header) and degraded to the empty shell.
 /// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the bake passed an output-size/frame

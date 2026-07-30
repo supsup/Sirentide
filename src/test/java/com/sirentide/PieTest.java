@@ -90,6 +90,8 @@ class PieTest {
     void aDroppedThinSliceLabelIsNamedOnAnOkCaveatSuggestingLegend() {
         RenderResult r = Sirentide.renderWithDiagnostics(DROP_DSL);
         assertEquals(Outcome.OK, r.diagnostics().outcome(), "the bake still SUCCEEDED (OK, with caveat)");
+        assertEquals("emit", r.diagnostics().stage(),
+            "classified at emit (the classification point), even though the caveat names a layout-time fact");
         String msg = r.diagnostics().message();
         assertTrue(msg.contains("right outside label that should clip"),
             "the caveat NAMES the dropped slice: " + msg);
@@ -135,6 +137,7 @@ class PieTest {
         RenderResult r = Sirentide.renderWithDiagnostics(
             "pie\n\"quarter 🚀\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74");
         assertEquals(Outcome.OK, r.diagnostics().outcome(), "still OK — caveats never fail a bake");
+        assertEquals("emit", r.diagnostics().stage(), "stage stays emit even composed with the font-coverage caveat");
         String msg = r.diagnostics().message();
         assertTrue(msg.contains("right outside label that should clip") && msg.contains("pie legend"),
             "the drop caveat survives the composition: " + msg);
