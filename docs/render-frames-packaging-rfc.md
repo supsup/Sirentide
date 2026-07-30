@@ -92,6 +92,13 @@ accumulated deck and returns `frames() == List.of()` plus a typed
 `consumer-frame-count` or `consumer-utf8-bytes`. Sirentide's existing 512-frame,
 per-frame, and 50 MB aggregate limits remain independent defense in depth.
 
+The trusted cap is an invariant of every bounded return, not only an OK bake. A
+final boundary check applies it to parse/unsupported diagnostics, producer-cap
+degrades, and caught fallback frames too. A sufficient budget preserves those
+existing frame bytes and their original non-OK diagnostic; an insufficient budget
+returns the same atomic empty deck and consumer-cap diagnostic. Thus no degraded
+85-byte inert frame can be retained under a trusted one-byte ceiling.
+
 A successful bounded result emits the existing conformant Sirentide wrapper
 with each independently valid SVG as a direct child, in frame order. It emits no
 new wrapper class, author-controlled attribute, or inner-SVG vocabulary.

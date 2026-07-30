@@ -109,6 +109,60 @@ class FrameBudgetTest {
     }
 
     @Test
+    void unknownInputDegradeCannotBypassTheConsumerByteBudget() {
+        String unknown = "definitely-not-a-type\n";
+        FramesResult existing = Sirentide.renderFramesWithDiagnostics(unknown);
+        long exactUtf8Bytes = utf8Bytes(existing);
+
+        assertEquals(Outcome.PARSE_ERROR, existing.diagnostics().outcome(),
+            "control: this is the early non-OK Empty-degrade return");
+        assertEquals(1, existing.frames().size());
+        assertTrue(exactUtf8Bytes > 1, "the returned inert frame must exceed the discriminator");
+
+        FramesResult exact = Sirentide.renderFramesWithDiagnostics(
+            unknown, null, new FrameBudget(1, exactUtf8Bytes));
+        FramesResult rejected = Sirentide.renderFramesWithDiagnostics(
+            unknown, null, new FrameBudget(1, 1));
+
+        assertEquals(existing.frames(), exact.frames(),
+            "a sufficient budget preserves the existing non-OK degrade bytes");
+        assertEquals(Outcome.PARSE_ERROR, exact.diagnostics().outcome(),
+            "a sufficient budget preserves the original diagnostic too");
+        assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, rejected.diagnostics().outcome());
+        assertTrue(rejected.diagnostics().detail().startsWith("consumer-utf8-bytes"));
+        assertTrue(rejected.frames().isEmpty(),
+            "even an early parse-degrade frame is subject to the trusted consumer cap");
+    }
+
+    @Test
+    void caughtFallbackFrameCannotBypassTheConsumerByteBudget() {
+        // Finite endpoints whose span overflows force the real layout catch/fallback path. This is
+        // not a synthetic test seam: NumericContractTest pins the same source as a loud RENDER_BUG.
+        String caughtFallback = "xychart\n  \"A\" : -1e308\n  \"B\" : 1e308\n";
+        FramesResult existing = Sirentide.renderFramesWithDiagnostics(caughtFallback);
+        long exactUtf8Bytes = utf8Bytes(existing);
+
+        assertEquals(Outcome.RENDER_BUG, existing.diagnostics().outcome(),
+            "control: layout failure must escape to the caught fallback");
+        assertEquals(1, existing.frames().size());
+        assertTrue(exactUtf8Bytes > 1, "the caught fallback frame must exceed the discriminator");
+
+        FramesResult exact = Sirentide.renderFramesWithDiagnostics(
+            caughtFallback, null, new FrameBudget(1, exactUtf8Bytes));
+        FramesResult rejected = Sirentide.renderFramesWithDiagnostics(
+            caughtFallback, null, new FrameBudget(1, 1));
+
+        assertEquals(existing.frames(), exact.frames(),
+            "a sufficient budget preserves the caught fallback bytes");
+        assertEquals(Outcome.RENDER_BUG, exact.diagnostics().outcome(),
+            "a sufficient budget preserves the caught diagnostic");
+        assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, rejected.diagnostics().outcome());
+        assertTrue(rejected.diagnostics().detail().startsWith("consumer-utf8-bytes"));
+        assertTrue(rejected.frames().isEmpty(),
+            "the caught fallback must not retain an over-budget frame");
+    }
+
+    @Test
     void prospectiveAggregateComparisonCannotOverflowLong() {
         assertTrue(Sirentide.wouldExceedFrameBudget(Long.MAX_VALUE - 4, 5, Long.MAX_VALUE));
         assertTrue(!Sirentide.wouldExceedFrameBudget(Long.MAX_VALUE - 5, 5, Long.MAX_VALUE));

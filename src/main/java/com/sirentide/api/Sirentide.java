@@ -258,8 +258,10 @@ public final class Sirentide {
     /// MathFragmentRenderer)}. The validated {@code consumerBudget} only narrows Sirentide's
     /// independent frame and aggregate-output defenses. Consumer frame-count excess is rejected
     /// before any emphasized frame is emitted; exact UTF-8 bytes are checked before each completed
-    /// frame is retained. Either consumer-cap failure returns an empty, all-or-nothing deck with
-    /// {@link Outcome#OUTPUT_CAP_EXCEEDED}. Existing overloads do not use this path and retain their
+    /// frame is retained. A final invariant fence applies the same limits to EVERY frame-bearing
+    /// return, including parse/unsupported diagnostics, producer-cap degrades, and caught fallback
+    /// frames. Either consumer-cap failure returns an empty, all-or-nothing deck with {@link
+    /// Outcome#OUTPUT_CAP_EXCEEDED}. Existing overloads do not use this path and retain their
     /// byte-identical behavior and degrade shapes.
     public static FramesResult renderFramesWithDiagnostics(
             String dsl,
@@ -268,7 +270,12 @@ public final class Sirentide {
         java.util.Objects.requireNonNull(consumerBudget, "consumerBudget");
         com.sirentide.font.EmittedText.arm();
         try {
-            return renderFramesWithDiagnosticsArmed(dsl, math, consumerBudget);
+            // The armed pipeline checks the normal single/multi-frame paths at their earliest safe
+            // retention points. This outer fence is deliberately ALSO present: the method has
+            // frame-bearing early diagnostic returns and a catch/fallback return, and a trusted
+            // cap is a property of the WHOLE bounded API, not only its successful control flow.
+            return enforceConsumerFrameBudget(
+                renderFramesWithDiagnosticsArmed(dsl, math, consumerBudget), consumerBudget);
         } finally {
             com.sirentide.font.EmittedText.disarm();
         }
@@ -427,6 +434,34 @@ public final class Sirentide {
                 + limit + " bytes, so no deck was retained.",
             -1, "consumer-utf8-bytes: retained=" + retainedBytes + ", next="
                 + nextFrameBytes + ", limit=" + limit));
+    }
+
+    /// Final trusted-consumer invariant fence. The normal emission path checks prospectively so an
+    /// over-budget multi-frame prefix is never retained; this check covers every OTHER return shape
+    /// too (early non-OK diagnostics, producer degrades, and caught fallback frames). It returns the
+    /// original result object unchanged when sufficient, preserving both frame bytes and diagnostics.
+    private static FramesResult enforceConsumerFrameBudget(
+            FramesResult result, FrameBudget consumerBudget) {
+        if (result.frames().size() > consumerBudget.maxFrames()) {
+            return new FramesResult(java.util.List.of(), new Diagnostics(
+                Outcome.OUTPUT_CAP_EXCEEDED, STAGE_EMIT,
+                "The returned play-through has " + result.frames().size()
+                    + " frames, past the trusted consumer budget of "
+                    + consumerBudget.maxFrames() + ", so no deck was retained.",
+                -1, "consumer-frame-count: " + result.frames().size() + " > "
+                    + consumerBudget.maxFrames()));
+        }
+        long retainedBytes = 0;
+        for (String frame : result.frames()) {
+            long frameBytes = frame.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (wouldExceedFrameBudget(
+                    retainedBytes, frameBytes, consumerBudget.maxUtf8Bytes())) {
+                return consumerUtf8CapExceeded(
+                    retainedBytes, frameBytes, consumerBudget.maxUtf8Bytes());
+            }
+            retainedBytes += frameBytes;
+        }
+        return result;
     }
 
     /// Overflow-safe prospective aggregate comparison. Package-private for the boundary receipt.

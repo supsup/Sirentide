@@ -54,7 +54,11 @@ gate runs before any emphasized frame is emitted; exact UTF-8 bytes are checked
 prospectively before each completed frame is retained. A consumer-cap hit returns
 an empty deck plus typed `OUTPUT_CAP_EXCEEDED` diagnostics identifying either
 `consumer-frame-count` or `consumer-utf8-bytes`. Existing render and frame overloads
-retain their byte-compatible behavior and degrade shapes.
+retain their byte-compatible behavior and degrade shapes. The bounded overload also
+applies a final invariant fence to every frame-bearing return, including parse or
+unsupported diagnostics, producer-cap degrades, and caught fallback frames: a
+sufficient budget preserves the original frames and diagnostic, while an insufficient
+budget retains no frame.
 
 The same jar now carries optional `sirentide-frames.js` and
 `sirentide-frames.css` bytes through defensive `FrameDeckAssets` accessors. The
