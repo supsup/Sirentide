@@ -16,6 +16,14 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### Self-loop labels ride their own lanes (plan 64cf1bae)
+
+Stacked class/ER self-loop labels no longer share a single column: each label takes its own
+lane, and the label fan shifts to avoid neighbor-edge corridors (`SelfLoopFanShift`), so a
+label never sits on top of a crossing edge's path. `SelfLoopGeometryTest` pins pairwise-disjoint
+label boxes over the full leaf geometry; gallery references `class-self-loops-*` and
+`er-self-loop*` re-captured.
+
 ### Tag-shaped display labels now FAIL CLOSED
 
 A label like `A[TRUE NEGATIVE<br/>safe to act on]` used to render `<br/>` as **visible text**
