@@ -75,6 +75,26 @@ class FramesDiagnosticsTest {
         assertEquals(Sirentide.renderFrames(dsl), r.frames());
     }
 
+    /// A dropping thin-slice-label pie has no seq-anchored steps, so it takes the frames path's
+    /// single-frame branch (the SAME `pieDropCaveat` call `renderWithDiagnostics` makes) — pinned
+    /// here because that branch classifies OK-with-caveat at STAGE_EMIT, not the layout-time stage
+    /// the dropped fact describes (Marlow sirentide/762: the public `Diagnostics.stage` contract
+    /// keys on the classification point, and a successful bake always classifies at emit).
+    private static final String DROPPING_PIE =
+        "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74";
+
+    @Test
+    void droppingPieOnFramesPathClassifiesAtStageEmit() {
+        FramesResult r = Sirentide.renderFramesWithDiagnostics(DROPPING_PIE);
+        assertEquals(Outcome.OK, r.diagnostics().outcome());
+        assertEquals("emit", r.diagnostics().stage(),
+            "the drop caveat classifies at emit, not layout, on the frames path too");
+        assertTrue(r.diagnostics().message().contains("dropped"),
+            "the drop caveat still rides the message: " + r.diagnostics().message());
+        assertEquals(Sirentide.renderFrames(DROPPING_PIE), r.frames(),
+            "frames stay byte-identical to renderFrames even with the caveat riding the diagnostics");
+    }
+
     /// The never-throw invariant holds on hostile input, same as the whole api surface.
     @Test
     void neverThrowsOnHostileInput() {
