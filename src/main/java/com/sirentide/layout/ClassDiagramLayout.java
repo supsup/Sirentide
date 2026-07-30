@@ -122,8 +122,9 @@ public final class ClassDiagramLayout {
     /// crossing the label's x-band (eye-pass finding, plan 64cf1bae): half a label line-height plus a
     /// small gap, so a loop label can never READ as a label ON a neighbour edge — misattribution,
     /// worse than crowding, and invisible to every pure-disjointness receipt (non-overlap is not
-    /// unambiguity). The layout shifts the whole label fan to honour it ({@link SelfLoopFanShift});
-    /// the geometry oracle imports this SAME value so the corridor and its test can never drift apart.
+    /// unambiguity). {@link SelfLoopLabelColumn} moves each CONFLICTED label — and only those — the
+    /// minimum that honours it; the geometry oracle imports this SAME value so the corridor and its
+    /// test can never drift apart.
     static final double SELF_LOOP_EDGE_CLEARANCE = FONT.lineHeight(EDGE_LABEL_SIZE) / 2 + 4;
 
     /// One placed class box: its grid rectangle plus the pre-measured compartment heights and the
@@ -338,10 +339,11 @@ public final class ClassDiagramLayout {
         // reserved lane extent bounds boxes, not edges — and the labels then READ as labels ON that
         // edge (g5, class-self-loops-stacked: A→B threaded between "refines itself" and "delegates").
         // Every non-self route is computed ONCE here and handed to the emit pass, so the corridor the
-        // fan avoids can never drift from the edge actually drawn; {@link SelfLoopFanShift} then
-        // shifts each node's fan vertically (as a set, ordering preserved) until every label keeps
-        // {@link #SELF_LOOP_EDGE_CLEARANCE} from every crossing segment and box — or drops the fan
-        // below everything (the growth pass below grows the canvas), never threading it.
+        // corridor a label avoids can never drift from the edge actually drawn;
+        // {@link SelfLoopLabelColumn} then places each node's labels INDIVIDUALLY — every label keeps
+        // {@link #SELF_LOOP_EDGE_CLEARANCE} from every segment and box crossing ITS OWN x-band, and a
+        // label nothing crosses does not move at all (Marlow sirentide/770). A label with no feasible
+        // position above its corridor drops below it, and the growth pass below grows the canvas.
         EdgeRouter.Route[] routes = new EdgeRouter.Route[cd.relations().size()];
         List<double[]> edgeSegments = new ArrayList<>();
         List<double[]> boxRects = new ArrayList<>();
@@ -382,13 +384,19 @@ public final class ClassDiagramLayout {
         //      descent + the lower label's ascent + SELF_LOOP_LABEL_BAND_GAP, so the occupied bands
         //      are disjoint BY CONSTRUCTION — the retired fixed slot ignored metrics and let two tall
         //      math labels emit OVERLAPPING bands (F2);
-        //   2. the CORRIDOR SOLVE ({@link SelfLoopFanShift}) then runs on the metric-floored stack
-        //      and returns ONE uniform shift for the whole fan. The shift is a NAMED degradation of
-        //      the association contract, not a silent exception (F1): a crossing neighbour edge
-        //      outranks exact leg-alignment, and what survives is order + pitch. Solving it over the
-        //      FLOORED stack is what makes the two degradations compose in one place — the retired
-        //      shape re-derived a metrics-blind ideal at three separate sites and could only ever
-        //      add the shift back on top of it.
+        //   2. the CORRIDOR SOLVE ({@link SelfLoopLabelColumn}) then runs on the metric-floored
+        //      stack and returns a FINAL BASELINE PER LABEL. It is PER-LABEL, not one shift for the
+        //      set (Marlow sirentide/770): the labels share an x ORIGIN, not an x EXTENT, so a
+        //      crossing edge can conflict with a wide label and miss a narrow one entirely, and a
+        //      whole-fan dy dragged the unconflicted one off the leg it is supposed to ride. A
+        //      conflicted label now moves the MINIMUM that clears its own corridor, in whichever
+        //      direction is nearer and feasible; an unconflicted label whose ideal survives its
+        //      neighbours' final positions does not move at all. The move is a NAMED degradation of
+        //      the association contract, not a silent exception (F1) — a crossing neighbour edge
+        //      outranks exact leg-alignment for THAT label, and where clearing it downward forces
+        //      the labels below it down too (disjointness), that cascade is contract as well.
+        //      Solving over the FLOORED stack is what makes the two degradations compose in one
+        //      place — the retired shape re-derived a metrics-blind ideal at three separate sites.
         //
         // The result lands in `selfLabelBaseline[e]`, indexed by relation, and BOTH the canvas-growth
         // reservation below and emitSelfLoop CONSUME it — emission recomputes nothing, so a
@@ -439,29 +447,30 @@ public final class ClassDiagramLayout {
         for (int k = 0; k < n; k++) {
             laneBaseline[k] = loopLabelBaselines(py[k], boxH[k], laneMetrics[k]);
         }
-        List<List<SelfLoopFanShift.FanLabel>> fans = new ArrayList<>();
+        List<List<SelfLoopLabelColumn.LoopLabel>> columns = new ArrayList<>();
+        List<List<Integer>> columnRel = new ArrayList<>();   // column entry → its relation index
         for (int k = 0; k < n; k++) {
-            fans.add(new ArrayList<>());
+            columns.add(new ArrayList<>());
+            columnRel.add(new ArrayList<>());
         }
         for (int e = 0; e < relCount; e++) {
             if (selfLabeled[e]) {
                 int li = index.get(cd.relations().get(e).left());
-                fans.get(li).add(new SelfLoopFanShift.FanLabel(selfLabelX0[e], selfLabelX1[e],
-                    selfLabelAsc[e], selfLabelDesc[e], laneBaseline[li][selfLane[e]]));
+                columns.get(li).add(new SelfLoopLabelColumn.LoopLabel(selfLane[e],
+                    selfLabelX0[e], selfLabelX1[e], selfLabelAsc[e], selfLabelDesc[e],
+                    laneBaseline[li][selfLane[e]]));
+                columnRel.get(li).add(e);
             }
         }
-        double[] fanShift = new double[n];              // step 2: the corridor solve on that stack
-        for (int i = 0; i < n; i++) {
-            if (!fans.get(i).isEmpty()) {
-                fanShift[i] = SelfLoopFanShift.solve(fans.get(i), edgeSegments, boxRects,
-                    SELF_LOOP_EDGE_CLEARANCE);
+        for (int i = 0; i < n; i++) {           // step 2: the per-label corridor solve on that stack
+            if (columns.get(i).isEmpty()) {
+                continue;
             }
-        }
-        for (int e = 0; e < relCount; e++) {
-            if (selfLabeled[e]) {
-                int li = index.get(cd.relations().get(e).left());
-                selfLabelBaseline[e] = Math.max(selfLabelAsc[e] + 2,
-                    laneBaseline[li][selfLane[e]] + fanShift[li]);
+            double[] solved = SelfLoopLabelColumn.place(columns.get(i), edgeSegments, boxRects,
+                SELF_LOOP_EDGE_CLEARANCE, SELF_LOOP_LABEL_BAND_GAP);
+            for (int j = 0; j < solved.length; j++) {
+                int e = columnRel.get(i).get(j);
+                selfLabelBaseline[e] = Math.max(selfLabelAsc[e] + 2, solved[j]);
             }
         }
 
@@ -756,9 +765,9 @@ public final class ClassDiagramLayout {
     /// tip on the border, pointing outward. The LABEL is placed by Y-ASSOCIATION (Marlow
     /// sirentide/761): x in ONE constant column {@code SELF_LOOP_LABEL_GAP} past the node's OUTERMOST
     /// leg — clear of every lane line by construction, whatever the label's width — and its baseline
-    /// the CARRIED `labelBaseline`: the layout pre-pass solved the node's whole fan ONCE from the full
-    /// label set (metric floor then corridor shift, {@link #loopLabelBaselines} +
-    /// {@link SelfLoopFanShift}) and this pass CONSUMES that value, recomputing nothing — the single
+    /// the CARRIED `labelBaseline`: the layout pre-pass solved the node's whole label column ONCE from
+    /// the full label set (metric floor then the PER-LABEL corridor solve, {@link #loopLabelBaselines}
+    /// + {@link SelfLoopLabelColumn}) and this pass CONSUMES that value, recomputing nothing — the single
     /// carrier the growth reservation also read, so avoided, reserved and drawn geometry cannot drift
     /// — and so the corridor degradation is stated ONCE, as contract, instead of composing the
     /// association away unnoticed (Marlow sirentide/768 F1). The ascent floor and canvas clamps are
@@ -792,7 +801,7 @@ public final class ClassDiagramLayout {
         // SELF_LOOP_OUT) by construction. Y is what associates, and it is NOT computed here: the
         // layout pre-pass solved the node's whole fan in one place — each lane's ideal (its own top
         // leg, optically centred), the METRIC FLOOR that keeps adjacent occupied bands disjoint from
-        // the labels' actual ascent/descent, then ONE uniform corridor shift over that floored stack —
+        // the labels' actual ascent/descent, then the PER-LABEL corridor solve over that floored stack —
         // and handed the answer down as `labelBaseline`. Re-deriving any part of it here is what let
         // the contract composed away unnoticed (Marlow sirentide/768 F1): with the ideal recomputed
         // at three sites, "rides its own leg" and "clears the corridor" could not both be stated
@@ -847,8 +856,10 @@ public final class ClassDiagramLayout {
     /// {@code {ascent, descent}}, or null for a lane whose relation carries no label — an unlabeled
     /// lane occupies no band, so it neither floors nor is floored.
     ///
-    /// This is the IDEAL + DEGRADATION-2 half of the contract; {@link SelfLoopFanShift} composes
-    /// DEGRADATION 1 (the corridor) on top of the stack this returns, in the layout pre-pass.
+    /// This is the IDEAL + DEGRADATION-2 half of the contract; {@link SelfLoopLabelColumn} composes
+    /// DEGRADATION 1 (the corridor) on top of the stack this returns, in the layout pre-pass — PER
+    /// LABEL, so what this method returns is both the starting point AND the target the corridor
+    /// solve stays as close to as the hard constraints allow.
     static double[] loopLabelBaselines(double boxY, double boxH, double[][] labelMetrics) {
         double[] baselines = new double[Math.max(labelMetrics.length, 1)];
         double lift = FONT.ascent(EDGE_LABEL_SIZE) * 0.35;
