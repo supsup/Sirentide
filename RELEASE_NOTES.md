@@ -16,6 +16,17 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
+### A dropped thin-slice pie label is NAMED, never silent (plan 86cee1d3)
+
+A pie slice too thin for its outside leader-label used to drop the label with no signal — a
+coloured wedge with no name and a clean OK. `renderWithDiagnostics` now reports the drop as an
+OK-with-caveat naming the slice and pointing at `pie legend`, which shows every label in the
+side key (new gallery twin `pie-thin-labels-legend`). The SVG bytes are unchanged — the caveat
+rides alongside, never in the bake. The drop caveat **composes** with the font-coverage caveat
+through one carrier (`okDiagnostics` now delegates to `withFontCoverageCaveat`), so at their
+intersection both honest notes appear instead of the last-built one shadowing the other
+(pinned by a delete-mutant-verified discriminator).
+
 ### Tag-shaped display labels now FAIL CLOSED
 
 A label like `A[TRUE NEGATIVE<br/>safe to act on]` used to render `<br/>` as **visible text**
