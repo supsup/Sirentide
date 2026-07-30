@@ -15,6 +15,14 @@ import java.util.List;
 /// labels stay in their loops' order and keep their relative offsets (a uniform shift is the most a
 /// corridor can cost the per-loop y-association; Marlow sirentide/761) — by the smallest |dy| such
 /// that EVERY label
+/// keeps the caller's clearance. This is DEGRADATION 1 of the self-loop label contract and it is
+/// CONTRACT, not an exception (Marlow sirentide/768 F1): a crossing neighbour edge outranks exact
+/// leg-association, so when the solve returns a non-zero dy every label of the node's fan sits that
+/// same dy off its own top leg — the association survives as ORDER + PITCH, not as exact alignment.
+/// The caller solves on the METRIC-FLOORED stack (each baseline already separated by the labels'
+/// real ascent/descent, degradation 2) and hands the shifted result straight to emission, so the two
+/// degradations compose in ONE carrier instead of the emit pass re-deriving an unshifted baseline.
+/// The invariant, in full: EVERY label
 /// keeps the caller's clearance from the y-interval of EVERY obstacle crossing its x-band (obstacle =
 /// each non-loop edge segment, a bent route contributing both legs, and each box rectangle) while no
 /// baseline rises past the canvas-top floor. The candidate scan (0 first, then every per-pair

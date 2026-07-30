@@ -209,15 +209,7 @@ class SelfLoopGeometryTest {
         assertEquals(4, loops.size(), "four self-relations → four edge groups");
         List<double[]> boxes = new ArrayList<>();   // {minX, minY, maxX, maxY} per label
         for (Group g : loops) {
-            List<double[]> pts = new ArrayList<>();
-            g.members().stream().filter(s -> s instanceof GlyphRun)
-                .forEach(s -> pathPoints(((GlyphRun) s).pathD(), pts));
-            assertFalse(pts.isEmpty(), "every loop label renders glyphs");
-            double minX = pts.stream().mapToDouble(p -> p[0]).min().orElseThrow();
-            double minY = pts.stream().mapToDouble(p -> p[1]).min().orElseThrow();
-            double maxX = pts.stream().mapToDouble(p -> p[0]).max().orElseThrow();
-            double maxY = pts.stream().mapToDouble(p -> p[1]).max().orElseThrow();
-            boxes.add(new double[] {minX, minY, maxX, maxY});
+            boxes.add(labelBbox(g));   // GlyphRun AND MathBox — see labelBbox (sirentide/768 F2)
         }
         for (int i = 0; i < boxes.size(); i++) {
             for (int j = i + 1; j < boxes.size(); j++) {
@@ -279,7 +271,11 @@ class SelfLoopGeometryTest {
         List<Group> loops = edgeGroups(laid);
         assertEquals(labels.size(), loops.size(), "one edge group per self-relation");
         double asc = FontMetrics.bundled().ascent(labelSize);
-        double slot = labelSize + 2;
+        // The METRIC FLOOR's minimum separation for two plain labels of this size: the upper
+        // label's descent + the lower label's ascent + the band gap. Property 1 claims exact
+        // association, which only holds while the attach step exceeds THIS — so the check below is
+        // stated against the floor actually in force, not a stale constant.
+        double band = FontMetrics.bundled().descent(labelSize) + asc + 2;
         double outermostLeg = loops.stream()
             .mapToDouble(g -> verticalLegX(g, edgeStroke)).max().orElseThrow();
         double prevBaseline = Double.NaN;
@@ -309,10 +305,11 @@ class SelfLoopGeometryTest {
                     + " (baseline " + baseline + ")");
             if (k > 0) {
                 // Lane k's top leg sits an attach-step ABOVE lane k−1's, so its label rides higher —
-                // by strictly MORE than a line slot here, which is exactly why the collision floor
-                // (pinned separately) stays inert on a real, sizing-grown box.
-                assertTrue(prevBaseline - baseline > slot + 1e-6,
-                    "lane " + k + " rides above lane " + (k - 1) + " by more than a line slot: "
+                // by strictly MORE than one occupied band here, which is exactly why the metric
+                // floor (pinned separately) stays INERT on a real, sizing-grown box and the
+                // association above is exact rather than degraded.
+                assertTrue(prevBaseline - baseline > band + 1e-6,
+                    "lane " + k + " rides above lane " + (k - 1) + " by more than one occupied band: "
                         + prevBaseline + " → " + baseline);
             }
             prevBaseline = baseline;
@@ -343,39 +340,77 @@ class SelfLoopGeometryTest {
             .min().orElseThrow(() -> new AssertionError("the loop has a horizontal leg"));
     }
 
-    /// PROPERTY 1b — the COLLISION FLOOR, the short-box degradation of property 1. The ideal baselines
-    /// are one attach-step apart, and on every box the layouts actually PRODUCE that step is unclamped
-    /// (the sizing pass grows a multi-lane box for exactly that reason), so the collision case is not
-    /// reachable through `layout(...)` — it is the belt that keeps a future/short geometry from
-    /// overprinting two labels. It is therefore pinned directly on the shared baseline computation,
-    /// with the expectation built from the LINE-SLOT CONSTANT, not from the helper.
+    /// PROPERTY 1b — DEGRADATION 2, the METRIC FLOOR, pinned directly on the shared computation. On a
+    /// short box every lane's attach CLAMPS to the same border inset, so all the ideals coincide and
+    /// only the floor can separate the labels; on a real (sizing-grown) box the floor is inert and
+    /// association is exact, which property 1 pins. The expectation is built from the MEASURED
+    /// ascent/descent + the band gap, never from the helper, so the helper cannot agree with itself.
     ///
-    /// Non-vacuity: on this box every lane's attach CLAMPS to the same border inset, so all the ideals
-    /// coincide — proven here by the one-lane call landing exactly where the four-lane call puts its
-    /// outermost (unfloored) lane. The floor then spreads the rest one exact slot apart, in lane order
-    /// (lane k rides above lane k−1, matching the leg order), degrading into the old even stack.
+    /// The retired fixed slot budgeted a flat {@code EDGE_LABEL_SIZE + 2} per lane whatever the label
+    /// measured (Marlow sirentide/768 F2). Two halves here:
+    ///   a. UNIFORM metrics — consecutive baselines sit exactly {@code descent + ascent + 2} apart,
+    ///      lane k above lane k−1 (leg order), so the occupied bands touch with a 2px gap;
+    ///   b. a TALL lane — one label with a 20px ascent and 20px descent pushes ONLY the lane below it
+    ///      further down, by that label's own descent + the lower label's ascent + 2. A fixed slot
+    ///      cannot express this, so this half fails by construction on the retired floor.
+    ///
+    /// Non-vacuity for (a): the one-lane call lands exactly where the four-lane call puts its
+    /// outermost (unfloored) lane — proof the ideals really did collide and the separation below is
+    /// the FLOOR at work, not the attach step.
     @Test
-    void collidingSelfLoopLabelIdealsDegradeToOneLineSlotApart() {
-        assertFlooredStack(ClassDiagramLayout.loopLabelBaselines(0, 12, 4),
-            ClassDiagramLayout.loopLabelBaselines(0, 12, 1)[0],
-            ClassDiagramLayout.EDGE_LABEL_SIZE, "class");
-        assertFlooredStack(ErDiagramLayout.loopLabelBaselines(0, 12, 4),
-            ErDiagramLayout.loopLabelBaselines(0, 12, 1)[0],
-            ErDiagramLayout.EDGE_LABEL_SIZE, "ER");
+    void collidingSelfLoopLabelIdealsDegradeToDisjointMetricBands() {
+        double asc = FontMetrics.bundled().ascent(ClassDiagramLayout.EDGE_LABEL_SIZE);
+        double desc = FontMetrics.bundled().descent(ClassDiagramLayout.EDGE_LABEL_SIZE);
+        assertFlooredStack(ClassDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(4, asc, desc)),
+            ClassDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(1, asc, desc))[0],
+            asc, desc, "class");
+        assertFlooredStack(ErDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(4, asc, desc)),
+            ErDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(1, asc, desc))[0],
+            asc, desc, "ER");
+        // (b) the tall-lane half: lane 3 (outermost, top of the stack) carries a 20/20 fragment.
+        double[][] tall = uniformMetrics(4, asc, desc);
+        tall[3] = new double[] {20, 20};
+        assertTallLanePushesTheLaneBelow(ClassDiagramLayout.loopLabelBaselines(0, 12, tall),
+            asc, desc, "class");
+        assertTallLanePushesTheLaneBelow(ErDiagramLayout.loopLabelBaselines(0, 12, tall),
+            asc, desc, "ER");
+    }
+
+    /// `laneCount` lanes, each label measuring the same ascent/descent — the shape the retired
+    /// fixed-slot floor implicitly assumed for every label.
+    private static double[][] uniformMetrics(int laneCount, double asc, double desc) {
+        double[][] m = new double[laneCount][];
+        for (int k = 0; k < laneCount; k++) {
+            m[k] = new double[] {asc, desc};
+        }
+        return m;
     }
 
     private static void assertFlooredStack(double[] baselines, double soleLaneBaseline,
-                                           double labelSize, String what) {
-        double slot = labelSize + 2;
+                                           double asc, double desc, String what) {
+        double band = desc + asc + 2;   // upper label's descent + lower label's ascent + the gap
         assertEquals(4, baselines.length, what + ": one baseline per lane");
         assertEquals(soleLaneBaseline, baselines[baselines.length - 1], 1e-9,
             what + ": on a short box every lane's ideal clamps to the same y — the outermost lane "
                 + "sits on that shared ideal, so the separation below really is the FLOOR at work");
         for (int k = 1; k < baselines.length; k++) {
-            assertEquals(slot, baselines[k - 1] - baselines[k], 1e-9,
-                what + ": collided lanes " + (k - 1) + " and " + k
-                    + " sit exactly one line slot apart, lane " + k + " above (leg order)");
+            assertEquals(band, baselines[k - 1] - baselines[k], 1e-9,
+                what + ": collided lanes " + (k - 1) + " and " + k + " sit exactly one OCCUPIED-BAND "
+                    + "apart (descent + ascent + gap), lane " + k + " above (leg order)");
         }
+    }
+
+    /// Lane 3 measures 20/20 while lanes 0-2 measure the plain font. The floor must charge lane 2 the
+    /// TALL label's descent (20) plus its own ascent plus the gap — strictly more than the uniform
+    /// separation the other pairs get, and more than any fixed slot could budget.
+    private static void assertTallLanePushesTheLaneBelow(double[] baselines, double asc, double desc,
+                                                          String what) {
+        assertEquals(20 + asc + 2, baselines[2] - baselines[3], 1e-9,
+            what + ": the 20px-descent lane pushes the lane below it by ITS OWN descent, not a slot");
+        assertEquals(desc + asc + 2, baselines[1] - baselines[2], 1e-9,
+            what + ": the untouched pairs keep the plain-metric separation");
+        assertEquals(desc + asc + 2, baselines[0] - baselines[1], 1e-9,
+            what + ": the untouched pairs keep the plain-metric separation");
     }
 
     /// PROPERTY 2 — pairwise label disjointness, the ER manages/uses RED: a self-loop label and a
@@ -553,20 +588,43 @@ class SelfLoopGeometryTest {
 
     /// A self-loop's edge group id is `left + "-" + right` with left == right (`A-A`,
     /// `EMPLOYEE-EMPLOYEE`) — the two halves around the middle dash are equal.
+    ///
+    /// …EXCEPT that {@link AnchorAssigner} uniquifies a repeated id by appending `-<k>`, so a node's
+    /// SECOND self-relation is `A-A-1`. Matching only the bare form silently dropped every loop but
+    /// the first — which is exactly how a two-lane fan could be half-checked and still look green
+    /// (the corridor oracle below asserted only that SOME loop existed). So try the stripped form
+    /// too, and never treat a plain `-<k>` id as decisive on its own.
     private static boolean isSelfLoopGroup(Group g) {
         String id = g.anchor().id();
+        return halvesEqual(id) || halvesEqual(id.replaceFirst("-\\d+$", ""));
+    }
+
+    private static boolean halvesEqual(String id) {
         int h = id.length() / 2;
         return id.length() % 2 == 1 && id.charAt(h) == '-'
             && id.substring(0, h).equals(id.substring(h + 1));
     }
 
-    /// The bounding box {minX, minY, maxX, maxY} of a loop group's LABEL glyphs (a positive control in
-    /// itself — throws if the group rendered no glyphs).
+    /// The bounding box {minX, minY, maxX, maxY} of a loop group's LABEL ink (a positive control in
+    /// itself — throws if the group rendered no label).
+    ///
+    /// BOTH label shapes are observed. Selecting GlyphRun only made every sweep built on this helper
+    /// structurally BLIND to a MATH label — a `$…$` fragment emits a {@link MathBox}, not glyphs, so
+    /// two colliding math labels produced NO points at all and the disjointness loops ran over an
+    /// empty set (Marlow sirentide/768 F2). A MathBox contributes its pen point `(x, baseline)`; its
+    /// full occupied band is not recoverable from the shape alone (the ink lives inside opaque
+    /// renderer markup), which is why the band receipt above reads the fragment's declared
+    /// ascent/descent instead. Here the pen point is enough to make the instrument non-blind.
     private static double[] labelBbox(Group g) {
         List<double[]> pts = new ArrayList<>();
-        g.members().stream().filter(s -> s instanceof GlyphRun)
-            .forEach(s -> pathPoints(((GlyphRun) s).pathD(), pts));
-        assertFalse(pts.isEmpty(), "the loop group rendered label glyphs");
+        for (Shape s : g.members()) {
+            if (s instanceof GlyphRun gr) {
+                pathPoints(gr.pathD(), pts);
+            } else if (s instanceof MathBox b) {
+                pts.add(new double[] {b.x(), b.y()});
+            }
+        }
+        assertFalse(pts.isEmpty(), "the loop group rendered a label");
         double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
         double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
         for (double[] p : pts) {
@@ -961,6 +1019,156 @@ class SelfLoopGeometryTest {
         assertTrue(laid.height() >= mb.y() + 60,
             "the canvas holds the fragment's 60px descent: height=" + laid.height()
                 + " baseline=" + mb.y());
+    }
+
+    /// PROPERTY 7 — the COMPOSED contract (Marlow sirentide/768 F1). Properties 1 and 6 each held
+    /// alone: association was pinned on a loop-ONLY fixture where nothing binds, and clearance was
+    /// pinned without ever asking where the labels ended up relative to their legs. Between them the
+    /// composition was UNPINNED and UNDOCUMENTED — and in this very topology the corridor moves the
+    /// whole fan 15px, so every label sits 15px off the leg property 1 says it rides, with nothing in
+    /// the suite either failing or recording that the contract had degraded. (The corridor oracle was
+    /// itself half-blind: it matched loop groups by the bare `A-A` anchor id, so a node's SECOND
+    /// self-relation — uniquified to `A-A-1` — was silently skipped. Fixed in isSelfLoopGroup.)
+    ///
+    /// This asserts the DEGRADED contract on the FULLY laid-out artifact — the exact
+    /// `class-self-loops-stacked` gallery DSL (two self-loops plus the crossing A→B neighbour), and
+    /// its ER analogue. What the implemented solver actually does is a WHOLE-FAN uniform shift, so
+    /// that — not a per-label selectivity it does not have — is what is asserted:
+    ///
+    ///   a. CLEARANCE: no label's box comes within SELF_LOOP_EDGE_CLEARANCE of the neighbour edge's
+    ///      swept band over its x-band (degradation 1 actually happened);
+    ///   b. ORDER: label order matches leg order — the outer lane's leg is higher and so is its label;
+    ///   c. PITCH: each label sits the SAME distance off its own leg's ideal, i.e. the fan moved as a
+    ///      SET and the baseline gap equals the leg gap exactly. THIS is the residual association: the
+    ///      labels still read in their loops' order at their loops' spacing;
+    ///   d. DISJOINTNESS survives the shift;
+    ///
+    /// and the receipt is NON-VACUOUS about the degradation being live: the common offset here is
+    /// strictly non-zero, so the fixture really is exercising degradation 1 and not quietly passing
+    /// as an un-degraded fan. The un-degraded case (offset exactly 0, every baseline ON its leg) is
+    /// property 1's loop-only fixture — the two together pin the whole hierarchy.
+    @Test
+    void theStackedFixtureComposesAssociationWithCorridorClearance() {
+        // The exact class-self-loops-stacked gallery DSL.
+        assertComposedDegradedContract(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  class B\n  A <|-- A : refines itself\n"
+                    + "  A --> A : delegates\n  A --> B\n")),
+            EDGE, ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE, ClassDiagramLayout.EDGE_LABEL_SIZE,
+            List.of("refines itself", "delegates"), "class");
+        // The ER analogue: the stacked-loop gallery shape with a crossing neighbour edge added.
+        assertComposedDegradedContract(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n  A ||--|| B : uses\n")),
+            ER_EDGE, ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE, ErDiagramLayout.EDGE_LABEL_SIZE,
+            List.of("first", "second"), "ER");
+    }
+
+    /// The composed oracle. `labels` are the authored loop labels in lane order (group i = lane i).
+    private static void assertComposedDegradedContract(LaidOut laid, String edgeStroke,
+                                                        double clearance, double labelSize,
+                                                        List<String> labels, String what) {
+        // (a) degradation 1 actually holds on the emitted artifact.
+        assertLoopLabelsClearNonLoopEdges(laid, edgeStroke, clearance);
+
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        assertEquals(labels.size(), loops.size(),
+            what + ": every self-relation renders as its own loop group");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        double[] legY = new double[labels.size()];
+        double[] baseline = new double[labels.size()];
+        for (int k = 0; k < labels.size(); k++) {
+            legY[k] = topLegY(loops.get(k), edgeStroke);
+            baseline[k] = emittedBaseline(loops.get(k), labels.get(k), labelSize);
+        }
+        for (int k = 1; k < labels.size(); k++) {
+            // (b) order preserved: lane k's leg is ABOVE lane k−1's, and so is lane k's label.
+            assertTrue(legY[k] < legY[k - 1] - 1e-6,
+                what + ": lane " + k + "'s top leg sits above lane " + (k - 1) + "'s");
+            assertTrue(baseline[k] < baseline[k - 1] - 1e-6,
+                what + ": lane " + k + "'s label must stay ABOVE lane " + (k - 1) + "'s — label order "
+                    + "must match leg order even under the corridor degradation");
+            // (c) pitch preserved: the labels kept their loops' spacing exactly.
+            assertEquals(legY[k - 1] - legY[k], baseline[k - 1] - baseline[k], 0.5,
+                what + ": the fan moved as a SET — the gap between lane " + (k - 1) + " and lane " + k
+                    + " labels must equal the gap between their legs");
+        }
+        // (c') one common offset for every label, and it is really non-zero (the degradation is live).
+        double offset = baseline[0] - (legY[0] + asc * 0.35);
+        for (int k = 0; k < labels.size(); k++) {
+            assertEquals(offset, baseline[k] - (legY[k] + asc * 0.35), 0.5,
+                what + ": lane " + k + " must carry the SAME corridor offset as every other lane "
+                    + "(a whole-fan shift is the most a corridor may cost the association)");
+        }
+        assertTrue(Math.abs(offset) > 1e-6,
+            what + ": NON-VACUITY — this fixture must actually exercise the corridor degradation "
+                + "(offset from the legs' ideal was " + offset + ")");
+        // (d) disjointness survives the shift.
+        for (int i = 0; i < loops.size(); i++) {
+            for (int j = i + 1; j < loops.size(); j++) {
+                assertTrue(footprintsDisjoint(labelBbox(loops.get(i)), labelBbox(loops.get(j))),
+                    what + ": loop labels " + i + " and " + j + " overlap after the corridor shift");
+            }
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// DEGRADATION 2 — the METRIC FLOOR, pinned on the case the retired fixed slot could not see
+    /// (Marlow sirentide/768 F2). The old floor budgeted a flat {@code EDGE_LABEL_SIZE + 2} = 12px
+    /// per lane regardless of what the label MEASURED, so two loop labels whose fragments rise 20px
+    /// above the baseline and fall 20px below it emitted OVERLAPPING occupied bands — Marlow's probe
+    /// read [32.667, 72.667] against [14.667, 54.667], a 22px overlap — while every receipt in this
+    /// file stayed green, because the pairwise-disjointness sweep selected GlyphRun only and a math
+    /// label emits a MathBox.
+    ///
+    /// The oracle is the AUTHORITATIVE occupied band, not a glyph bbox: a MathBox is placed at the
+    /// pen `(x, baseline)` and the fragment's own contract says it rises `heightPx` above that
+    /// baseline and falls `depthPx` below it, so `[y − heightPx, y + depthPx]` is exactly the ink the
+    /// fragment claims. Both twins, because they must not drift. Non-vacuity: each lane's fragment
+    /// must actually have landed as a MathBox, and the fixture's 40px band is WIDER than the class
+    /// attach step (18px) and the ER one (20px), so nothing but a metrics-aware floor can separate
+    /// them.
+    @Test
+    void twoTallMathSelfLoopLabelsEmitDisjointOccupiedBands() {
+        double asc = 20;
+        double desc = 20;
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g transform=\"scale(0.5 0.5)\"><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>",
+                40, asc, desc));
+        assertMathLoopLabelBandsDisjoint(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A --> A : $x$\n  A --> A : $y$\n"), fake), asc, desc, "class");
+        assertMathLoopLabelBandsDisjoint(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  A ||--o{ A : $x$\n  A ||--|| A : $y$\n"), fake), asc, desc, "ER");
+    }
+
+    /// The degradation-2 oracle: every self-loop label's occupied band, read off its emitted MathBox
+    /// and the fragment's declared ascent/descent, is pairwise DISJOINT — and the canvas holds it.
+    private static void assertMathLoopLabelBandsDisjoint(LaidOut laid, double asc, double desc,
+                                                         String what) {
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        assertEquals(2, loops.size(), what + ": two self-relations → two loop groups");
+        List<double[]> bands = new ArrayList<>();
+        for (int k = 0; k < loops.size(); k++) {
+            MathBox mb = loops.get(k).members().stream()
+                .filter(s -> s instanceof MathBox).map(s -> (MathBox) s)
+                .findFirst().orElseThrow(() -> new AssertionError(
+                    what + ": lane's math label rendered as a MathBox"));   // positive control
+            assertTrue(laid.height() >= mb.y() + desc - 1e-6,
+                what + ": the canvas holds lane " + k + "'s descent: height=" + laid.height()
+                    + " band bottom=" + (mb.y() + desc));
+            bands.add(new double[] {mb.y() - asc, mb.y() + desc});
+        }
+        for (int i = 0; i < bands.size(); i++) {
+            for (int j = i + 1; j < bands.size(); j++) {
+                double[] a = bands.get(i);
+                double[] b = bands.get(j);
+                assertTrue(a[1] <= b[0] + 1e-6 || b[1] <= a[0] + 1e-6,
+                    what + ": loop labels " + i + " and " + j + " occupy OVERLAPPING bands "
+                        + java.util.Arrays.toString(a) + " vs " + java.util.Arrays.toString(b)
+                        + " — the floor must consume each label's real ascent+descent");
+            }
+        }
     }
 
     // -- helpers ----------------------------------------------------------------------------------

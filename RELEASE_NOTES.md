@@ -16,19 +16,36 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
-### Each self-loop label rides ITS OWN loop (plan 64cf1bae, review sirentide/761)
+### Each self-loop label rides ITS OWN loop (plan 64cf1bae, reviews sirentide/761 + 768)
 
 A stacked class/ER self-loop label now tells you which loop it names. Every label sits in ONE
 column just past the node's outermost lane leg — clear of every lane line whatever the label's
 width — and its BASELINE is aligned with its own loop's top horizontal leg, so it reads as
-riding that loop the way an edge label rides its edge. A short box whose attach points clamp
-together degrades to an evenly-spaced stack (one line-slot apart, in leg order) instead of
-overprinting, and the whole fan still shifts as a set to avoid neighbor-edge corridors
-(`SelfLoopFanShift`), so a label never sits on top of a crossing edge's path. The earlier cut of
-this work x-staggered the labels one lane-pitch apart, which separated them but tied none of
-them to its loop. `SelfLoopGeometryTest` pins the association against the emitted leg geometry
-(plus pairwise-disjoint label boxes over the full leaf geometry); gallery references
-`class-self-loop*` and `er-self-loop*` re-captured.
+riding that loop the way an edge label rides its edge. The earlier cut of this work x-staggered
+the labels one lane-pitch apart, which separated them but tied none of them to its loop.
+
+Placement is a **contract hierarchy**, not one rule with silent exceptions, and both
+degradations are named:
+
+- **Ideal** — the baseline sits on its own loop's top leg, in the constant label column. This is
+  what you get whenever nothing else binds.
+- **Degradation 1, corridor.** A neighbour edge crossing the label column outranks exact
+  leg-association: a label sitting on that edge would read as a label *of* it, which is worse
+  than being a few px off its own leg. The fan then shifts **as a set** (`SelfLoopFanShift`) —
+  every label the same distance, so loop ORDER and loop SPACING are preserved and only the
+  absolute alignment is spent.
+- **Degradation 2, metric floor.** Consecutive baselines are separated by the upper label's real
+  DESCENT plus the lower label's real ASCENT plus a 2px gap, measured per label (inline math
+  included), so the occupied bands are disjoint by construction at any label size. A tall label
+  can push the lanes below it off their legs; order is preserved. This replaces a fixed
+  one-line-slot budget that ignored what a label actually measured — two tall math fragments
+  used to emit overlapping bands while every receipt stayed green.
+
+Both are solved ONCE in the layout pre-pass, from the full label set (floor first, then the
+corridor shift over the floored stack), and canvas reservation and emission consume that single
+result — nothing is recomputed at emit. `SelfLoopGeometryTest` pins the ideal, each degradation,
+and their COMPOSITION on the stacked fixture (association, clearance, order and pairwise
+disjointness together); gallery references `class-self-loop*` and `er-self-loop*` re-captured.
 
 ### A dropped thin-slice pie label is NAMED, never silent (plan 86cee1d3)
 
