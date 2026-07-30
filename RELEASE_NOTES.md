@@ -16,13 +16,19 @@ exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only
 fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
 path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
 
-### Self-loop labels ride their own lanes (plan 64cf1bae)
+### Each self-loop label rides ITS OWN loop (plan 64cf1bae, review sirentide/761)
 
-Stacked class/ER self-loop labels no longer share a single column: each label takes its own
-lane, and the label fan shifts to avoid neighbor-edge corridors (`SelfLoopFanShift`), so a
-label never sits on top of a crossing edge's path. `SelfLoopGeometryTest` pins pairwise-disjoint
-label boxes over the full leaf geometry; gallery references `class-self-loops-*` and
-`er-self-loop*` re-captured.
+A stacked class/ER self-loop label now tells you which loop it names. Every label sits in ONE
+column just past the node's outermost lane leg — clear of every lane line whatever the label's
+width — and its BASELINE is aligned with its own loop's top horizontal leg, so it reads as
+riding that loop the way an edge label rides its edge. A short box whose attach points clamp
+together degrades to an evenly-spaced stack (one line-slot apart, in leg order) instead of
+overprinting, and the whole fan still shifts as a set to avoid neighbor-edge corridors
+(`SelfLoopFanShift`), so a label never sits on top of a crossing edge's path. The earlier cut of
+this work x-staggered the labels one lane-pitch apart, which separated them but tied none of
+them to its loop. `SelfLoopGeometryTest` pins the association against the emitted leg geometry
+(plus pairwise-disjoint label boxes over the full leaf geometry); gallery references
+`class-self-loop*` and `er-self-loop*` re-captured.
 
 ### Tag-shaped display labels now FAIL CLOSED
 

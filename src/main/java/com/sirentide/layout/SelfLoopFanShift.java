@@ -11,8 +11,10 @@ import java.util.List;
 /// gallery shape passed all of them while the A→B edge threaded right between "refines itself" and
 /// "delegates"). Non-overlap is not unambiguity.
 ///
-/// The fan therefore shifts VERTICALLY AS A SET — ordering and line-pitch preserved, so the per-lane
-/// x-stagger still associates each label with its lane — by the smallest |dy| such that EVERY label
+/// The fan therefore shifts VERTICALLY AS A SET — ordering and per-lane spacing preserved, so the
+/// labels stay in their loops' order and keep their relative offsets (a uniform shift is the most a
+/// corridor can cost the per-loop y-association; Marlow sirentide/761) — by the smallest |dy| such
+/// that EVERY label
 /// keeps the caller's clearance from the y-interval of EVERY obstacle crossing its x-band (obstacle =
 /// each non-loop edge segment, a bent route contributing both legs, and each box rectangle) while no
 /// baseline rises past the canvas-top floor. The candidate scan (0 first, then every per-pair
@@ -30,7 +32,7 @@ final class SelfLoopFanShift {
     private static final double TOP_FLOOR = 2;
     private static final double EPS = 1e-6;
 
-    /// One label of the fan: its fixed x-band `[x0, x1]` (the staircase never moves horizontally),
+    /// One label of the fan: its fixed x-band `[x0, x1]` (the label column never moves horizontally),
     /// its ascent/descent about the baseline, and the UNSHIFTED baseline the layout would give it.
     record FanLabel(double x0, double x1, double asc, double desc, double baseline) {}
 

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.contract.SirentideRole;
+import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ErDiagram;
 import com.sirentide.parse.DslParser;
@@ -231,35 +232,150 @@ class SelfLoopGeometryTest {
         assertAllGeometryInside(laid);
     }
 
-    // -- 3c) each self-loop label RIDES ITS OWN LANE (Charles-flagged gallery review, plan 64cf1bae) --
-    // The five defect properties, each a receipt. On the OLD placement every loop label stacked into
-    // ONE detached column at the outermost leg's top-right: the ER two-label case OVERLAPPED, the
-    // marker-stack case collided with the marker column, and 3-nested-lane association was ambiguous.
+    // -- 3c) each self-loop label is ASSOCIATED WITH ITS OWN LOOP (Marlow sirentide/761) -------------
+    // The defect properties, each a receipt. On the OLD placement every loop label stacked into a
+    // detached staircase BLOCK beyond the outermost leg, centred on the box middle: nothing tied a
+    // label to the loop it names, so a reader could only guess. The fix is Y-ASSOCIATION — one
+    // constant label column past the outermost leg (x cannot associate: a label runs up to MAX_LABEL_W,
+    // many lane pitches wide, so an "inside its own lane" band would cross the outer legs), with each
+    // baseline riding ITS OWN loop's top horizontal leg.
 
-    /// PROPERTY 1 — per-lane x-band association: labels no longer share a column. Each loop label is
-    /// x-staggered one lane-pitch past the OUTERMOST vertical leg, so the labels' x-bands are STRICTLY
-    /// increasing by lane and every one starts past every leg. On the old code all three shared one
-    /// minX (the single outermost-lane column) → this fails RED there.
+    /// PROPERTY 1 — per-loop Y-ASSOCIATION (Marlow sirentide/761), pinned against the EMITTED artifact:
+    /// the expected baseline is derived from the loop's OWN top-leg Line shape plus the bundled font's
+    /// ascent, never from the layout's baseline helper (that would be a tautology — the helper could
+    /// place labels anywhere and still "agree with itself"). Two halves, both load-bearing:
+    ///
+    ///   a. every label's x-band starts past the OUTERMOST vertical leg — clear of every lane line
+    ///      whatever the label's width (this half also held on the old staircase);
+    ///   b. every label's BASELINE sits on its OWN loop's top horizontal leg, optically centred
+    ///      (leg y + ascent·0.35) — the half the old placement failed, where every baseline keyed off
+    ///      the box CENTRE and lane k's label could sit a whole stack away from lane k's leg.
+    ///
+    /// The baseline is recovered from the artifact by translation: the emitted glyph run for a label
+    /// is that same string's outline placed at the baseline, so `emitted glyph top − the outline's own
+    /// top at baseline 0` IS the baseline the layout chose. Held for the class AND ER twins, which
+    /// must not drift.
     @Test
-    void eachSelfLoopLabelRidesItsOwnLaneXBandNotAColumn() {
-        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
-            "classDiagram\n  class A\n  A --> A : first\n  A --> A : second\n  A --> A : third\n"));
-        List<Group> loops = edgeGroups(laid);   // group i == lane i (relations emit in order)
-        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+    void eachClassSelfLoopLabelBaselineRidesItsOwnLoopsTopLeg() {
+        assertLabelsRideTheirOwnTopLegs(
+            ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  A --> A : first\n  A --> A : second\n"
+                    + "  A --> A : third\n")),
+            EDGE, List.of("first", "second", "third"), ClassDiagramLayout.EDGE_LABEL_SIZE);
+    }
+
+    @Test
+    void eachErSelfLoopLabelBaselineRidesItsOwnLoopsTopLeg() {
+        assertLabelsRideTheirOwnTopLegs(
+            ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : first\n  A ||--|| A : second\n  A ||--o| A : third\n")),
+            ER_EDGE, List.of("first", "second", "third"), ErDiagramLayout.EDGE_LABEL_SIZE);
+    }
+
+    /// The property-1 oracle. `labels` are the authored (un-ellipsized, so re-measurable) loop labels
+    /// in lane order — group i is lane i, relations emit in authored order.
+    private static void assertLabelsRideTheirOwnTopLegs(LaidOut laid, String edgeStroke,
+                                                        List<String> labels, double labelSize) {
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(labels.size(), loops.size(), "one edge group per self-relation");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        double slot = labelSize + 2;
         double outermostLeg = loops.stream()
-            .mapToDouble(g -> verticalLegX(g, EDGE)).max().orElseThrow();
-        double prevMinX = Double.NEGATIVE_INFINITY;
+            .mapToDouble(g -> verticalLegX(g, edgeStroke)).max().orElseThrow();
+        double prevBaseline = Double.NaN;
+        double firstMinX = Double.NaN;
         for (int k = 0; k < loops.size(); k++) {
-            double[] b = labelBbox(loops.get(k));   // positive control: throws if no glyphs
+            Group g = loops.get(k);
+            double[] b = labelBbox(g);   // positive control: throws if the lane rendered no glyphs
+            // (a) clear of EVERY leg — the label column sits past the outermost lane line.
             assertTrue(b[0] > outermostLeg + 1e-6,
                 "lane " + k + " label starts past the outermost leg (minX=" + b[0]
                     + " > " + outermostLeg + ")");
-            assertTrue(b[0] > prevMinX + 1.0,
-                "lane " + k + " label rides its OWN x-band, not a shared column: minX " + b[0]
-                    + " must strictly exceed lane " + (k - 1) + "'s " + prevMinX);
-            prevMinX = b[0];
+            // …and it is ONE column: every lane's label starts at the same x, up to the first glyph's
+            // own left side bearing (a couple of px). The retired x-staircase offset each lane by a
+            // full SELF_LOOP_LANE (14px) — far outside this tolerance — so it fails here.
+            if (k == 0) {
+                firstMinX = b[0];
+            } else {
+                assertTrue(Math.abs(b[0] - firstMinX) < 3.0,
+                    "every loop label shares ONE column past the outermost leg: lane " + k
+                        + " starts at " + b[0] + ", lane 0 at " + firstMinX);
+            }
+            // (b) the association: this label's baseline rides THIS loop's own top leg.
+            double legY = topLegY(g, edgeStroke);
+            double baseline = emittedBaseline(g, labels.get(k), labelSize);
+            assertEquals(legY + asc * 0.35, baseline, 0.5,
+                "lane " + k + " label must ride ITS OWN loop's top leg at y=" + legY
+                    + " (baseline " + baseline + ")");
+            if (k > 0) {
+                // Lane k's top leg sits an attach-step ABOVE lane k−1's, so its label rides higher —
+                // by strictly MORE than a line slot here, which is exactly why the collision floor
+                // (pinned separately) stays inert on a real, sizing-grown box.
+                assertTrue(prevBaseline - baseline > slot + 1e-6,
+                    "lane " + k + " rides above lane " + (k - 1) + " by more than a line slot: "
+                        + prevBaseline + " → " + baseline);
+            }
+            prevBaseline = baseline;
         }
         assertAllGeometryInside(laid);
+    }
+
+    /// The BASELINE the layout gave a loop group's label, recovered from the EMITTED glyph outline:
+    /// the emitter draws `label` as {@code FontMetrics.textPathD(label, originX, baseline, size)}, and
+    /// that path is a pure translation of the same string's outline at baseline 0 — so the emitted
+    /// glyph top minus the baseline-0 outline's top is the baseline. Derived from the artifact + the
+    /// shared font, NOT from the layout's placement code.
+    private static double emittedBaseline(Group g, String label, double size) {
+        List<double[]> ref = new ArrayList<>();
+        pathPoints(FontMetrics.bundled().textPathD(label, 0, 0, size), ref);
+        assertFalse(ref.isEmpty(), "the label '" + label + "' has a measurable outline");
+        double refTop = ref.stream().mapToDouble(p -> p[1]).min().orElseThrow();
+        return labelBbox(g)[1] - refTop;
+    }
+
+    /// The y of a self-loop's TOP horizontal leg: the highest edge-coloured horizontal Line in the
+    /// group (a rectilinear loop emits exactly two — the top attach's run out, the bottom's run back).
+    private static double topLegY(Group g, String edgeStroke) {
+        return g.members().stream()
+            .filter(s -> s instanceof Line l && edgeStroke.equals(l.stroke())
+                && near(l.y1(), l.y2(), 1e-6))
+            .mapToDouble(s -> ((Line) s).y1())
+            .min().orElseThrow(() -> new AssertionError("the loop has a horizontal leg"));
+    }
+
+    /// PROPERTY 1b — the COLLISION FLOOR, the short-box degradation of property 1. The ideal baselines
+    /// are one attach-step apart, and on every box the layouts actually PRODUCE that step is unclamped
+    /// (the sizing pass grows a multi-lane box for exactly that reason), so the collision case is not
+    /// reachable through `layout(...)` — it is the belt that keeps a future/short geometry from
+    /// overprinting two labels. It is therefore pinned directly on the shared baseline computation,
+    /// with the expectation built from the LINE-SLOT CONSTANT, not from the helper.
+    ///
+    /// Non-vacuity: on this box every lane's attach CLAMPS to the same border inset, so all the ideals
+    /// coincide — proven here by the one-lane call landing exactly where the four-lane call puts its
+    /// outermost (unfloored) lane. The floor then spreads the rest one exact slot apart, in lane order
+    /// (lane k rides above lane k−1, matching the leg order), degrading into the old even stack.
+    @Test
+    void collidingSelfLoopLabelIdealsDegradeToOneLineSlotApart() {
+        assertFlooredStack(ClassDiagramLayout.loopLabelBaselines(0, 12, 4),
+            ClassDiagramLayout.loopLabelBaselines(0, 12, 1)[0],
+            ClassDiagramLayout.EDGE_LABEL_SIZE, "class");
+        assertFlooredStack(ErDiagramLayout.loopLabelBaselines(0, 12, 4),
+            ErDiagramLayout.loopLabelBaselines(0, 12, 1)[0],
+            ErDiagramLayout.EDGE_LABEL_SIZE, "ER");
+    }
+
+    private static void assertFlooredStack(double[] baselines, double soleLaneBaseline,
+                                           double labelSize, String what) {
+        double slot = labelSize + 2;
+        assertEquals(4, baselines.length, what + ": one baseline per lane");
+        assertEquals(soleLaneBaseline, baselines[baselines.length - 1], 1e-9,
+            what + ": on a short box every lane's ideal clamps to the same y — the outermost lane "
+                + "sits on that shared ideal, so the separation below really is the FLOOR at work");
+        for (int k = 1; k < baselines.length; k++) {
+            assertEquals(slot, baselines[k - 1] - baselines[k], 1e-9,
+                what + ": collided lanes " + (k - 1) + " and " + k
+                    + " sit exactly one line slot apart, lane " + k + " above (leg order)");
+        }
     }
 
     /// PROPERTY 2 — pairwise label disjointness, the ER manages/uses RED: a self-loop label and a
@@ -337,7 +453,7 @@ class SelfLoopGeometryTest {
         // is bounded on the right by its VERTICAL leg (x1 == x2), and every horizontal leg ends at
         // x ≤ that vertical leg — so the outermost vertical leg is the rightmost lane coordinate. (The
         // A→B neighbour edge is a straight, non-vertical line and carries no lane leg, so it is
-        // correctly excluded.) Labels stagger beyond it, so none can cross or sit on a loop leg.
+        // correctly excluded.) The label column sits beyond it, so none can cross or sit on a loop leg.
         double maxLaneX = Double.NEGATIVE_INFINITY;
         for (Group g : loops) {
             for (Shape s : g.members()) {
@@ -350,7 +466,7 @@ class SelfLoopGeometryTest {
         assertTrue(minLabelX > maxLaneX + 1e-6,
             "every loop label clears every self-loop lane leg: min label x " + minLabelX
                 + " must exceed the outermost vertical leg x " + maxLaneX);
-        assertAllGeometryInside(laid);   // the canvas grew to hold the offset staircase
+        assertAllGeometryInside(laid);   // the canvas grew to hold the label column
     }
 
     /// PROPERTY 6 — labels keep a CLEAR CORRIDOR from every NON-LOOP edge segment crossing their

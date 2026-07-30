@@ -66,7 +66,10 @@ public final class ClassDiagramLayout {
     private static final String EDGE_STROKE = "#94a3b8"; // relationship edge line
     private static final double BORDER_W = 1;
     private static final double EDGE_WIDTH = 1.5;
-    private static final double EDGE_LABEL_SIZE = 10;
+    /// Edge/self-loop label type size. Package-private because the self-loop geometry oracle derives the
+    /// label line-slot (and the baseline it expects on each loop's top leg) from this SAME value, so the
+    /// placement and its receipts can never drift apart.
+    static final double EDGE_LABEL_SIZE = 10;
 
     // Marker geometry (px). Length = how far the marker extends back from the box border along the
     // edge; half-width = its perpendicular half-extent. Distinct per family so the shapes read clearly.
@@ -96,8 +99,9 @@ public final class ClassDiagramLayout {
     // legs) …
     private static final double SELF_LOOP_LANE = 14;
     // … and nudges its attach points apart (top attach up, bottom attach down, clamped inside the
-    // border span) so the horizontal legs never overpaint either. Labels stack separately (see
-    // loopLabelBaseline), so an attach-clamp collapse can never merge them.
+    // border span) so the horizontal legs never overpaint either. Each lane's LABEL rides its own
+    // top leg (see loopLabelBaselines), with a line-slot floor so an attach-clamp collapse can
+    // never merge two labels.
     // DERIVED from the marker footprint, NOT a flat constant (sirentide 275): two adjacent same-side
     // markers sit one step apart perpendicular to their horizontal legs, each extending ±MAX_MARKER_HALF,
     // so the pitch must clear 2·MAX_MARKER_HALF + stroke clearance or the glyphs overprint AND a later
@@ -248,7 +252,8 @@ public final class ClassDiagramLayout {
 
         // Self-loop lane bookkeeping (Lattice re-review, seq 217): every self-relation on a box
         // occupies a LANE off its right edge — lane k's vertical leg sits k·SELF_LOOP_LANE further
-        // out — and each loop's (already-ellipsized) label rides beside the node's OUTERMOST leg.
+        // out — and each loop's (already-ellipsized) label rides ONE shared column past the node's
+        // OUTERMOST leg, at the height of its OWN loop's top leg (Marlow sirentide/761).
         // The row cursor below reserves the node's full lane extent, which is what keeps a loop
         // label from escaping the viewBox (the old grow-pass reserved only the legs) and from
         // running through the next box in the row.
@@ -362,7 +367,7 @@ public final class ClassDiagramLayout {
                 edgeSegments.add(new double[] {lb[0], lb[1], rb[0], rb[1]});
             }
         }
-        // Each node's fan: the SAME label metrics + staircase x + baseline emitSelfLoop will use.
+        // Each node's fan: the SAME label metrics + label column x + baseline emitSelfLoop will use.
         double[] fanShift = new double[n];
         List<List<SelfLoopFanShift.FanLabel>> fans = new ArrayList<>();
         for (int k = 0; k < n; k++) {
@@ -390,7 +395,7 @@ public final class ClassDiagramLayout {
                 desc = FONT.descent(EDGE_LABEL_SIZE);
             }
             double labelX = px[li] + boxW[li] + SELF_LOOP_OUT + (selfLoops[li] - 1) * SELF_LOOP_LANE
-                + SELF_LOOP_LABEL_GAP + selfLane[e] * SELF_LOOP_LANE;
+                + SELF_LOOP_LABEL_GAP;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
             fans.get(li).add(new SelfLoopFanShift.FanLabel(originX, originX + w, asc, desc,
                 loopLabelBaseline(py[li], boxH[li], selfLane[e], selfLoops[li])));
@@ -405,8 +410,11 @@ public final class ClassDiagramLayout {
         // The row cursor above reserved every self-loop lane HORIZONTALLY. What can still poke past
         // the canvas is a MATH label's ascent/descent (a tall fraction at EDGE_LABEL_SIZE) or a
         // corridor-shifted fan dropped below the bottom row: the label baseline (the same
-        // {@link #loopLabelBaseline} + fan-shift + ascent-floor formula emitSelfLoop uses) grows the
-        // BOTTOM when a label's descent reaches past the margin.
+        // {@link #loopLabelBaselines} + fan-shift + ascent-floor formula emitSelfLoop uses — ONE
+        // computation, so a reservation can never be smaller than the emission it covers) grows the
+        // BOTTOM when a label's descent reaches past the margin. Lane 0's baseline is the LOWEST of
+        // the stack (its top leg sits lowest, and the collision floor only ever pushes a lower lane
+        // FURTHER down), and every lane is visited here, so the floored stack is covered whole.
         for (int e = 0; e < cd.relations().size(); e++) {
             ClassRelation r = cd.relations().get(e);
             Integer li = index.get(r.left());
@@ -706,10 +714,16 @@ public final class ClassDiagramLayout {
     /// can escape the viewBox or run through a neighbor. The UML {@link #marker} honours the kind's
     /// {@link RelationKind#markerAtLeft()} operand exactly like a straight edge: the LEFT operand maps
     /// to the TOP attach (mirroring the ER twin's left-cardinality-at-top), the RIGHT to the BOTTOM —
-    /// tip on the border, pointing outward. The label rides beside the node's OUTERMOST lane leg on
-    /// its own staircase step ({@link #loopLabelBaseline}), shifted by the node's corridor `fanShift`
-    /// (layout's {@link SelfLoopFanShift} solve — the whole fan clears every neighbour-edge corridor),
-    /// baseline floored below the top edge (tall math: layout grew the bottom with the same formula).
+    /// tip on the border, pointing outward. The LABEL is placed by Y-ASSOCIATION (Marlow
+    /// sirentide/761): x in ONE constant column {@code SELF_LOOP_LABEL_GAP} past the node's OUTERMOST
+    /// leg — clear of every lane line by construction, whatever the label's width — and its baseline
+    /// ALIGNED WITH ITS OWN LOOP'S TOP HORIZONTAL LEG ({@link #loopLabelBaselines}: optically centred
+    /// on that line, with a one-line-slot collision floor for a short box), so each label reads as
+    /// riding its own loop the way an edge label rides its edge. The whole fan is then shifted by the
+    /// node's corridor `fanShift` (layout's {@link SelfLoopFanShift} solve — the set clears every
+    /// neighbour-edge corridor, ordering and pitch preserved), floored below the canvas top edge and
+    /// clamped in-canvas (belts: layout reserved this exact column width and grew the bottom with the
+    /// SAME baseline computation).
     private static void emitSelfLoop(List<Shape> shapes, Placed box, ClassRelation r, String textColor,
                                      double canvasW, double canvasH, MathFragmentRenderer math,
                                      int lane, int laneCount, double fanShift) {
@@ -730,20 +744,19 @@ public final class ClassDiagramLayout {
         emitEdgeLine(shapes, out, ay, out, by, dashed);
         emitEdgeLine(shapes, out, by, markTop ? x1 : x1 + markLen, by, dashed);
         shapes.addAll(mk);
-        // Optional `: label` — each loop's label RIDES ITS OWN LANE (Charles-flagged gallery review):
-        // x-STAGGERED one lane-pitch per lane past the OUTERMOST vertical leg, so no two lanes share a
-        // detached column and every label's x-band echoes the depth of its own leg. Vertically the set
-        // SPREADS symmetrically about the box CENTRE (the middle of the nested runs) via
-        // {@link #loopLabelBaseline}: a lone loop's label lands at mid-height — clear of a right-
-        // neighbour edge's own centre-band midpoint label (the ER manages/uses overlap) — while stacked
-        // loops fan one line-slot apart. Every label sits at x ≥ the outermost leg, so it never crosses
-        // a lane line or a border marker (markers cap at x1 + markerLength ≤ x1 + SELF_LOOP_OUT). The
-        // baseline is attach-INDEPENDENT (keyed off the box rect, not the clamped attach nudges) so a
-        // short box can never collapse two labels onto the same y — and the whole fan rides the node's
-        // corridor `fanShift` (eye-pass finding: a neighbour edge crossing the fan's x-band must keep
-        // SELF_LOOP_EDGE_CLEARANCE from every label, or the labels read as labels ON that edge). The
-        // canvas clamps are belts: layout reserved the staircase width and grew the height with the
-        // same baseline formula.
+        // Optional `: label` — Y-ASSOCIATION (Marlow sirentide/761; the old x-staircase put every label
+        // beyond the OUTERMOST leg in a detached block with no geometric tie to its own loop). X: ONE
+        // constant column for all of the node's loop labels, SELF_LOOP_LABEL_GAP past the outermost
+        // vertical leg — an x-band INSIDE a lane is impossible (a label runs up to MAX_LABEL_W, far
+        // wider than the lane pitch, so it would cross the outer legs), and out here every label clears
+        // every lane line AND every border marker (markers cap at x1 + markerLength ≤ x1 +
+        // SELF_LOOP_OUT) by construction. Y is what associates: this lane's baseline sits ON ITS OWN
+        // loop's top horizontal leg ({@link #loopLabelBaselines} — optically centred on that line, with
+        // a one-line-slot floor so a short box's clamped attaches degrade into a stack instead of
+        // overprinting). The whole fan then rides the node's corridor `fanShift` (eye-pass finding: a
+        // neighbour edge crossing the fan's x-band must keep SELF_LOOP_EDGE_CLEARANCE from every label,
+        // or the labels read as labels ON that edge). The ascent floor and canvas clamps are belts:
+        // layout reserved this column's width and grew the height with the SAME baseline computation.
         if (r.label() != null && !r.label().isBlank()) {
             String lbl = FONT.ellipsize(r.label(), MAX_LABEL_W, EDGE_LABEL_SIZE);
             double w;
@@ -757,7 +770,7 @@ public final class ClassDiagramLayout {
                 asc = FONT.ascent(EDGE_LABEL_SIZE);
             }
             double labelX = x1 + SELF_LOOP_OUT + (laneCount - 1) * SELF_LOOP_LANE
-                + SELF_LOOP_LABEL_GAP + lane * SELF_LOOP_LANE;
+                + SELF_LOOP_LABEL_GAP;
             double originX = Math.max(2, Math.min(labelX, canvasW - 2 - w));
             double baseline = Math.max(asc + 2,
                 loopLabelBaseline(box.y(), box.h(), lane, laneCount) + fanShift);
@@ -765,16 +778,44 @@ public final class ClassDiagramLayout {
         }
     }
 
-    /// Lane k's label BASELINE: the whole set of a box's self-loop labels rides a stack CENTRED on the
-    /// box's vertical middle (the centre of the symmetric nested runs), one line-slot ({@code
-    /// EDGE_LABEL_SIZE + 2}) per lane. A single loop (laneCount 1) therefore lands at mid-height —
-    /// below a right-neighbour edge's own centre-band midpoint label, not stacked into it — and stacked
-    /// loops stay ≥ one line apart. Deliberately independent of the attach-point CLAMPS so a SHORT box
-    /// clamping the attach nudges together can never collapse two labels onto the same y.
+    /// The label BASELINES of a box's `laneCount` self-loop lanes, indexed by lane — the ONE
+    /// computation both the emit pass and the layout's reservation passes consume (Marlow
+    /// sirentide/761: the old placement stacked every label in a detached block with no geometric tie
+    /// to its own loop, so a reader could not tell which label belonged to which loop).
+    ///
+    /// Y-ASSOCIATION. Lane k's label rides ITS OWN loop's TOP HORIZONTAL LEG: that leg leaves the
+    /// border at {@link #loopExitY}(k) and runs out to lane k's vertical leg, so a baseline at
+    /// {@code ay_k + ascent·0.35} optically centres the text on that line and the label reads as
+    /// riding its own loop exactly like an edge label rides its edge. (The x-band cannot do the
+    /// associating — a label runs up to MAX_LABEL_W, many times the lane pitch, so an "inside its own
+    /// lane" column would cross every outer leg; emitSelfLoop therefore puts ALL of them in one
+    /// column past the outermost leg and lets Y carry the association.)
+    ///
+    /// COLLISION FLOOR. Lane k's top leg sits one {@link #SELF_LOOP_ATTACH_STEP} ABOVE lane k−1's, so
+    /// the ideals run downward from the OUTERMOST lane to lane 0; walking that order, each next label
+    /// is pushed to at least one line-slot ({@code EDGE_LABEL_SIZE + 2}) BELOW the previous one. A
+    /// SHORT box whose attach nudges CLAMP together (all ideals equal) therefore degrades gracefully
+    /// into the old evenly-spaced stack instead of overprinting. On every box this layout actually
+    /// produces the floor is inert — the sizing pass grows a multi-lane box until the attach step
+    /// (2·MAX_MARKER_HALF + clearance) applies unclamped, and that step already exceeds a line slot —
+    /// so association is exact and the floor is a belt.
+    static double[] loopLabelBaselines(double boxY, double boxH, int laneCount) {
+        double[] baselines = new double[Math.max(laneCount, 1)];
+        double slot = EDGE_LABEL_SIZE + 2;
+        double lift = FONT.ascent(EDGE_LABEL_SIZE) * 0.35;
+        double prev = Double.NEGATIVE_INFINITY;
+        for (int lane = baselines.length - 1; lane >= 0; lane--) {
+            baselines[lane] = Math.max(loopExitY(boxY, boxH, lane) + lift, prev + slot);
+            prev = baselines[lane];
+        }
+        return baselines;
+    }
+
+    /// Lane k's label baseline — the single-lane view of {@link #loopLabelBaselines} (emitSelfLoop
+    /// knows only its own lane, while the floor is a property of the whole stack; routing both the
+    /// emit and the reserve passes through the same array is what keeps reservation ≥ emission).
     private static double loopLabelBaseline(double boxY, double boxH, int lane, int laneCount) {
-        double pitch = EDGE_LABEL_SIZE + 2;
-        double centre = boxY + boxH * 0.5 + EDGE_LABEL_SIZE * 0.35;   // text-centre on the box middle
-        return centre + (lane - (laneCount - 1) / 2.0) * pitch;
+        return loopLabelBaselines(boxY, boxH, laneCount)[lane];
     }
 
     /// Lane k's EXIT attach y (the top attach): 0.3·h nudged UP one {@link #SELF_LOOP_ATTACH_STEP} per
@@ -792,15 +833,16 @@ public final class ClassDiagramLayout {
     }
 
     /// Horizontal extent a node's self-loop lane adds past its right border: the outermost vertical
-    /// leg plus (when any of its loops is labeled) the label gap + the per-lane label STAIRCASE offset
-    /// + the widest label. Zero without self-loops. The row cursor reserves exactly this, and
-    /// emitSelfLoop stays within it (the widest label rides at most the outermost lane's stagger).
+    /// leg plus (when any of its loops is labeled) the label gap + the widest label. Zero without
+    /// self-loops. Every loop label now shares ONE column at that offset (Marlow sirentide/761 — the
+    /// per-lane x-staircase is gone, and with it the extra {@code (loops-1)·SELF_LOOP_LANE} this used
+    /// to reserve for it), so the row cursor reserves exactly the band emitSelfLoop writes into.
     private static double selfLaneExtent(int loops, double labelW) {
         if (loops == 0) {
             return 0;
         }
         return SELF_LOOP_OUT + (loops - 1) * SELF_LOOP_LANE
-            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + (loops - 1) * SELF_LOOP_LANE + labelW : 0);
+            + (labelW > 0 ? SELF_LOOP_LABEL_GAP + labelW : 0);
     }
 
     /// Emits the edge core from `(x1,y1)` to `(x2,y2)`: a single straight run when the route is direct,
