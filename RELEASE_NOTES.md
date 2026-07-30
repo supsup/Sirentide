@@ -6,15 +6,25 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
-## **0.5.0** — IN PROGRESS (unreleased)
+## 2026-07-30 — Release **0.5.0**
 
-The version bumped to 0.5.0 immediately after the 0.4.0 cut, because post-release work changes
-public CLI behavior — a jar built from post-0.4.0 main must never be mistakable for the
-immutable, already-vendored `sirentide-0.4.0.jar`. In so far: the `sirentide render <file.md>`
-render-check verb (plan 6eb098d6 slice A) with bake-parity fence extraction, the 0/1/2
-exit-code contract (1 = "/docs would keep this fence verbatim"), and atomic-only `-o` writes —
-fail-closed where the filesystem cannot replace atomically, symlink destinations replaced as
-path entries (reviews sirentide/471 + 490). Notes finalize at cut time.
+The version moved to 0.5.0 immediately after the 0.4.0 cut so post-release jars could never be
+mistaken for the immutable, already-vendored `sirentide-0.4.0.jar`. This cut freezes that accumulated
+surface: the `sirentide render <file.md>` parity checker and Docker watch flow, trusted frame-deck
+budgets with artifact-paired optional assets, deterministic packing and self-loop layout hardening,
+fail-closed display-label diagnostics, and one new diagram type — `rootsystem` — growing the sealed
+production inventory **22 → 23**. The detailed contracts and degradation boundaries follow below.
+
+### Source-verifiable immutable artifacts
+
+The executable jar now carries `Sirentide-Source-Revision`, an exact lowercase 40-hex git commit,
+beside its implementation version. The release-only
+`SIRENTIDE_REQUIRE_CHROME=1 ./gradlew releaseBuild` gate removes old build output, rejects an
+unresolvable revision, a dirty worktree, a non-`X.Y.Z` version, unfinished release notes, or a build
+where the real-browser pins can skip. It then runs the full build and verifies the executable,
+sources, and Javadoc jars; the paired `sirentide-frames.js` / `.css` resources; manifest version and
+source identity; and a SHA-256 sidecar for each jar. The tag and GitHub release are therefore bound to
+artifacts that can be traced back to one reviewed source commit.
 
 ### Each self-loop label rides ITS OWN loop (plan 64cf1bae, reviews sirentide/761 + 768 + 770)
 

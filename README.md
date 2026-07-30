@@ -150,6 +150,25 @@ remain read-only.
 - **[docs/DESIGN.md](docs/DESIGN.md)** — full design, the LatteX dependency, the security model.
 - **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every shipped diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot) and checked against the sealed production IR inventory.
 
+## Release provenance
+
+An immutable release carries three jars — executable, sources, and Javadoc — plus a `.sha256`
+sidecar for each. The executable jar's manifest binds `Implementation-Version` to the release
+number and `Sirentide-Source-Revision` to the exact lowercase 40-hex git commit used to build it.
+After downloading a release, verify the sidecars from the directory containing the artifacts:
+
+```sh
+shasum -a 256 -c sirentide-0.5.0.jar.sha256
+shasum -a 256 -c sirentide-0.5.0-sources.jar.sha256
+shasum -a 256 -c sirentide-0.5.0-javadoc.jar.sha256
+unzip -p sirentide-0.5.0.jar META-INF/MANIFEST.MF
+```
+
+For maintainers, `SIRENTIDE_REQUIRE_CHROME=1 ./gradlew releaseBuild` is the release-only gate. It
+requires a clean, resolvable git commit and finalized release notes, runs the clean full build with
+the browser suite unable to skip green, then checks all three jars, the paired frame-deck assets,
+manifest identity, and checksum sidecars before a tag or GitHub release is created.
+
 ## Family
 
 - **[LatteX](https://github.com/supsup/LatteX)** — the clean-room LaTeX→SVG math sibling Sirentide depends on (render-only) and composes with.
