@@ -372,6 +372,20 @@ public final class Sirentide {
                             + "-byte output cap, so the bake degraded to the empty shell.",
                         -1, "frame seq=" + k + " length " + svg.length() + " > MAX_OUTPUT_BYTES"));
                 }
+                long frameUtf8Bytes = 0;
+                if (consumerBudget != null) {
+                    // This prospective check must precede the legacy character-count aggregate
+                    // below. UTF-8 bytes are never fewer than Java characters and the trusted
+                    // ceiling cannot exceed MAX_TOTAL_OUTPUT_BYTES, so a deck crossing both limits
+                    // is first and truthfully classified as the consumer cap it hit.
+                    frameUtf8Bytes = svg.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    if (wouldExceedFrameBudget(consumerUtf8Bytes, frameUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes())) {
+                        return consumerUtf8CapExceeded(
+                            consumerUtf8Bytes, frameUtf8Bytes,
+                            consumerBudget.maxUtf8Bytes());
+                    }
+                }
                 totalBytes += svg.length();
                 // SIR-01: aggregate byte budget — mirror renderFrames' inert-shell degrade, classified
                 // as OUTPUT_CAP_EXCEEDED so the frames stay byte-identical to renderFrames.
@@ -384,14 +398,6 @@ public final class Sirentide {
                         -1, "aggregate frame bytes " + totalBytes + " > MAX_TOTAL_OUTPUT_BYTES"));
                 }
                 if (consumerBudget != null) {
-                    long frameUtf8Bytes =
-                        svg.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-                    if (wouldExceedFrameBudget(consumerUtf8Bytes, frameUtf8Bytes,
-                            consumerBudget.maxUtf8Bytes())) {
-                        return consumerUtf8CapExceeded(
-                            consumerUtf8Bytes, frameUtf8Bytes,
-                            consumerBudget.maxUtf8Bytes());
-                    }
                     consumerUtf8Bytes += frameUtf8Bytes;
                 }
                 frames.add(svg);
