@@ -1,17 +1,24 @@
 # `renderFrames` packaging for documentation fences
 
-Status: corrected design proposal for plan `71926eda-3d26-4f71-851a-c1b0174577a0`
-after Lattice review `PROJECT/sirentide/624`.
-This document does not widen the emitted SVG or Stafficy sanitizer contracts.
+Status: reviewed design from plan `71926eda-3d26-4f71-851a-c1b0174577a0`
+after Lattice review `PROJECT/sirentide/624`. The Sirentide producer is owned by
+plan `3743edd3-e467-4f9a-bb96-59e225e2f4d3`; the Stafficy consumer remains gated
+by plan `27ef2ca1-6120-42ac-b74d-42b7974e60e7` until the producer is reviewed and
+lands on Sirentide main. This document does not widen the emitted SVG or Stafficy
+sanitizer contracts.
 
-## Current source of truth
+## Producer and consumer source of truth
 
-The following current-main behavior bounds this proposal:
+The following producer contract and current Stafficy behavior bound this proposal:
 
-- `Sirentide.renderFramesWithDiagnostics` lays out once and returns deterministic,
-  independently inert SVG frames. It fails atomically to one inert frame, caps the
-  renderer at 512 frames and 50 MB aggregate output, and never needs script, style,
-  animation, or navigation inside an SVG.
+- Existing `Sirentide.renderFramesWithDiagnostics` overloads lay out once and return
+  deterministic, independently inert SVG frames. They fail atomically to one inert
+  frame, cap the renderer at 512 frames and 50 MB aggregate output, and never need
+  script, style, animation, or navigation inside an SVG. The trusted-consumer
+  overload only narrows those limits and leaves every existing overload unchanged.
+- `FrameDeckAssets` carries the optional external runtime and stylesheet in the same
+  artifact as the producer API. Sirentide never executes or injects either asset;
+  ordinary SVG rendering remains runtime-free.
 - Stafficy's `SirentideDiagramConverter` recognizes only the exact `sirentide`
   fence and asks its renderer for one SVG. It emits the exact existing wrapper,
   `div.sirentide.sirentide-<type>`.
@@ -167,6 +174,26 @@ published `stafficy_docs` contract correction
 Resulting-main verification includes each repository's full test lane, the
 Stafficy image rebuild and `/docs` live smoke, a JavaScript-disabled storyboard
 check, keyboard control checks, and a BrewShot image of the live deck.
+
+## Sirentide producer implementation receipt
+
+Producer plan `3743edd3-e467-4f9a-bb96-59e225e2f4d3` owns exactly these additive
+Sirentide surfaces:
+
+- `FrameBudget(maxFrames, maxUtf8Bytes)` and the three-argument
+  `renderFramesWithDiagnostics` overload;
+- pre-emission consumer frame-count rejection and prospective exact UTF-8 aggregate
+  checks that return an empty deck plus stable typed diagnostics;
+- `/com/sirentide/frames/sirentide-frames.js` and
+  `/com/sirentide/frames/sirentide-frames.css`; and
+- defensive `FrameDeckAssets.javascript()` / `stylesheet()` byte accessors.
+
+The producer tests pin validation, exact/equality and one-over boundaries, atomic
+empty-deck failure, overflow-safe aggregation, byte identity with the existing frame
+path, exact artifact resource bytes, defensive copies, fixed-text DOM construction,
+dangerous-sink absence, and JavaScript-disabled visibility. Consumers must still
+prove that the reviewed producer tip is present on Sirentide main and in the exact
+artifact they vend; a local or merely reviewed branch does not satisfy that gate.
 
 ## Decisions recorded from Lattice review 624
 

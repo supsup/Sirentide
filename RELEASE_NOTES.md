@@ -45,17 +45,27 @@ past the check.
 **Identifiers are unaffected.** `subgraph outer<unsafe> [Outer title]` still sanitizes the id to
 `outerunsafe`; only the visible `Outer title` is validated.
 
-### Frame-deck packaging design and contract truth
-The reviewed `sirentide-frames` packaging RFC now specifies a trusted-consumer
-budget API that rejects a frame-count cap before emission and enforces exact
-aggregate UTF-8 bytes incrementally without retaining a partial deck. Its Stafficy
-consumer budget is cumulative across the whole Markdown document (32 frames / 4
-MiB), leaving headroom under the existing response wrappers; existing public
-render overloads remain byte-compatible. This is a gated design, not a newly
-shipped runtime surface. The container contract now says so explicitly:
-`role`/`id`/`seq` anchors are live, while `data-sirentide-fx`, an effect enum, and
-a Sirentide `/docs` page runtime remain deferred. A build-failing test prevents
-those deferred surfaces from drifting back into present-tense documentation.
+### Trusted frame-deck budgets and artifact-paired optional assets
+Sirentide now exposes additive trusted-consumer input
+`FrameBudget(maxFrames, maxUtf8Bytes)` and a bounded
+`renderFramesWithDiagnostics` overload. Both limits must be positive and may only
+narrow Sirentide's independent 512-frame / 50-MB producer defenses. The frame-count
+gate runs before any emphasized frame is emitted; exact UTF-8 bytes are checked
+prospectively before each completed frame is retained. A consumer-cap hit returns
+an empty deck plus typed `OUTPUT_CAP_EXCEEDED` diagnostics identifying either
+`consumer-frame-count` or `consumer-utf8-bytes`. Existing render and frame overloads
+retain their byte-compatible behavior and degrade shapes.
+
+The same jar now carries optional `sirentide-frames.js` and
+`sirentide-frames.css` bytes through defensive `FrameDeckAssets` accessors. The
+runtime enhances only conformant wrappers with multiple direct-child SVGs, builds
+native Previous/Next controls from fixed text, and uses no HTML sink, inline handler,
+author data, or inner-SVG vocabulary. Its stylesheet is inactive until enhancement,
+so absent or failed JavaScript leaves every inert frame visible in source order.
+Sirentide itself neither injects nor executes these assets; ordinary SVG rendering
+remains zero-runtime. The exact `sirentide-frames` fence, document-wide 32-frame /
+4-MiB consumer budget, same-origin routes, page injection, CSP proof, and live docs
+remain gated Stafficy work. No sanitizer or emitted-SVG contract grows here.
 
 ### Deterministic Timeline and GitGraph displayed-label packing
 Displayed Timeline event/value labels and GitGraph commit-ID labels now use a
