@@ -486,7 +486,8 @@ class BrewShotGalleryTest {
             + "Each diagram is audited so no drawn element "
             + "escapes its canvas (the visual class the byte-pinned SVG goldens can't see).\n\n");
 
-        try (BrewShot shot = BrewShot.launch(520, 320)) {
+        BrewShot shot = BrewShot.launch(520, 320);
+        try {
             for (Case c : GALLERY) {
                 String svg = c.renderer() == null
                     ? Sirentide.render(c.dsl())
@@ -521,6 +522,8 @@ class BrewShotGalleryTest {
                 md.append("## ").append(c.title()).append("\n\n```\n").append(c.dsl())
                     .append("\n```\n\n![").append(c.title()).append("](").append(c.name()).append(".png)\n\n");
             }
+        } finally {
+            BrewShotTestResource.close(shot);
         }
         Files.writeString(dir.resolve("GALLERY.md"), md.toString());
     }
@@ -537,7 +540,8 @@ class BrewShotGalleryTest {
             + "width cap would render as an enormous run spanning the whole distance between the "
             + "far-apart actors A and E and blow well past any readable width";
         String dsl = "sequence\nA ->> B : x\nB ->> C : x\nC ->> D : x\nD ->> E : x\nA ->> E : " + longLabel;
-        try (BrewShot shot = BrewShot.launch(1600, 400)) {
+        BrewShot shot = BrewShot.launch(1600, 400);
+        try {
             shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
                 + Sirentide.render(dsl) + "</body></html>");
             shot.settle(120);
@@ -547,6 +551,8 @@ class BrewShotGalleryTest {
             double widest = ((Number) maxW).doubleValue();
             assertTrue(widest < 300,
                 "the wide-span message label is width-capped; widest glyph path=" + widest);
+        } finally {
+            BrewShotTestResource.close(shot);
         }
     }
 }
