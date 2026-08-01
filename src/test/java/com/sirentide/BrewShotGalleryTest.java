@@ -486,7 +486,8 @@ class BrewShotGalleryTest {
             + "Each diagram is audited so no drawn element "
             + "escapes its canvas (the visual class the byte-pinned SVG goldens can't see).\n\n");
 
-        try (BrewShot shot = BrewShot.launch(520, 320)) {
+        BrewShot shot = BrewShot.launch(520, 320);
+        try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
             for (Case c : GALLERY) {
                 String svg = c.renderer() == null
                     ? Sirentide.render(c.dsl())
@@ -537,7 +538,8 @@ class BrewShotGalleryTest {
             + "width cap would render as an enormous run spanning the whole distance between the "
             + "far-apart actors A and E and blow well past any readable width";
         String dsl = "sequence\nA ->> B : x\nB ->> C : x\nC ->> D : x\nD ->> E : x\nA ->> E : " + longLabel;
-        try (BrewShot shot = BrewShot.launch(1600, 400)) {
+        BrewShot shot = BrewShot.launch(1600, 400);
+        try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
             shot.html("<!doctype html><html><body style=\"margin:20px;background:#fff\">"
                 + Sirentide.render(dsl) + "</body></html>");
             shot.settle(120);

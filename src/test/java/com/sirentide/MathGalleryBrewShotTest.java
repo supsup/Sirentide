@@ -71,7 +71,8 @@ class MathGalleryBrewShotTest {
         assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
         Path dir = galleryDir();
         Files.createDirectories(dir);
-        try (BrewShot shot = BrewShot.launch(560, 340)) {
+        BrewShot shot = BrewShot.launch(560, 340);
+        try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
             for (Case c : GALLERY) {
                 String svg = Sirentide.render(c.dsl(), REAL);
                 // The math actually baked (a MathBox wrapper is present, not degraded to raw text).
