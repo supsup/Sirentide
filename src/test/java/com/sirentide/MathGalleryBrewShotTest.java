@@ -72,7 +72,7 @@ class MathGalleryBrewShotTest {
         Path dir = galleryDir();
         Files.createDirectories(dir);
         BrewShot shot = BrewShot.launch(560, 340);
-        try {
+        try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
             for (Case c : GALLERY) {
                 String svg = Sirentide.render(c.dsl(), REAL);
                 // The math actually baked (a MathBox wrapper is present, not degraded to raw text).
@@ -87,8 +87,6 @@ class MathGalleryBrewShotTest {
                     c.name() + ": baked math must stay inside the canvas — " + escapes);
                 shot.screenshot(dir.resolve(c.name() + ".png"));
             }
-        } finally {
-            BrewShotTestResource.close(shot);
         }
     }
 }

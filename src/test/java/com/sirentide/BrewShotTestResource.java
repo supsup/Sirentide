@@ -11,6 +11,14 @@ final class BrewShotTestResource {
 
     private BrewShotTestResource() {}
 
+    /**
+     * Adapts a BrewShot resource for try-with-resources so Java retains its primary/suppressed
+     * exception semantics while {@link #close(AutoCloseable)} applies the narrow teardown filter.
+     */
+    static AutoCloseable asResource(AutoCloseable resource) {
+        return () -> close(resource);
+    }
+
     static void close(AutoCloseable resource) throws Exception {
         try {
             resource.close();
