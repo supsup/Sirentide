@@ -6,6 +6,13 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## **0.6.0** — IN PROGRESS
+
+Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
+new feature is claimed by this version boundary alone; reviewed entries will be
+added here as they land. Source-checkout jars now identify as 0.6.0 so they
+cannot be mistaken for the published 0.5.0 artifacts.
+
 ## 2026-07-30 — Release **0.5.0**
 
 The version moved to 0.5.0 immediately after the 0.4.0 cut so post-release jars could never be
