@@ -100,11 +100,11 @@ types, `timeline` and `gantt` included, with real-browser renders.)
 alias it:
 
 ```bash
-./gradlew jar                # produces build/libs/sirentide-0.5.0.jar (Main-Class is set)
+./gradlew jar                # produces build/libs/sirentide-0.6.0.jar (Main-Class is set)
 # The double quotes are load-bearing: $PWD expands NOW, while you are still in the checkout,
 # baking the absolute jar path into the alias — so it keeps working after you cd anywhere else.
 # (Single-quoting the alias would defer $PWD to each invocation and break outside the checkout.)
-alias sirentide="java -jar '$PWD/build/libs/sirentide-0.5.0.jar'"
+alias sirentide="java -jar '$PWD/build/libs/sirentide-0.6.0.jar'"
 ```
 
 ```bash

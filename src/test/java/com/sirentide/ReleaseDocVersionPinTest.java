@@ -13,11 +13,12 @@ import org.junit.jupiter.api.Test;
 
 /// Release-doc version pin (plan sirentide-040-release-cut; LatteX's identical guard, adopted
 /// after the 0.3.0 review found stale version-pinned recipes by hand across 7 doc sites — the
-/// doc-drift channel, sir442). The user-facing run recipes hard-code the CURRENT version in jar
-/// names ({@code sirentide-X.Y.Z.jar}) and Maven coordinates ({@code com.sirentide:sirentide:X.Y.Z});
-/// a version bump that freshens {@code build.gradle.kts} but not these recipes ships instructions
-/// pointing at a jar the build no longer produces. This pins every such reference to the
-/// {@code build.gradle.kts} version so future drift reddens at build time.
+/// doc-drift channel, sir442). Source-checkout run recipes hard-code the CURRENT build version in
+/// jar names ({@code sirentide-X.Y.Z.jar}) and Maven coordinates
+/// ({@code com.sirentide:sirentide:X.Y.Z}); a version bump that freshens
+/// {@code build.gradle.kts} but not these recipes ships instructions pointing at a jar the build
+/// no longer produces. The README release-provenance recipe has a different clock: it must remain
+/// pinned to the latest FINALIZED release while the next source version is IN PROGRESS.
 ///
 /// Scope is deliberate: {@code RELEASE_NOTES.md} version headings are history and never matched,
 /// and {@code docs/DESIGN.md} is EXCLUDED — its "vendored {@code sirentide-X.Y.Z.jar}" line names
@@ -25,23 +26,28 @@ import org.junit.jupiter.api.Test;
 /// (the sir448–451 precedent: that line moves in its own follow-up, not in the cut).
 class ReleaseDocVersionPinTest {
 
-    /// Docs carrying CURRENT-version run recipes (NOT RELEASE_NOTES = history; NOT docs/DESIGN.md
-    /// = the deliberately-lagging vendored pin).
-    private static final List<String> RECIPE_DOCS = List.of("README.md", "QUICKSTART.md", "SLOWSTART.md");
+    /// Docs carrying CURRENT source-checkout run recipes (NOT README = immutable download recipe;
+    /// NOT RELEASE_NOTES = history; NOT docs/DESIGN.md = the deliberately-lagging vendored pin).
+    private static final List<String> CURRENT_RECIPE_DOCS = List.of("QUICKSTART.md", "SLOWSTART.md");
+
+    private static final String IMMUTABLE_RELEASE_DOC = "README.md";
 
     /// {@code com.sirentide:sirentide:X.Y.Z} (group 1) OR {@code sirentide-X.Y.Z.jar} (group 2).
     private static final Pattern PINNED = Pattern.compile(
         "com\\.sirentide:sirentide:(\\d+\\.\\d+\\.\\d+)|sirentide-(\\d+\\.\\d+\\.\\d+)\\.jar");
 
+    private static final Pattern FINALIZED_RELEASE_HEADING = Pattern.compile(
+        "(?m)^## .*Release \\*\\*(\\d+\\.\\d+\\.\\d+)\\*\\*\\s*$");
+
     /// The recipe refs present at the 0.4.0 cut — a floor (>=, so adding recipes is fine).
     private static final int MIN_RECIPE_REFS = 1;
 
     @Test
-    void everyCurrentVersionRecipeMatchesTheBuildVersion() throws IOException {
+    void everyCurrentSourceRecipeMatchesTheBuildVersion() throws IOException {
         String buildVersion = buildGradleVersion();
         int found = 0;
         List<String> mismatches = new ArrayList<>();
-        for (String doc : RECIPE_DOCS) {
+        for (String doc : CURRENT_RECIPE_DOCS) {
             String text = Files.readString(Path.of(doc));
             Matcher m = PINNED.matcher(text);
             while (m.find()) {
@@ -58,8 +64,34 @@ class ReleaseDocVersionPinTest {
             + "build.gradle.kts " + buildVersion + ": " + mismatches);
         assertTrue(found >= MIN_RECIPE_REFS,
             "expected >= " + MIN_RECIPE_REFS + " version-pinned coordinate/jar recipes across "
-            + RECIPE_DOCS + " (non-vacuity floor); found " + found
+            + CURRENT_RECIPE_DOCS + " (non-vacuity floor); found " + found
             + " — did a doc rewrite drop the run recipes?");
+    }
+
+    @Test
+    void immutableDownloadRecipeMatchesLatestFinalizedRelease() throws IOException {
+        Matcher heading = FINALIZED_RELEASE_HEADING.matcher(
+            Files.readString(Path.of("RELEASE_NOTES.md")));
+        assertTrue(heading.find(), "expected a finalized release heading in RELEASE_NOTES.md");
+        String releasedVersion = heading.group(1);
+
+        int found = 0;
+        List<String> mismatches = new ArrayList<>();
+        Matcher pinned = PINNED.matcher(Files.readString(Path.of(IMMUTABLE_RELEASE_DOC)));
+        while (pinned.find()) {
+            String version = pinned.group(1) != null ? pinned.group(1) : pinned.group(2);
+            found++;
+            if (!version.equals(releasedVersion)) {
+                mismatches.add(IMMUTABLE_RELEASE_DOC + ": \"" + pinned.group()
+                    + "\" pins " + version + " but latest finalized release is "
+                    + releasedVersion);
+            }
+        }
+        assertTrue(mismatches.isEmpty(),
+            "immutable release-download recipe drift: " + mismatches);
+        assertTrue(found >= MIN_RECIPE_REFS,
+            "expected >= " + MIN_RECIPE_REFS + " immutable jar recipes in "
+            + IMMUTABLE_RELEASE_DOC + "; found " + found);
     }
 
     private static String buildGradleVersion() throws IOException {

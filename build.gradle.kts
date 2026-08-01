@@ -16,7 +16,8 @@ group = "com.sirentide"
 // ramp + legend; to be vendored into stafficy /docs as sirentide-0.4.0.jar (part B).
 // 0.5.0: the 2026-07-30 immutable cut — render-check CLI, bounded frame decks + paired assets,
 // rootsystem projections (22 → 23 types), Docker watch mode, and layout/diagnostic hardening.
-version = "0.5.0"
+// 0.6.0: the post-0.5.0 development line; contents remain IN PROGRESS until the next cut.
+version = "0.6.0"
 
 java {
     toolchain {
