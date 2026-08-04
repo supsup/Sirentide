@@ -134,9 +134,8 @@ public final class LabelMarkup {
         return null;
     }
 
-    /// Scans one literal run for a tag-shaped sequence: `<`, an optional `/`, an ASCII letter,
-    /// then name characters, then anything up to the closing `>`.
-    /// Scans one literal run for a tag-shaped sequence.
+    /// Scans one literal run for a tag-shaped sequence: `<`, an optional `/`, an element name,
+    /// a tag boundary, then anything up to the closing `>`.
     ///
     /// ## The name must END somewhere, and that is the whole fix
     ///
@@ -153,18 +152,47 @@ public final class LabelMarkup {
     /// So the name is now consumed properly and must TERMINATE at a real tag boundary:
     /// whitespace, `/`, or `>`. `<x+y>` stops at `+`, which is not a boundary, so it is not a
     /// tag. `<br/>`, `<b>`, `<span class="x">` and `</b>` all terminate legally.
+    /// ## The name is a GRAMMAR, and enumerating characters is how it stayed wrong
+    ///
+    /// `isNameChar` used to be letters, digits and hyphen — the characters the tags in front of me
+    /// happened to use. So `<b>`, `<h1>` and `<x-custom>` refused while `<svg:rect/>`, `<xhtml:br/>`,
+    /// `<_priv>` and `<x_y>` rendered as visible glyphs with outcome OK. That is Marlow's
+    /// falsification clause (e) verbatim — "the validator accepts a tag VARIANT it was not literally
+    /// written against" — and it is the same enumeration trap that the ISO-controls and
+    /// supplementary-plane rounds hit: I widened to the cases I could name and stopped at the
+    /// boundary I had not thought about.
+    ///
+    /// A namespaced element is not exotic. SVG, this renderer's own OUTPUT format, IS XML, and
+    /// `<svg:rect/>` is an ordinary qualified name in it.
+    ///
+    /// So the name is now the PUBLISHED production rather than a list: an XML `QName` —
+    /// `NCName (':' NCName)?` — over the ASCII repertoire, where `NCName` is
+    /// `[A-Za-z_][A-Za-z0-9_.-]*`.
+    ///
+    /// ## Why QName and not "a colon is one more name character"
+    ///
+    /// Because `<http://example.com>` is the ordinary plaintext convention for a URL, and a colon
+    /// admitted as a plain name character would refuse every bracketed URI — swapping the
+    /// under-detection this closes for the over-rejection clause (b) forbids. The QName production
+    /// rules those out STRUCTURALLY: what follows the colon must itself START an NCName, and `//`,
+    /// a digit (`<tel:15551234>`) or an empty local part does not. The colon then sits where a tag
+    /// boundary must be, and the span is rejected as a tag for the same reason `0<x+y>1` is.
+    ///
+    /// ## The ASCII limit is deliberate, and flagged
+    ///
+    /// XML's `NCNameStartChar` also admits Latin-1 and beyond, so `<área>` is a legal XML name and
+    /// is NOT refused here. Widening to Unicode letters would refuse `<ça>` and `<über>` — ordinary
+    /// bracketed words in ordinary prose — which is a large over-rejection for a shape that neither
+    /// HTML nor SVG uses in practice. The line is drawn at ASCII on purpose rather than by oversight.
     private static String scanLiteral(String s) {
         for (int i = s.indexOf('<'); i >= 0; i = s.indexOf('<', i + 1)) {
             int j = i + 1;
             if (j < s.length() && s.charAt(j) == '/') {
                 j++;                     // closing tag
             }
-            if (j >= s.length() || !isNameStart(s.charAt(j))) {
+            int nameEnd = scanQName(s, j);
+            if (nameEnd < 0) {
                 continue;                // "x < y", "a <- b", "3 <5" -- not tag-shaped
-            }
-            int nameEnd = j;
-            while (nameEnd < s.length() && isNameChar(s.charAt(nameEnd))) {
-                nameEnd++;
             }
             if (nameEnd >= s.length() || !isTagBoundary(s.charAt(nameEnd))) {
                 continue;                // "0<x+y>1" -- the name never terminates as a tag
@@ -178,12 +206,45 @@ public final class LabelMarkup {
         return null;
     }
 
-    /// Characters that may continue an element name once it has started. Deliberately narrow:
-    /// letters, digits and hyphen cover HTML and custom-element names without admitting the
-    /// operators that appear in comparison prose.
+    /// Consumes an XML `QName` (`NCName (':' NCName)?`) at `from`, returning the index just past
+    /// it, or -1 when no NCName starts there at all.
+    ///
+    /// A colon that is NOT followed by an NCName is not a QName separator, so the name ends BEFORE
+    /// it and the caller's boundary check then rejects the span — which is exactly what keeps
+    /// `<http://example.com>` and `<tel:15551234>` legal.
+    private static int scanQName(String s, int from) {
+        int end = scanNcName(s, from);
+        if (end < 0) {
+            return -1;
+        }
+        if (end < s.length() && s.charAt(end) == ':') {
+            int local = scanNcName(s, end + 1);
+            if (local >= 0) {
+                return local;            // prefix:local -- a genuine qualified name
+            }
+        }
+        return end;
+    }
+
+    /// Consumes one ASCII `NCName` (`[A-Za-z_][A-Za-z0-9_.-]*`) at `from`, or -1 if there is none.
+    private static int scanNcName(String s, int from) {
+        if (from >= s.length() || !isNameStart(s.charAt(from))) {
+            return -1;
+        }
+        int end = from;
+        while (end < s.length() && isNameChar(s.charAt(end))) {
+            end++;
+        }
+        return end;
+    }
+
+    /// Characters that may continue an NCName once it has started: the ASCII half of XML's
+    /// `NCNameChar` — letters, digits, `_`, `.` and `-`. Still narrow enough to exclude every
+    /// operator that appears in comparison prose (`+`, `*`, `=`, `,`, `|`), which is what keeps
+    /// `0<x+y>1` and `<u,v>` legal.
     private static boolean isNameChar(char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9') || c == '-';
+            || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
     }
 
     /// What may legally FOLLOW a complete element name: attributes (whitespace), a
@@ -193,8 +254,10 @@ public final class LabelMarkup {
         return Character.isWhitespace(c) || c == '/' || c == '>';
     }
 
+    /// What may START an NCName: the ASCII half of XML's `NCNameStartChar` — a letter or `_`.
+    /// Deliberately NOT a digit and NOT `-`, which is what keeps `3<5` and `a <- b` legal.
     private static boolean isNameStart(char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
     }
 
     /// Bounds the echo and strips control characters, so a hostile label cannot inject
