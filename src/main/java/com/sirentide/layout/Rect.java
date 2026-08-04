@@ -11,6 +11,13 @@ package com.sirentide.layout;
 public record Rect(double x, double y, double width, double height, String fill,
                    String stroke, double strokeWidth) implements Shape {
 
+    /// Charges the global layout-time work budget ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2).
+    /// The CANONICAL constructor only — the borderless overload below delegates here, so a Rect is
+    /// charged exactly once. A no-op when no layout scope is armed.
+    public Rect {
+        LayoutWorkBudget.charge(LayoutWorkBudget.WEIGHT_RECT);
+    }
+
     /// Borderless construction (no stroke) — keeps every existing Rect caller byte-for-byte unchanged.
     public Rect(double x, double y, double width, double height, String fill) {
         this(x, y, width, height, fill, null, 0);

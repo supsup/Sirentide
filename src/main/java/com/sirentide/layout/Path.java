@@ -20,6 +20,14 @@ package com.sirentide.layout;
 public record Path(String d, String fill, String stroke, double strokeWidth, boolean structural)
     implements Shape {
 
+    /// Charges the global layout-time work budget ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2)
+    /// its exact `d` length plus the fixed `<path …/>` overhead. The CANONICAL constructor only, so
+    /// the fill-only overload and {@link #silhouette} each charge exactly once. A no-op when no
+    /// layout scope is armed.
+    public Path {
+        LayoutWorkBudget.charge(LayoutWorkBudget.WEIGHT_PATH_BASE + (d == null ? 0 : d.length()));
+    }
+
     /// Fill-only construction (no stroke, accentable) — keeps every existing Path caller
     /// byte-for-byte unchanged.
     public Path(String d, String fill) {

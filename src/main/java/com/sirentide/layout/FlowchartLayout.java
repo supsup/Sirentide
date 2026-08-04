@@ -66,8 +66,10 @@ public final class FlowchartLayout {
     // EDGE_DASH+GAP stride, so a canvas-spanning dotted edge (× up to MAX_EDGES of them) forces
     // millions of Lines with no backstop (the 5 MB emit cap fires only AFTER layout). Past this many
     // pieces a segment draws ONE solid line instead — a legit dotted edge on a normal canvas is well
-    // under it. Public + mutable so a test can force the cap without a giant canvas. (A cross-diagram
-    // global dash/shape budget is the layout-time-budget slice, not this per-segment cap.)
+    // under it. Public + mutable so a test can force the cap without a giant canvas. This is a
+    // PER-SEGMENT cap and says nothing about the SUM — 1000 legal edges each just UNDER it still
+    // retain ~550k Lines. That aggregate is bounded by the cross-diagram {@link LayoutWorkBudget}
+    // (plan fe8c5bbc slice 2), armed at the Sirentide layout dispatch seam; the two are complementary.
     public static int MAX_DASH_PIECES = 1000;
     private static final double ARROW_LEN = 10;     // arrowhead length (px back from the dst anchor)
     private static final double ARROW_HALF_W = 3.5; // arrowhead half-width (perpendicular)

@@ -63,7 +63,11 @@ public final class SankeyLayout {
     private static final double MIN_W = 140;          // empty-sankey blank canvas
     private static final double MIN_H = 70;
 
-    // Deterministic interim guard until the shared global layout budget lands (plan fe8c5bbc).
+    // Deterministic guard on COLUMN RELAXATION specifically. The shared global layout budget
+    // ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2) has now landed, but it charges SHAPE
+    // CONSTRUCTION — relaxation is pure iteration that produces no shapes, so it stays invisible to
+    // that budget and needs this one. The two are complementary, not redundant: this bounds the
+    // solver, the global budget bounds the scene.
     // 500² edge inspections are allowed exactly; the next inspection aborts to the guarded inert
     // shell. This bounds both cycles and adversarial reverse-declaration DAGs without changing any
     // graph that converges within the budget.

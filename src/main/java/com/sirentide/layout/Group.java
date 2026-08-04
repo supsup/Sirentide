@@ -11,11 +11,17 @@ import java.util.List;
 /// its ungrouped self. Members are leaf shapes (a Group never nests another Group).
 public record Group(Anchor anchor, List<Shape> members) implements Shape {
 
+    /// Charges the global layout-time work budget ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2)
+    /// for the `<g …>`/`</g>` wrapper ONLY — the members charged themselves when THEY were
+    /// constructed, so grouping never double-counts its contents. A no-op when no layout scope is
+    /// armed. The null-anchor check runs FIRST so a programming error keeps its own (unchanged)
+    /// IllegalArgumentException instead of being masked by a budget breach.
     public Group {
         if (anchor == null) {
             throw new IllegalArgumentException("group anchor must not be null");
         }
         members = List.copyOf(members);
+        LayoutWorkBudget.charge(LayoutWorkBudget.WEIGHT_GROUP);
     }
 
     /// Expand a shape list to its DRAWABLE LEAVES: every {@link Group} is replaced (recursively) by its
