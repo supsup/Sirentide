@@ -110,6 +110,25 @@ past the check.
 **Identifiers are unaffected.** `subgraph outer<unsafe> [Outer title]` still sanitizes the id to
 `outerunsafe`; only the visible `Outer title` is validated.
 
+**The element name is the XML QName production**, not a list of characters. The first cut
+enumerated letters, digits and hyphen, so `<b>` and `<x-custom>` refused while `<svg:rect/>`,
+`<xhtml:br/>`, `<_priv>`, `<x_y>` and `<v1.2>` still rendered as visible text with a clean OK —
+the original defect on a tag variant the check was not written against. A namespaced element is
+not exotic: SVG, the output format, *is* XML. The name is now `NCName (':' NCName)?` over ASCII,
+with `NCName` = `[A-Za-z_][A-Za-z0-9_.-]*`.
+
+This is a QName and deliberately **not** "a colon is one more name character", because
+`<http://example.com>` is the ordinary way to write a URL in prose. What follows the colon must
+itself start an NCName, so bracketed URIs stay legal — `<http://example.com>`,
+`<https://x.example/p?q=1>`, `<file:///tmp/x>`, `<mailto:bob@x.com>`, `<tel:15551234>` and
+`<doi:10.1000/xyz>` all render, and so do `<u,v>` and `<a|b>`. Non-ASCII names such as `<área>`
+are **not** refused: widening to Unicode letters would reject ordinary bracketed words in
+ordinary prose for a shape neither HTML nor SVG uses in practice.
+
+Still rendered literally, pending a contract call: comments, declarations and processing
+instructions (`<!-- c -->`, `<!DOCTYPE html>`, `<![CDATA[x]]>`, `<?xml ...?>`). These are markup
+but not *tags*, which is what the policy is scoped to.
+
 ### Trusted frame-deck budgets and artifact-paired optional assets
 Sirentide now exposes additive trusted-consumer input
 `FrameBudget(maxFrames, maxUtf8Bytes)` and a bounded
