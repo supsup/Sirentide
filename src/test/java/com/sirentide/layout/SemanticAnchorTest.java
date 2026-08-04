@@ -1126,6 +1126,66 @@ class SemanticAnchorTest {
             "stable identity names the op index: " + result.diagnostics().message());
     }
 
+    /// THE REPRO, RE-RUN WITH A TAG VARIANT THE DETECTOR WAS NOT WRITTEN AGAINST.
+    ///
+    /// Marlow's falsification clause (e) — "the validator accepts a tag variant it was not
+    /// literally written against" — was live: `A[pre<svg:rect/>post]` returned OK at emit with a
+    /// ~15 KB non-inert SVG carrying the characters `<svg:rect/>` as visible glyphs inside the
+    /// node box. That is the ORIGINAL DEFECT verbatim, on a qualified name rather than `<br/>`,
+    /// and every automated check passed exactly as it did the first time.
+    ///
+    /// The whole acceptance shape from sirentide/667 is asserted on this input, not just the
+    /// outcome: inert render, named node, echoed token, static/frames byte parity.
+    @Test
+    void aNamespacedTagFailsClosedWithTheFullReproContract() {
+        String source = "flowchart TD\n  A[pre<svg:rect/>post] --> B[done]\n";
+
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "a qualified element name is a tag: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(), "classified at parse, not emit");
+        assertTrue(result.diagnostics().message().contains("node:A"),
+            "the stable identity names the node: " + result.diagnostics().message());
+        assertTrue(result.diagnostics().message().contains("<svg:rect/>"),
+            "the bounded token echo is the tag: " + result.diagnostics().message());
+
+        // The markup must never reach output, and the two entry points must agree BYTE for byte
+        // on the failure path (a required control; a live SVG beside a PARSE_ERROR is the exact
+        // contradiction the frames-retry finding was about).
+        String svg = Sirentide.render(source);
+        assertEquals(INERT_SHELL_FOR_TAGS, svg, "render must degrade to the inert shell");
+        assertEquals(svg, result.svg(), "render and renderWithDiagnostics must agree byte-for-byte");
+        assertFalse(svg.contains("svg:rect"), "the markup must not reach the SVG: " + svg);
+
+        // FRAMES PARITY on the same source.
+        var frames = Sirentide.renderFramesWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, frames.diagnostics().outcome(),
+            "the frames path must classify identically: " + frames.diagnostics());
+        assertEquals(List.of(INERT_SHELL_FOR_TAGS), frames.frames(),
+            "the frames path must carry the same inert bytes");
+    }
+
+    /// POSITIVE CONTROL for the widening above, and the reason it is the QName production rather
+    /// than "a colon is one more name character".
+    ///
+    /// `<http://example.com>` is the ordinary plaintext convention for a URL and contains a colon
+    /// straight after an ASCII name. If this renders as anything but a normal diagram, the
+    /// detector has become the over-rejecting one Marlow's clause (b) forbids — which would be
+    /// just as much a defect as the under-detection above, and just as green without this test.
+    @Test
+    void aBracketedUrlStillRendersAfterTheQNameWidening() {
+        var result = Sirentide.renderWithDiagnostics(
+            "flowchart TD\n  A[see <http://example.com> now] --> B[<mailto:bob@x.com>]\n");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "a bracketed URI is prose, not markup: " + result.diagnostics());
+        assertNotEquals(INERT_SHELL_FOR_TAGS, result.svg(), "it must actually render");
+    }
+
+    /// The inert shell every fail-closed degrade lands on (mirrors {@code Sirentide.INERT_SHELL},
+    /// which is package-private to the api package).
+    private static final String INERT_SHELL_FOR_TAGS =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
+
     /// COORDINATE-ID COVERAGE, preserved on a LEGAL label (Marlow's ruling point 4,
     /// sirentide/671). The original version of this test used a tag-shaped label, which is
     /// intentionally INVALID under the fail-closed contract — so keeping it here would have
