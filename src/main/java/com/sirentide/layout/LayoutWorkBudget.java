@@ -32,15 +32,31 @@ package com.sirentide.layout;
 /// re-enter `render` on this thread (see the plain-render boundary in `Sirentide`), and that inner
 /// bake gets its OWN fresh scope while the outer one is restored afterwards.
 ///
-/// WHY THE LIMIT IS THE OUTPUT CAP. Each weight below is a strict LOWER BOUND on the bytes that shape
-/// costs the emitter (`<line …/>` is at least 63 bytes and is charged 48; a {@link GlyphRun} costs at
-/// least `21 + pathD.length()` and is charged `16 + pathD.length()`). So for any scene,
-/// `chargedWork <= emittedBytes`. Therefore a scene that trips a budget of {@code MAX_OUTPUT_BYTES}
-/// would ALSO have blown the 5 MB emit cap and degraded to the inert shell anyway: the budget changes
-/// no successful bake's bytes, it only moves an already-doomed one's abort EARLIER — before the
-/// gigabytes are retained. That derivation is what makes the constant defensible rather than
-/// arbitrary, and it is pinned by
-/// {@code GlobalLayoutBudgetTest.everyShapeWeightIsALowerBoundOnItsEmittedBytes}.
+/// WHY THE LIMIT IS TWICE THE OUTPUT CAP. Each weight below is a strict LOWER BOUND on the bytes
+/// that shape costs the emitter IF IT IS RETAINED to the final scene (`<line …/>` is at least 63
+/// bytes and is charged 48; a {@link GlyphRun} costs at least `21 + pathD.length()` and is charged
+/// `16 + pathD.length()` — pinned per shape by
+/// {@code GlobalLayoutBudgetTest.everyShapeWeightIsALowerBoundOnItsEmittedBytes}). That bound says
+/// NOTHING about a shape that is built and then discarded — discarded construction charges work and
+/// emits zero bytes — so `chargedWork <= emittedBytes` does NOT hold in general (Lattice,
+/// sirentide/812), and the limit cannot borrow the output cap's number as if it did. It is instead
+/// defined independently at DOUBLE the cap, which buys a two-sided breach proof: any scene that fits
+/// the 5 MB output cap retains less than 5 MB of lower-bound work, so charging past 10 MB proves
+/// EITHER the retained scene alone could never have fitted the output cap, OR at least an entire
+/// cap's worth (5 MB lower-bound) of construction was built and thrown away — a build-and-discard
+/// runaway as large as the biggest legal scene. Both are the aggregate blow-up this fence exists to
+/// stop.
+///
+/// THE BEHAVIOR CHANGE, STATED RATHER THAN HIDDEN. Because this is a WORK budget, a bake that does
+/// more than 10 MB of lower-bound construction work is aborted EVEN IF its final output would have
+/// been small. That is deliberate: construction is the cost being bounded, and a bake discarding
+/// hundreds of thousands of shapes is the CPU/allocation runaway itself, not an innocent bystander.
+/// Today the distinction is theoretical — every one of the 255 shape-construction sites across the
+/// 43 layout classes retains what it builds, unconditionally (census 2026-08-04: no conditional
+/// add, no measure-and-drop, no copy-on-translate, no stream filter after a constructing map) — so
+/// no bake that succeeds at this tip changes outcome. But the guarantee above does not REST on that
+/// census staying true: a future discard-heavy layout inherits the documented work-bound semantics,
+/// pinned by {@code GlobalLayoutBudgetTest.transientConstructionAloneTripsTheProductionBudget}.
 ///
 /// SCOPE NOT COVERED (stated so it is not mistaken for coverage): `CaptionLayout.withCaption` runs
 /// AFTER the dispatch returns and is therefore unbudgeted — its output is bounded by one wrapped
@@ -48,12 +64,13 @@ package com.sirentide.layout;
 /// {@code MAX_OUTPUT_BYTES} / {@code MAX_TOTAL_OUTPUT_BYTES}.
 public final class LayoutWorkBudget {
 
-    /// The global cap on a single layout's shape work, in "lower-bound emitted bytes" (see the class
-    /// doc for the derivation). Deliberately EQUAL to {@code Sirentide.MAX_OUTPUT_BYTES} — duplicated
-    /// here rather than imported to avoid a layout↔api package cycle, exactly as
-    /// {@code SvgEmitter.MAX_OUTPUT_BYTES} is. Because every weight under-counts the real emitted
-    /// bytes, tripping this is a PROOF that the bake could not have fit in the output cap.
-    public static final long MAX_LAYOUT_SHAPE_WORK = 5_000_000L;
+    /// The global cap on a single layout's shape work, in "lower-bound emitted bytes" — defined
+    /// INDEPENDENTLY of the output cap at exactly double it (the 5 MB is duplicated rather than
+    /// imported to avoid a layout↔api package cycle, exactly as {@code SvgEmitter.MAX_OUTPUT_BYTES}
+    /// is). Tripping this is a proof that the bake either could never have fit the output cap, or
+    /// discarded at least a whole cap's worth of construction — see the class doc for the two-sided
+    /// derivation and for the documented behavior change this work-bound semantics carries.
+    public static final long MAX_LAYOUT_SHAPE_WORK = 2L * 5_000_000L;
 
     /// `<line x1=".." y1=".." x2=".." y2=".." stroke=".." stroke-width=".."/>` — 57 literal chars
     /// plus five numbers and a colour, so ≥ 63 emitted bytes.

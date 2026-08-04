@@ -33,8 +33,9 @@ class GlobalLayoutBudgetTest {
     private static final String INERT_SHELL =
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
 
-    /// Mirrors {@code Sirentide.MAX_OUTPUT_BYTES} / {@code SvgEmitter.MAX_OUTPUT_BYTES} — the cap the
-    /// budget's limit is DERIVED from (see {@link LayoutWorkBudget}'s class doc).
+    /// Mirrors {@code Sirentide.MAX_OUTPUT_BYTES} / {@code SvgEmitter.MAX_OUTPUT_BYTES}. The budget's
+    /// limit is defined independently at DOUBLE this (see {@link LayoutWorkBudget}'s class doc for the
+    /// two-sided breach proof; the old `limit == cap` derivation was refuted at sirentide/812).
     private static final int MAX_OUTPUT_BYTES = 5_000_000;
 
     /// The composite falsifier's shape: a 500-node LR chain (the parser's {@code MAX_NODES}) plus
@@ -128,9 +129,11 @@ class GlobalLayoutBudgetTest {
             "the aggregate must actually run away for this to be a falsifier, was " + atProductionCap);
         long dashLines = Group.flatten(FlowchartLayout.layout(fc, (com.sirentide.api.MathFragmentRenderer) null).shapes()).stream()
             .filter(Line.class::isInstance).count();
-        assertTrue(dashLines * LayoutWorkBudget.WEIGHT_LINE > 4L * MAX_OUTPUT_BYTES,
-            "the scene's " + dashLines + " retained Line shapes alone are worth more than four times "
-                + "the 5 MB emit cap — all of it built and held before the emitter is ever entered");
+        assertTrue(dashLines * LayoutWorkBudget.WEIGHT_LINE > 2L * LayoutWorkBudget.MAX_LAYOUT_SHAPE_WORK,
+            "the scene's " + dashLines + " RETAINED Line shapes alone are worth more than double the "
+                + "10 MB work budget (and four times the 5 MB emit cap) — all of it built and held "
+                + "before the emitter is ever entered, so the trip below is forced by retained work "
+                + "with margin, not by any charge/emit accounting subtlety");
 
         // (c) the global budget fences it, with the diagnostic the plan pins.
         RenderResult result = Sirentide.renderWithDiagnostics(dsl);
@@ -205,14 +208,17 @@ class GlobalLayoutBudgetTest {
         }
     }
 
-    /// THE DERIVATION, PINNED. {@link LayoutWorkBudget#MAX_LAYOUT_SHAPE_WORK} is only defensible at
-    /// {@code MAX_OUTPUT_BYTES} because every per-shape weight UNDER-counts the bytes that shape
-    /// actually costs the emitter — which makes `chargedWork <= emittedBytes` for any scene, and
-    /// therefore makes a budget breach a PROOF that the bake could not have fitted the output cap.
-    /// This measures both sides for every shape in the sealed hierarchy: what the budget charges, and
-    /// what {@link SvgEmitter} really writes (by differencing an emit with and without the shape).
-    /// Raise any weight above its true emitted cost and this fails — which is the mutation that would
-    /// let the budget reject a diagram that WOULD have rendered.
+    /// THE RETAINED-SHAPE LEG OF THE DERIVATION, PINNED. Every per-shape weight UNDER-counts the
+    /// bytes that shape costs the emitter WHEN IT IS RETAINED — so any scene that fits the 5 MB
+    /// output cap carries less than 5 MB of lower-bound work in retained shapes, which is one half of
+    /// the two-sided breach proof in {@link LayoutWorkBudget}'s class doc (the other half — discarded
+    /// construction — is deliberately NOT covered by this bound; sirentide/812 refuted the old
+    /// scene-wide `chargedWork <= emittedBytes` reading, and the work-budget semantics for discards
+    /// are pinned by {@code transientConstructionAloneTripsTheProductionBudget} below). This measures
+    /// both sides for every shape in the sealed hierarchy: what the budget charges, and what
+    /// {@link SvgEmitter} really writes (by differencing an emit with and without the shape). Raise
+    /// any weight above its true emitted cost and this fails — which is the mutation that would let
+    /// the budget reject a diagram that WOULD have rendered.
     @Test
     void everyShapeWeightIsALowerBoundOnItsEmittedBytes() {
         String shortPath = "M0 0L1 1";
@@ -223,6 +229,49 @@ class GlobalLayoutBudgetTest {
         assertWeightIsLowerBound("Path", () -> new Path(shortPath, "#000000"));
         assertWeightIsLowerBound("MathBox", () -> new MathBox(0, 0, "#000000", "<path d=\"M0 0\"/>"));
         assertWeightIsLowerBound("Group", () -> new Group(new Anchor(SirentideRole.NODE, "n", 0), List.of()));
+    }
+
+    /// THE DISCARD LEG, PINNED — the discriminator sirentide/812 required. This is a WORK budget:
+    /// construction charges whether or not the shape is retained, so transient construction ALONE
+    /// trips the PRODUCTION limit even though nothing is retained and the emitted output (an empty
+    /// scene, bytes below any cap) is as small as output gets. Under charge-at-retained-state
+    /// semantics this loop would never trip — which is exactly what the count assertion
+    /// discriminates: the budget refuses the FIRST construction past the limit, at the position the
+    /// production constant and the Line weight jointly predict, so the charge provably happened at
+    /// construction time for every discarded shape, not at retention or emit. This is the documented
+    /// behavior change of the work-bound semantics (see the class doc): a hypothetical bake doing
+    /// this much discarded construction — ~208k thrown-away Lines, an entire output cap's worth
+    /// twice over — is aborted as the CPU/allocation runaway it is, small output notwithstanding.
+    /// No current layout can reach this band (every construction site retains, per the census in
+    /// the class doc); the funnel is exercised directly because the funnel IS the production charge
+    /// point every future discard site must pass through.
+    @Test
+    void transientConstructionAloneTripsTheProductionBudget() {
+        long expectedConstructions = LayoutWorkBudget.MAX_LAYOUT_SHAPE_WORK / LayoutWorkBudget.WEIGHT_LINE;
+        LayoutWorkBudget.Scope displaced = LayoutWorkBudget.enterLayout(); // the PRODUCTION limit
+        try {
+            long constructed = 0;
+            IllegalStateException breach = null;
+            while (breach == null) {
+                try {
+                    new Line(0, 0, 1, 1, "#000000", 1); // built, never stored anywhere: pure discard
+                    constructed++;
+                } catch (IllegalStateException e) {
+                    breach = e;
+                }
+            }
+            assertEquals(expectedConstructions, constructed,
+                "the budget must refuse the first DISCARDED construction past the production limit — "
+                    + "charge-at-retention semantics would never have tripped here at all");
+            assertTrue(breach.getMessage().contains("MAX_LAYOUT_SHAPE_WORK"),
+                "the breach names the work budget: " + breach.getMessage());
+            assertTrue((expectedConstructions + 1) * LayoutWorkBudget.WEIGHT_LINE > 2L * MAX_OUTPUT_BYTES,
+                "and the trip fires only once ATTEMPTED construction exceeds two whole output caps' "
+                    + "worth (the charged total sits within one shape-weight below it), so no scene "
+                    + "that could ever have fitted the cap is in reach of this band");
+        } finally {
+            LayoutWorkBudget.exitLayout(displaced);
+        }
     }
 
     private static void assertWeightIsLowerBound(String name, java.util.function.Supplier<Shape> make) {

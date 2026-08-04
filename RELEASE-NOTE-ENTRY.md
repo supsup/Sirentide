@@ -26,13 +26,18 @@ the diagnostics channel reports it the way every other known cap is reported —
 `RENDER_BUG`.
 
 **The limit is derived, not chosen.** Each shape is charged a weight that is a strict *lower bound* on
-the bytes that shape costs the emitter (a `<line …/>` costs at least 63 bytes and is charged 48; a
-glyph run is charged its exact path length plus 16). So a scene's charged work can never exceed the
-bytes it would emit — which means the budget can sit exactly at the 5 MB output cap and still be
-provably free: **anything it rejects would have blown the output cap anyway** and degraded to the same
-inert shell. Nothing that renders today renders differently. The budget only moves an already-doomed
-bake's abort earlier, before the gigabytes are retained. The lower-bound property is measured
-per shape in the test suite, so raising a weight above its true emitted cost fails the build.
+the bytes that shape costs the emitter **if it is retained** (a `<line …/>` costs at least 63 bytes and
+is charged 48; a glyph run is charged its exact path length plus 16). A shape that is built and then
+discarded charges work and emits nothing — this is a *work* budget, and construction is the work — so
+the limit cannot simply borrow the output cap's number. It sits at **double** the cap instead, which
+buys a two-sided proof: any scene that fits the 5 MB output cap retains under 5 MB of lower-bound
+work, so charging past 10 MB means the bake either **could never have fitted the output cap**, or
+**threw away at least an entire cap's worth of construction** — a build-and-discard runaway the size
+of the largest legal scene. Today the second arm is unreachable: every shape-construction site in
+every layout retains what it builds (a dated census in the budget's class doc), so nothing that
+renders today renders differently. But the guarantee no longer rests on that census staying true.
+Both legs are measured in the test suite: raising a weight above its true emitted cost fails the
+build, and so does moving the charge point off construction.
 
 **Scope and non-scope, stated plainly.** The budget is armed only inside the public API's layout
 dispatch, so a direct `FlowchartLayout.layout(...)` call from an embedder or a per-type test is
@@ -43,9 +48,13 @@ caption band). Sankey's column-relaxation cap remains and is *not* redundant —
 iteration that produces no shapes, so the shape budget cannot see it. Frame-deck aggregation stays with
 `MAX_TOTAL_OUTPUT_BYTES`.
 
-**One observable change.** A diagram whose shape work alone already exceeds the output cap — a
-10 000-slice pie, say — now reports its degrade at stage `layout` instead of stage `emit`. The outcome
-(`OUTPUT_CAP_EXCEEDED`) and the returned bytes (the inert shell) are identical; only the stage the
-abort is attributed to moves, and only for scenes that could never have fitted the cap. The emit-stage
-classification is still live and still pinned for scenes that genuinely reach the emitter before
-overflowing it.
+**Two observable changes, both stated.** First: a diagram whose shape work alone already exceeds the
+output cap — a 10 000-slice pie, say — now reports its degrade at stage `layout` instead of stage
+`emit`. The outcome (`OUTPUT_CAP_EXCEEDED`) and the returned bytes (the inert shell) are identical;
+only the stage the abort is attributed to moves. The emit-stage classification is still live and
+still pinned for scenes that genuinely reach the emitter before overflowing it. Second, currently
+theoretical but documented rather than hidden: a bake that performs more than 10 MB of lower-bound
+construction work is aborted **even if its final output would have been small**, because a work
+budget bounds building, not keeping. No layout today can produce that band (none discards what it
+constructs); the semantics are pinned by a dedicated discriminator test so a future discard-heavy
+layout inherits them knowingly instead of silently.
