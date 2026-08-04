@@ -741,7 +741,34 @@ public final class Sirentide {
     /// label-bearing type consumes `math`, routing any `$…$` run in its labels through the shared
     /// {@link com.sirentide.layout.MathLabel} seam (plan sirentide-math-in-all-label-types). A `null`
     /// `math` is the plain-text degrade path for every type — byte-identical to the pre-feature bake.
+    ///
+    /// GLOBAL LAYOUT-WORK BUDGET (plan fe8c5bbc slice 2). This one seam — the switch every public
+    /// entry point ({@link #render}, {@link #renderFrames}, and both `*WithDiagnostics` twins) routes
+    /// through — is where {@link com.sirentide.layout.LayoutWorkBudget} is armed, so all 25 dispatch
+    /// cases are covered without editing any layout class. It closes the gap {@link #MAX_OUTPUT_BYTES}
+    /// structurally cannot: the emit cap can only fire once emit STARTS, i.e. after layout has already
+    /// built and retained the whole shape list, so a blow-up DURING layout (a legal 14 KB flowchart
+    /// retaining ~550k dash-piece {@link com.sirentide.layout.Line}s, every segment of it under the
+    /// per-segment {@code MAX_DASH_PIECES} cap) reaches the emitter only as an OOM risk. Every budget
+    /// weight is a lower bound on that shape's emitted bytes, so a breach PROVES the bake could not
+    /// have fitted the 5 MB cap — the degrade target is the same inert shell either way, just reached
+    /// before the retention. The breach throws the shared `MAX_LAYOUT_WORK` signal, so
+    /// {@link #classifyFailure} already reports it as {@link Outcome#OUTPUT_CAP_EXCEEDED} at stage
+    /// `layout`, never a RENDER_BUG. Save-and-restore scoping keeps a re-entrant
+    /// {@link MathFragmentRenderer} callback's nested bake from clobbering this one's budget.
     private static LaidOut layout(Diagram ir, com.sirentide.api.MathFragmentRenderer math) {
+        com.sirentide.layout.LayoutWorkBudget.Scope displaced =
+            com.sirentide.layout.LayoutWorkBudget.enterLayout();
+        try {
+            return dispatchLayout(ir, math);
+        } finally {
+            com.sirentide.layout.LayoutWorkBudget.exitLayout(displaced);
+        }
+    }
+
+    /// The dispatch itself, budget-free — see {@link #layout(Diagram, MathFragmentRenderer)} for the
+    /// scoping. Split out so the arm/disarm bracket cannot be accidentally bypassed by a new case.
+    private static LaidOut dispatchLayout(Diagram ir, com.sirentide.api.MathFragmentRenderer math) {
         return switch (ir) {
             case Pie pie -> PieLayout.layout(pie, math);
             case XyChart chart -> XyChartLayout.layout(chart, math);

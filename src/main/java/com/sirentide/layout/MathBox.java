@@ -12,4 +12,14 @@ package com.sirentide.layout;
 /// `fill` is stamped on the wrapping `<g>` so a `currentColor` fragment inherits the LABEL's
 /// contrast colour (F2, Conf pins sirentide/51) — otherwise `currentColor` math resolves to the
 /// SVG default (black) and vanishes on a dark node while the text runs stay light.
-public record MathBox(double x, double y, String fill, String innerSvg) implements Shape {}
+public record MathBox(double x, double y, String fill, String innerSvg) implements Shape {
+
+    /// Charges the global layout-time work budget ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2)
+    /// its exact `innerSvg` length plus the fixed `<g transform=…>` overhead — a math fragment is
+    /// FOREIGN geometry from an application callback, so its size is the least bounded of any shape.
+    /// A no-op when no layout scope is armed.
+    public MathBox {
+        LayoutWorkBudget.charge(
+            LayoutWorkBudget.WEIGHT_PATH_BASE + (innerSvg == null ? 0 : innerSvg.length()));
+    }
+}
