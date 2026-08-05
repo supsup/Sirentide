@@ -279,7 +279,7 @@ public final class DslParser {
     /// replaces. (Making the blank itself loud is slice 2 of the plan; it needs a typed
     /// unsupported-header result the CLI can exit non-zero on, and is deliberately NOT bundled
     /// into this parse-only change.)
-    private static final java.util.Map<String, String> DIAGRAM_TYPE_ALIASES = java.util.Map.ofEntries(
+    static final java.util.Map<String, String> DIAGRAM_TYPE_ALIASES = java.util.Map.ofEntries(
         // Mermaid spellings whose canonical Sirentide token differs.
         java.util.Map.entry("statediagram", "state"),
         java.util.Map.entry("statediagram-v2", "state"),
@@ -318,7 +318,7 @@ public final class DslParser {
 
     /// Resolve a header token to its canonical dispatch key, case-insensitively. An unrecognised
     /// token is returned VERBATIM so it reaches `default` — see the fail-closed note above.
-    private static String canonicalDiagramType(String raw) {
+    static String canonicalDiagramType(String raw) {
         if (raw == null || raw.isEmpty()) {
             return raw;
         }
