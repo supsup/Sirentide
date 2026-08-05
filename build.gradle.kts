@@ -52,6 +52,16 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // StagedReleaseNoteCountsTest reads RELEASE-NOTE-ENTRY.md, which is NOT a source file, so
+    // Gradle would consider `test` UP-TO-DATE after a doc-only edit and skip the very run that
+    // matters — the guard would be inert exactly when someone changes the number it guards.
+    // (Observed, not theorised: editing the count and re-running produced BUILD SUCCESSFUL in
+    // 252ms because the task never executed.) Declaring the file as an input makes a doc edit
+    // invalidate the task. `optional` so the build still works once the note merges away.
+    inputs.file(layout.projectDirectory.file("RELEASE-NOTE-ENTRY.md"))
+        .withPropertyName("stagedReleaseNote")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .optional(true)
     // Forward the golden-regen switch to the forked test JVM so
     // `./gradlew test -Dsirentide.updateGolden=true` actually reaches GoldenSvgTest.
     systemProperty("sirentide.updateGolden", System.getProperty("sirentide.updateGolden", "false"))

@@ -19,7 +19,7 @@ projection. A per-path cap bounds **one** path, and says nothing about their sum
 the emitter was ever entered.
 
 That aggregate is now fenced. A single work budget is armed at Sirentide's layout dispatch seam and
-charged by **every shape constructed**, so all 25 diagram types and all 43 layout classes are covered
+charged by **every shape constructed**, so all 23 diagram types and every layout class are covered
 without a per-type cap in any of them. Past the budget the bake degrades to the usual inert shell, and
 the diagnostics channel reports it the way every other known cap is reported —
 `OUTPUT_CAP_EXCEEDED` at stage `layout`, with `MAX_LAYOUT_SHAPE_WORK` named in the detail — never a
