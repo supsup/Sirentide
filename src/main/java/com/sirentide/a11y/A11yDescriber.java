@@ -636,8 +636,12 @@ public final class A11yDescriber {
     /// One relation as a natural phrase, keyed to the UML meaning of its marker (the whole/parent-side
     /// kinds read "child ← parent"; the arrow-side kinds read "source → target").
     private static String relationPhrase(ClassRelation r) {
-        String left = label(r.left());
-        String right = label(r.right());
+        // Multiplicity is diagram CONTENT — a `1..*` cardinality is information, not decoration —
+        // and it is not yet drawn on the edge, so verbalizing it here is what keeps it from being
+        // silently dropped at the parse boundary once the parser stopped absorbing it into the
+        // class name (plan 24d6b22f).
+        String left = withMultiplicity(label(r.left()), r.leftMultiplicity());
+        String right = withMultiplicity(label(r.right()), r.rightMultiplicity());
         return switch (r.kind()) {
             case INHERITANCE -> right + " inherits from " + left;
             case COMPOSITION -> left + " is composed of " + right;
@@ -645,6 +649,13 @@ public final class A11yDescriber {
             case ASSOCIATION -> left + " is associated with " + right;
             case DEPENDENCY -> left + " depends on " + right;
         };
+    }
+
+    /// `User` + `1` → `User (1)`. A null/blank multiplicity leaves the name untouched, so an
+    /// unannotated diagram's description is byte-identical to what it was before multiplicities
+    /// were carried at all.
+    private static String withMultiplicity(String name, String multiplicity) {
+        return multiplicity == null || multiplicity.isBlank() ? name : name + " (" + multiplicity + ")";
     }
 
     /// Math block: a GENERIC, non-empty description — "Display math expression." — that does NOT

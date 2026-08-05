@@ -2991,6 +2991,20 @@ public final class DslParser {
     /// {@link #MAX_EDGES} relationships; names/members `cap()`'d. Empty body → a ClassDiagram with no
     /// classes (round-trips, NOT degraded to Empty).
     private static Diagram parseClassDiagram(String[] lines, String textColor) {
+        // DECLARED NAMES, collected in a PRE-PASS so the reference grammar can agree with the
+        // declaration grammar (plan 24d6b22f; Fixpoint sirentide/851).
+        //
+        // The defect this closes is a DIVERGENCE, not a bad predicate. `class <Name>` accepts any
+        // name, quotes included; a relation endpoint then peeled a trailing quoted token off it.
+        // So `class Foo"Bar"` + `Foo"Bar" --> Baz` minted a phantom `Foo` and hung the members on
+        // a different box. A shape gate NARROWS that (a name has to look like a cardinality to be
+        // eaten) but cannot CLOSE it: `class Foo "123"` is still shape-valid and still diverged.
+        // Only agreement between the two productions closes it — if a name was declared, an
+        // endpoint spelling it exactly means THAT class, and nothing is peeled.
+        //
+        // A pre-pass, not incremental, because declaration order is the author's business: a
+        // relation may legitimately precede the `class` block it references.
+        java.util.Set<String> declaredNames = collectDeclaredClassNames(lines);
         // Insertion-ordered name → member accumulator: preserves first-seen class order (declared or
         // relationship-referenced). A relationship-referenced name auto-vivifies an empty accumulator.
         LinkedHashMap<String, ClassAcc> classes = new LinkedHashMap<>();
@@ -3049,8 +3063,16 @@ public final class DslParser {
             if (op == null) {
                 continue;   // no operator (and not a class directive) → malformed, drop (never throw)
             }
-            String left = cap(head.substring(0, op.pos()).strip());
-            String right = cap(head.substring(op.pos() + op.len()).strip());
+            // Peel the optional UML multiplicity — a QUOTED token adjacent to the operator, as in
+            // `User "1" --> "*" Order`. It must come off BEFORE the name is taken: absorbed into
+            // the name it mints a phantom class (`User "1"`) that is a DIFFERENT box from the
+            // declared `User`, so members land on one and edges on the other (plan 24d6b22f).
+            Multiplicity leftEnd = peelTrailingMultiplicity(
+                head.substring(0, op.pos()).strip(), declaredNames);
+            Multiplicity rightEnd = peelLeadingMultiplicity(
+                head.substring(op.pos() + op.len()).strip(), declaredNames);
+            String left = cap(leftEnd.name());
+            String right = cap(rightEnd.name());
             if (left.isEmpty() || right.isEmpty()) {
                 continue;   // an empty endpoint → malformed relation, drop
             }
@@ -3059,7 +3081,8 @@ public final class DslParser {
             registerClass(classes, right);
             if (relations.size() < MAX_EDGES
                 && classes.containsKey(left) && classes.containsKey(right)) {
-                relations.add(new ClassRelation(left, right, op.kind(), label));
+                relations.add(new ClassRelation(left, right, op.kind(), label,
+                    leftEnd.multiplicity(), rightEnd.multiplicity()));
             }
         }
         List<ClassBox> boxes = new ArrayList<>();
@@ -3738,6 +3761,190 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// Collect every name a `class` directive DECLARES, in one pre-pass, so the reference
+    /// grammar can agree with the declaration grammar. Mirrors the declaration parsing in
+    /// {@link #parseClassDiagram} exactly — bare `class Name` and `class Name {` — because a
+    /// collector that recognised a DIFFERENT set than the parser would reintroduce the very
+    /// divergence it exists to close.
+    private static java.util.Set<String> collectDeclaredClassNames(String[] lines) {
+        java.util.Set<String> declared = new java.util.LinkedHashSet<>();
+        boolean insideBlock = false;
+        for (String raw : lines) {
+            String line = raw.strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (insideBlock) {
+                if (line.equals("}") || line.endsWith("}")) {
+                    insideBlock = false;
+                }
+                continue;
+            }
+            String[] kwRest = splitKeyword(line);
+            if (!kwRest[0].equals(KW_CLASS) || kwRest[1].isEmpty()) {
+                continue;
+            }
+            String rest = kwRest[1];
+            int brace = rest.indexOf('{');
+            if (brace < 0) {
+                declared.add(cap(rest.strip()));
+                continue;
+            }
+            String name = cap(rest.substring(0, brace).strip());
+            if (!name.isEmpty()) {
+                declared.add(name);
+                insideBlock = !rest.substring(brace + 1).strip().startsWith("}");
+            }
+        }
+        return declared;
+    }
+
+    /// A relation endpoint split into its class NAME and its optional UML multiplicity
+    /// (`null` when absent — never `""`, so "no annotation" stays distinguishable from
+    /// "empty annotation"). Plan 24d6b22f.
+    private record Multiplicity(String name, String multiplicity) {}
+
+    /// Hard ceiling on a peelable multiplicity, counted in CODE POINTS (not UTF-16 units, so an
+    /// astral-character token is not penalised for its encoding). This is a resource bound only —
+    /// SHAPE, below, is the semantic filter. Generous on purpose: the longest real UML idiom I
+    /// know, `0..* {ordered, nonunique}`, is 25.
+    private static final int MAX_MULTIPLICITY_LEN = 64;
+
+    /// Does this quoted token LOOK like a UML cardinality?
+    ///
+    /// THIS REPLACED A LENGTH CAP, and the reason is the review finding at sirentide/845. Length
+    /// alone cannot tell a 5-character NAME (`"Order"`) from a 5-character cardinality (`"0..*"`),
+    /// so the old cap ate names that were short and rejected cardinalities that were long: the
+    /// real UML property string `1..* {ordered, unique}` is 22 characters and was refused.
+    ///
+    /// AND THE OLD FAILURE WAS NOT NEUTRAL, which is the part I had mis-stated. Failing closed
+    /// does not mean "the annotation is ignored" — it means the quoted token stays in the NAME,
+    /// which mints the phantom class this whole plan exists to eliminate. So the true trade was
+    /// never "missed annotation vs eaten identity"; it was MISSED ANNOTATION → PHANTOM CLASS,
+    /// which is strictly worse and has to be named that way.
+    ///
+    /// The grammar accepted here is deliberately narrow: digits, `*`, `.` (for `0..*`), plus an
+    /// optional trailing `{…}` property string with its commas and spaces. A token containing
+    /// anything else — a letter outside a property string, punctuation UML does not use — is NOT
+    /// a cardinality and is left in the name, where it belongs.
+    private static boolean looksLikeMultiplicity(String token) {
+        if (token.isEmpty() || token.codePointCount(0, token.length()) > MAX_MULTIPLICITY_LEN) {
+            return false;
+        }
+        String cardinality = token;
+        int brace = token.indexOf('{');
+        if (brace >= 0) {
+            if (!token.endsWith("}")) {
+                return false;   // an unbalanced property string is not a cardinality
+            }
+            String properties = token.substring(brace + 1, token.length() - 1);
+            for (int i = 0; i < properties.length(); i++) {
+                char c = properties.charAt(i);
+                if (!Character.isLetter(c) && c != ',' && c != ' ' && c != '-' && c != '_') {
+                    return false;
+                }
+            }
+            cardinality = token.substring(0, brace).strip();
+        }
+        cardinality = cardinality.strip();
+        if (cardinality.isEmpty()) {
+            // `"{ordered}"` alone, or a whitespace-only token. The latter would otherwise yield a
+            // BLANK multiplicity, breaking ClassRelation's own never-empty contract (null or a
+            // real value, never "") — Fixpoint's direction-B note at sirentide/851.
+            return false;
+        }
+        // A cardinality is `term` or `term..term`, where a term is digits or the variable bound
+        // `n`. Mermaid documents `n`, `0..n`, `1..n` alongside `1`, `0..1`, `1..*`, `*` — my first
+        // gate admitted only digits, `*`, `.` and space, so `n` (a LETTER) failed on the first
+        // character and FOUR documented cardinalities minted the phantom class this plan exists
+        // to eliminate. Same failure as the length cap it replaced, one notch narrower: the cap
+        // cut through `1..* {ordered, unique}`, the first gate cut through `1..n`.
+        int sep = cardinality.indexOf("..");
+        if (sep >= 0) {
+            return isCardinalityTerm(cardinality.substring(0, sep).strip())
+                && isCardinalityTerm(cardinality.substring(sep + 2).strip());
+        }
+        return isCardinalityTerm(cardinality);
+    }
+
+    /// One bound of a cardinality: all digits, a lone `*`, or the variable bound `n`. Anything
+    /// else — a letter that is not `n`, punctuation UML does not use — is part of a NAME.
+    private static boolean isCardinalityTerm(String term) {
+        if (term.isEmpty()) {
+            return false;
+        }
+        if (term.equals("*") || term.equals("n")) {
+            return true;
+        }
+        for (int i = 0; i < term.length(); i++) {
+            if (!Character.isDigit(term.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Peel a trailing quoted multiplicity off a LEFT endpoint: `User "1"` → (`User`, `1`).
+    ///
+    /// Fails closed to the whole string as the NAME whenever the shape is not an unambiguous
+    /// quoted-token-at-the-end: no trailing quote, no opening quote, an over-long token, or a
+    /// token that consumes the ENTIRE endpoint (`"1" --> X` — a quoted token that IS the whole
+    /// endpoint is a degenerate NAME, not a cardinality qualifying something, and peeling it
+    /// would empty the endpoint and drop the relation).
+    private static Multiplicity peelTrailingMultiplicity(String endpoint,
+            java.util.Set<String> declaredNames) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
+            return new Multiplicity(endpoint, null);   // declared verbatim → never peel
+        }
+        if (endpoint.length() < 2 || endpoint.charAt(endpoint.length() - 1) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int open = endpoint.lastIndexOf('"', endpoint.length() - 2);
+        if (open < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(open + 1, endpoint.length() - 1);
+        String name = endpoint.substring(0, open).strip();
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
+    }
+
+    /// Peel a leading quoted multiplicity off a RIGHT endpoint: `"*" Order` → (`Order`, `*`).
+    /// Same fail-closed rules as {@link #peelTrailingMultiplicity}, mirrored.
+    private static Multiplicity peelLeadingMultiplicity(String endpoint,
+            java.util.Set<String> declaredNames) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
+            return new Multiplicity(endpoint, null);   // declared verbatim → never peel
+        }
+        if (endpoint.length() < 2 || endpoint.charAt(0) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int close = endpoint.indexOf('"', 1);
+        if (close < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(1, close);
+        String name = endpoint.substring(close + 1).strip();
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
     }
 
     /// The reserved tensor-network CHAIN keywords — the first token of a `tensornetwork` body line
