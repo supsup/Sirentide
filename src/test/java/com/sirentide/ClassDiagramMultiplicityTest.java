@@ -252,8 +252,15 @@ class ClassDiagramMultiplicityTest {
         // behind the trailing arm's coverage. That is the same one-arm-of-two blindness that
         // produced this branch's previous two rounds; asserting it once and calling the pair
         // covered would repeat it inside the very fix for it.
-        String name = "A".repeat(510) + " \"123\"";
+        // THE TOKEN MUST LEAD. My first version of this test used the trailing-token name and a
+        // mutant reverting THIS arm survived it: with the token at the end, peelLeading
+        // fail-closes at `charAt(0) != '"'` and returns the same answer whether or not the
+        // agreement check ran, so the fixture exercised the arm without discriminating on it.
+        // A mirror test that cannot fail for the mirror's own reason is decoration.
+        String name = "\"123\" " + "A".repeat(510);
         assertTrue(name.length() > 512, "the fixture must actually cross the cap: " + name.length());
+        assertEquals('"', name.charAt(0),
+            "the fixture must reach peelLeading's peeling path, not its fail-closed early return");
         ClassDiagram cd = parse("classDiagram\n"
             + "  class " + name + " {\n    +int x\n  }\n"
             + "  Bar --> " + name + "\n");
