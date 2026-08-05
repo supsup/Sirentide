@@ -2959,8 +2959,14 @@ public final class DslParser {
             if (op == null) {
                 continue;   // no operator (and not a class directive) → malformed, drop (never throw)
             }
-            String left = cap(head.substring(0, op.pos()).strip());
-            String right = cap(head.substring(op.pos() + op.len()).strip());
+            // Peel the optional UML multiplicity — a QUOTED token adjacent to the operator, as in
+            // `User "1" --> "*" Order`. It must come off BEFORE the name is taken: absorbed into
+            // the name it mints a phantom class (`User "1"`) that is a DIFFERENT box from the
+            // declared `User`, so members land on one and edges on the other (plan 24d6b22f).
+            Multiplicity leftEnd = peelTrailingMultiplicity(head.substring(0, op.pos()).strip());
+            Multiplicity rightEnd = peelLeadingMultiplicity(head.substring(op.pos() + op.len()).strip());
+            String left = cap(leftEnd.name());
+            String right = cap(rightEnd.name());
             if (left.isEmpty() || right.isEmpty()) {
                 continue;   // an empty endpoint → malformed relation, drop
             }
@@ -2969,7 +2975,8 @@ public final class DslParser {
             registerClass(classes, right);
             if (relations.size() < MAX_EDGES
                 && classes.containsKey(left) && classes.containsKey(right)) {
-                relations.add(new ClassRelation(left, right, op.kind(), label));
+                relations.add(new ClassRelation(left, right, op.kind(), label,
+                    leftEnd.multiplicity(), rightEnd.multiplicity()));
             }
         }
         List<ClassBox> boxes = new ArrayList<>();
@@ -3648,6 +3655,57 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// A relation endpoint split into its class NAME and its optional UML multiplicity
+    /// (`null` when absent — never `""`, so "no annotation" stays distinguishable from
+    /// "empty annotation"). Plan 24d6b22f.
+    private record Multiplicity(String name, String multiplicity) {}
+
+    /// Longest multiplicity we will peel. A cardinality is `1`, `*`, `0..*`, `1..5` — short by
+    /// construction. Anything longer is not a cardinality, and treating it as one would silently
+    /// eat a real (quoted) name, so the cap fails CLOSED back to "this is the name".
+    private static final int MAX_MULTIPLICITY_LEN = 16;
+
+    /// Peel a trailing quoted multiplicity off a LEFT endpoint: `User "1"` → (`User`, `1`).
+    ///
+    /// Fails closed to the whole string as the NAME whenever the shape is not an unambiguous
+    /// quoted-token-at-the-end: no trailing quote, no opening quote, an over-long token, or a
+    /// token that consumes the ENTIRE endpoint (`"1" --> X` — a quoted token that IS the whole
+    /// endpoint is a degenerate NAME, not a cardinality qualifying something, and peeling it
+    /// would empty the endpoint and drop the relation).
+    private static Multiplicity peelTrailingMultiplicity(String endpoint) {
+        if (endpoint.length() < 2 || endpoint.charAt(endpoint.length() - 1) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int open = endpoint.lastIndexOf('"', endpoint.length() - 2);
+        if (open < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(open + 1, endpoint.length() - 1);
+        String name = endpoint.substring(0, open).strip();
+        if (name.isEmpty() || inner.length() > MAX_MULTIPLICITY_LEN) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
+    }
+
+    /// Peel a leading quoted multiplicity off a RIGHT endpoint: `"*" Order` → (`Order`, `*`).
+    /// Same fail-closed rules as {@link #peelTrailingMultiplicity}, mirrored.
+    private static Multiplicity peelLeadingMultiplicity(String endpoint) {
+        if (endpoint.length() < 2 || endpoint.charAt(0) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int close = endpoint.indexOf('"', 1);
+        if (close < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(1, close);
+        String name = endpoint.substring(close + 1).strip();
+        if (name.isEmpty() || inner.length() > MAX_MULTIPLICITY_LEN) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
     }
 
     /// The reserved tensor-network CHAIN keywords — the first token of a `tensornetwork` body line
