@@ -214,6 +214,76 @@ class ClassDiagramMultiplicityTest {
     }
 
     @Test
+    void agreementSurvivesTheCapBoundary() {
+        // FIXPOINT'S E8, sirentide/859, and the third round of ONE shape: a mechanism that is
+        // right everywhere except the boundary it forgot to normalize.
+        //
+        // collectDeclaredClassNames stored cap()'d names while both peel functions compared the
+        // RAW endpoint against that set. Above MAX_LABEL_LEN the set could therefore never
+        // contain what the lookup asked for, so the agreement rule — the whole mechanism of this
+        // branch — was UNREACHABLE, and the original three-box defect returned verbatim: the
+        // truncated declaration held the members while the peeled phantom held the edge.
+        //
+        // The invariant is "an endpoint spelling a declared name exactly is never peeled". Above
+        // 512 that invariant was simply false, which is worse than a missing feature: the javadoc
+        // asserted it.
+        String name = "A".repeat(510) + " \"123\"";   // 516 chars — past the 512 cap
+        assertTrue(name.length() > 512, "the fixture must actually cross the cap: " + name.length());
+        ClassDiagram cd = parse("classDiagram\n"
+            + "  class " + name + " {\n    +int x\n  }\n"
+            + "  " + name + " --> Bar\n");
+        assertEquals(2, cd.classes().size(),
+            "a declared name past the cap must still bind its own reference — got a phantom "
+                + "sibling, i.e. members on one box and edges on another: " + classNames(cd));
+        ClassBox declared = cd.classes().stream()
+            .filter(c -> !c.name().equals("Bar")).findFirst().orElseThrow();
+        assertEquals(List.of("+int x"), declared.attributes(),
+            "members and edges must land on the SAME box past the cap, as they do below it");
+        assertEquals(declared.name(), cd.relations().get(0).left(),
+            "the relation must point at the declared box, not at a peeled phantom");
+        assertNull(cd.relations().get(0).leftMultiplicity(),
+            "the declared name wins: the embedded token stays in the name, mult is null");
+    }
+
+    @Test
+    void agreementSurvivesTheCapBoundaryOnTheRightEndpointToo() {
+        // The MIRROR arm. E8 named both peel sites (:3874 trailing, :3896 leading) and the fix
+        // touches both — so both need their own test, or a revert of the leading arm survives
+        // behind the trailing arm's coverage. That is the same one-arm-of-two blindness that
+        // produced this branch's previous two rounds; asserting it once and calling the pair
+        // covered would repeat it inside the very fix for it.
+        String name = "A".repeat(510) + " \"123\"";
+        assertTrue(name.length() > 512, "the fixture must actually cross the cap: " + name.length());
+        ClassDiagram cd = parse("classDiagram\n"
+            + "  class " + name + " {\n    +int x\n  }\n"
+            + "  Bar --> " + name + "\n");
+        assertEquals(2, cd.classes().size(),
+            "a declared name past the cap must bind a RIGHT-hand reference too: " + classNames(cd));
+        ClassBox declared = cd.classes().stream()
+            .filter(c -> !c.name().equals("Bar")).findFirst().orElseThrow();
+        assertEquals(List.of("+int x"), declared.attributes(),
+            "members and edges must land on the SAME box on the right endpoint as well");
+        assertEquals(declared.name(), cd.relations().get(0).right());
+        assertNull(cd.relations().get(0).rightMultiplicity());
+    }
+
+    @Test
+    void agreementBelowTheCapIsTheControlForThatBoundary() {
+        // The same shape UNDER the cap. It passed before the fix and must pass after, which is
+        // what isolates the failure to the cap boundary rather than to the agreement rule itself
+        // — without it, a green result above could mean either "boundary fixed" or "agreement
+        // rewritten", and those are different claims.
+        String name = "A".repeat(100) + " \"123\"";
+        assertTrue(name.length() < 512, "the control must stay BELOW the cap: " + name.length());
+        ClassDiagram cd = parse("classDiagram\n"
+            + "  class " + name + " {\n    +int x\n  }\n"
+            + "  " + name + " --> Bar\n");
+        assertEquals(2, cd.classes().size(), classNames(cd).toString());
+        assertEquals(name, cd.relations().get(0).left());
+        assertNull(cd.relations().get(0).leftMultiplicity());
+    }
+
+    @Test
     void aQuotedNameWithNoOperatorSideEffectsIsNotTreatedAsMultiplicity() {
         // Multiplicity is positional: adjacent to the operator. A quoted token that is the WHOLE
         // endpoint is a (degenerate) name, not a cardinality to peel into nothing.

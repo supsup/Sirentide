@@ -3871,7 +3871,13 @@ public final class DslParser {
     /// would empty the endpoint and drop the relation).
     private static Multiplicity peelTrailingMultiplicity(String endpoint,
             java.util.Set<String> declaredNames) {
-        if (declaredNames.contains(endpoint)) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
             return new Multiplicity(endpoint, null);   // declared verbatim → never peel
         }
         if (endpoint.length() < 2 || endpoint.charAt(endpoint.length() - 1) != '"') {
@@ -3893,7 +3899,13 @@ public final class DslParser {
     /// Same fail-closed rules as {@link #peelTrailingMultiplicity}, mirrored.
     private static Multiplicity peelLeadingMultiplicity(String endpoint,
             java.util.Set<String> declaredNames) {
-        if (declaredNames.contains(endpoint)) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
             return new Multiplicity(endpoint, null);   // declared verbatim → never peel
         }
         if (endpoint.length() < 2 || endpoint.charAt(0) != '"') {
