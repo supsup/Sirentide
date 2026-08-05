@@ -52,6 +52,27 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // StagedReleaseNoteCountsTest reads RELEASE-NOTE-ENTRY.md, which is NOT a source file, so
+    // Gradle would consider `test` UP-TO-DATE after a doc-only edit and skip the very run that
+    // matters — the guard would be inert exactly when someone changes the number it guards.
+    // (Observed, not theorised: editing the count and re-running produced BUILD SUCCESSFUL in
+    // 252ms because the task never executed.) Declaring the file as an input makes a doc edit
+    // invalidate the task.
+    //
+    // `inputs.files` (PLURAL) and not `inputs.file(...).optional(true)`. This is the whole
+    // reason for the distinction, and my first version had it wrong: `optional(true)` does NOT
+    // tolerate an absent file. With the note deleted the `test` task fails at CONFIGURATION
+    // time — "property 'stagedReleaseNote' specifies file ... which doesn't exist" — before a
+    // single test runs. That matters more than an ordinary bug because deleting this file is
+    // the PLANNED happy path: it merges into RELEASE_NOTES and leaves this name, at which
+    // point the guard is supposed to retire itself, and StagedReleaseNoteCountsTest already
+    // handles that with a Files.exists early return. The Gradle half failed FIRST, so that
+    // graceful path was unreachable and whoever merged the note would get a red build naming
+    // a file they had just legitimately deleted. A FileCollection tolerates absent entries.
+    // (Fixpoint, sirentide/868; reproduced here before fixing.)
+    inputs.files(layout.projectDirectory.file("RELEASE-NOTE-ENTRY.md"))
+        .withPropertyName("stagedReleaseNote")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     // Forward the golden-regen switch to the forked test JVM so
     // `./gradlew test -Dsirentide.updateGolden=true` actually reaches GoldenSvgTest.
     systemProperty("sirentide.updateGolden", System.getProperty("sirentide.updateGolden", "false"))
