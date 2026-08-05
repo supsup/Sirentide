@@ -114,6 +114,63 @@ class ClassDiagramMultiplicityTest {
             "the left identity is not half-eaten: " + classNames(cd));
     }
 
+    // ---- Fixpoint's needs-fix, sirentide/845 -------------------------------------------------
+    // He found the endpoint I asked him to find, by EXECUTION, and it was a REGRESSION against
+    // the parent: the `class` DECLARATION grammar accepts any name, including `Foo"Bar"`, while
+    // the REFERENCE grammar peeled any trailing quoted token. Two name productions, and I fenced
+    // only one — the same one-arm-of-a-two-arm-condition shape this branch's own commit message
+    // claims to eliminate, reproduced one level down.
+
+    @Test
+    void aDeclaredNameContainingQuotesIsNotEatenWhenReferenced() {
+        ClassDiagram cd = parse("classDiagram\n"
+            + "  class Foo\"Bar\" {\n    +int id\n  }\n"
+            + "  Foo\"Bar\" --> Baz\n");
+        assertEquals(List.of("Foo\"Bar\"", "Baz"), classNames(cd),
+            "the declaration grammar accepts Foo\"Bar\" as an identity, so the reference grammar "
+                + "must too — three boxes here means the peel ate a declared name");
+        ClassRelation r = cd.relations().get(0);
+        assertEquals("Foo\"Bar\"", r.left(), "the edge must attach to the DECLARED box");
+        assertNull(r.leftMultiplicity(), "Bar is part of an identity, not a cardinality");
+        ClassBox foo = cd.classes().stream().filter(c -> c.name().equals("Foo\"Bar\""))
+            .findFirst().orElseThrow();
+        assertEquals(List.of("+int id"), foo.attributes(),
+            "members and the edge must land on the SAME box");
+    }
+
+    @Test
+    void anEscapedQuoteShapeDoesNotHalfEatTheName() {
+        // My anUnterminatedQuoteLeavesTheNameIntact... test is NAMED for this class but only
+        // covers the no-trailing-quote shape; the escaped-quote shape walked straight past it.
+        ClassDiagram cd = parse("classDiagram\n  User \"\\\"\" --> Order\n");
+        ClassRelation r = cd.relations().get(0);
+        assertTrue(r.left().startsWith("User"), "left identity half-eaten: " + r.left());
+        assertTrue(r.leftMultiplicity() == null || !r.leftMultiplicity().isEmpty(),
+            "an EMPTY multiplicity is never a real cardinality: " + r.leftMultiplicity());
+    }
+
+    @Test
+    void realUmlPropertyStringsAreAcceptedNotRejectedByLength() {
+        // The 16-char cap cut a line THROUGH a real UML idiom: `1..* {ordered, unique}` is 22
+        // chars. And failing closed there is NOT neutral — it renders the ORIGINAL phantom-class
+        // defect, so the true trade was "missed annotation -> PHANTOM CLASS", not "missed
+        // annotation vs eaten identity". A shape gate admits it and rejects nothing real.
+        ClassDiagram cd = parse("classDiagram\n  User \"1..* {ordered, unique}\" --> \"0..*\" Order\n");
+        assertEquals(List.of("User", "Order"), classNames(cd),
+            "a long but well-shaped cardinality must not mint a phantom class");
+        assertEquals("1..* {ordered, unique}", cd.relations().get(0).leftMultiplicity());
+    }
+
+    @Test
+    void aQuotedTokenThatIsNotCardinalityShapedIsLeftAsPartOfTheName() {
+        // The shape gate is the real filter now: LENGTH alone could never tell a 5-char name
+        // from a 5-char cardinality.
+        ClassDiagram cd = parse("classDiagram\n  User \"Order\" --> Thing\n");
+        ClassRelation r = cd.relations().get(0);
+        assertNull(r.leftMultiplicity(),
+            "\"Order\" is not cardinality-shaped and must not be peeled: " + r.leftMultiplicity());
+    }
+
     @Test
     void aQuotedNameWithNoOperatorSideEffectsIsNotTreatedAsMultiplicity() {
         // Multiplicity is positional: adjacent to the operator. A quoted token that is the WHOLE

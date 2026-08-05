@@ -3662,10 +3662,59 @@ public final class DslParser {
     /// "empty annotation"). Plan 24d6b22f.
     private record Multiplicity(String name, String multiplicity) {}
 
-    /// Longest multiplicity we will peel. A cardinality is `1`, `*`, `0..*`, `1..5` — short by
-    /// construction. Anything longer is not a cardinality, and treating it as one would silently
-    /// eat a real (quoted) name, so the cap fails CLOSED back to "this is the name".
-    private static final int MAX_MULTIPLICITY_LEN = 16;
+    /// Hard ceiling on a peelable multiplicity, counted in CODE POINTS (not UTF-16 units, so an
+    /// astral-character token is not penalised for its encoding). This is a resource bound only —
+    /// SHAPE, below, is the semantic filter. Generous on purpose: the longest real UML idiom I
+    /// know, `0..* {ordered, nonunique}`, is 25.
+    private static final int MAX_MULTIPLICITY_LEN = 64;
+
+    /// Does this quoted token LOOK like a UML cardinality?
+    ///
+    /// THIS REPLACED A LENGTH CAP, and the reason is the review finding at sirentide/845. Length
+    /// alone cannot tell a 5-character NAME (`"Order"`) from a 5-character cardinality (`"0..*"`),
+    /// so the old cap ate names that were short and rejected cardinalities that were long: the
+    /// real UML property string `1..* {ordered, unique}` is 22 characters and was refused.
+    ///
+    /// AND THE OLD FAILURE WAS NOT NEUTRAL, which is the part I had mis-stated. Failing closed
+    /// does not mean "the annotation is ignored" — it means the quoted token stays in the NAME,
+    /// which mints the phantom class this whole plan exists to eliminate. So the true trade was
+    /// never "missed annotation vs eaten identity"; it was MISSED ANNOTATION → PHANTOM CLASS,
+    /// which is strictly worse and has to be named that way.
+    ///
+    /// The grammar accepted here is deliberately narrow: digits, `*`, `.` (for `0..*`), plus an
+    /// optional trailing `{…}` property string with its commas and spaces. A token containing
+    /// anything else — a letter outside a property string, punctuation UML does not use — is NOT
+    /// a cardinality and is left in the name, where it belongs.
+    private static boolean looksLikeMultiplicity(String token) {
+        if (token.isEmpty() || token.codePointCount(0, token.length()) > MAX_MULTIPLICITY_LEN) {
+            return false;
+        }
+        String cardinality = token;
+        int brace = token.indexOf('{');
+        if (brace >= 0) {
+            if (!token.endsWith("}")) {
+                return false;   // an unbalanced property string is not a cardinality
+            }
+            String properties = token.substring(brace + 1, token.length() - 1);
+            for (int i = 0; i < properties.length(); i++) {
+                char c = properties.charAt(i);
+                if (!Character.isLetter(c) && c != ',' && c != ' ' && c != '-' && c != '_') {
+                    return false;
+                }
+            }
+            cardinality = token.substring(0, brace).strip();
+        }
+        if (cardinality.isEmpty()) {
+            return false;   // `"{ordered}"` alone is not a cardinality
+        }
+        for (int i = 0; i < cardinality.length(); i++) {
+            char c = cardinality.charAt(i);
+            if (!Character.isDigit(c) && c != '*' && c != '.' && c != ' ') {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /// Peel a trailing quoted multiplicity off a LEFT endpoint: `User "1"` → (`User`, `1`).
     ///
@@ -3684,7 +3733,7 @@ public final class DslParser {
         }
         String inner = endpoint.substring(open + 1, endpoint.length() - 1);
         String name = endpoint.substring(0, open).strip();
-        if (name.isEmpty() || inner.length() > MAX_MULTIPLICITY_LEN) {
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
             return new Multiplicity(endpoint, null);
         }
         return new Multiplicity(name, inner);
@@ -3702,7 +3751,7 @@ public final class DslParser {
         }
         String inner = endpoint.substring(1, close);
         String name = endpoint.substring(close + 1).strip();
-        if (name.isEmpty() || inner.length() > MAX_MULTIPLICITY_LEN) {
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
             return new Multiplicity(endpoint, null);
         }
         return new Multiplicity(name, inner);
