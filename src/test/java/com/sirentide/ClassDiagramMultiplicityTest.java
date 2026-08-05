@@ -14,6 +14,7 @@ import com.sirentide.ir.Diagram;
 import com.sirentide.parse.DslParser;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
 
 /// UML multiplicity annotations on relation endpoints (plan 24d6b22f).
 ///
@@ -169,6 +170,47 @@ class ClassDiagramMultiplicityTest {
         ClassRelation r = cd.relations().get(0);
         assertNull(r.leftMultiplicity(),
             "\"Order\" is not cardinality-shaped and must not be peeled: " + r.leftMultiplicity());
+    }
+
+    // ---- Fixpoint's second needs-fix, sirentide/851 -------------------------------------------
+
+    @ParameterizedTest(name = "variable bound {0} is a cardinality, not part of a name")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"n", "0..n", "1..n", "2..n"})
+    void documentedVariableBoundCardinalitiesAreAccepted(String card) {
+        // Mermaid documents n / 0..n / 1..n alongside 1 / 0..1 / 1..* / *. My shape gate admitted
+        // digits, '*', '.' and space — so 'n', a LETTER, failed on the first character and the
+        // token stayed in the name, minting the phantom class this plan exists to eliminate.
+        // Same shape as the length cap it replaced, one notch narrower: the cap cut through
+        // "1..* {ordered, unique}", the gate cut through "1..n".
+        ClassDiagram cd = parse("classDiagram\n  User \"" + card + "\" --> Order\n");
+        assertEquals(List.of("User", "Order"), classNames(cd),
+            card + " must not mint a phantom class");
+        assertEquals(card, cd.relations().get(0).leftMultiplicity());
+    }
+
+    @Test
+    void aWhitespaceOnlyTokenIsNotACardinality() {
+        // Direction B: a blank multiplicity re-creates the empty-ish value ClassRelation's own
+        // javadoc promises never happens (null or a real value, never "").
+        ClassDiagram cd = parse("classDiagram\n  User \"   \" --> Order\n");
+        ClassRelation r = cd.relations().get(0);
+        assertTrue(r.leftMultiplicity() == null || !r.leftMultiplicity().isBlank(),
+            "blank multiplicity breaks the never-empty contract: [" + r.leftMultiplicity() + "]");
+    }
+
+    @Test
+    void aShapeValidTokenInsideADECLAREDNameIsStillNotPeeled() {
+        // THE RESIDUAL OF THE ORIGINAL CLASS, narrowed by the shape gate but not closed: "123"
+        // IS cardinality-shaped, so the reference peeled it while the declaration kept it — three
+        // boxes again, for the same declaration-vs-reference divergence, just through a narrower
+        // door. Shape alone can never close this: the two productions must AGREE.
+        ClassDiagram cd = parse("classDiagram\n"
+            + "  class Foo \"123\" {\n    +int x\n  }\n"
+            + "  Foo \"123\" --> Bar\n");
+        assertEquals(List.of("Foo \"123\"", "Bar"), classNames(cd),
+            "a DECLARED name must be referenceable verbatim, whatever its shape");
+        assertEquals("Foo \"123\"", cd.relations().get(0).left());
+        assertNull(cd.relations().get(0).leftMultiplicity());
     }
 
     @Test
