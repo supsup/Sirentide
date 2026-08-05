@@ -45,12 +45,30 @@ class DispatchTokenAxisTest {
         Path.of("src/main/java/com/sirentide/parse/DslParser.java");
 
     /// `case "a", "b" ->` — the label list of one switch arm.
-    private static final Pattern CASE_ARM = Pattern.compile("^\\s*case\\s+(\"[^\"]+\"(?:\\s*,\\s*\"[^\"]+\")*)\\s*->");
+    private static final Pattern CASE_ARM = Pattern.compile("case\\s+(\"[^\"]+\"(?:\\s*,\\s*\"[^\"]+\")*)\\s*->", Pattern.DOTALL);
 
-    /// Every token the DIAGRAM-TYPE switch dispatches on, extracted from the bounded block only.
+    /// Every token the DIAGRAM-TYPE switch dispatches on, extracted from the bounded block.
+    ///
+    /// JOINED, NOT LINE-ANCHORED. My first version matched `^\s*case … ->` per LINE, so a
+    /// formatter-realistic wrap — `case "journey"` newline `-> parseJourney(...)` — silently
+    /// dropped a token from the extractor's own corpus while the positive control still passed.
+    /// Fixpoint demonstrated it at sirentide/853 and showed the same wrap readmits the defect.
+    /// The block is now joined before matching so an arm may span any number of lines.
     private static TreeSet<String> dispatchTokens() throws IOException {
-        List<String> lines = Files.readAllLines(PARSER_SOURCE);
         TreeSet<String> tokens = new TreeSet<>();
+        for (Matcher m = CASE_ARM.matcher(switchBlock()); m.find(); ) {
+            for (String quoted : m.group(1).split("\\s*,\\s*")) {
+                tokens.add(quoted.replace("\"", "").strip());
+            }
+        }
+        return tokens;
+    }
+
+    /// The diagram-type switch body, bounded by its exact opening and closing markers and joined
+    /// into one string.
+    private static String switchBlock() throws IOException {
+        List<String> lines = Files.readAllLines(PARSER_SOURCE);
+        StringBuilder block = new StringBuilder();
         boolean inside = false;
         for (String line : lines) {
             if (!inside) {
@@ -60,16 +78,24 @@ class DispatchTokenAxisTest {
                 continue;
             }
             if (line.contains("default -> new Empty();")) {
-                break;                                  // end of the diagram-type switch
+                break;
             }
-            Matcher m = CASE_ARM.matcher(line);
-            if (m.find()) {
-                for (String quoted : m.group(1).split("\\s*,\\s*")) {
-                    tokens.add(quoted.replace("\"", "").strip());
-                }
-            }
+            block.append(line).append('\n');
         }
-        return tokens;
+        return block.toString();
+    }
+
+    /// How many `case` arms the block actually contains, counted independently of the extractor's
+    /// own regex. This is the control that my first version lacked: a size floor cannot notice
+    /// that the corpus quietly SHRANK by one, but a disagreement between "arms present" and "arms
+    /// parsed" can.
+    private static int caseArmCount() throws IOException {
+        int count = 0;
+        Matcher m = Pattern.compile("(?m)^\\s*case\\s").matcher(switchBlock());
+        while (m.find()) {
+            count++;
+        }
+        return count;
     }
 
     @Test
@@ -79,6 +105,20 @@ class DispatchTokenAxisTest {
         // in this class passes vacuously — a silent false-clean, which is the exact failure class
         // this plan is about. So the extractor must prove it found a real switch first.
         TreeSet<String> tokens = dispatchTokens();
+        // THE CONTROL MY FIRST VERSION LACKED, and it is the one that would have caught
+        // Fixpoint's attack. A size FLOOR cannot notice that the corpus quietly shrank by one:
+        // he wrapped a single `case` arm onto two lines, `journey` vanished from the extracted
+        // set, and the floor still passed because ~23 tokens is still >= 20. Counting arms
+        // independently of the extractor's own regex catches a disagreement the floor cannot.
+        int armsPresent = caseArmCount();
+        int armsParsed = 0;
+        for (Matcher m = CASE_ARM.matcher(switchBlock()); m.find(); ) {
+            armsParsed++;
+        }
+        assertEquals(armsPresent, armsParsed,
+            "the extractor parsed " + armsParsed + " of " + armsPresent + " `case` arms — it is "
+                + "silently measuring a SMALLER corpus than the switch actually has, so every "
+                + "assertion in this class is now narrower than it claims to be");
         assertTrue(tokens.size() >= 20,
             "the dispatch-switch extractor found only " + tokens.size() + " tokens (" + tokens
                 + ") — it has lost its anchors, and every assertion in this class is now vacuous");

@@ -189,6 +189,30 @@ public final class DslParser {
         // (DESIGN §6: never fail the bake).
         String[] header = lines[0].strip().split("\\s+");
         String type = canonicalDiagramType(header[0]);
+        // THE ALIAS TABLE IS THE ONLY DOOR TO THE DISPATCH SWITCH (plan 8a991947; Fixpoint's
+        // attack at sirentide/853).
+        //
+        // Without this line, a token wired into the switch but ABSENT from the table dispatches
+        // when spelled exactly and renders a BLANK SVG at exit 0 on any other casing — which is
+        // verbatim the `stateDiagram-v2` defect this plan exists to kill, and it is how the defect
+        // arose in the first place: a new SPELLING for an EXISTING type.
+        //
+        // I first tried to DETECT that with a test that read the switch's case labels out of the
+        // source. Fixpoint defeated it in one move — the extractor's regex was line-anchored, so a
+        // formatter-realistic wrap (`case "journey"` / newline / `-> …`) silently dropped a token
+        // from its own corpus while my positive control still passed, and the same wrap readmitted
+        // the defect past the test built to catch it. The lesson I took is not "write a better
+        // regex": source-parsing a switch from a test is an arms race the test loses, because the
+        // attacker is a formatter.
+        //
+        // So the property is now STRUCTURAL rather than detected. An un-tabled token cannot reach
+        // the switch at all, which makes a switch arm without a table entry DEAD CODE — a
+        // maintenance smell — instead of a silent case-sensitivity regression. Behaviour-preserving
+        // as of this commit: the completeness suite proves every current switch token is in the
+        // table, so nothing reachable today becomes unreachable.
+        if (!DIAGRAM_TYPE_ALIASES.containsValue(type)) {
+            return new Empty();
+        }
         // The off-slice text colour (page-background labels). `color=<value>` overrides the default;
         // an unparseable/illegal colour falls back to the default (never fails the bake).
         String textColor = parseTextColor(header);
