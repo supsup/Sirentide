@@ -188,7 +188,7 @@ public final class DslParser {
         // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
         // (DESIGN §6: never fail the bake).
         String[] header = lines[0].strip().split("\\s+");
-        String type = header[0];
+        String type = canonicalDiagramType(header[0]);
         // The off-slice text colour (page-background labels). `color=<value>` overrides the default;
         // an unparseable/illegal colour falls back to the default (never fails the bake).
         String textColor = parseTextColor(header);
@@ -257,6 +257,72 @@ public final class DslParser {
             case "rootsystem" -> parseRootSystem(lines, textColor);
             default -> new Empty();
         };
+    }
+
+    /// Every accepted spelling of a diagram-type header, keyed by its LOWERCASED form, mapped to
+    /// the canonical token the dispatch switch keys on (plan 8a991947 slice 1).
+    ///
+    /// TWO DEFECTS THIS CLOSES, both measured against the shipped 0.6.0 jar. The dispatch was an
+    /// exact, case-SENSITIVE match, so (a) `stateDiagram` — real Mermaid, and the spelling an
+    /// author copying from Mermaid actually writes — missed the `statediagram` arm by one capital
+    /// and rendered a 0x0 SVG at exit 0, and (b) `sequenceDiagram`/`quadrantChart` had no alias at
+    /// ALL, so lowercasing alone would not have saved them. Both were silent blanks, via the CLI's
+    /// no-args stdin path, which is the README's own documented default Docker invocation.
+    ///
+    /// The inconsistency is what made it a trap rather than a limitation: `classDiagram`,
+    /// `erDiagram` and `gitGraph` already matched Mermaid 1:1, so the surface TAUGHT authors that
+    /// Mermaid spellings work — and then three of them silently did not.
+    ///
+    /// FAIL-CLOSED ON MISS: an unrecognised token is returned UNCHANGED, so it still falls to the
+    /// switch's `default` arm. Normalisation must never fuzzy-match a near-miss onto a real type —
+    /// silently rendering the WRONG diagram would be a far worse defect than the blank this
+    /// replaces. (Making the blank itself loud is slice 2 of the plan; it needs a typed
+    /// unsupported-header result the CLI can exit non-zero on, and is deliberately NOT bundled
+    /// into this parse-only change.)
+    private static final java.util.Map<String, String> DIAGRAM_TYPE_ALIASES = java.util.Map.ofEntries(
+        // Mermaid spellings whose canonical Sirentide token differs.
+        java.util.Map.entry("statediagram", "state"),
+        java.util.Map.entry("statediagram-v2", "state"),
+        java.util.Map.entry("sequencediagram", "sequence"),
+        java.util.Map.entry("quadrantchart", "quadrant"),
+        // Canonical tokens that carry capitals — listed so the lookup is uniformly
+        // case-insensitive rather than case-insensitive only for the types that were broken.
+        java.util.Map.entry("classdiagram", "classDiagram"),
+        java.util.Map.entry("erdiagram", "erDiagram"),
+        java.util.Map.entry("gitgraph", "gitGraph"),
+        // All-lowercase canonical tokens, mapped to themselves so a SHOUTED or MixedCase header
+        // resolves too. Enumerated rather than derived: the switch labels are the contract, and a
+        // derived list would drift silently the day a new type is added without one.
+        java.util.Map.entry("pie", "pie"),
+        java.util.Map.entry("xychart", "xychart"),
+        java.util.Map.entry("timeline", "timeline"),
+        java.util.Map.entry("gantt", "gantt"),
+        java.util.Map.entry("flowchart", "flowchart"),
+        java.util.Map.entry("sequence", "sequence"),
+        java.util.Map.entry("state", "state"),
+        java.util.Map.entry("quadrant", "quadrant"),
+        java.util.Map.entry("matrix", "matrix"),
+        java.util.Map.entry("comparison", "comparison"),
+        java.util.Map.entry("heatmap", "heatmap"),
+        java.util.Map.entry("mathblock", "mathblock"),
+        java.util.Map.entry("journey", "journey"),
+        java.util.Map.entry("mindmap", "mindmap"),
+        java.util.Map.entry("sankey", "sankey"),
+        java.util.Map.entry("sankey-beta", "sankey-beta"),
+        java.util.Map.entry("snake", "snake"),
+        java.util.Map.entry("tensornetwork", "tensornetwork"),
+        java.util.Map.entry("young", "young"),
+        java.util.Map.entry("knot", "knot"),
+        java.util.Map.entry("dynkin", "dynkin"),
+        java.util.Map.entry("rootsystem", "rootsystem"));
+
+    /// Resolve a header token to its canonical dispatch key, case-insensitively. An unrecognised
+    /// token is returned VERBATIM so it reaches `default` — see the fail-closed note above.
+    private static String canonicalDiagramType(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        return DIAGRAM_TYPE_ALIASES.getOrDefault(raw.toLowerCase(java.util.Locale.ROOT), raw);
     }
 
     /// The optional leading marker line that names the DSL (accepted + ignored, mermaid-`sirentide`
