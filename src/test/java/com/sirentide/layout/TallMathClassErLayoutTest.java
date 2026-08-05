@@ -110,7 +110,7 @@ class TallMathClassErLayoutTest {
         ClassBox plain = new ClassBox("P", List.of(), List.of());
         ClassDiagram cd = new ClassDiagram(List.of(matrixClass, plain),
             List.of(new com.sirentide.ir.ClassRelation("M", "P",
-                com.sirentide.ir.RelationKind.ASSOCIATION, null)), null);
+                com.sirentide.ir.RelationKind.ASSOCIATION, null, null, null)), null);
 
         List<Shape> shapes = Group.flatten(ClassDiagramLayout.layout(cd, REAL).shapes());
         Rect box = tallestRect(shapes, CLASS_BOX_FILL);
