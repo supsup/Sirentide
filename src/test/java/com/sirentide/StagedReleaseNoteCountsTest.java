@@ -37,6 +37,16 @@ import org.junit.jupiter.api.Test;
 /// closing the class of stale doc counts — I am closing the one file with a merge deadline,
 /// and saying so, because a guard described as broader than it is would be the same defect
 /// this plan is about.
+///
+/// AND THE OTHER NUMBER IS GONE, NOT GUARDED. The same release-note sentence claimed "43
+/// layout classes". I could not derive 43 from anything — `layout/` holds 46 files and the
+/// per-diagram `*Layout` classes number 23 — so it was DESTATED to "every layout class"
+/// rather than restated. That is defensible (the budget is charged at the shared dispatch
+/// seam, so universal coverage is the real property) but it is not the same outcome as the
+/// type count: one number is now pinned by a test, the other simply no longer exists and
+/// nothing here would notice if a future edit reintroduced a wrong one. Recorded because a
+/// reader who sees this guard could reasonably assume the whole sentence is covered.
+/// (Fixpoint asked for this to be said out loud — sirentide/868.)
 class StagedReleaseNoteCountsTest {
 
     private static final Path STAGED_NOTE = Path.of("RELEASE-NOTE-ENTRY.md");
