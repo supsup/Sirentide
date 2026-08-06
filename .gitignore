@@ -8,3 +8,13 @@ build/
 
 # stray downloads (never commit large binaries)
 *.zip
+
+# ai-bin telemetry fallback. When the Stafficy app is unreachable, `ai` writes its
+# telemetry row to a local file instead of the server, and the path it picks walks UP
+# from the caller's cwd looking for a dir containing `ai-bin`. There is none above this
+# repo, so it falls back to cwd and drops an untracked ai-files/logs/ here.
+# An identical file blocked a brewshot land hours after the outage that wrote it
+# (brewshot/389, RFC stafficy/14117). The real fix pins STAFFICY_AI_TELEMETRY_LOG in the
+# ai-bin wrappers, which closes it for every repo at once; this line is the second layer,
+# covering anything else that ever writes under that root.
+ai-files/
