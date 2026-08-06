@@ -120,11 +120,30 @@ class CompositeStateGuardTest {
     }
 
     @Test
+    void aBraceInsideALabelOnAStateDeclarationIsLegalContent() {
+        // POSITION CLASS, mirroring the flowchart detector's rule that a sigil inside a span is
+        // content. The detector peels the `: label` tail before scanning, so a brace the author
+        // typed in a display name is text, not a block opener.
+        //
+        // THE FIXTURE MUST CARRY THE `state` KEYWORD, and my first version did not. I wrote
+        // `Idle --> Running : retry {3}`, and the mutant that scans the RAW line instead of the
+        // peeled statement SURVIVED it — because that line's keyword is `Idle`, so the keyword
+        // check rejects it whether or not the label was peeled. The fixture exercised the peel
+        // without discriminating on it. Only a statement that would otherwise satisfy BOTH
+        // conditions — keyword `state`, brace present in the raw text but ONLY inside the label —
+        // can tell the two implementations apart.
+        String src = "stateDiagram-v2\n  state Foo : phase {2}\n  [*] --> Foo\n";
+        assertTrue(src.contains("state Foo : phase {2}"),
+            "the fixture must combine the `state` keyword with a brace confined to the label, or "
+                + "it cannot discriminate the peel");
+        Diagram d = DslParser.parse(src);
+        assertInstanceOf(StateDiagram.class, d,
+            "a brace inside a LABEL must not read as a composite opener: " + describe(d));
+        assertNull(DslParser.detectUnsupportedConstruct(src));
+    }
+
+    @Test
     void aBraceInsideATransitionLabelIsLegalContent() {
-        // POSITION CLASS, mirroring the flowchart detector's rule that a sigil inside a
-        // bracketed/quoted span is content. A brace in a `: label` tail is text the author
-        // typed, not a composite opener, and a detector that scans the raw line for `{`
-        // would trip on it.
         String src = "stateDiagram-v2\n  [*] --> Idle\n  Idle --> Running : retry {3}\n";
         Diagram d = DslParser.parse(src);
         assertInstanceOf(StateDiagram.class, d,
