@@ -1071,10 +1071,20 @@ public final class DslParser {
         String[] lines = bodyStart == 0
             ? rawLines
             : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
-        if (!lines[0].strip().split("\\s+")[0].equals("flowchart")) {
-            return null;   // only the flowchart parse path is in scope for this detector
+        // CANONICALIZE the header token rather than string-matching it. `stateDiagram-v2`,
+        // `stateDiagram` and `state` are the same diagram type, and the alias table is the single
+        // place that knows so — matching the raw spelling here would silently cover one spelling of
+        // state diagrams and miss the two the Mermaid docs actually teach.
+        String rawType = lines[0].strip().split("\\s+")[0];
+        String type = canonicalDiagramType(rawType.toLowerCase(java.util.Locale.ROOT));
+        UnsupportedConstruct u;
+        if (type.equals("flowchart")) {
+            u = firstUnsupportedFlowToken(lines);
+        } else if (type.equals("state") || type.equals("statediagram")) {
+            u = firstUnsupportedStateToken(lines);
+        } else {
+            return null;   // no other parse path has a construct detector yet
         }
-        UnsupportedConstruct u = firstUnsupportedFlowToken(lines);
         if (u == null) {
             return null;
         }
@@ -2317,11 +2327,60 @@ public final class DslParser {
     /// arrows, or a state DISPLAY NAME when it does not. On a chained transition the label applies to
     /// the LAST hop only (mermaid semantics). `[*]` is the START pseudostate (id `__start__`) when it
     /// is a hop SOURCE and the END pseudostate (id `__end__`) when it is a hop TARGET; both carry an
+    /// The `state` keyword that opens a declaration or a composite block.
+    private static final String KW_STATE = "state";
+
+    /// Scan a STATE-DIAGRAM body for the first composite-state block opener (plan 8a991947 slice 2),
+    /// returning its {@link UnsupportedConstruct} with a 0-BASED `line` index into `lines`, or `null`.
+    /// Shared by {@link #detectUnsupportedConstruct} (which names it) and {@link #parseStateDiagram}
+    /// (which degrades on it) — the same two-part shape {@link #firstUnsupportedFlowToken} has.
+    ///
+    /// A composite state is `state X { … }`: nested states inside a block. This parser has no notion
+    /// of nesting, so today the opener becomes a LITERAL box labelled `state Active {`, the closing
+    /// `}` becomes a box labelled `}`, and — the part that makes this silent-WRONG rather than
+    /// silent-MISSING — the nested `[*]` fuses with the OUTER start pseudostate, emitting a
+    /// `__start__ -> Idle` transition the author never wrote. A reader cannot distinguish that
+    /// fabricated edge from an authored one.
+    ///
+    /// POSITION CLASS, mirroring the flowchart scanner's rule that a sigil inside a span is content:
+    /// detection keys on the STATEMENT, after {@link #peelLabel} removes any `: label` tail, so a
+    /// brace the author typed inside a transition label (`Idle --> Running : retry {3}`) is text and
+    /// never trips this. It also requires the `state` KEYWORD to open the statement AND a brace to be
+    /// present, so a bare `state Foo` declaration — legal Mermaid, and supported here — is untouched.
+    private static UnsupportedConstruct firstUnsupportedStateToken(String[] lines) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Peel the `: label` tail FIRST, exactly as parseStateDiagram does, so the scanner and the
+            // parser agree on what counts as the statement. Scanning the raw line instead would read a
+            // brace inside a label as a block opener.
+            String statement = peelLabel(line)[0].strip();
+            if (splitKeyword(statement)[0].equals(KW_STATE) && statement.indexOf('{') >= 0) {
+                return new UnsupportedConstruct(statement, i,
+                    "composite (nested) states are not supported: `" + cap(statement) + "` opens a "
+                        + "state block. Sirentide's state diagrams are flat, and rendering the "
+                        + "supported subset would emit boxes named after the block delimiters plus a "
+                        + "start transition into the nested state that you did not write. Flatten the "
+                        + "nested states, or split them into a second diagram.");
+            }
+        }
+        return null;
+    }
+
     /// EMPTY label so layout draws a disc/bullseye with no text. Arrow splitting reuses
     /// {@link #topLevelArrows}. Malformed rows (empty endpoint, bare `[*]`) drop, never throw
     /// (DESIGN §6). Caps {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph. Empty body → a state
     /// diagram with no states (round-trips, NOT degraded to Empty).
     private static Diagram parseStateDiagram(String[] lines, String[] header, String textColor) {
+        // Composite `state X { … }` blocks degrade the WHOLE diagram to the inert shell rather than
+        // render a misleading partial — the same call parseFlowchart makes for its own unsupported
+        // constructs, and for the same reason: the wrong part is indistinguishable from the right
+        // part. The diagnostic channel NAMES the block via detectUnsupportedConstruct.
+        if (firstUnsupportedStateToken(lines) != null) {
+            return new Empty();
+        }
         // Header `nodecolor=#hex` colours every state box (null → the built-in default); a per-state
         // trailing `#hex` (`Idle #22c55e`) overrides it, riding the same endpoint parse as flowcharts.
         String nodeColor = parseNodeColor(header);
