@@ -786,6 +786,22 @@ public final class ClassDiagramLayout {
             fwdR[0], fwdR[1], -1, canvasW, textColor);
     }
 
+    /// How far along its own leg an endpoint cardinality is drawn, given that leg's length.
+    ///
+    /// THE INVARIANT, and it is the reason this is a named function rather than a `Math.min` inline:
+    /// a cardinality must NEVER REACH THE MIDPOINT OF ITS OWN LEG, because the midpoint is exactly
+    /// where the relation's `: label` is drawn. A flat step satisfies that on a long edge and fails
+    /// on a short one — the first cut of this feature rendered a literal `0..*places` on a pair of
+    /// adjacent boxes — so the step is capped as a FRACTION of the leg and the guarantee holds at
+    /// every length rather than at the lengths that happened to be on screen.
+    ///
+    /// With `MULT_ALONG_FRACTION < 0.5` the invariant is arithmetic, not a coincidence of constants:
+    /// below the knee `along = fraction·len < len/2`, and above it `along = MULT_ALONG`, which is
+    /// smaller still because the knee is where the two are equal.
+    static double multiplicityAlong(double legLen) {
+        return Math.min(MULT_ALONG, legLen * MULT_ALONG_FRACTION);
+    }
+
     /// The UNIT NORMAL naming which side of a stroke an endpoint cardinality sits on, given that
     /// leg's direction `(fx, fy)`. Extracted and package-private because it is the part of this
     /// feature that was wrong TWICE, in opposite directions, with both cuts looking reasonable in
@@ -836,11 +852,8 @@ public final class ClassDiagramLayout {
         }
         String lbl = FONT.ellipsize(raw, MAX_MULT_W, MULT_SIZE);
         double w = FONT.runWidth(lbl, MULT_SIZE);
-        // SHORT LEGS: a flat step would walk a cardinality onto the midpoint label, which is where
-        // the `: label` lives. Cap the step at a fraction of THIS leg so the cardinality stays in
-        // its own third of the edge however close the two boxes are.
         double legLen = Math.hypot(towardX - bx, towardY - by);
-        double along = Math.min(MULT_ALONG, legLen * MULT_ALONG_FRACTION);
+        double along = multiplicityAlong(legLen);
         // WHICH SIDE OF THE STROKE, AS A RULE RATHER THAN A DERIVED VALUE. Two earlier cuts got this
         // wrong in opposite directions and both were geometrically defensible, which is the tell
         // that the side is not derivable from the edge at all:
@@ -939,6 +952,36 @@ public final class ClassDiagramLayout {
             double baseline = Math.max(asc + 2, labelBaseline);
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
+        // Cardinalities on a SELF-relation, at the two attach points this method already named:
+        // the top attach is the LEFT operand's end and the bottom is the RIGHT's. Without this a
+        // self-relation would draw its `: label` and silently drop its multiplicities — support
+        // that is real on four edge shapes and absent on the fifth, which is the partial-coverage
+        // failure this codebase keeps finding in other people's work.
+        //
+        // The two ends take OPPOSITE vertical offsets rather than the shared side the straight-edge
+        // path uses. Both loop legs run rightward out of the same border, so a shared side would put
+        // one cardinality on top of a stroke; lifting the top attach and dropping the bottom one
+        // clears both legs and separates the pair from each other.
+        emitLoopMultiplicity(shapes, r.leftMultiplicity(), x1 + MULT_ALONG,
+            ay - MULT_PERP, canvasW, textColor);
+        emitLoopMultiplicity(shapes, r.rightMultiplicity(), x1 + MULT_ALONG,
+            by + MULT_PERP + FONT.ascent(MULT_SIZE), canvasW, textColor);
+    }
+
+    /// One cardinality on a self-loop attach point, clamped in-canvas. Separate from
+    /// {@link #emitMultiplicity} because a loop's geometry is rectilinear and already known here —
+    /// there is no leg direction to project onto, and the side rule that method encodes would put
+    /// both ends on the same side of two parallel legs.
+    private static void emitLoopMultiplicity(List<Shape> shapes, String raw, double x,
+                                             double baseline, double canvasW, String textColor) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        String lbl = FONT.ellipsize(raw, MAX_MULT_W, MULT_SIZE);
+        double w = FONT.runWidth(lbl, MULT_SIZE);
+        double originX = Math.max(2, Math.min(x, canvasW - 2 - w));
+        emitLine(shapes, lbl, originX, Math.max(FONT.ascent(MULT_SIZE) + 2, baseline),
+            MULT_SIZE, false, canvasW, textColor, null);
     }
 
     /// The label BASELINES of a box's self-loop lanes, indexed by lane — computed from the FULL

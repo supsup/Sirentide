@@ -127,4 +127,39 @@ class ClassDiagramMultiplicityRenderTest {
         assertEquals(1.0, Math.hypot(diag[0], diag[1]), 1e-9, "the normal is unit length");
         assertNotEquals(0.0, diag[1], "and a diagonal leg still resolves to a real side");
     }
+
+    /// THE SHORT-LEG INVARIANT. Added because a mutant replacing the fraction cap with a flat step
+    /// SURVIVED the first version of this suite — every test above stayed green while the feature
+    /// reverted to the behaviour that rendered a literal `0..*places` on adjacent boxes. The
+    /// property is not "the constant is 0.3"; it is that a cardinality never reaches the midpoint of
+    /// its own leg, because the midpoint is where the `: label` is drawn.
+    @Test
+    void aCardinalityNeverReachesTheMidpointOfItsOwnLeg() {
+        for (double len : new double[] {1, 5, 12, 20, 30, 49.9, 50, 50.1, 120, 400, 5000}) {
+            double along = ClassDiagramLayout.multiplicityAlong(len);
+            assertTrue(along < len / 2,
+                "leg " + len + ": step " + along + " must stay short of the midpoint " + (len / 2));
+        }
+    }
+
+    /// SELF-RELATIONS TOO. A self-loop is routed by a different method that returns before the
+    /// straight-edge path, so the first cut of this feature drew a self-relation's `: label` and
+    /// silently dropped its cardinalities — support that was real on four edge shapes and absent on
+    /// the fifth. Pinned separately because no assertion above traverses that method.
+    @Test
+    void aSelfRelationDrawsItsCardinalitiesToo() {
+        String bare = "classDiagram\n  Node --> Node : parentOf\n";
+        String annotated = "classDiagram\n  Node \"1\" --> \"0..*\" Node : parentOf\n";
+        assertEquals(glyphRuns(Sirentide.render(bare)) + 2, glyphRuns(Sirentide.render(annotated)),
+            "a self-relation's two cardinalities draw two glyph runs, exactly as a straight edge's do");
+    }
+
+    /// The cap must BIND on a short leg — otherwise the invariant above is also satisfied by a flat
+    /// step that merely happens to be smaller than half of every length sampled, which is a
+    /// different and much weaker claim.
+    @Test
+    void theFractionCapActuallyBindsOnAShortLeg() {
+        assertTrue(ClassDiagramLayout.multiplicityAlong(20) < ClassDiagramLayout.multiplicityAlong(400),
+            "a 20px leg must get a SHORTER step than a 400px one — equal steps mean the cap is inert");
+    }
 }
