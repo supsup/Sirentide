@@ -71,6 +71,28 @@ public final class ClassDiagramLayout {
     /// placement and its receipts can never drift apart.
     static final double EDGE_LABEL_SIZE = 10;
 
+    /// Endpoint cardinality type size. Deliberately BELOW {@link #EDGE_LABEL_SIZE}: the relation's
+    /// `: label` names the association and the cardinality qualifies it, and UML convention sets the
+    /// multiplicity subordinate. Equal sizes read as two competing labels on one edge.
+    private static final double MULT_SIZE = 8.5;
+
+    /// Distance stepped ALONG the edge from the border point before drawing a cardinality. Must clear
+    /// the longest marker glyph, since a marker caps the border end of the leg and the cardinality
+    /// would otherwise sit inside it.
+    private static final double MULT_ALONG = 15;
+
+    /// Distance pushed PERPENDICULAR to the edge, so the cardinality clears the stroke it labels.
+    private static final double MULT_PERP = 6;
+
+    /// Ceiling on {@link #MULT_ALONG} as a fraction of the leg being annotated, so that on a SHORT
+    /// edge the cardinality stays in its own end-third instead of walking onto the midpoint label.
+    private static final double MULT_ALONG_FRACTION = 0.3;
+
+    /// Ellipsize ceiling for a cardinality. The parser already bounds one at 64 code points and
+    /// shape-filters it, and the longest real UML idiom (`0..* {ordered, nonunique}`) is 25 — so this
+    /// is a drawing belt, not the semantic gate.
+    private static final double MAX_MULT_W = 72;
+
     // Marker geometry (px). Length = how far the marker extends back from the box border along the
     // edge; half-width = its perpendicular half-extent. Distinct per family so the shapes read clearly.
     private static final double TRI_LEN = 14;
@@ -749,6 +771,111 @@ public final class ClassDiagramLayout {
             double originX = Math.max(2, Math.min(midX - w / 2, canvasW - 2 - w));
             emitLine(shapes, lbl, originX, midY, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
+        // UML multiplicities, at the ENDPOINT each one annotates (plan 35bccb97). Placed from the
+        // BORDER POINT and the same onward point the marker already derived its direction from, so
+        // the cardinality rides the leg it belongs to whether or not the route bends — no second
+        // derivation of the geometry, which is the failure this file already paid for once
+        // (Marlow sirentide/768 F1).
+        // The FORWARD direction of each leg, both in left→right traversal order, so the one
+        // perpendicular derived inside names the same side of the stroke at both ends.
+        double[] fwdL = unit(lNextX - lb[0], lNextY - lb[1]);
+        double[] fwdR = unit(rb[0] - rPrevX, rb[1] - rPrevY);
+        emitMultiplicity(shapes, r.leftMultiplicity(), lb[0], lb[1], lNextX, lNextY,
+            fwdL[0], fwdL[1], 1, canvasW, textColor);
+        emitMultiplicity(shapes, r.rightMultiplicity(), rb[0], rb[1], rPrevX, rPrevY,
+            fwdR[0], fwdR[1], -1, canvasW, textColor);
+    }
+
+    /// How far along its own leg an endpoint cardinality is drawn, given that leg's length.
+    ///
+    /// THE INVARIANT, and it is the reason this is a named function rather than a `Math.min` inline:
+    /// a cardinality must NEVER REACH THE MIDPOINT OF ITS OWN LEG, because the midpoint is exactly
+    /// where the relation's `: label` is drawn. A flat step satisfies that on a long edge and fails
+    /// on a short one — the first cut of this feature rendered a literal `0..*places` on a pair of
+    /// adjacent boxes — so the step is capped as a FRACTION of the leg and the guarantee holds at
+    /// every length rather than at the lengths that happened to be on screen.
+    ///
+    /// With `MULT_ALONG_FRACTION < 0.5` the invariant is arithmetic, not a coincidence of constants:
+    /// below the knee `along = fraction·len < len/2`, and above it `along = MULT_ALONG`, which is
+    /// smaller still because the knee is where the two are equal.
+    static double multiplicityAlong(double legLen) {
+        return Math.min(MULT_ALONG, legLen * MULT_ALONG_FRACTION);
+    }
+
+    /// The UNIT NORMAL naming which side of a stroke an endpoint cardinality sits on, given that
+    /// leg's direction `(fx, fy)`. Extracted and package-private because it is the part of this
+    /// feature that was wrong TWICE, in opposite directions, with both cuts looking reasonable in
+    /// the source — so it is pinned directly rather than only through a render.
+    ///
+    /// The contract is stated in SCREEN space, deliberately, because the thing it must avoid is
+    /// stated in screen space: the relation's `: label` offsets by a flat `-3` in y, so it is above
+    /// the stroke whichever way the edge runs. Hence:
+    ///
+    ///   - the normal always points DOWN-screen (`y > 0`), putting the cardinality opposite the label;
+    ///   - for a VERTICAL leg the normal is horizontal, so `y == 0` and the tie is broken RIGHTWARD
+    ///     — on a vertical edge the label sits ON the stroke, and either side clears it, so the only
+    ///     requirement is that the choice be deterministic and the same at both ends.
+    ///
+    /// Both endpoints of one relation call this with their own leg direction and therefore agree by
+    /// RULE. They do not agree by shared derivation, which is what the first cut assumed and what
+    /// made its failure invisible on a symmetric edge.
+    static double[] multiplicitySide(double fx, double fy) {
+        double px = -fy;
+        double py = fx;
+        if (py < 0 || (py == 0 && px < 0)) {
+            px = -px;
+            py = -py;
+        }
+        return new double[] {px, py};
+    }
+
+    /// Draw ONE endpoint cardinality near the border point it annotates, stepped {@link #MULT_ALONG}
+    /// along the edge (clear of the box border and of any marker glyph, which caps at
+    /// {@code markerLength} ≤ {@link #MULT_ALONG}) and pushed {@link #MULT_PERP} off the line so the
+    /// text never sits ON the stroke it labels.
+    ///
+    /// THE OFFSET IS PERPENDICULAR, NOT VERTICAL, and that is the whole reason this is a method
+    /// rather than two inline y-nudges. The midpoint `: label` above lifts by a flat `-3` in y, which
+    /// is right for a horizontal edge and puts the text straight through a VERTICAL one. Endpoint
+    /// cardinalities land on both, so the offset rotates with the edge: `perp = (dy, −dx)` reads
+    /// ABOVE a rightward edge and to the RIGHT of a downward edge.
+    ///
+    /// No reservation pass: this matches the midpoint label's own discipline on non-self edges, which
+    /// clamps into the canvas rather than growing it. A cardinality is bounded at parse — 64 code
+    /// points ceiling, shape-filtered to `term` or `term..term` — so it cannot be the thing that
+    /// overruns a canvas the way an arbitrary MATH label can.
+    private static void emitMultiplicity(List<Shape> shapes, String raw, double bx, double by,
+                                         double towardX, double towardY, double fx, double fy,
+                                         double sign, double canvasW, String textColor) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        String lbl = FONT.ellipsize(raw, MAX_MULT_W, MULT_SIZE);
+        double w = FONT.runWidth(lbl, MULT_SIZE);
+        double legLen = Math.hypot(towardX - bx, towardY - by);
+        double along = multiplicityAlong(legLen);
+        // WHICH SIDE OF THE STROKE, AS A RULE RATHER THAN A DERIVED VALUE. Two earlier cuts got this
+        // wrong in opposite directions and both were geometrically defensible, which is the tell
+        // that the side is not derivable from the edge at all:
+        //
+        //   cut 1 — perp from each endpoint's own OUTWARD direction. The two ends face opposite
+        //           ways, so perp flipped sign between them and one relation's cardinalities
+        //           straddled the line; the left one landed back on the `: label`.
+        //   cut 2 — perp from ONE forward direction for both ends. Consistent, and consistently
+        //           WRONG on this diagram: forward here points leftward, so both went ABOVE — which
+        //           is exactly where the label lives.
+        //
+        // The label's own offset is a flat `-3` in SCREEN y, not in edge space: it is above the
+        // stroke whichever way the edge runs. So the cardinality's side must be stated in screen
+        // space too. Take `perp = (−fy, fx)` and orient it DOWNWARD; for a vertical edge (perp
+        // horizontal, and the label sits ON the stroke) orient it RIGHTWARD instead. Both ends then
+        // agree because they follow the same rule, not because their inputs happened to match.
+        double[] side = multiplicitySide(fx, fy);
+        double ax = bx + fx * along * sign + side[0] * MULT_PERP;
+        double ay = by + fy * along * sign + side[1] * MULT_PERP;
+        double originX = Math.max(2, Math.min(ax - w / 2, canvasW - 2 - w));
+        double baseline = Math.max(FONT.ascent(MULT_SIZE) + 2, ay + FONT.ascent(MULT_SIZE) * 0.35);
+        emitLine(shapes, lbl, originX, baseline, MULT_SIZE, false, canvasW, textColor, null);
     }
 
     /// Routes a SELF-relation (`A <|-- A`) as a deterministic rectilinear LOOP off the box's RIGHT edge,
@@ -825,6 +952,36 @@ public final class ClassDiagramLayout {
             double baseline = Math.max(asc + 2, labelBaseline);
             emitLine(shapes, lbl, originX, baseline, EDGE_LABEL_SIZE, false, canvasW, textColor, math);
         }
+        // Cardinalities on a SELF-relation, at the two attach points this method already named:
+        // the top attach is the LEFT operand's end and the bottom is the RIGHT's. Without this a
+        // self-relation would draw its `: label` and silently drop its multiplicities — support
+        // that is real on four edge shapes and absent on the fifth, which is the partial-coverage
+        // failure this codebase keeps finding in other people's work.
+        //
+        // The two ends take OPPOSITE vertical offsets rather than the shared side the straight-edge
+        // path uses. Both loop legs run rightward out of the same border, so a shared side would put
+        // one cardinality on top of a stroke; lifting the top attach and dropping the bottom one
+        // clears both legs and separates the pair from each other.
+        emitLoopMultiplicity(shapes, r.leftMultiplicity(), x1 + MULT_ALONG,
+            ay - MULT_PERP, canvasW, textColor);
+        emitLoopMultiplicity(shapes, r.rightMultiplicity(), x1 + MULT_ALONG,
+            by + MULT_PERP + FONT.ascent(MULT_SIZE), canvasW, textColor);
+    }
+
+    /// One cardinality on a self-loop attach point, clamped in-canvas. Separate from
+    /// {@link #emitMultiplicity} because a loop's geometry is rectilinear and already known here —
+    /// there is no leg direction to project onto, and the side rule that method encodes would put
+    /// both ends on the same side of two parallel legs.
+    private static void emitLoopMultiplicity(List<Shape> shapes, String raw, double x,
+                                             double baseline, double canvasW, String textColor) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        String lbl = FONT.ellipsize(raw, MAX_MULT_W, MULT_SIZE);
+        double w = FONT.runWidth(lbl, MULT_SIZE);
+        double originX = Math.max(2, Math.min(x, canvasW - 2 - w));
+        emitLine(shapes, lbl, originX, Math.max(FONT.ascent(MULT_SIZE) + 2, baseline),
+            MULT_SIZE, false, canvasW, textColor, null);
     }
 
     /// The label BASELINES of a box's self-loop lanes, indexed by lane — computed from the FULL
