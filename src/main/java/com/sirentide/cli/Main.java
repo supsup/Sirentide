@@ -74,11 +74,12 @@ public final class Main {
     /// missing fence, bad fence) — those are reported on `err` and reflected in the return code.
     static int run(String[] args, InputStream in, PrintStream out, PrintStream err) throws IOException {
         if (args.length == 0) {
-            // M0 legacy path: single-shot stdin -> stdout DSL render, no diagnostics. Routed
-            // through writeOutput so the stdout error check is shared (one write seam, review
-            // sirentide/471 stream-error correction): a broken stdout consumer is now exit 2,
-            // not a silent 0 — the SVG bytes themselves are unchanged.
-            return writeOutput(renderRawDsl(in), null, out, err);
+            // M0 legacy path: single-shot stdin -> stdout DSL render. Routed through
+            // writeRawDslOrRefuse so a source that does NOT render is a loud exit 1 rather than a
+            // blank SVG at exit 0 (plan 8a991947) — and through writeOutput beneath it so the
+            // stdout error check stays shared (one write seam, review sirentide/471): a broken
+            // stdout consumer is exit 2. A successful bake's SVG bytes are unchanged.
+            return writeRawDslOrRefuse(renderRawDsl(in), null, out, err);
         }
         if (!"render".equals(args[0])) {
             err.print(USAGE);
@@ -101,9 +102,10 @@ public final class Main {
 
         String source = args[1];
         if ("-".equals(source)) {
-            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction, no
-            // diagnostics — deliberately identical to the args.length == 0 path above.
-            return writeOutput(renderRawDsl(in), outPath, out, err);
+            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction —
+            // deliberately identical to the args.length == 0 path above, INCLUDING its refusal.
+            // Fixing only one arm would make that stated equivalence false.
+            return writeRawDslOrRefuse(renderRawDsl(in), outPath, out, err);
         }
 
         String markdown;
@@ -146,10 +148,38 @@ public final class Main {
     /// The M0 read shape, factored out so both the legacy no-args path and the `render -` alias
     /// share it byte-for-byte. Bound to the parser's source cap (+1 to detect overflow): a runaway
     /// stdin degrades to the inert shell in `render()` rather than OOMing on `readAllBytes`.
-    private static String renderRawDsl(InputStream in) throws IOException {
+    ///
+    /// Renders through the DIAGNOSTICS api so the caller can refuse a non-render, rather than
+    /// through the plain `render()` which cannot distinguish "baked a blank diagram" from "did not
+    /// bake". See {@link #writeRawDslOrRefuse} for why.
+    private static RenderResult renderRawDsl(InputStream in) throws IOException {
         byte[] bytes = in.readNBytes(DslParser.MAX_SOURCE_BYTES + 1);
         String dsl = new String(bytes, StandardCharsets.UTF_8);
-        return Sirentide.render(dsl);
+        return tryRenderWithDiagnostics(dsl);
+    }
+
+    /// Write a raw-DSL bake, or refuse it LOUDLY — the truthful render-check posture the
+    /// `render <file.md>` path has always had (review sirentide/471 B3), now applied to the two
+    /// raw-DSL arms that skipped it.
+    ///
+    /// MEASURED BEFORE THIS EXISTED: `notadiagram` and a composite-state diagram each produced
+    /// exit 0, an 85-byte `width="0" height="0"` shell, and EMPTY stderr. A caller checking the
+    /// exit code was told the bake succeeded and handed a valid, blank SVG. That is the same
+    /// claim the fence path already refuses to make.
+    ///
+    /// THE PREDICATE IS THE OUTCOME, NOT THE IR TYPE, and that is load-bearing rather than
+    /// stylistic. A BLANK source parses to the `Empty` IR and reports `OK` — baking nothing from
+    /// nothing is an honest success — while `flowchart TD` with no body is a real `Flowchart`,
+    /// also OK. Keying on `Empty` would refuse a legitimate blank input; only the diagnostic
+    /// channel separates "nothing to draw" from "could not read this".
+    private static int writeRawDslOrRefuse(RenderResult result, String outPath,
+                                           PrintStream out, PrintStream err) {
+        if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
+            String reason = result == null ? "renderer failure" : result.diagnostics().message();
+            err.println("sirentide: diagram did not render — " + reason + " (nothing written)");
+            return 1;
+        }
+        return writeOutput(result.svg(), outPath, out, err);
     }
 
     /// Renders via the diagnostics API, or returns null on an unexpected throw — the same
