@@ -53,8 +53,17 @@ public final class Main {
     private static final String USAGE = """
         Usage:
           sirentide                             Read a DSL source from stdin, bake to stdout (legacy M0 shape).
-          sirentide render <file.md> [-o PATH]  Render the first ```sirentide fence the /docs bake would capture.
-          sirentide render - [-o PATH]          Same as the legacy shape (raw DSL on stdin), verb spelling.
+          sirentide render <file.md> [flags]    Render the first ```sirentide fence the /docs bake would capture.
+          sirentide render - [flags]            Same as the legacy shape (raw DSL on stdin), verb spelling.
+
+        Flags:
+          -o PATH          write the SVG here instead of stdout (atomic replace)
+          --png PATH       ALSO screenshot the baked SVG to a PNG, for a local file:// review
+                           artifact in one step instead of a second manual pass
+          --brewshot PATH  the BrewShot jar --png shells out to; or set SIRENTIDE_BREWSHOT_JAR.
+                           Sirentide does NOT bundle it -- same posture as the math backend, the
+                           host supplies the tool -- so --png without it is a loud usage error,
+                           never a silent skip.
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written.
@@ -91,12 +100,38 @@ public final class Main {
             err.println("sirentide: 'render' needs a file path (or '-' for stdin)");
             return 2;
         }
+        // Flag loop, replacing the old exact-arity check. The two shapes that check accepted --
+        // `render <file>` and `render <file> -o OUT` -- still parse identically; anything it
+        // rejected still exits 2 with the same message, which is what the arity tests pin.
         String outPath = null;
-        if (args.length == 4 && "-o".equals(args[2])) {
-            outPath = args[3];
-        } else if (args.length != 2) {
+        String pngPath = null;
+        String brewshotJar = System.getenv(BREWSHOT_JAR_ENV);
+        for (int i = 2; i < args.length; i++) {
+            String flag = args[i];
+            if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)) {
+                err.print(USAGE);
+                err.println("sirentide: bad arguments after the file path");
+                return 2;
+            }
+            if (i + 1 >= args.length) {
+                err.print(USAGE);
+                err.println("sirentide: " + flag + " needs a value");
+                return 2;
+            }
+            String value = args[++i];
+            switch (flag) {
+                case "-o" -> outPath = value;
+                case "--png" -> pngPath = value;
+                default -> brewshotJar = value;
+            }
+        }
+        // RESOLVE THE SCREENSHOT BACKEND BEFORE RENDERING, so a missing jar costs the author an
+        // instant usage error instead of a render they then discover produced no PNG.
+        if (pngPath != null && (brewshotJar == null || brewshotJar.isBlank())) {
             err.print(USAGE);
-            err.println("sirentide: bad arguments after the file path");
+            err.println("sirentide: --png needs the BrewShot jar: pass --brewshot PATH or set "
+                + BREWSHOT_JAR_ENV + ". Sirentide does not bundle it -- same posture as the math"
+                + " backend, the host supplies the tool.");
             return 2;
         }
 
@@ -142,7 +177,76 @@ public final class Main {
                 + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
             return 1;
         }
-        return writeOutput(result.svg(), outPath, out, err);
+        int code = writeOutput(result.svg(), outPath, out, err);
+        if (code != 0 || pngPath == null) {
+            return code;
+        }
+        return writePng(result.svg(), pngPath, brewshotJar, err);
+    }
+
+    /// Environment variable naming the BrewShot jar, so an author sets it once per shell instead of
+    /// passing `--brewshot` on every render-check. `--brewshot` overrides it.
+    static final String BREWSHOT_JAR_ENV = "SIRENTIDE_BREWSHOT_JAR";
+
+    /// Screenshot the baked SVG to a PNG (plan 6eb098d6 slice B).
+    ///
+    /// WHY SHELL OUT RATHER THAN DEPEND. Sirentide does not take BrewShot as a dependency, for the
+    /// same reason it does not take LatteX: `build.gradle.kts` states that the host supplies the
+    /// heavy tools and "Sirentide never depends on LatteX at runtime". A screenshot backend is the
+    /// same shape of thing -- it drags in a browser -- so it is located at RUN time and its absence
+    /// is a loud usage error, never a silent skip. A `--png` that quietly produced no PNG would be
+    /// this project's signature defect: a surface reporting success while establishing nothing.
+    ///
+    /// ORDER MATTERS. This runs only after {@link #writeOutput} returned 0, so the SVG is on disk
+    /// (or stdout) before the screenshot is attempted, and a render that did NOT happen -- exit 1,
+    /// nothing written -- never reaches here. The PNG can therefore never be newer evidence than
+    /// the SVG it claims to depict.
+    private static int writePng(String svg, String pngPath, String brewshotJar, PrintStream err) {
+        Path html = null;
+        try {
+            if (!Files.isReadable(Path.of(brewshotJar))) {
+                err.println("sirentide: BrewShot jar not readable: '" + brewshotJar + "'");
+                return 2;
+            }
+            // A minimal wrapper, no external references: BrewShot loads it over file:// and the SVG
+            // is inline, so nothing is fetched and the shot cannot depend on network state.
+            html = Files.createTempFile("sirentide-render-", ".html");
+            Files.writeString(html, "<!doctype html><html><body style=\"margin:0;background:#fff\">"
+                + svg + "</body></html>", StandardCharsets.UTF_8);
+            Process p = new ProcessBuilder("java", "-jar", brewshotJar,
+                html.toAbsolutePath().toString(), "-o", pngPath)
+                .redirectErrorStream(true).start();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exit = p.waitFor();
+            if (exit != 0) {
+                err.println("sirentide: BrewShot failed (exit " + exit + "): " + output.strip());
+                return 2;
+            }
+            // TRUST THE FILE, NOT THE EXIT CODE. A zero exit from a subprocess is a claim about the
+            // subprocess, not about the artifact -- and a zero-byte PNG at exit 0 is exactly the
+            // shape of failure this CLI already refuses for blank SVGs.
+            Path png = Path.of(pngPath);
+            if (!Files.isRegularFile(png) || Files.size(png) == 0) {
+                err.println("sirentide: BrewShot exited 0 but wrote no PNG at '" + pngPath + "'");
+                return 2;
+            }
+            return 0;
+        } catch (IOException e) {
+            err.println("sirentide: cannot write PNG '" + pngPath + "': " + e.getMessage());
+            return 2;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            err.println("sirentide: interrupted while screenshotting");
+            return 2;
+        } finally {
+            if (html != null) {
+                try {
+                    Files.deleteIfExists(html);
+                } catch (IOException ignored) {
+                    // A leftover temp file is not worth failing a successful render over.
+                }
+            }
+        }
     }
 
     /// The M0 read shape, factored out so both the legacy no-args path and the `render -` alias
