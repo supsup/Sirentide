@@ -2336,11 +2336,33 @@ public final class DslParser {
     /// (which degrades on it) — the same two-part shape {@link #firstUnsupportedFlowToken} has.
     ///
     /// A composite state is `state X { … }`: nested states inside a block. This parser has no notion
-    /// of nesting, so today the opener becomes a LITERAL box labelled `state Active {`, the closing
-    /// `}` becomes a box labelled `}`, and — the part that makes this silent-WRONG rather than
-    /// silent-MISSING — the nested `[*]` fuses with the OUTER start pseudostate, emitting a
-    /// `__start__ -> Idle` transition the author never wrote. A reader cannot distinguish that
-    /// fabricated edge from an authored one.
+    /// of nesting, so before this guard the opener became a LITERAL box labelled `state Active {`,
+    /// the closing `}` became a box labelled `}`, and — the part that makes this silent-WRONG
+    /// rather than silent-MISSING — the nested `[*]` fused with the OUTER start pseudostate,
+    /// emitting a start transition the author never wrote.
+    ///
+    /// WHY THAT FORCES DEGRADING THE WHOLE DIAGRAM RATHER THAN RENDERING THE SUPPORTED SUBSET, and
+    /// this is Fixpoint's argument from the review (sirentide/874), sharper than the one I first
+    /// wrote here: the fabricated edge sits BESIDE a structurally identical AUTHORED edge from the
+    /// SAME source node. Measured on the pre-guard parser:
+    ///
+    ///     stateDiagram-v2          edges: __start__ -> Idle      (AUTHORED)
+    ///       [*] --> Idle                  __start__ -> Running   (FABRICATED)
+    ///       state Active {                Idle -> Active         (AUTHORED)
+    ///         [*] --> Running
+    ///       }
+    ///       Idle --> Active
+    ///
+    /// Same shape, same style, same origin node — so a reader has no positional or syntactic cue to
+    /// tell the invented edge from the real one. That is what makes "render what we understand and
+    /// drop the rest" wrong HERE specifically, rather than merely inadvisable in general: the
+    /// surviving output is not a subset of the author's diagram, it is a different diagram that
+    /// looks equally authored.
+    ///
+    /// (Note the fabricated edge is whichever transition the NESTED `[*]` opens; in the fixture used
+    /// by {@code CompositeStateGuardTest} the nesting targets `Idle`, so there it is
+    /// `__start__ -> Idle` that is invented and `__start__ -> Active` that is authored. The identity
+    /// of the invented edge moves with the fixture — the property does not.)
     ///
     /// POSITION CLASS, mirroring the flowchart scanner's rule that a sigil inside a span is content:
     /// detection keys on the STATEMENT, after {@link #peelLabel} removes any `: label` tail, so a
