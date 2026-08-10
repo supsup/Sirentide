@@ -44,14 +44,35 @@ class RenderPngTest {
     private record Captured(int exitCode, String out, String err) {}
 
     private Captured run(String... args) throws IOException {
+        return runWithStdin("", args);
+    }
+
+    /// The same driver with a REAL stdin body.
+    ///
+    /// Its absence is why sirentide/905 survived this file. Every case above fed
+    /// `new ByteArrayInputStream(new byte[0])`, so no test here could drive `render -` with actual
+    /// DSL — and a blank stdin renders to the `Empty` IR, reports OK, and writes an empty SVG at
+    /// exit 0, which is indistinguishable from the defect. The fixture could not express the
+    /// failing case, so the seven tests below it were all honestly green while `render - --png`
+    /// silently produced nothing. A narrow fixture does not announce itself as narrow.
+    private Captured runWithStdin(String stdin, String... args) throws IOException {
         ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
         ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
-        int code = Main.run(args, new ByteArrayInputStream(new byte[0]),
+        int code = Main.run(args,
+            new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)),
             new PrintStream(outBuf, true, StandardCharsets.UTF_8),
             new PrintStream(errBuf, true, StandardCharsets.UTF_8));
         return new Captured(code, outBuf.toString(StandardCharsets.UTF_8),
             errBuf.toString(StandardCharsets.UTF_8));
     }
+
+    /// Raw DSL for the stdin arm — no fence, since `render -` does no fence extraction.
+    private static final String RAW_DSL = """
+        classDiagram
+          class Order {
+            +int id
+          }
+        """;
 
     private Path md() throws IOException {
         Path p = tmp.resolve("doc.md");
@@ -149,5 +170,60 @@ class RenderPngTest {
         Captured c = run("render", md().toString(), "-o", svg.toString(), "--brewshot", "");
         assertEquals(0, c.exitCode(), c.err());
         assertTrue(Files.size(svg) > 0);
+    }
+
+    // ---- the stdin arm: sirentide/905 -------------------------------------------------------
+
+    /// THE REGRESSION. `render -` used to `return` before the write tail, so `--png` on stdin was
+    /// accepted, validated, and then silently ignored: exit 0, an SVG, and no PNG.
+    ///
+    /// This is LOAD-BEARING and cheap, and it needs no real BrewShot jar. On the old code the
+    /// unreadable-jar guard was unreachable from this arm, so the run exited 0; reaching the guard
+    /// at all is the whole property under test. Asserting the REFUSAL rather than a successful
+    /// screenshot is what keeps it runnable in CI — and it discriminates just as sharply, because
+    /// exit 0 here is precisely the defect.
+    @Test
+    void stdinArmReachesTheScreenshotBackend_pngOnStdinCannotSilentlyExitZero() throws IOException {
+        Path svg = tmp.resolve("out.svg");
+        Path png = tmp.resolve("out.png");
+        Captured c = runWithStdin(RAW_DSL, "render", "-", "-o", svg.toString(),
+            "--png", png.toString(), "--brewshot", tmp.resolve("does-not-exist.jar").toString());
+
+        assertEquals(2, c.exitCode(),
+            "exit 0 here IS the defect: it means the stdin arm returned before writePng, so every "
+                + "--png guard sat downstream of a return. stderr: " + c.err());
+        assertTrue(c.err().contains("not readable"), c.err());
+        assertFalse(Files.exists(png), "no PNG, and the failure said so");
+        assertTrue(Files.size(svg) > 0,
+            "the SVG still lands — the render genuinely succeeded, exactly as on the file arm");
+    }
+
+    /// The other half: with a backend that never gets consulted, the stdin arm must still behave
+    /// like the file arm. Without this, the test above could pass on an implementation that simply
+    /// refuses `--png` on stdin outright, which was the OTHER option offered in review and is a
+    /// different contract from the one this branch chose.
+    @Test
+    void stdinArmStillRendersNormallyWhenPngIsNotAsked() throws IOException {
+        Path svg = tmp.resolve("out.svg");
+        Captured c = runWithStdin(RAW_DSL, "render", "-", "-o", svg.toString(), "--brewshot", "");
+        assertEquals(0, c.exitCode(), c.err());
+        assertTrue(Files.size(svg) > 0);
+    }
+
+    /// The equivalence the original comment ASSERTED, now pinned as a test. Both raw-DSL arms —
+    /// no-args and `render -` — must refuse an unrenderable source identically. This is the
+    /// property that made the old `return` look safe; pinning it means the shared seam can be
+    /// refactored without the claim quietly going stale again.
+    @Test
+    void bothRawDslArmsRefuseAnUnrenderableSourceIdentically() throws IOException {
+        String garbage = "!!! not a diagram !!!";
+        Captured noArgs = runWithStdin(garbage);
+        Captured dashArm = runWithStdin(garbage, "render", "-");
+
+        assertEquals(1, noArgs.exitCode(), noArgs.err());
+        assertEquals(noArgs.exitCode(), dashArm.exitCode(),
+            "the two raw-DSL arms must refuse with the same exit code");
+        assertEquals(noArgs.err(), dashArm.err(),
+            "and with the same diagnostic — they share one refusal seam by construction");
     }
 }

@@ -136,52 +136,70 @@ public final class Main {
         }
 
         String source = args[1];
+        String svg;
         if ("-".equals(source)) {
-            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction —
-            // deliberately identical to the args.length == 0 path above, INCLUDING its refusal.
-            // Fixing only one arm would make that stated equivalence false.
-            return writeRawDslOrRefuse(renderRawDsl(in), outPath, out, err);
-        }
+            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction.
+            // The REFUSAL is shared with the args.length == 0 path above by CONSTRUCTION — both go
+            // through rawDslSvgOrNull, so the stated equivalence is enforced by the single seam
+            // rather than asserted in a comment that a later edit can silently falsify.
+            //
+            // The TAIL is deliberately not shared with that path, and cannot diverge from it: the
+            // no-args shape parses no flags at all, so there is no input it can express on which
+            // `-o` or `--png` handling could differ. Returning here instead — which is what this
+            // arm did until sirentide/905 — put writeOutput AND writePng downstream of a return,
+            // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
+            // written no PNG: verbatim the failure {@link #writePng} names as this project's
+            // signature defect.
+            svg = rawDslSvgOrNull(renderRawDsl(in), err);
+            if (svg == null) {
+                return 1;
+            }
+        } else {
 
-        String markdown;
-        try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
-            byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
-            if (bytes.length > MAX_MARKDOWN_BYTES) {
-                err.println("sirentide: cannot read '" + source + "': larger than the "
-                    + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+            String markdown;
+            try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
+                byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
+                if (bytes.length > MAX_MARKDOWN_BYTES) {
+                    err.println("sirentide: cannot read '" + source + "': larger than the "
+                        + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+                    return 2;
+                }
+                markdown = new String(bytes, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
                 return 2;
             }
-            markdown = new String(bytes, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
-            return 2;
+
+            String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
+            if (fenceBody == null) {
+                err.println("sirentide: no ```sirentide fence found in '" + source + "'"
+                    + " (a fence nested inside another fence is not captured — matching the /docs bake)");
+                return 2;
+            }
+
+            // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
+            // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
+            // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
+            // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
+            // /docs does not produce. The defensive catch mirrors the converter's tryRender
+            // (RuntimeException + StackOverflowError -> degrade, never a crash).
+            RenderResult result = tryRenderWithDiagnostics(fenceBody);
+            if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
+                String reason = result == null ? "renderer failure" : result.diagnostics().message();
+                err.println("sirentide: diagram did not render — " + reason
+                    + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
+                return 1;
+            }
+            svg = result.svg();
         }
 
-        String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
-        if (fenceBody == null) {
-            err.println("sirentide: no ```sirentide fence found in '" + source + "'"
-                + " (a fence nested inside another fence is not captured — matching the /docs bake)");
-            return 2;
-        }
-
-        // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
-        // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
-        // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
-        // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
-        // /docs does not produce. The defensive catch mirrors the converter's tryRender
-        // (RuntimeException + StackOverflowError -> degrade, never a crash).
-        RenderResult result = tryRenderWithDiagnostics(fenceBody);
-        if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
-            String reason = result == null ? "renderer failure" : result.diagnostics().message();
-            err.println("sirentide: diagram did not render — " + reason
-                + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
-            return 1;
-        }
-        int code = writeOutput(result.svg(), outPath, out, err);
+        // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
+        // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
+        int code = writeOutput(svg, outPath, out, err);
         if (code != 0 || pngPath == null) {
             return code;
         }
-        return writePng(result.svg(), pngPath, brewshotJar, err);
+        return writePng(svg, pngPath, brewshotJar, err);
     }
 
     /// Environment variable naming the BrewShot jar, so an author sets it once per shell instead of
@@ -278,12 +296,27 @@ public final class Main {
     /// channel separates "nothing to draw" from "could not read this".
     private static int writeRawDslOrRefuse(RenderResult result, String outPath,
                                            PrintStream out, PrintStream err) {
+        String svg = rawDslSvgOrNull(result, err);
+        if (svg == null) {
+            return 1;
+        }
+        return writeOutput(svg, outPath, out, err);
+    }
+
+    /// THE SINGLE RAW-DSL REFUSAL SEAM, shared by the no-args legacy path and `render -`.
+    ///
+    /// It exists so the two arms cannot drift: before sirentide/905 their equivalence was asserted
+    /// only by a comment, and the `render -` arm was changed (to reach `-o`) without the comment
+    /// becoming false, which is exactly how the unreachable-`--png` defect got in. Extracting the
+    /// predicate makes "these two refuse identically" a property of the code rather than a claim
+    /// about it. Returns the SVG on an honest bake, or null having already reported the reason.
+    private static String rawDslSvgOrNull(RenderResult result, PrintStream err) {
         if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
             String reason = result == null ? "renderer failure" : result.diagnostics().message();
             err.println("sirentide: diagram did not render — " + reason + " (nothing written)");
-            return 1;
+            return null;
         }
-        return writeOutput(result.svg(), outPath, out, err);
+        return result.svg();
     }
 
     /// Renders via the diagnostics API, or returns null on an unexpected throw — the same
