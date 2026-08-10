@@ -62,7 +62,8 @@ class ClassDiagramMultiplicityRenderTest {
         assertTrue(withLabel > 0, "a rendered class diagram draws SOMETHING: " + withLabel);
         assertEquals(withoutLabel + 1, withLabel,
             "dropping the `: places` label must remove exactly one glyph run — if this fails the "
-                + "counter is not measuring drawn text and every other assertion here is vacuous");
+                + "counter is measuring something other than drawn glyphs, and the exact-delta "
+                + "assertions below are anchored to a proxy rather than to text");
     }
 
     @Test
