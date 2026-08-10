@@ -104,10 +104,32 @@ application {
     mainClass = "com.sirentide.cli.Main"
 }
 
-val releaseSourceRevision = providers.exec {
-    workingDir(layout.projectDirectory)
-    commandLine("git", "rev-parse", "--verify", "HEAD^{commit}")
-}.standardOutput.asText.map { it.trim() }
+// THE REVISION MAY BE SUPPLIED BY THE CALLER, because the build container has no git and
+// cannot get one. `.dockerignore` excludes `.git`, so the Docker build context contains no
+// repository at all — installing git in the build stage would NOT fix it, there is nothing
+// for git to read. Since 2026-07-30 (d7c0521, the 0.5.0 cut) `docker build` has therefore
+// failed outright on `:jar`:
+//
+//     Error while evaluating property 'sirentideSourceRevision' of task ':jar'
+//        > A problem occurred starting process 'command 'git''
+//
+// Nothing rebuilt the image after that commit, so nobody hit it: the newest sirentide image
+// on the host dates from THREE DAYS BEFORE the break.
+//
+// THE 40-HEX CHECK BELOW IS UNCHANGED AND IS THE POINT. The alternative fix — degrading the
+// revision to "unknown" when git is absent — would defeat a deliberate release-integrity
+// guarantee: an artifact must name the exact tree it was cut from. This keeps that guarantee
+// and moves only the SOURCE of the value, from "shell out to git" to "git, or whoever already
+// knows". An override that is not a real 40-hex commit still fails the build.
+val releaseSourceRevision = providers.gradleProperty("sirentideSourceRevision")
+    .orElse(providers.environmentVariable("SIRENTIDE_SOURCE_REVISION"))
+    .orElse(
+        providers.exec {
+            workingDir(layout.projectDirectory)
+            commandLine("git", "rev-parse", "--verify", "HEAD^{commit}")
+        }.standardOutput.asText
+    )
+    .map { it.trim() }
 
 // Make the plain library jar directly launchable: `java -jar build/libs/sirentide-<ver>.jar`.
 tasks.jar {
