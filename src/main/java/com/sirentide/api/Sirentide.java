@@ -331,6 +331,14 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
+            // Same honesty gate as renderWithDiagnostics (plan 650d6425): a written body that
+            // produced no nodes and no edges is a degrade, not a success. The frames stay
+            // byte-identical to renderFrames (the single base frame — an empty scene carries no
+            // seq anchors, so this is exactly the deck renderFrames returns).
+            Diagnostics emptied = emptiedGraphDiagnostics(ir, dsl);
+            if (emptied != null) {
+                return new FramesResult(java.util.List.of(base), emptied);
+            }
 
             java.util.TreeSet<Integer> seqs = new java.util.TreeSet<>();
             collectSeqs(laid.shapes(), seqs);
@@ -583,6 +591,13 @@ public final class Sirentide {
                         + "Check the diagram type on the first line.",
                     -1, "parse resolved to the Empty degrade target for non-blank input"));
             }
+            // A body the author WROTE that produced no nodes and no edges is not a success (plan
+            // 650d6425). The SVG is unchanged (it is the same empty canvas `render` bakes); only
+            // the verdict on top of it changes, from "Rendered successfully." to a named degrade.
+            Diagnostics emptied = emptiedGraphDiagnostics(ir, dsl);
+            if (emptied != null) {
+                return new RenderResult(svg, emptied);
+            }
             // OK, with one honest caveat: a pie whose thin-slice OUTSIDE label had no room is drawn
             // as a coloured wedge with NO visible name (PieLayout drops the leader+text rather than
             // overrun the canvas). The SVG is unchanged — this only NAMES the dropped slice(s) and
@@ -714,6 +729,80 @@ public final class Sirentide {
             "The renderer hit an unexpected failure during " + stage + ", so it degraded to the empty "
                 + "shell. This is a renderer bug, not a problem with your diagram — please report it.",
             -1, detail);
+    }
+
+    /// The EMPTIED-DIAGRAM degrade (plan 650d6425): a flowchart whose author-written body produced
+    /// ZERO nodes and ZERO edges. Returns `null` — i.e. leaves the verdict alone — for every other
+    /// diagram and for a body that is genuinely empty.
+    ///
+    /// THE DEFECT. `flowchart TD` + `A <--> B` renders an empty picture and used to report
+    /// `OK / "Rendered successfully."`. The DROP is correct (a bidirectional arrow is unsupported;
+    /// dropping the line kills the `A <` phantom node the old parser minted). The VERDICT was not:
+    /// the author wrote a two-node diagram, watched it vanish, and was told it succeeded.
+    ///
+    /// THE TRIGGER IS NON-EMPTY-BODY-YIELDS-EMPTY-GRAPH, NEVER MERELY EMPTY-GRAPH. A genuinely
+    /// empty body — `flowchart TD` alone, a blank source, whitespace — is LEGITIMATELY empty and
+    /// keeps its OK. That distinction cannot be made from the IR or the SVG: both inputs produce
+    /// the same zero-node Flowchart and the same 174-byte canvas. It can only be made from the
+    /// SOURCE, which is why {@link com.sirentide.parse.DslParser#flowchartBodyCensus} exists and
+    /// why it counts statements from inside the real parse walk.
+    ///
+    /// Vocabulary is REUSED, not invented: a recognized-but-unsupported construct (the
+    /// bidirectional arrow) reports on the existing {@link Outcome#UNSUPPORTED_CONSTRUCT} channel
+    /// with the offending 1-based physical line; an unparseable statement, or a body that declared
+    /// nothing renderable at all, reports {@link Outcome#PARSE_ERROR}. Both classify at
+    /// `stage` `"parse"` — the point where the content was lost.
+    ///
+    /// SCOPE, stated plainly: FLOWCHART only, because "0 nodes and 0 edges" is that type's own
+    /// vocabulary and the flowchart body census is the only drop census the parser exposes. Other
+    /// types can also render an empty scene from a written body (a pie whose rows are all
+    /// malformed, a class diagram with no parsed classes); those are the SAME defect class and are
+    /// NOT closed here.
+    private static Diagnostics emptiedGraphDiagnostics(Diagram ir, String dsl) {
+        if (!(ir instanceof Flowchart fc) || !fc.nodes().isEmpty() || !fc.edges().isEmpty()) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.FlowchartBodyCensus census =
+            com.sirentide.parse.DslParser.flowchartBodyCensus(dsl);
+        if (census == null || census.statements() == 0) {
+            return null;   // THE CONTROL: a genuinely empty body is legitimately empty → OK stands
+        }
+        String wrote = census.statements() == 1
+            ? "1 statement" : census.statements() + " statements";
+        if (census.dropped().isEmpty()) {
+            // Nothing was DROPPED, yet nothing was declared either — every statement was a
+            // directive, an empty `subgraph`, or otherwise contributed no node and no edge.
+            return new Diagnostics(Outcome.PARSE_ERROR, STAGE_PARSE,
+                "This flowchart's body has " + wrote + " but declared no nodes and no edges, so the "
+                    + "diagram rendered empty. Add at least one node or edge statement (for example "
+                    + "`A[Start] --> B[End]`).",
+                census.firstStatementLine(),
+                "emptied flowchart: " + census.statements() + " body statement(s), 0 dropped, "
+                    + "0 nodes, 0 edges");
+        }
+        com.sirentide.parse.DslParser.DroppedStatement first = census.dropped().get(0);
+        StringBuilder detail = new StringBuilder("emptied flowchart: ")
+            .append(census.statements()).append(" body statement(s), ")
+            .append(census.droppedTotal()).append(" dropped, 0 nodes, 0 edges");
+        for (com.sirentide.parse.DslParser.DroppedStatement d : census.dropped()) {
+            detail.append("; line ").append(d.line()).append(": ").append(d.text());
+        }
+        if (census.droppedTotal() > census.dropped().size()) {
+            detail.append("; (")
+                .append(census.droppedTotal() - census.dropped().size())
+                .append(" more not listed)");
+        }
+        // Counted, not characterized: the other drops may have fired for other reasons, and this
+        // sentence must not claim otherwise.
+        String others = census.droppedTotal() == 1 ? ""
+            : " " + census.droppedTotal() + " of this body's statements were dropped in all.";
+        return new Diagnostics(
+            first.unsupported() ? Outcome.UNSUPPORTED_CONSTRUCT : Outcome.PARSE_ERROR,
+            STAGE_PARSE,
+            "This flowchart's body has " + wrote + " but produced no nodes and no edges, so the "
+                + "diagram rendered empty: line " + first.line() + " uses " + first.reason()
+                + ", so that whole statement was dropped." + others,
+            first.line(), detail.toString());
     }
 
     /// A SUCCESS-with-caveat diagnostic for a pie whose thin-slice OUTSIDE label(s) had no room and
