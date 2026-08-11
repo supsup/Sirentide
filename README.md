@@ -36,10 +36,24 @@ Still ahead (the remaining *thesis* work): the native **effect layer** — `data
 
 ## Docker
 
-Build the Java 25 image from the repository root:
+Build the Java 25 image from the repository root. **The build argument is required, not
+optional** — the jar stamps `Sirentide-Source-Revision` into its manifest and refuses to
+build without an exact 40-hex commit, so a bare `docker build -t sirentide .` fails with
+`Sirentide-Source-Revision requires one exact lowercase 40-hex git commit; got ''`:
 
 ```sh
-docker build -t sirentide .
+docker build --build-arg SIRENTIDE_SOURCE_REVISION="$(git rev-parse HEAD)" -t sirentide .
+```
+
+That stamp is worth understanding rather than pasting past, because it makes a Sirentide
+image self-describing: the artifact carries the commit it was built from, so "which
+Sirentide is this?" is answerable from the image alone — no build logs, no tag
+archaeology. Read it back at any time:
+
+```sh
+docker run --rm --entrypoint sh sirentide -c \
+  'unzip -p /opt/sirentide/sirentide.jar META-INF/MANIFEST.MF' \
+  | grep -E 'Implementation-Version|Sirentide-Source-Revision'
 ```
 
 The image keeps its application artifacts under the immutable
