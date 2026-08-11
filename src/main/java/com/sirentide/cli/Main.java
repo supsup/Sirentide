@@ -53,8 +53,17 @@ public final class Main {
     private static final String USAGE = """
         Usage:
           sirentide                             Read a DSL source from stdin, bake to stdout (legacy M0 shape).
-          sirentide render <file.md> [-o PATH]  Render the first ```sirentide fence the /docs bake would capture.
-          sirentide render - [-o PATH]          Same as the legacy shape (raw DSL on stdin), verb spelling.
+          sirentide render <file.md> [flags]    Render the first ```sirentide fence the /docs bake would capture.
+          sirentide render - [flags]            Same as the legacy shape (raw DSL on stdin), verb spelling.
+
+        Flags:
+          -o PATH          write the SVG here instead of stdout (atomic replace)
+          --png PATH       ALSO screenshot the baked SVG to a PNG, for a local file:// review
+                           artifact in one step instead of a second manual pass
+          --brewshot PATH  the BrewShot jar --png shells out to; or set SIRENTIDE_BREWSHOT_JAR.
+                           Sirentide does NOT bundle it -- same posture as the math backend, the
+                           host supplies the tool -- so --png without it is a loud usage error,
+                           never a silent skip.
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written.
@@ -91,58 +100,171 @@ public final class Main {
             err.println("sirentide: 'render' needs a file path (or '-' for stdin)");
             return 2;
         }
+        // Flag loop, replacing the old exact-arity check. The two shapes that check accepted --
+        // `render <file>` and `render <file> -o OUT` -- still parse identically; anything it
+        // rejected still exits 2 with the same message, which is what the arity tests pin.
         String outPath = null;
-        if (args.length == 4 && "-o".equals(args[2])) {
-            outPath = args[3];
-        } else if (args.length != 2) {
+        String pngPath = null;
+        String brewshotJar = System.getenv(BREWSHOT_JAR_ENV);
+        for (int i = 2; i < args.length; i++) {
+            String flag = args[i];
+            if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)) {
+                err.print(USAGE);
+                err.println("sirentide: bad arguments after the file path");
+                return 2;
+            }
+            if (i + 1 >= args.length) {
+                err.print(USAGE);
+                err.println("sirentide: " + flag + " needs a value");
+                return 2;
+            }
+            String value = args[++i];
+            switch (flag) {
+                case "-o" -> outPath = value;
+                case "--png" -> pngPath = value;
+                default -> brewshotJar = value;
+            }
+        }
+        // RESOLVE THE SCREENSHOT BACKEND BEFORE RENDERING, so a missing jar costs the author an
+        // instant usage error instead of a render they then discover produced no PNG.
+        if (pngPath != null && (brewshotJar == null || brewshotJar.isBlank())) {
             err.print(USAGE);
-            err.println("sirentide: bad arguments after the file path");
+            err.println("sirentide: --png needs the BrewShot jar: pass --brewshot PATH or set "
+                + BREWSHOT_JAR_ENV + ". Sirentide does not bundle it -- same posture as the math"
+                + " backend, the host supplies the tool.");
             return 2;
         }
 
         String source = args[1];
+        String svg;
         if ("-".equals(source)) {
-            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction —
-            // deliberately identical to the args.length == 0 path above, INCLUDING its refusal.
-            // Fixing only one arm would make that stated equivalence false.
-            return writeRawDslOrRefuse(renderRawDsl(in), outPath, out, err);
-        }
+            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction.
+            // The REFUSAL is shared with the args.length == 0 path above by CONSTRUCTION — both go
+            // through rawDslSvgOrNull, so the stated equivalence is enforced by the single seam
+            // rather than asserted in a comment that a later edit can silently falsify.
+            //
+            // The TAIL is deliberately not shared with that path, and cannot diverge from it: the
+            // no-args shape parses no flags at all, so there is no input it can express on which
+            // `-o` or `--png` handling could differ. Returning here instead — which is what this
+            // arm did until sirentide/905 — put writeOutput AND writePng downstream of a return,
+            // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
+            // written no PNG: verbatim the failure {@link #writePng} names as this project's
+            // signature defect.
+            svg = rawDslSvgOrNull(renderRawDsl(in), err);
+            if (svg == null) {
+                return 1;
+            }
+        } else {
 
-        String markdown;
-        try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
-            byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
-            if (bytes.length > MAX_MARKDOWN_BYTES) {
-                err.println("sirentide: cannot read '" + source + "': larger than the "
-                    + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+            String markdown;
+            try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
+                byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
+                if (bytes.length > MAX_MARKDOWN_BYTES) {
+                    err.println("sirentide: cannot read '" + source + "': larger than the "
+                        + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+                    return 2;
+                }
+                markdown = new String(bytes, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
                 return 2;
             }
-            markdown = new String(bytes, StandardCharsets.UTF_8);
+
+            String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
+            if (fenceBody == null) {
+                err.println("sirentide: no ```sirentide fence found in '" + source + "'"
+                    + " (a fence nested inside another fence is not captured — matching the /docs bake)");
+                return 2;
+            }
+
+            // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
+            // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
+            // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
+            // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
+            // /docs does not produce. The defensive catch mirrors the converter's tryRender
+            // (RuntimeException + StackOverflowError -> degrade, never a crash).
+            RenderResult result = tryRenderWithDiagnostics(fenceBody);
+            if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
+                String reason = result == null ? "renderer failure" : result.diagnostics().message();
+                err.println("sirentide: diagram did not render — " + reason
+                    + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
+                return 1;
+            }
+            svg = result.svg();
+        }
+
+        // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
+        // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
+        int code = writeOutput(svg, outPath, out, err);
+        if (code != 0 || pngPath == null) {
+            return code;
+        }
+        return writePng(svg, pngPath, brewshotJar, err);
+    }
+
+    /// Environment variable naming the BrewShot jar, so an author sets it once per shell instead of
+    /// passing `--brewshot` on every render-check. `--brewshot` overrides it.
+    static final String BREWSHOT_JAR_ENV = "SIRENTIDE_BREWSHOT_JAR";
+
+    /// Screenshot the baked SVG to a PNG (plan 6eb098d6 slice B).
+    ///
+    /// WHY SHELL OUT RATHER THAN DEPEND. Sirentide does not take BrewShot as a dependency, for the
+    /// same reason it does not take LatteX: `build.gradle.kts` states that the host supplies the
+    /// heavy tools and "Sirentide never depends on LatteX at runtime". A screenshot backend is the
+    /// same shape of thing -- it drags in a browser -- so it is located at RUN time and its absence
+    /// is a loud usage error, never a silent skip. A `--png` that quietly produced no PNG would be
+    /// this project's signature defect: a surface reporting success while establishing nothing.
+    ///
+    /// ORDER MATTERS. This runs only after {@link #writeOutput} returned 0, so the SVG is on disk
+    /// (or stdout) before the screenshot is attempted, and a render that did NOT happen -- exit 1,
+    /// nothing written -- never reaches here. The PNG can therefore never be newer evidence than
+    /// the SVG it claims to depict.
+    private static int writePng(String svg, String pngPath, String brewshotJar, PrintStream err) {
+        Path html = null;
+        try {
+            if (!Files.isReadable(Path.of(brewshotJar))) {
+                err.println("sirentide: BrewShot jar not readable: '" + brewshotJar + "'");
+                return 2;
+            }
+            // A minimal wrapper, no external references: BrewShot loads it over file:// and the SVG
+            // is inline, so nothing is fetched and the shot cannot depend on network state.
+            html = Files.createTempFile("sirentide-render-", ".html");
+            Files.writeString(html, "<!doctype html><html><body style=\"margin:0;background:#fff\">"
+                + svg + "</body></html>", StandardCharsets.UTF_8);
+            Process p = new ProcessBuilder("java", "-jar", brewshotJar,
+                html.toAbsolutePath().toString(), "-o", pngPath)
+                .redirectErrorStream(true).start();
+            String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exit = p.waitFor();
+            if (exit != 0) {
+                err.println("sirentide: BrewShot failed (exit " + exit + "): " + output.strip());
+                return 2;
+            }
+            // TRUST THE FILE, NOT THE EXIT CODE. A zero exit from a subprocess is a claim about the
+            // subprocess, not about the artifact -- and a zero-byte PNG at exit 0 is exactly the
+            // shape of failure this CLI already refuses for blank SVGs.
+            Path png = Path.of(pngPath);
+            if (!Files.isRegularFile(png) || Files.size(png) == 0) {
+                err.println("sirentide: BrewShot exited 0 but wrote no PNG at '" + pngPath + "'");
+                return 2;
+            }
+            return 0;
         } catch (IOException e) {
-            err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
+            err.println("sirentide: cannot write PNG '" + pngPath + "': " + e.getMessage());
             return 2;
-        }
-
-        String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
-        if (fenceBody == null) {
-            err.println("sirentide: no ```sirentide fence found in '" + source + "'"
-                + " (a fence nested inside another fence is not captured — matching the /docs bake)");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            err.println("sirentide: interrupted while screenshotting");
             return 2;
+        } finally {
+            if (html != null) {
+                try {
+                    Files.deleteIfExists(html);
+                } catch (IOException ignored) {
+                    // A leftover temp file is not worth failing a successful render over.
+                }
+            }
         }
-
-        // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
-        // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
-        // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
-        // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
-        // /docs does not produce. The defensive catch mirrors the converter's tryRender
-        // (RuntimeException + StackOverflowError -> degrade, never a crash).
-        RenderResult result = tryRenderWithDiagnostics(fenceBody);
-        if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
-            String reason = result == null ? "renderer failure" : result.diagnostics().message();
-            err.println("sirentide: diagram did not render — " + reason
-                + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
-            return 1;
-        }
-        return writeOutput(result.svg(), outPath, out, err);
     }
 
     /// The M0 read shape, factored out so both the legacy no-args path and the `render -` alias
@@ -174,12 +296,27 @@ public final class Main {
     /// channel separates "nothing to draw" from "could not read this".
     private static int writeRawDslOrRefuse(RenderResult result, String outPath,
                                            PrintStream out, PrintStream err) {
+        String svg = rawDslSvgOrNull(result, err);
+        if (svg == null) {
+            return 1;
+        }
+        return writeOutput(svg, outPath, out, err);
+    }
+
+    /// THE SINGLE RAW-DSL REFUSAL SEAM, shared by the no-args legacy path and `render -`.
+    ///
+    /// It exists so the two arms cannot drift: before sirentide/905 their equivalence was asserted
+    /// only by a comment, and the `render -` arm was changed (to reach `-o`) without the comment
+    /// becoming false, which is exactly how the unreachable-`--png` defect got in. Extracting the
+    /// predicate makes "these two refuse identically" a property of the code rather than a claim
+    /// about it. Returns the SVG on an honest bake, or null having already reported the reason.
+    private static String rawDslSvgOrNull(RenderResult result, PrintStream err) {
         if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
             String reason = result == null ? "renderer failure" : result.diagnostics().message();
             err.println("sirentide: diagram did not render — " + reason + " (nothing written)");
-            return 1;
+            return null;
         }
-        return writeOutput(result.svg(), outPath, out, err);
+        return result.svg();
     }
 
     /// Renders via the diagnostics API, or returns null on an unexpected throw — the same

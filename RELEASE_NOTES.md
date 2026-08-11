@@ -13,6 +13,15 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+### Fixed
+
+- `render-png` now refuses an unrenderable diagram instead of writing a PNG beside
+  a failed SVG. The no-args and `render -` paths previously diverged: one refused,
+  the other continued to the write tail, so the same bad input could leave an
+  artifact on disk or not depending on how it was invoked. Both now pass through a
+  single refusal seam and reach one shared write tail, making the two forms
+  equivalent by construction rather than by matching code.
+
 ## 2026-07-30 — Release **0.5.0**
 
 The version moved to 0.5.0 immediately after the 0.4.0 cut so post-release jars could never be
