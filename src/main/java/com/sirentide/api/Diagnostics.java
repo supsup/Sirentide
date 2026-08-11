@@ -10,7 +10,10 @@ package com.sirentide.api;
 /// - `line` — the 1-based source line the problem localizes to, or `-1` when unknown. Most outcomes
 ///   report `-1` (line/token attribution for the exception/cap paths needs deeper annotation, still
 ///   deferred), EXCEPT {@link Outcome#UNSUPPORTED_CONSTRUCT}, which carries the real 1-based line of
-///   the offending flowchart token (plan 933eed50 F2).
+///   the offending flowchart token (plan 933eed50 F2), and the EMPTIED-DIAGRAM degrade (plan
+///   650d6425 — a written flowchart body that produced zero nodes and zero edges), which carries the
+///   line of the first dropped statement on EITHER channel it classifies on, UNSUPPORTED_CONSTRUCT
+///   or {@link Outcome#PARSE_ERROR}.
 /// - `detail` — a lower-level diagnostic crumb (the caught throwable's type+message, the branch that
 ///   fired, the unsupported token, the out-of-coverage `U+XXXX` code points on an OK caveat, or a
 ///   dropped pie thin-slice-label list on an OK caveat); "" when there is nothing to add. For
