@@ -1,10 +1,23 @@
 package com.sirentide.api;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /// The play-through bake plus its structured WHY — the frames twin of {@link RenderResult}
-/// (plan sirentide-fence-diagnostics). `frames` is exactly what
-/// {@link Sirentide#renderFrames(String, MathFragmentRenderer)} returns for the same input
-/// (byte-identical, including every degrade), and `diagnostics` classifies the outcome the
-/// same way {@link Sirentide#renderWithDiagnostics(String, MathFragmentRenderer)} does.
-public record FramesResult(List<String> frames, Diagnostics diagnostics) {}
+/// (plan sirentide-fence-diagnostics). For the existing unbounded diagnostics overloads,
+/// `frames` is exactly what {@link Sirentide#renderFrames(String, MathFragmentRenderer)} returns
+/// for the same input (byte-identical, including every degrade), and `diagnostics` classifies the
+/// outcome the same way {@link Sirentide#renderWithDiagnostics(String, MathFragmentRenderer)} does.
+/// The trusted-consumer overload {@link Sirentide#renderFramesWithDiagnostics(String,
+/// MathFragmentRenderer, FrameBudget)} preserves those exact frames and diagnostics when its budget
+/// is sufficient; when ANY frame-bearing result exceeds that narrower budget, including a non-OK or
+/// caught degrade, it intentionally returns an empty deck with {@link Outcome#OUTPUT_CAP_EXCEEDED}.
+public record FramesResult(List<String> frames, Diagnostics diagnostics) {
+
+    public FramesResult {
+        frames = frames == null
+            ? null
+            : Collections.unmodifiableList(new ArrayList<>(frames));
+    }
+}

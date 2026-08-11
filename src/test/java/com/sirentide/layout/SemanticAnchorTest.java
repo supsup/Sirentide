@@ -19,8 +19,7 @@ import org.junit.jupiter.api.Test;
 /// The SEMANTIC-ANCHOR infrastructure (plan sirentide-semantic-anchor-g, contract sirentide/67): the
 /// closed role enum, the deterministic charset-safe id sanitizer, the per-diagram unique-id + emit-
 /// order-seq assigner, and the proof that a real FLOWCHART wraps each node/edge (and a PIE each slice)
-/// in ONE `<g data-sirentide-*>`. The OTHER types stay un-anchored this slice (covered by their own
-/// byte-identical goldens / shape-count tests).
+/// in ONE `<g data-sirentide-*>`. Per-type tests pin the remaining element and structural roles.
 class SemanticAnchorTest {
 
     /// Matches ONE emitted anchor group open-tag → (role, id, seq).
@@ -264,6 +263,33 @@ class SemanticAnchorTest {
         assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
     }
 
+    /// S2 cluster coverage: each drawn subgraph frame is one `role=cluster` group, keyed by the raw
+    /// subgraph id rather than its display title. Clusters emit under/before edges and nodes, and all
+    /// three roles share one unique-id/seq namespace.
+    @Test
+    void flowchartEmitsAClusterAnchorPerDrawnSubgraphFrame() {
+        List<Anc> a = anchors(Sirentide.render(
+            "flowchart TD\n  subgraph outer<unsafe> [Outer title]\n"
+                + "    A[outerunsafe] --> B[End]\n    subgraph inner [Inner title]\n"
+                + "      B --> C[Ship]\n    end\n  end\n"));
+        // 2 clusters + 2 edges + 3 nodes.
+        assertWellFormed(a, 7);
+        assertEquals(2, countRole(a, "cluster"), "one cluster anchor per frame: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("cluster")
+                && x.id().equals("outerunsafe")),
+            "cluster id comes from sanitized subgraph id, not its display title: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("node")
+                && x.id().equals("outerunsafe-1")),
+            "cluster and node share one collision namespace: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("cluster") && x.id().equals("inner")),
+            "nested cluster retains its stable id: " + a);
+        int maxClusterSeq = a.stream().filter(x -> x.role().equals("cluster"))
+            .mapToInt(Anc::seq).max().orElse(-1);
+        int minEdgeSeq = a.stream().filter(x -> x.role().equals("edge"))
+            .mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxClusterSeq < minEdgeSeq, "cluster frames emit before edges/nodes: " + a);
+    }
+
     // -- the PIE proof (slices) ---------------------------------------------------------------------
 
     @Test
@@ -366,15 +392,21 @@ class SemanticAnchorTest {
     void quadrantEmitsPointAnchors() {
         List<Anc> a = anchors(Sirentide.render(
             "quadrant\n  \"Feature A\" : [0.3, 0.6]\n  \"Feature B\" : [0.7, 0.2]\n"));
-        assertWellFormed(a, 2);
+        assertWellFormed(a, 4);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(2, countRole(a, "point"), "two point anchors: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("x")),
+            "x-axis has stable id x: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("y")),
+            "y-axis has stable id y: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("FeatureA")), "point id from label: " + a);
     }
 
     @Test
     void xychartEmitsBarAnchorPerBar() {
         List<Anc> a = anchors(Sirentide.render("xychart\n  \"Mon\" : 5\n  \"Tue\" : 8\n  \"Wed\" : 3\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 5);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(3, countRole(a, "bar"), "one bar anchor per bar: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Mon")), "bar id from category: " + a);
     }
@@ -384,14 +416,18 @@ class SemanticAnchorTest {
         // 2 series × 2 categories, all present → 4 point discs, each role=bar (id = category, uniquified).
         List<Anc> a = anchors(Sirentide.render(
             "xychart line\n  series: R, C\n  \"Q1\" : 5 3\n  \"Q2\" : 8 6\n"));
-        assertWellFormed(a, 4);
+        assertWellFormed(a, 6);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(4, countRole(a, "bar"), "one bar anchor per present point: " + a);
     }
 
     @Test
     void ganttEmitsBarAnchorPerTask() {
         List<Anc> a = anchors(Sirentide.render("gantt\n  \"Design\" : 0-3\n  \"Build\" : 3-8\n"));
-        assertWellFormed(a, 2);
+        assertWellFormed(a, 3);
+        assertEquals(1, countRole(a, "axis"), "one time-axis anchor: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("time")),
+            "time axis has stable id time: " + a);
         assertEquals(2, countRole(a, "bar"), "one bar anchor per task: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Design")), "bar id from task label: " + a);
     }
@@ -400,7 +436,10 @@ class SemanticAnchorTest {
     void timelineEmitsEventAnchorPerEvent() {
         List<Anc> a = anchors(Sirentide.render(
             "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 4);
+        assertEquals(1, countRole(a, "axis"), "one time-axis anchor: " + a);
+        assertTrue(a.stream().anyMatch(x -> x.role().equals("axis") && x.id().equals("time")),
+            "time axis has stable id time: " + a);
         assertEquals(3, countRole(a, "event"), "one event anchor per event: " + a);
         assertTrue(a.stream().anyMatch(x -> x.id().equals("Founded")), "event id from label: " + a);
     }
@@ -453,16 +492,17 @@ class SemanticAnchorTest {
     }
 
     /// journey (receipt #2): every task's point + name + actor labels wrap in ONE `<g role="task">`
-    /// (id = the task name, uniquified), seq 0..N-1 in declaration order across all sections. A journey
-    /// with 2 sections × (2 + 1) = 3 tasks → exactly 3 task anchors; the section brackets, satisfaction
-    /// line, and axes stay bare. Proves a task emits role="task". DROP the `<g>` wrapper in
+    /// (id = the task name, uniquified), seq follows the two axes in declaration order. A journey
+    /// with 2 sections × (2 + 1) = 3 tasks → 3 task anchors plus x/y axis anchors; the section brackets
+    /// and satisfaction line stay bare. Proves a task emits role="task". DROP the `<g>` wrapper in
     /// JourneyLayout (emit the shapes bare) and the count falls to 0 → RED.
     @Test
     void journeyEmitsATaskAnchorPerTask() {
         List<Anc> a = anchors(Sirentide.render(
             "journey\n  title Day\n  section Go to work\n    Make tea: 5: Me\n    Commute: 3: Me, Cat\n"
                 + "  section Do work\n    Code: 5: Me\n"));
-        assertWellFormed(a, 3);
+        assertWellFormed(a, 5);
+        assertEquals(2, countRole(a, "axis"), "x/y axis anchors: " + a);
         assertEquals(3, countRole(a, "task"), "one task anchor per task: " + a);
         assertTrue(a.stream().anyMatch(x -> x.role().equals("task") && x.id().equals("Maketea")),
             "task id is the sanitized task name (Maketea): " + a);
@@ -548,6 +588,23 @@ class SemanticAnchorTest {
         assertEquals(3, seqOf(a, "r1c0"));
         assertEquals(4, seqOf(a, "r1c1"));
         assertEquals(5, seqOf(a, "r1c2"));
+    }
+
+    @Test
+    void rootSystemEmitsMinimalEdgesBeforeOnePointAnchorPerRoot() {
+        List<Anc> a = anchors(Sirentide.render(
+            "rootsystem\n  type: A2\n  edges: minimal\n"));
+        // A2 is a six-root hexagon with six minimal root-polytope edges.
+        assertWellFormed(a, 12);
+        assertEquals(6, countRole(a, "edge"), "one anchor per bounded minimal edge: " + a);
+        assertEquals(6, countRole(a, "point"), "one point anchor per mathematical root: " + a);
+        int maxEdgeSeq = a.stream().filter(x -> x.role().equals("edge"))
+            .mapToInt(Anc::seq).max().orElse(-1);
+        int minPointSeq = a.stream().filter(x -> x.role().equals("point"))
+            .mapToInt(Anc::seq).min().orElse(-1);
+        assertTrue(maxEdgeSeq < minPointSeq, "polytope edges draw/sequence before root points: " + a);
+        assertTrue(a.stream().filter(x -> x.role().equals("point"))
+            .allMatch(x -> x.id().startsWith("root-")), "root ids are deterministic indices: " + a);
     }
 
     private static int seqOf(List<Anc> a, String id) {
@@ -648,33 +705,588 @@ class SemanticAnchorTest {
         assertEquals(nodeIds.size(), nodeIds.stream().distinct().count(), "core ids are all distinct");
     }
 
-    /// A hostile row/column/cell label can NEVER place an illegal char into an emitted matrix cell
-    /// `<g>` id — the ids are coordinate-derived, so they are structurally immune, and the render path
-    /// also never leaks the raw markup into the output. The security property mirrored for matrix.
+    /// Marlow's HIGH finding at sirentide/680, as his exact discriminators.
+    ///
+    /// The math-run exemption was global, so wrapping the tag in `$…$` restored the original
+    /// defect on every surface that does not render math. On caption, GitGraph and mindmap the
+    /// dollars are ordinary glyphs, so skipping that span just handed an attacker a delimiter.
     @Test
-    void aHostileMatrixLabelCannotBreakOutOfTheAnchorAttribute() {
+    void dollarWrappingCannotSmuggleMarkupOntoPlainOnlySurfaces() {
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("caption",  "%% caption: unsafe $<br/>$\npie\n \"A\" : 1"),
+                new Probe("gitgraph", "gitGraph\n commit id: \"$<br/>$\""),
+                new Probe("mindmap",  "mindmap\n root $<br/>$"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source());
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+                pr.what() + " is a PLAIN surface — $…$ is literal there, so the tag must still "
+                    + "fail closed: " + result.diagnostics());
+            assertFalse(Sirentide.render(pr.source()).contains("<br/>"),
+                pr.what() + " must not emit the markup");
+        }
+    }
+
+    /// Marlow's HIGH finding at sirentide/685, as his exact discriminators. My capability set
+    /// was too NARROW and rejected valid formulas on surfaces that genuinely render math.
+    ///
+    /// These use a real MathFragmentRenderer, because the bug only shows with math enabled:
+    /// validation runs BEFORE layout, so a wrong classification removes supported input
+    /// rather than merely recording a cautious internal default.
+    @Test
+    void relationalMathIsLegalOnEverySurfaceThatActuallyRendersIt() {
+        // A WORKING renderer. This test previously used `(tex, display) -> null` -- a FAILING
+        // renderer -- and asserted OK. Under the old surface-classification design that passed
+        // because the SURFACE was exempt whether or not math actually rendered. Under the
+        // emission-boundary gate (Marlow, sirentide/703) it is exactly wrong: a failed math run
+        // DEGRADES to literal glyphs, so `$0<x>1$` reaches the plain-glyph primitive carrying a
+        // complete tag and must refuse. The test's own name says "that actually renders it" --
+        // with a null renderer, nothing renders it. The premise was wrong, not the gate.
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("sequence message", "sequence\n  Alice ->> Bob : $0<x>1$"),
+                new Probe("flowchart edge",   "flowchart TD\n  A[a] -->|$0<x>1$| B[b]"),
+                new Probe("flowchart node",   "flowchart TD\n  A[$0<x>1$] --> B[b]"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), math);
+            assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+                pr.what() + " routes through MathLabel, so a relational formula is VALID "
+                    + "input and must not be rejected: " + result.diagnostics());
+        }
+    }
+
+    /// THE CAPABILITY MAP, ASSERTED BEHAVIOURALLY, one row per distinct emitted label surface.
+    ///
+    /// Three granularities failed before this one: per diagram TYPE, then per LAYOUT FILE, then
+    /// a source-scan for `MathLabel` in that file. Marlow's sirentide/697 killed the third: a
+    /// single layout emits several surfaces through DIFFERENT paths, so a file-level boolean
+    /// cannot describe it. FlowchartLayout routes node/edge through MathLabel but emits cluster
+    /// TITLES via FONT directly; SequenceLayout routes actors/messages through MathLabel but
+    /// emits notes, blocks and dividers via FONT.
+    ///
+    /// So this stops describing the code and INTERROGATES it. Every row feeds `$<br/>$` through
+    /// the public API with a NON-NULL renderer:
+    ///
+    ///   PLAIN surface  -> PARSE_ERROR   (the dollars are literal glyphs; the tag must fail closed)
+    ///   MATH surface   -> OK            (a real math run, legitimately exempt)
+    ///
+    /// A behavioural probe cannot pass on bookkeeping. The previous guard asserted my own map
+    /// against my own source-scan and agreed with itself while two bypasses were live.
+    @Test
+    void everyEmittedLabelSurfaceBehavesAsItsEmitterImplies() {
+        // WORKING renderer -- see relationalMathIsLegalOnEverySurfaceThatActuallyRendersIt.
+        // The math-aware rows below assert OK because a SUCCESSFUL fragment is placed as a
+        // MathBox and never reaches the plain-glyph gate; with a null renderer they would
+        // (correctly) refuse, which is asserted separately by
+        // degradedMathCarryingATagRefusesAtTheEmissionBoundary.
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        record Row(String surface, boolean mathAware, String source) {}
+        List<Row> rows = List.of(
+            // --- PLAIN: emitter is FONT.runWidth/textPathD/ellipsize, no MathLabel ---
+            new Row("config caption",      false, "%% caption: $<br/>$\npie\n \"A\" : 1"),
+            new Row("flowchart cluster",   false, "flowchart TD\n  subgraph grp [$<br/>$]\n    A[a] --> B[b]\n  end"),
+            // state transition labels reuse FlowchartLayout's EDGE path (MathLabel), and state
+            // DISPLAY NAMES reuse the node path -- so both are math-aware, and the plain arm
+            // for this type is proved by the flowchart cluster row above (same emitter).
+            new Row("state display name",  true,  "state\n  Idle : $<br/>$\n  Idle --> Run"),
+            new Row("state transition",    true,  "state\n  Idle --> Run : $<br/>$"),
+            new Row("sequence note",       false, "sequence\n  Alice ->> Bob : hi\n  note over Alice,Bob : $<br/>$"),
+            new Row("gitgraph commit",     false, "gitGraph\n commit id: \"$<br/>$\""),
+            new Row("mindmap node",        false, "mindmap\n  root $<br/>$"),
+            new Row("journey title",       false, "journey\n  title $<br/>$\n  section Go\n    Make tea: 5: Me"),
+            new Row("sankey endpoint",     false, "sankey\n  $<br/>$,Electricity,25\n"),
+            new Row("heatmap column",      false, "heatmap\ncols: $<br/>$\n\"row\" : 1"),
+            new Row("tensor core",         false, "tensornetwork\n  mps $<br/>$ B\n"),
+            // --- PIE: capability depends on RUNTIME MODE, not just surface (sirentide/699).
+            // Both sides of the 15-degree THIN_SLICE boundary are probed, because the mirror
+            // of that constant in LabelSurfaces is the drift-prone part.
+            new Row("pie legend",          false, "pie legend\n  \"$<br/>$\" : 60\n  \"Rest\" : 40"),
+            new Row("pie thin slice",      false, "pie\n  \"$<br/>$\" : 1\n  \"Rest\" : 99"),
+            new Row("pie comfortable",     true,  "pie\n  \"$<br/>$\" : 60\n  \"Rest\" : 40"),
+            // --- MATH: emitter routes through MathLabel, so a real math run is exempt ---
+            new Row("flowchart node",      true,  "flowchart TD\n  A[$<br/>$] --> B[b]"),
+            new Row("flowchart edge",      true,  "flowchart TD\n  A[a] -->|$<br/>$| B[b]"),
+            new Row("sequence message",    true,  "sequence\n  Alice ->> Bob : $<br/>$"),
+            new Row("sequence actor",      true,  "sequence\n  $<br/>$ ->> Bob : hi"));
+
+        for (Row r : rows) {
+            var got = Sirentide.renderWithDiagnostics(r.source(), math).diagnostics().outcome();
+            var want = r.mathAware()
+                ? com.sirentide.api.Outcome.OK : com.sirentide.api.Outcome.PARSE_ERROR;
+            assertEquals(want, got, r.surface() + " is "
+                + (r.mathAware() ? "MATH-aware (emits through MathLabel), so a real $…$ run is "
+                    + "exempt and must render" : "PLAIN (emits through FONT directly), so $…$ is "
+                    + "literal there and the tag must fail closed")
+                + ". Got " + got + " for: " + r.source());
+        }
+    }
+
+
+    /// THE CASE MARLOW'S RULING CREATES, and the one the old design could not express:
+    /// "failed math that degrades to literal glyphs must pass [the plain-glyph guard] too."
+    ///
+    /// The same source that is LEGAL with a working renderer must REFUSE with a failing one,
+    /// because the degraded output is literal `$…$` text carrying a complete tag. The two
+    /// assertions differ ONLY in the renderer, which is what makes this a discriminator rather
+    /// than a restatement: it isolates the emission decision as the cause.
+    @Test
+    void degradedMathCarryingATagRefusesAtTheEmissionBoundary() {
+        String source = "flowchart TD\n  A[a] -->|$<br/>$| B[b]";
+        com.sirentide.api.MathFragmentRenderer working = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        com.sirentide.api.MathFragmentRenderer failing = (tex, display) -> null;
+
+        assertEquals(com.sirentide.api.Outcome.OK,
+            Sirentide.renderWithDiagnostics(source, working).diagnostics().outcome(),
+            "a SUCCESSFUL fragment is placed as a MathBox and never reaches the plain-glyph "
+                + "gate, so real inline math stays legal");
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+            Sirentide.renderWithDiagnostics(source, failing).diagnostics().outcome(),
+            "the SAME source with a failing renderer degrades to literal glyphs carrying a "
+                + "complete tag, and the emission-boundary gate must refuse it -- the old "
+                + "surface-classification design returned OK here, which was the bypass");
+    }
+
+
+    /// MARLOW'S THREE 701 FINDINGS, as public-API regressions against the emission-boundary
+    /// gate. These are the reason the redesign exists, so they are the test that decides
+    /// whether it worked. Each previously returned OK with a non-inert SVG.
+    ///
+    /// Requirement 2 of his ruling — "at least two runtime-dependent branches must prove the
+    /// same exact-string gate is reached" — is satisfied by the xychart LEGEND row (a locally
+    /// computed showLegend the static scan could not see) and the pie THIN-SLICE row (a
+    /// width/sweep branch), which reach the gate through completely different decisions.
+    @Test
+    void marlowsThreeRuntimeDependentBypassesAllRefuseAtTheGate() {
+        com.sirentide.api.MathFragmentRenderer working = (tex, display) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                // 701 finding 1 — XyChart series key, reached via a LOCAL showLegend boolean
+                new Probe("xychart legend",
+                    "xychart legend\n  series: $<br/>$, Safe\n  \"A\" : 1 2"),
+                // 701 finding 3 — Class relation: ellipsized BEFORE the math decision, so the
+                // closing delimiter is lost while the complete tag survives
+                new Probe("class relation ellipsized",
+                    "classDiagram\n  A --> B : $<span xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>$iii"),
+                new Probe("er relation ellipsized",
+                    "erDiagram\n  A ||--o{ B : $<span xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>$iii"),
+                // a RUNTIME WIDTH branch, distinct from the mode branch above
+                new Probe("pie thin slice",
+                    "pie\n  \"$<br/>$\" : 1\n  \"Rest\" : 99"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), working);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+                result.diagnostics().outcome(),
+                pr.what() + " reaches plain-glyph emission through a RUNTIME decision the "
+                    + "static surface map could not see; the exact emitted string must be "
+                    + "gated: " + result.diagnostics());
+        }
+    }
+
+
+    /// MARLOW sirentide/713 HIGH, his exact probe: a late tag rejection must be TERMINAL, never
+    /// re-run through the injected renderer.
+    ///
+    /// Both frames entry points degraded by calling render(dsl, math) again. MathFragmentRenderer
+    /// carries no purity or stable-result contract, so a renderer that FAILS ONCE AND SUCCEEDS ON
+    /// THE RETRY turned a fail-closed rejection back into live output. Measured at ee041959:
+    /// render() returned an 85-byte inert shell while renderFrames() returned 2620 bytes of LIVE
+    /// SVG for the same source — the diagnostic said PARSE_ERROR while the bytes said rendered,
+    /// breaking both the fail-closed invariant and static/frames byte parity.
+    ///
+    /// The retry is still the intended degrade for UNRELATED failures. It is only a REJECTION it
+    /// must not be permitted to reverse.
+    @Test
+    void aLateTagRejectionCannotBeUndoneByTheFramesRetry() {
+        String src = "flowchart TD\n  A[a] -->|$<br/>$| B[b]";
+        // fails on the first invocation, succeeds on every later one
+        java.util.function.Supplier<com.sirentide.api.MathFragmentRenderer> fresh = () -> {
+            java.util.concurrent.atomic.AtomicInteger n =
+                new java.util.concurrent.atomic.AtomicInteger();
+            return (tex, size) -> n.getAndIncrement() == 0
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(new com.sirentide.api.MathFragment("<g/>", 10, 12, 3));
+        };
+
+        String staticSvg = Sirentide.render(src, fresh.get());
+        String frame = Sirentide.renderFrames(src, fresh.get()).get(0);
+        assertEquals(staticSvg, frame,
+            "static/frames BYTE PARITY: the frames path must not re-run the renderer and escape "
+                + "the inert shell the static path produced");
+
+        var framesDiag = Sirentide.renderFramesWithDiagnostics(src, fresh.get());
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR,
+            framesDiag.diagnostics().outcome(),
+            "the diagnostic must still classify as PARSE_ERROR");
+        assertEquals(staticSvg, framesDiag.frames().get(0),
+            "a PARSE_ERROR diagnostic accompanied by LIVE SVG is the exact contradiction this "
+                + "pins: the bytes must be the inert shell, not a second successful render");
+    }
+
+
+    /// MARLOW sirentide/713 MEDIUM, his exact probe. U+202E RIGHT-TO-LEFT OVERRIDE is category
+    /// Cf (FORMAT), NOT an ISO control, so it survived a "control-sanitized" diagnostic and could
+    /// visually reorder the text around it once printed, logged or pasted. The token was bounded
+    /// but not sanitized, which is the promise the method's name makes.
+    ///
+    /// Pinned through the PUBLIC diagnostic surface, not just the helper, because that is where a
+    /// human or an agent actually meets the bytes.
+    @Test
+    void unicodeFormatControlsDoNotSurviveIntoThePublicDiagnostic() {
+        String bidi = "\u202E";                                  // RIGHT-TO-LEFT OVERRIDE (Cf)
+        String zwj  = "\u200D";                                  // ZERO WIDTH JOINER (Cf)
+        // NOTE: U+2028 LINE SEPARATOR is deliberately NOT in this loop. Measured: a label
+        // `x<b \u2028evil>` returns OK, because the separator breaks the tag-name grammar so the
+        // scanner never classifies it as a tag and there is no diagnostic to sanitize. sanitize()
+        // still replaces Zl/Zp defensively (a tag could carry one elsewhere), but asserting a
+        // PARSE_ERROR here would be asserting a behaviour the parser does not have. Raised with
+        // Marlow separately rather than decided here.
+        // SUPPLEMENTARY-PLANE hazards (Marlow sirentide/719): above U+FFFF a code point arrives
+        // as a surrogate PAIR, and neither half is category Cf -- each is SURROGATE. A char-based
+        // classifier therefore passed every one of these through while correctly catching every
+        // BMP case, which is why the earlier round looked complete.
+        String langTag = new String(Character.toChars(0xE0001));   // LANGUAGE TAG (Cf, plane 14)
+        String tagLatin = new String(Character.toChars(0xE0041));  // TAG LATIN A (Cf, plane 14)
+        for (String hazard : java.util.List.of(bidi, zwj, langTag, tagLatin)) {
+            String src = "flowchart TD\n  A[x<b " + hazard + "evil>]";
+            var diag = Sirentide.renderWithDiagnostics(src);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, diag.diagnostics().outcome(),
+                "the tag itself must still be refused");
+            assertFalse(diag.diagnostics().toString().contains(hazard),
+                "a display hazard (U+" + Integer.toHexString(hazard.codePointAt(0)).toUpperCase()
+                    + ") must not survive into the public diagnostic: "
+                    + diag.diagnostics());
+        }
+        // POSITIVE CONTROL: ordinary text in the offending token is PRESERVED, so the
+        // replacement is targeted rather than a blanket scrub that would make the diagnostic
+        // useless for identifying what was rejected.
+        var plain = Sirentide.renderWithDiagnostics("flowchart TD\n  A[x<bEVIL>]");
+        assertTrue(plain.diagnostics().toString().contains("bEVIL"),
+            "the offending token must remain identifiable: " + plain.diagnostics());
+    }
+
+    /// CONTAINMENT (Marlow requirement 3): no production glyph path may reach the outline
+    /// primitive without passing the gate. textPathD is the only caller of the private
+    /// appendGlyph and the only production caller of sfnt.glyphContours, so the guard cannot
+    /// be routed around -- this asserts that structurally at SOURCE rather than trusting it.
+    @Test
+    void noProductionGlyphPathBypassesTheEmissionGate() throws Exception {
+        java.nio.file.Path root = java.nio.file.Path.of("src/main/java");
+        java.util.List<String> offenders = new java.util.ArrayList<>();
+        try (var walk = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path f : walk.filter(x -> x.toString().endsWith(".java")).toList()) {
+                String src = java.nio.file.Files.readString(f);
+                String name = f.getFileName().toString();
+                if (!name.equals("FontMetrics.java") && !name.equals("SfntMetrics.java")
+                        && src.contains("glyphContours")) {
+                    offenders.add(f + " uses glyphContours outside the guarded primitive");
+                }
+            }
+        }
+
+        // IN-FILE CONTAINMENT (Marlow sirentide/713 MEDIUM). The first version EXCLUDED
+        // FontMetrics.java wholesale and then asserted two unrelated substrings were present --
+        // so a SECOND method inside FontMetrics could call appendGlyph/glyphContours with no
+        // guard and this test would still pass. That is precisely the future bypass requirement 3
+        // exists to turn red for, and the exclusion made it structurally unable to.
+        //
+        // Now: every call site of appendGlyph and every non-recursive glyphContours use inside
+        // FontMetrics must sit in a method that guards first. Derived by locating each call and
+        // walking back to its enclosing method declaration, rather than assuming there is one.
+        String fm = java.nio.file.Files.readString(root.resolve("com/sirentide/font/FontMetrics.java"));
+        java.util.List<String> callers = enclosingMethodsOfCalls(fm,
+            java.util.List.of("appendGlyph(", "sfnt.glyphContours("));
+        assertFalse(callers.isEmpty(),
+            "the scan must find at least one glyph-conversion call, or it is vacuous");
+        for (String m : callers) {
+            if (m.equals("appendGlyph")) {
+                continue;   // the private primitive itself; its callers are what must guard
+            }
+            assertTrue(guardsBeforeGlyphWork(fm, m),
+                "method " + m + " reaches glyph conversion without calling guardPlainGlyphs "
+                    + "first -- an unguarded in-class path to plain-glyph emission");
+        }
+        assertEquals(java.util.List.of(), offenders,
+            "any use of the glyph outline primitive outside FontMetrics/SfntMetrics would be an "
+                + "unguarded path to plain-glyph emission");
+    }
+
+    /// Names of the methods that CONTAIN any of the given call snippets.
+    private static java.util.List<String> enclosingMethodsOfCalls(
+            String src, java.util.List<String> snippets) {
+        java.util.List<String> found = new java.util.ArrayList<>();
+        java.util.regex.Matcher decl = java.util.regex.Pattern
+            .compile("(?m)^\\s*(?:public|private|protected)?\\s*(?:static\\s+)?[\\w<>\\[\\], .]+?\\s+(\\w+)\\s*\\([^)]*\\)\\s*\\{")
+            .matcher(src);
+        java.util.List<int[]> spans = new java.util.ArrayList<>();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        while (decl.find()) {
+            spans.add(new int[] {decl.end() - 1, bodyEnd(src, decl.end() - 1)});
+            names.add(decl.group(1));
+        }
+        for (int i = 0; i < spans.size(); i++) {
+            String body = src.substring(spans.get(i)[0], spans.get(i)[1]);
+            for (String snip : snippets) {
+                if (body.contains(snip) && !found.contains(names.get(i))) {
+                    found.add(names.get(i));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// True when `guardPlainGlyphs` appears in the named method BEFORE its first glyph-conversion
+    /// call -- ordering matters, since a guard after the contours are appended guards nothing.
+    private static boolean guardsBeforeGlyphWork(String src, String method) {
+        java.util.regex.Matcher decl = java.util.regex.Pattern
+            .compile("(?m)^\\s*(?:public|private|protected)?\\s*(?:static\\s+)?[\\w<>\\[\\], .]+?\\s+"
+                + java.util.regex.Pattern.quote(method) + "\\s*\\([^)]*\\)\\s*\\{")
+            .matcher(src);
+        if (!decl.find()) {
+            return false;
+        }
+        String body = src.substring(decl.end() - 1, bodyEnd(src, decl.end() - 1));
+        int guard = body.indexOf("guardPlainGlyphs(");
+        int work = Math.min(idx(body, "appendGlyph("), idx(body, "sfnt.glyphContours("));
+        return guard >= 0 && guard < work;
+    }
+
+    private static int idx(String s, String needle) {
+        int i = s.indexOf(needle);
+        return i < 0 ? Integer.MAX_VALUE : i;
+    }
+
+    private static int bodyEnd(String src, int openBrace) {
+        int depth = 0;
+        for (int i = openBrace; i < src.length(); i++) {
+            if (src.charAt(i) == '{') {
+                depth++;
+            } else if (src.charAt(i) == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return src.length();
+    }
+
+    /// Marlow's BLOCKER at sirentide/693, as public-API regressions with a NON-NULL renderer.
+    ///
+    /// Journey, Sankey, Heatmap and TensorNetwork render labels as plain glyph paths -- three
+    /// document that their math argument is unused, and TensorNetworkLayout emits directly via
+    /// FontMetrics. My math-aware DEFAULT swept all four in, so `$<br/>$` on those surfaces
+    /// returned OK while the renderer was never called: the tag pretended to be math on a
+    /// surface that cannot render math.
+    ///
+    /// The renderer is non-null deliberately -- with a null renderer the bug is invisible,
+    /// which is why the existing suite stayed green through two rounds.
+    @Test
+    void dollarWrappingCannotSmuggleMarkupOntoTheFourPlainGlyphLayouts() {
+        java.util.concurrent.atomic.AtomicInteger calls =
+            new java.util.concurrent.atomic.AtomicInteger();
+        com.sirentide.api.MathFragmentRenderer math = (tex, display) -> {
+            calls.incrementAndGet();
+            return null;
+        };
+        record Probe(String what, String source) {}
+        for (Probe pr : java.util.List.of(
+                new Probe("journey", "journey\n  title $<br/>$\n  section Go\n    Make tea: 5: Me"),
+                new Probe("sankey",  "sankey\n  $<br/>$,Electricity,25\n"),
+                new Probe("heatmap", "heatmap\ncols: $<br/>$\n\"row\" : 1"),
+                new Probe("tensor",  "tensornetwork\n  mps $<br/>$ B\n"))) {
+            var result = Sirentide.renderWithDiagnostics(pr.source(), math);
+            assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+                pr.what() + " renders plain glyph paths, so $…$ is literal there and the tag "
+                    + "must fail closed: " + result.diagnostics());
+        }
+    }
+
+    /// THE POSITIVE CONTROL Marlow required, and the reason the fix is surface-aware rather
+    /// than "delete the math exemption": on a flowchart NODE label — the one surface the API
+    /// documents as math-capable — inline math must stay legal.
+    @Test
+    void inlineMathStaysLegalOnTheOneMathAwareSurface() {
+        var result = Sirentide.renderWithDiagnostics("flowchart TD\n A[$0<x+y>1$]");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "a real math run on a math-aware surface stays legal: " + result.diagnostics());
+    }
+
+    /// Marlow's MEDIUM finding: the FRAME validation calls were unguarded. He proved it by
+    /// passing DiagramConfig.DEFAULT at only those two sites — all 919 tests still passed,
+    /// while a direct probe gave STATIC=PARSE_ERROR but FRAMES=OK.
+    ///
+    /// So this asserts the frames path independently, not by implication from the static path.
+    @Test
+    void theFramesPathFailsClosedOnACaptionToo() {
+        String source = "%% caption: unsafe<br/>\npie\n \"A\" : 1";
+        var frames = Sirentide.renderFramesWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, frames.diagnostics().outcome(),
+            "renderFrames validates the caption on its OWN path: " + frames.diagnostics());
+        // parity with the static path, which is the property 667 required
+        var stat = Sirentide.renderWithDiagnostics(source);
+        assertEquals(stat.diagnostics().outcome(), frames.diagnostics().outcome(),
+            "frames and static must agree on the same source");
+    }
+
+    /// Marlow's finding 1 (sirentide/676): the visible config CAPTION bypassed the seam.
+    /// His discriminator, verbatim, through the public API -- it used to return OK at emit.
+    @Test
+    void aTagShapedConfigCaptionFailsClosedLikeAnyOtherDisplayLabel() {
+        String source = "%% caption: unsafe<br/>\npie\n \"A\" : 1";
+
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "the caption is a DISPLAY surface and must fail closed: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(), "classified at parse, not emit");
+        assertTrue(result.diagnostics().message().contains("caption"),
+            "the stable identity for a single named field IS its name: "
+                + result.diagnostics().message());
+        // render() takes the same degrade, and the markup never reaches output.
+        String svg = Sirentide.render(source);
+        assertFalse(svg.contains("<br/>"), "caption markup must not reach the SVG: " + svg);
+    }
+
+    /// POSITIVE CONTROL for the same surface: a LEGAL caption must still render, or the fix
+    /// above would be indistinguishable from breaking captions entirely.
+    @Test
+    void aLegalConfigCaptionStillRenders() {
+        var result = Sirentide.renderWithDiagnostics("%% caption: a < b holds\npie\n \"A\" : 1");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "an ordinary comparison in a caption stays legal: " + result.diagnostics());
+    }
+
+    /// Marlow's finding 2 (sirentide/676): gitGraph commit ids ARE authored display labels.
+    /// I excluded them as identifiers and he overturned it with the layout's glyph emission.
+    @Test
+    void aTagShapedGitCommitLabelFailsClosed() {
+        var result = Sirentide.renderWithDiagnostics("gitGraph\n commit id: \"<br/>\"");
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "a rendered commit label is a display surface: " + result.diagnostics());
+        assertTrue(result.diagnostics().message().contains("gitgraph.commit"),
+            "stable identity names the op index: " + result.diagnostics().message());
+    }
+
+    /// THE REPRO, RE-RUN WITH A TAG VARIANT THE DETECTOR WAS NOT WRITTEN AGAINST.
+    ///
+    /// Marlow's falsification clause (e) — "the validator accepts a tag variant it was not
+    /// literally written against" — was live: `A[pre<svg:rect/>post]` returned OK at emit with a
+    /// ~15 KB non-inert SVG carrying the characters `<svg:rect/>` as visible glyphs inside the
+    /// node box. That is the ORIGINAL DEFECT verbatim, on a qualified name rather than `<br/>`,
+    /// and every automated check passed exactly as it did the first time.
+    ///
+    /// The whole acceptance shape from sirentide/667 is asserted on this input, not just the
+    /// outcome: inert render, named node, echoed token, static/frames byte parity.
+    @Test
+    void aNamespacedTagFailsClosedWithTheFullReproContract() {
+        String source = "flowchart TD\n  A[pre<svg:rect/>post] --> B[done]\n";
+
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "a qualified element name is a tag: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(), "classified at parse, not emit");
+        assertTrue(result.diagnostics().message().contains("node:A"),
+            "the stable identity names the node: " + result.diagnostics().message());
+        assertTrue(result.diagnostics().message().contains("<svg:rect/>"),
+            "the bounded token echo is the tag: " + result.diagnostics().message());
+
+        // The markup must never reach output, and the two entry points must agree BYTE for byte
+        // on the failure path (a required control; a live SVG beside a PARSE_ERROR is the exact
+        // contradiction the frames-retry finding was about).
+        String svg = Sirentide.render(source);
+        assertEquals(INERT_SHELL_FOR_TAGS, svg, "render must degrade to the inert shell");
+        assertEquals(svg, result.svg(), "render and renderWithDiagnostics must agree byte-for-byte");
+        assertFalse(svg.contains("svg:rect"), "the markup must not reach the SVG: " + svg);
+
+        // FRAMES PARITY on the same source.
+        var frames = Sirentide.renderFramesWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, frames.diagnostics().outcome(),
+            "the frames path must classify identically: " + frames.diagnostics());
+        assertEquals(List.of(INERT_SHELL_FOR_TAGS), frames.frames(),
+            "the frames path must carry the same inert bytes");
+    }
+
+    /// POSITIVE CONTROL for the widening above, and the reason it is the QName production rather
+    /// than "a colon is one more name character".
+    ///
+    /// `<http://example.com>` is the ordinary plaintext convention for a URL and contains a colon
+    /// straight after an ASCII name. If this renders as anything but a normal diagram, the
+    /// detector has become the over-rejecting one Marlow's clause (b) forbids — which would be
+    /// just as much a defect as the under-detection above, and just as green without this test.
+    @Test
+    void aBracketedUrlStillRendersAfterTheQNameWidening() {
+        var result = Sirentide.renderWithDiagnostics(
+            "flowchart TD\n  A[see <http://example.com> now] --> B[<mailto:bob@x.com>]\n");
+        assertEquals(com.sirentide.api.Outcome.OK, result.diagnostics().outcome(),
+            "a bracketed URI is prose, not markup: " + result.diagnostics());
+        assertNotEquals(INERT_SHELL_FOR_TAGS, result.svg(), "it must actually render");
+    }
+
+    /// The inert shell every fail-closed degrade lands on (mirrors {@code Sirentide.INERT_SHELL},
+    /// which is package-private to the api package).
+    private static final String INERT_SHELL_FOR_TAGS =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>";
+
+    /// COORDINATE-ID COVERAGE, preserved on a LEGAL label (Marlow's ruling point 4,
+    /// sirentide/671). The original version of this test used a tag-shaped label, which is
+    /// intentionally INVALID under the fail-closed contract — so keeping it here would have
+    /// tested the degrade path while claiming to test anchor charset safety.
+    ///
+    /// The label is deliberately metacharacter-RICH and tag-SHAPED-NOT: `a < b` has a space
+    /// after the bracket, `&` and `"` are ordinary text. All three must survive to the escaping
+    /// sink, and the ids must stay coordinate-derived.
+    @Test
+    void matrixCoordinateIdsSurviveALegalMetacharacterRichLabel() {
         String svg = Sirentide.render(
-            "matrix\n  cols: <script>a\"b, ok\n  \"<img src=x onerror=alert(1)>\" : pass, fail\n");
+            "matrix\n  cols: a < b, ok\n  \"x & y\" : pass, fail\n");
         List<Anc> a = anchors(svg);
-        assertFalse(a.isEmpty(), "the matrix still emits cell anchors: " + a);
+        assertFalse(a.isEmpty(), "a LEGAL metacharacter-rich matrix must still emit anchors: " + a);
         for (Anc x : anchors(svg)) {
             assertTrue(SirentideContract.ANCHOR_ID.matcher(x.id()).matches(),
-                "emitted id stays charset-legal for a hostile label: " + x.id());
+                "emitted id stays charset-legal: " + x.id());
             assertTrue(x.id().matches("r\\d+c\\d+"),
-                "the id is coordinate-derived, never the hostile text: " + x.id());
+                "the id is coordinate-derived, never the label text: " + x.id());
         }
-        // The hostile label never reaches the output as live MARKUP — it only survives XML-escaped
-        // inside the a11y `<desc>` text (`&lt;img … onerror …&gt;`), which is inert. No `<` opens a tag.
-        assertFalse(svg.contains("<script>"), "the label never reaches the output as markup: " + svg);
-        assertFalse(svg.contains("<img"), "no element injection from the label: " + svg);
-        // NON-VACUITY (Lattice sirentide/215 follow-up 1): also assert the hostile
-        // labels ARE present XML-ESCAPED, so this pins "the label went through the
-        // parser + escaping sink" — not merely "no live tag", which a label silently
-        // dropped would also satisfy.
-        assertTrue(svg.contains("&lt;script&gt;"),
-            "the <script> label survives XML-escaped (reached the sink, not dropped): " + svg);
-        assertTrue(svg.contains("&lt;img") && svg.contains("onerror"),
-            "the <img … onerror> label is present but inert-escaped, pinning parser-through-sink coverage: " + svg);
+        // NON-VACUITY: the metacharacters must actually reach the sink XML-ESCAPED, not be
+        // silently dropped — a dropped label would also satisfy "no live tag".
+        assertTrue(svg.contains("&lt;") || svg.contains("&amp;"),
+            "the legal metacharacters reached the escaping sink: " + svg);
+    }
+
+    /// THE FAIL-CLOSED HALF (Marlow's ruling point 3). The same hostile source that used to be
+    /// asserted as a SUCCESS is now intentionally invalid: its display labels are tag-shaped,
+    /// so the render degrades and the diagnostic says so.
+    ///
+    /// This is the end-to-end contract, not a unit check on the detector: parse → validate →
+    /// degrade → classify, through the public API.
+    @Test
+    void aTagShapedMatrixLabelFailsClosedWithAStableIdentityAndBoundedToken() {
+        String source =
+            "matrix\n  cols: <script>a\"b, ok\n  \"<img src=x onerror=alert(1)>\" : pass, fail\n";
+
+        // 1. render() degrades. No cell anchors, because there is no diagram.
+        String svg = Sirentide.render(source);
+        assertTrue(anchors(svg).isEmpty(),
+            "a tag-shaped display label must degrade, not render: " + anchors(svg));
+
+        // 2. the markup never reaches the output in ANY form on the degrade path.
+        assertFalse(svg.contains("<script>"), "no live markup in the degrade: " + svg);
+        assertFalse(svg.contains("<img"), "no element injection in the degrade: " + svg);
+
+        // 3. the diagnostic classifies at PARSE, names a STABLE identity, and bounds the token.
+        var result = Sirentide.renderWithDiagnostics(source);
+        assertEquals(com.sirentide.api.Outcome.PARSE_ERROR, result.diagnostics().outcome(),
+            "tag-shaped display label is a parse-level failure: " + result.diagnostics());
+        assertEquals("parse", result.diagnostics().stage(),
+            "must classify at PARSE, not layout — the stage is set before validation runs");
+        String message = result.diagnostics().message();
+        assertTrue(message.contains("matrix."),
+            "the diagnostic names a stable label identity: " + message);
+        // The echoed token is bounded and control-sanitized by LabelMarkup, so a hostile label
+        // cannot pump the diagnostic — which is itself an output surface that gets printed,
+        // logged and pasted.
+        assertTrue(message.length() < 600, "the diagnostic stays bounded: " + message.length());
     }
 
     /// knot (plan sirentide-knot-diagram-primitive): the knot shadow is a 4-valent graph whose strand

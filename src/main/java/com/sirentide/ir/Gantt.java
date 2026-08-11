@@ -22,22 +22,27 @@ public record Gantt(List<Task> tasks, String textColor) implements Diagram {
         this(tasks, "currentColor");
     }
 
-    /// The earliest start across all tasks (the time-axis LEFT edge). The missing min-normalization
-    /// was the invisible-sliver bug: absolute-date tasks (start ≫ 0) crammed to the right edge as
-    /// ~sub-pixel bars. `0` for an empty chart.
+    /// The time-axis LEFT edge: the minimum over BOTH endpoints of EVERY task. Aggregating over the
+    /// `end` as well as the `start` (SIR-09) keeps a REVERSED/out-of-order task (`end < start`, so its
+    /// smaller coordinate is its `end`) inside the domain — otherwise that endpoint fell outside
+    /// `[start, end]` and `AxisScale` extrapolated the bar off-canvas (invisible). The missing
+    /// min-normalization was the original invisible-sliver bug (absolute-date tasks crammed to the
+    /// right edge as sub-pixel bars); this closes the reversed-task escape too. `0` for an empty chart.
     public double start() {
         double s = Double.POSITIVE_INFINITY;
         for (Task t : tasks) {
-            s = Math.min(s, t.start());
+            s = Math.min(s, Math.min(t.start(), t.end()));
         }
         return Double.isFinite(s) ? s : 0;
     }
 
-    /// The latest end across all tasks (the time-axis RIGHT edge).
+    /// The time-axis RIGHT edge: the maximum over BOTH endpoints of EVERY task (symmetric to
+    /// {@link #start()} — a reversed task whose larger coordinate is its `start` still bounds the
+    /// domain, so its bar stays on-canvas). `0` for an empty chart.
     public double end() {
         double e = Double.NEGATIVE_INFINITY;
         for (Task t : tasks) {
-            e = Math.max(e, t.end());
+            e = Math.max(e, Math.max(t.start(), t.end()));
         }
         return Double.isFinite(e) ? e : 0;
     }

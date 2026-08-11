@@ -1,13 +1,17 @@
-<!-- Sirentide container contract (v1, M0). The wrapper + the per-element data-sirentide-*
-     semantic/FX anchor vocabulary that makes a baked diagram STYLABLE + DIRECTABLE, and how the
-     Stafficy sanitizer (constrainSirentideWrappers) enforces it. The diagram sibling of LatteX's
-     container-output-contract — but with a deliberate SECURITY FORK: anchors live on INNER
-     elements, not just the wrapper. Owner: Confluence (FX layer + constrainSirentideWrappers +
-     the runtime). Lattice security-reviews. Sirentide M0 plan 8372449f. -->
+<!-- Sirentide container contract (v1, M0). The live wrapper + per-element
+     data-sirentide-role/id/seq vocabulary, the deferred FX vocabulary, and how the Stafficy
+     sanitizer (constrainSirentideWrappers) enforces the admitted subset. The diagram sibling of
+     LatteX's container-output-contract — but with a deliberate SECURITY FORK: semantic anchors
+     live on INNER elements, not just the wrapper. Lattice security-reviews. Sirentide M0 plan
+     8372449f. -->
 
 # Sirentide Container Contract (v1)
 
-Where the [emitter-output contract](sirentide-output-contract.md) governs the diagram's SVG *geometry*, **this** contract governs the layer that makes a baked diagram **stylable and directable** — the wrapper and the semantic/effect anchors — **without opening an XSS hole.** It is the diagram sibling of LatteX's container-output-contract, and it is where Sirentide's whole thesis (Pillar 2: a native effect/narrative layer) actually lives. I own it end to end: the emitter emits to it, my `constrainSirentideWrappers` enforces it, my runtime reads it.
+Where the [emitter-output contract](sirentide-output-contract.md) governs the diagram's SVG
+*geometry*, **this** contract records the admitted wrapper and semantic-anchor layer, plus the
+security boundary a future effect/narrative layer must cross. It is the diagram sibling of
+LatteX's container-output contract. The wrapper and `role`/`id`/`seq` anchors are live; the FX
+vocabulary and page runtime are deferred. **There is no Sirentide page runtime in `/docs` today.**
 
 ## The fork from LatteX (read this first — it's the crux)
 
@@ -31,7 +35,10 @@ Diagrams are block-level (no inline/display split like math):
 
 ## The inner-element anchor vocabulary (closed + value-constrained)
 
-Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constrained. **Anything else is stripped.**
+Sirentide's emitter puts exactly these three semantic-anchor attributes on inner `<g>` groups,
+each enum- or pattern-constrained. Stafficy keeps this `data-sirentide-*` vocabulary closed, but
+its generic safe-SVG allow-list can also preserve inert inner SVG `class`, `id`, and
+presentation/geometry attributes on hand-authored input.
 
 | Attribute | Allowed value | Meaning |
 | --- | --- | --- |
@@ -43,8 +50,10 @@ Inner `<g>` groups may carry ONLY these attributes, each enum- or pattern-constr
 enum into every consumer, and the Stafficy sanitizer pins its allow-list to
 `SirentideRole.WIRE_VALUES` directly — so the enum, not this table, is what enforcement reads.
 This table is kept byte-aligned with the enum by a **build-failing drift test**
-(`ContractDocDriftTest`) that parses this file and compares. `cluster` and `axis` are
-**RESERVED**: admitted by the contract + sanitizer, not yet emitted by any layout.
+(`ContractDocDriftTest`) that parses this file and compares. `cluster` is emitted on each
+flowchart subgraph frame (id from the stable subgraph id); `axis` is emitted on the eight primary
+axis spines across xychart, quadrant, journey, timeline, and gantt. These roles use the same closed
+id/seq value constraints as every other semantic group.
 
 **The seq split is deliberate.** The in-process contract (`SirentideContract.ANCHOR_SEQ`,
 `{1,9}`) stays loose for the unbounded in-process play-through; the `/docs` **wire** bound is
@@ -57,34 +66,55 @@ lands (security-gated, Lattice sign-off), the effect-name enum will ship the sam
 do — jar-exported and drift-guarded, not doc-as-truth. Planned starting vocabulary (design
 intent only): `glow`, `pulse`, `fade`, `draw`, `handscribe`, `spotlight`, `none`.
 
-### Banned on inner elements (build-failing)
-Any `on*`; `<script>`; `href`/`xlink:href`; any `style` attribute; any `data-*` outside the closed list above (including `data-sirentide-fx` until Part 2); **any `class` at all on inner elements** (class lives ONLY on the wrapper `<div>`); any executable or navigational affordance.
+### Banned from Sirentide producer output (build-failing)
+
+Sirentide emits no `on*`, `<script>`, `href`/`xlink:href`, `style`, foreign `data-*`, or inner
+`class` attributes. This producer invariant is deliberately narrower than Stafficy's generic
+safe-SVG sanitizer; arbitrary sanitized SVG may retain inert inner `class`, `id`, and
+presentation/geometry attributes.
 
 ## `constrainSirentideWrappers` — the Stafficy sanitizer pass (Confluence)
 
 The sibling of `constrainMathWrappers` / `constrainCalloutClasses`. On every Sirentide subtree the sanitizer:
 1. Keeps the wrapper `<div class="sirentide sirentide-<type>">` (class value-checked against the closed set).
 2. On every inner element, **strips any `data-sirentide-*` not in the allow-list, and any value not matching its enum/pattern** (a rogue `data-sirentide-fx="alert(1)"` → dropped; `data-sirentide-onwhatever` → dropped).
-3. Strips any `on*`, `href`, `style`, `<script>`, and any non-`sirentide-*` class.
-4. Leaves the geometry (governed by the emitter contract) untouched.
+3. Relies on the generic safe-SVG allow-list to strip executable or navigational surface such as `on*`, `href`/`xlink:href`, `style`, and `<script>`.
+4. May preserve generic safe-SVG `class`, `id`, and presentation/geometry attributes on inner SVG elements; Sirentide's own emitter simply does not produce them beyond its narrower contract.
 
 Value-constrain HARD; never free-form. Back it with an **e2e MarkdownHtml survival test**: a Sirentide diagram survives sanitize with its wrapper class + allowed inner `data-sirentide-*` intact, and a crafted rogue attribute is provably stripped — **drift-guarded against the shared enum/pattern constants, build-failing on drift.**
 
-## The FX runtime — mechanism is PLUGGABLE BY TARGET
+## Deferred FX runtime — mechanism remains pluggable by target
 
-The recon suggested SMIL / inlined `@keyframes` for "no-runtime" animation. That collides with our primary target: **`/docs` strips both `<style>` and `<script>`**, so inlined keyframes can't survive there, and SMIL carries its own event surface (a Lattice call). So:
+The following is future design context, not a description of shipped behavior.
+`/docs` strips both `<style>` and `<script>`, so inline keyframes cannot survive
+there, and SMIL carries its own event surface (a Lattice call). If Part 2 is
+approved and implemented, target-specific mechanisms may include:
 
-- **`/docs` (primary):** the **anchor + one trusted page-level runtime** — the single allowed script, in the trusted head, never inline — reads `data-sirentide-fx` + `data-sirentide-seq` and drives effects + the play-through. This is exactly the LatteX fx-runtime pattern we shipped this session; reuse it.
-- **Standalone bake (optional):** for an author who controls their own page, an optional self-contained SMIL / inlined-CSS emit — zero runtime — off the *same* anchors.
+- **`/docs` (proposed):** one trusted external page-level runtime, never inline,
+  could read a future admitted `data-sirentide-fx` plus the existing
+  `data-sirentide-seq` anchor and drive effects or play-through.
+- **Standalone bake (optional, proposed):** an author-controlled page could opt
+  into a self-contained SMIL or inline-CSS emitter off the same anchors.
 
-Same semantic anchors, two emit backends by trust boundary. Do not spec "SMIL" as THE mechanism; spec the anchor vocabulary and let the backend vary.
+Any implementation requires a separate Lattice security gate, an enum-backed
+effect vocabulary, sanitizer admission, CSP verification, and runtime tests.
+Do not specify SMIL as the universal mechanism; trust boundaries differ.
 
-## The directable / play-through model (Pillar 2 — the reason to build)
+## Deferred directable / play-through model (Pillar 2)
 
-- `data-sirentide-seq` orders the reveal; the runtime steps through it (reveal + highlight in order) — "handscribe for diagrams," a flow you *play*.
-- **Autonomous or one-control, never drag.** Play-through fires on scroll-into-view or a single play control — NOT drag, NOT hover-to-scrub (the small-viewport lesson: my wobble/gravwell were invisible until they became autonomous). Diagram effects must be sized to the rendered box and never require interaction to read.
-- **reduced-motion honored** (static fallback); **no resting-element mutation** (the transform-box-at-rest bug — set transform state only while animating, clear at rest); **body-overlay** for effects that exceed the element bounds.
+If this layer is later admitted:
+
+- `data-sirentide-seq` may order reveal and highlight steps.
+- Use autonomous or one-control playback, never drag or hover-to-scrub; the
+  static diagram must remain readable without interaction.
+- Honor reduced motion with a static fallback, avoid resting-element mutation,
+  and use a body overlay for effects that exceed element bounds.
 
 ## Drift guard (the shared-constants rule)
 
-The role-enum, the effect-name enum, the id/seq patterns, and the `sirentide-*` class set are the **single shared source of truth** (this doc). The emitter pins to it, `constrainSirentideWrappers` pins to it, the runtime pins to it. Any change is one edit here + a matching update to all three, guarded by the e2e survival test — so an effect can never silently die between renderer, sanitizer, and runtime.
+The jar-exported `SirentideRole`, `SirentideContract` patterns, and the emitted
+`sirentide-*` class set are the live source of truth. This document mirrors that
+surface, and `ContractDocDriftTest` fails the build when its role/id/seq claims
+drift. No effect-name enum or Sirentide page runtime exists today. If Part 2 is
+admitted, its enum, sanitizer rules, emitter behavior, and runtime tests must be
+added together before this document may describe them as live.

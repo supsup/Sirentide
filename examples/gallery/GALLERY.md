@@ -130,6 +130,22 @@ timeline
 
 ![Timeline (proportional)](timeline.png)
 
+## Timeline label interval-packing (crowded month)
+
+```
+timeline
+"Charter signed by founders" : 2026-03-02
+"Seed round closed early" : 2026-03-05
+"Prototype demo to board" : 2026-03-09
+"Design freeze declared" : 2026-03-13
+"Beta invitations mailed" : 2026-03-17
+"Security review passed" : 2026-03-21
+"Release candidate cut" : 2026-03-25
+"Public launch announced" : 2026-03-30
+```
+
+![Timeline label interval-packing (crowded month)](timeline-packed.png)
+
 ## Gantt
 
 ```
@@ -540,6 +556,15 @@ mpo A B C D
 
 ![Tensor network (MPO — second operator leg per core)](tensornetwork-mpo.png)
 
+## Young diagram — partition 8 + 6 + 4 + 3 + 1
+
+```
+young
+rows: 8, 6, 4, 3, 1
+```
+
+![Young diagram — partition 8 + 6 + 4 + 3 + 1](young.png)
+
 ## Dynkin — A₃ (a line, all single bonds)
 
 ```
@@ -585,6 +610,36 @@ type: G2
 
 ![Dynkin — G₂ (a triple bond with an arrow)](dynkin-g2.png)
 
+## Root system — A₂ hexagon (6 roots, 6 minimal links)
+
+```
+rootsystem
+type: A2
+edges: minimal
+```
+
+![Root system — A₂ hexagon (6 roots, 6 minimal links)](rootsystem-a2.png)
+
+## Root system — G₂ short/long roots (12 roots, rings only)
+
+```
+rootsystem
+type: G2
+edges: none
+```
+
+![Root system — G₂ short/long roots (12 roots, rings only)](rootsystem-g2.png)
+
+## Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)
+
+```
+rootsystem
+type: E8
+edges: minimal
+```
+
+![Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)](rootsystem-e8.png)
+
 ## Pie thin-slice outside labels (clipped)
 
 ```
@@ -595,6 +650,17 @@ pie
 ```
 
 ![Pie thin-slice outside labels (clipped)](pie-thin-labels.png)
+
+## Pie thin-slice labels — legend shows the dropped name
+
+```
+pie legend
+"quarter" : 25
+"right outside label that should clip" : 1
+"rest" : 74
+```
+
+![Pie thin-slice labels — legend shows the dropped name](pie-thin-labels-legend.png)
 
 ## Timeline endpoint labels (clamped)
 

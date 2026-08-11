@@ -1,6 +1,8 @@
 package com.sirentide.ir;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 /// A cartesian chart over labelled categories. Three render modes share the same axis/tick
 /// machinery: `bars` (the default — value → bar height), `line` (a disc per point + connecting
@@ -27,9 +29,9 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
     public XyChart {
         bars = List.copyOf(bars);
         // `series`/`seriesNames` stay NULLABLE — null `series` is the legacy single-series bar path
-        // (byte-identical). When present, defensively copy the outer list (the `double[]`s are
-        // treated as immutable by convention, like every other Slice-derived value in the IR).
-        series = series == null ? null : List.copyOf(series);
+        // (byte-identical). When present, defensively copy both the outer list and every mutable
+        // value array.
+        series = series == null ? null : copySeries(series);
         seriesNames = seriesNames == null ? null : List.copyOf(seriesNames);
         if (mode == null || mode.isBlank()) {
             mode = "bars";
@@ -37,6 +39,71 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
         if (textColor == null) {
             textColor = "currentColor";
         }
+    }
+
+    /// Defensive-copy accessor so a caller can't mutate any stored series values.
+    @Override
+    public List<double[]> series() {
+        return series == null ? null : copySeries(series);
+    }
+
+    private static List<double[]> copySeries(List<double[]> source) {
+        return source.stream().map(values -> values.clone()).toList();
+    }
+
+    /// Record value equality with content semantics for the nested primitive arrays.
+    @Override
+    public final boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof XyChart that)) {
+            return false;
+        }
+        return legend == that.legend
+            && Objects.equals(bars, that.bars)
+            && seriesEquals(series, that.series)
+            && Objects.equals(seriesNames, that.seriesNames)
+            && Objects.equals(mode, that.mode)
+            && Objects.equals(textColor, that.textColor);
+    }
+
+    /// Hashes the same nested-array contents compared by {@link #equals(Object)}.
+    @Override
+    public final int hashCode() {
+        int result = Objects.hashCode(bars);
+        result = 31 * result + seriesHashCode(series);
+        result = 31 * result + Objects.hashCode(seriesNames);
+        result = 31 * result + Objects.hashCode(mode);
+        result = 31 * result + Boolean.hashCode(legend);
+        result = 31 * result + Objects.hashCode(textColor);
+        return result;
+    }
+
+    private static boolean seriesEquals(List<double[]> left, List<double[]> right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null || left.size() != right.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.size(); i++) {
+            if (!Arrays.equals(left.get(i), right.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int seriesHashCode(List<double[]> series) {
+        if (series == null) {
+            return 0;
+        }
+        int result = 1;
+        for (double[] values : series) {
+            result = 31 * result + Arrays.hashCode(values);
+        }
+        return result;
     }
 
     /// Default construction with the `currentColor` text fill — keeps existing callers/tests

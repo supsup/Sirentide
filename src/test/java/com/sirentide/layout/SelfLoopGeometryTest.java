@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.sirentide.api.Sirentide;
 import com.sirentide.contract.SirentideRole;
+import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.ClassDiagram;
 import com.sirentide.ir.ErDiagram;
 import com.sirentide.parse.DslParser;
@@ -208,15 +209,7 @@ class SelfLoopGeometryTest {
         assertEquals(4, loops.size(), "four self-relations → four edge groups");
         List<double[]> boxes = new ArrayList<>();   // {minX, minY, maxX, maxY} per label
         for (Group g : loops) {
-            List<double[]> pts = new ArrayList<>();
-            g.members().stream().filter(s -> s instanceof GlyphRun)
-                .forEach(s -> pathPoints(((GlyphRun) s).pathD(), pts));
-            assertFalse(pts.isEmpty(), "every loop label renders glyphs");
-            double minX = pts.stream().mapToDouble(p -> p[0]).min().orElseThrow();
-            double minY = pts.stream().mapToDouble(p -> p[1]).min().orElseThrow();
-            double maxX = pts.stream().mapToDouble(p -> p[0]).max().orElseThrow();
-            double maxY = pts.stream().mapToDouble(p -> p[1]).max().orElseThrow();
-            boxes.add(new double[] {minX, minY, maxX, maxY});
+            boxes.add(labelBbox(g));   // GlyphRun AND MathBox — see labelBbox (sirentide/768 F2)
         }
         for (int i = 0; i < boxes.size(); i++) {
             for (int j = i + 1; j < boxes.size(); j++) {
@@ -229,6 +222,424 @@ class SelfLoopGeometryTest {
         }
         assertNoCollinearOverlapAcrossGroups(loops, EDGE);
         assertAllGeometryInside(laid);
+    }
+
+    // -- 3c) each self-loop label is ASSOCIATED WITH ITS OWN LOOP (Marlow sirentide/761) -------------
+    // The defect properties, each a receipt. On the OLD placement every loop label stacked into a
+    // detached staircase BLOCK beyond the outermost leg, centred on the box middle: nothing tied a
+    // label to the loop it names, so a reader could only guess. The fix is Y-ASSOCIATION — one
+    // constant label column past the outermost leg (x cannot associate: a label runs up to MAX_LABEL_W,
+    // many lane pitches wide, so an "inside its own lane" band would cross the outer legs), with each
+    // baseline riding ITS OWN loop's top horizontal leg.
+
+    /// PROPERTY 1 — per-loop Y-ASSOCIATION (Marlow sirentide/761), pinned against the EMITTED artifact:
+    /// the expected baseline is derived from the loop's OWN top-leg Line shape plus the bundled font's
+    /// ascent, never from the layout's baseline helper (that would be a tautology — the helper could
+    /// place labels anywhere and still "agree with itself"). Two halves, both load-bearing:
+    ///
+    ///   a. every label's x-band starts past the OUTERMOST vertical leg — clear of every lane line
+    ///      whatever the label's width (this half also held on the old staircase);
+    ///   b. every label's BASELINE sits on its OWN loop's top horizontal leg, optically centred
+    ///      (leg y + ascent·0.35) — the half the old placement failed, where every baseline keyed off
+    ///      the box CENTRE and lane k's label could sit a whole stack away from lane k's leg.
+    ///
+    /// The baseline is recovered from the artifact by translation: the emitted glyph run for a label
+    /// is that same string's outline placed at the baseline, so `emitted glyph top − the outline's own
+    /// top at baseline 0` IS the baseline the layout chose. Held for the class AND ER twins, which
+    /// must not drift.
+    @Test
+    void eachClassSelfLoopLabelBaselineRidesItsOwnLoopsTopLeg() {
+        assertLabelsRideTheirOwnTopLegs(
+            ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  A --> A : first\n  A --> A : second\n"
+                    + "  A --> A : third\n")),
+            EDGE, List.of("first", "second", "third"), ClassDiagramLayout.EDGE_LABEL_SIZE);
+    }
+
+    @Test
+    void eachErSelfLoopLabelBaselineRidesItsOwnLoopsTopLeg() {
+        assertLabelsRideTheirOwnTopLegs(
+            ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : first\n  A ||--|| A : second\n  A ||--o| A : third\n")),
+            ER_EDGE, List.of("first", "second", "third"), ErDiagramLayout.EDGE_LABEL_SIZE);
+    }
+
+    /// The property-1 oracle. `labels` are the authored (un-ellipsized, so re-measurable) loop labels
+    /// in lane order — group i is lane i, relations emit in authored order.
+    private static void assertLabelsRideTheirOwnTopLegs(LaidOut laid, String edgeStroke,
+                                                        List<String> labels, double labelSize) {
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(labels.size(), loops.size(), "one edge group per self-relation");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        // The METRIC FLOOR's minimum separation for two plain labels of this size: the upper
+        // label's descent + the lower label's ascent + the band gap. Property 1 claims exact
+        // association, which only holds while the attach step exceeds THIS — so the check below is
+        // stated against the floor actually in force, not a stale constant.
+        double band = FontMetrics.bundled().descent(labelSize) + asc + 2;
+        double outermostLeg = loops.stream()
+            .mapToDouble(g -> verticalLegX(g, edgeStroke)).max().orElseThrow();
+        double prevBaseline = Double.NaN;
+        double firstMinX = Double.NaN;
+        for (int k = 0; k < loops.size(); k++) {
+            Group g = loops.get(k);
+            double[] b = labelBbox(g);   // positive control: throws if the lane rendered no glyphs
+            // (a) clear of EVERY leg — the label column sits past the outermost lane line.
+            assertTrue(b[0] > outermostLeg + 1e-6,
+                "lane " + k + " label starts past the outermost leg (minX=" + b[0]
+                    + " > " + outermostLeg + ")");
+            // …and it is ONE column: every lane's label starts at the same x, up to the first glyph's
+            // own left side bearing (a couple of px). The retired x-staircase offset each lane by a
+            // full SELF_LOOP_LANE (14px) — far outside this tolerance — so it fails here.
+            if (k == 0) {
+                firstMinX = b[0];
+            } else {
+                assertTrue(Math.abs(b[0] - firstMinX) < 3.0,
+                    "every loop label shares ONE column past the outermost leg: lane " + k
+                        + " starts at " + b[0] + ", lane 0 at " + firstMinX);
+            }
+            // (b) the association: this label's baseline rides THIS loop's own top leg.
+            double legY = topLegY(g, edgeStroke);
+            double baseline = emittedBaseline(g, labels.get(k), labelSize);
+            assertEquals(legY + asc * 0.35, baseline, 0.5,
+                "lane " + k + " label must ride ITS OWN loop's top leg at y=" + legY
+                    + " (baseline " + baseline + ")");
+            if (k > 0) {
+                // Lane k's top leg sits an attach-step ABOVE lane k−1's, so its label rides higher —
+                // by strictly MORE than one occupied band here, which is exactly why the metric
+                // floor (pinned separately) stays INERT on a real, sizing-grown box and the
+                // association above is exact rather than degraded.
+                assertTrue(prevBaseline - baseline > band + 1e-6,
+                    "lane " + k + " rides above lane " + (k - 1) + " by more than one occupied band: "
+                        + prevBaseline + " → " + baseline);
+            }
+            prevBaseline = baseline;
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// The BASELINE the layout gave a loop group's label, recovered from the EMITTED glyph outline:
+    /// the emitter draws `label` as {@code FontMetrics.textPathD(label, originX, baseline, size)}, and
+    /// that path is a pure translation of the same string's outline at baseline 0 — so the emitted
+    /// glyph top minus the baseline-0 outline's top is the baseline. Derived from the artifact + the
+    /// shared font, NOT from the layout's placement code.
+    private static double emittedBaseline(Group g, String label, double size) {
+        List<double[]> ref = new ArrayList<>();
+        pathPoints(FontMetrics.bundled().textPathD(label, 0, 0, size), ref);
+        assertFalse(ref.isEmpty(), "the label '" + label + "' has a measurable outline");
+        double refTop = ref.stream().mapToDouble(p -> p[1]).min().orElseThrow();
+        return labelBbox(g)[1] - refTop;
+    }
+
+    /// The y of a self-loop's TOP horizontal leg: the highest edge-coloured horizontal Line in the
+    /// group (a rectilinear loop emits exactly two — the top attach's run out, the bottom's run back).
+    private static double topLegY(Group g, String edgeStroke) {
+        return g.members().stream()
+            .filter(s -> s instanceof Line l && edgeStroke.equals(l.stroke())
+                && near(l.y1(), l.y2(), 1e-6))
+            .mapToDouble(s -> ((Line) s).y1())
+            .min().orElseThrow(() -> new AssertionError("the loop has a horizontal leg"));
+    }
+
+    /// PROPERTY 1b — DEGRADATION 2, the METRIC FLOOR, pinned directly on the shared computation. On a
+    /// short box every lane's attach CLAMPS to the same border inset, so all the ideals coincide and
+    /// only the floor can separate the labels; on a real (sizing-grown) box the floor is inert and
+    /// association is exact, which property 1 pins. The expectation is built from the MEASURED
+    /// ascent/descent + the band gap, never from the helper, so the helper cannot agree with itself.
+    ///
+    /// The retired fixed slot budgeted a flat {@code EDGE_LABEL_SIZE + 2} per lane whatever the label
+    /// measured (Marlow sirentide/768 F2). Two halves here:
+    ///   a. UNIFORM metrics — consecutive baselines sit exactly {@code descent + ascent + 2} apart,
+    ///      lane k above lane k−1 (leg order), so the occupied bands touch with a 2px gap;
+    ///   b. a TALL lane — one label with a 20px ascent and 20px descent pushes ONLY the lane below it
+    ///      further down, by that label's own descent + the lower label's ascent + 2. A fixed slot
+    ///      cannot express this, so this half fails by construction on the retired floor.
+    ///
+    /// Non-vacuity for (a): the one-lane call lands exactly where the four-lane call puts its
+    /// outermost (unfloored) lane — proof the ideals really did collide and the separation below is
+    /// the FLOOR at work, not the attach step.
+    @Test
+    void collidingSelfLoopLabelIdealsDegradeToDisjointMetricBands() {
+        double asc = FontMetrics.bundled().ascent(ClassDiagramLayout.EDGE_LABEL_SIZE);
+        double desc = FontMetrics.bundled().descent(ClassDiagramLayout.EDGE_LABEL_SIZE);
+        assertFlooredStack(ClassDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(4, asc, desc)),
+            ClassDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(1, asc, desc))[0],
+            asc, desc, "class");
+        assertFlooredStack(ErDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(4, asc, desc)),
+            ErDiagramLayout.loopLabelBaselines(0, 12, uniformMetrics(1, asc, desc))[0],
+            asc, desc, "ER");
+        // (b) the tall-lane half: lane 3 (outermost, top of the stack) carries a 20/20 fragment.
+        double[][] tall = uniformMetrics(4, asc, desc);
+        tall[3] = new double[] {20, 20};
+        assertTallLanePushesTheLaneBelow(ClassDiagramLayout.loopLabelBaselines(0, 12, tall),
+            asc, desc, "class");
+        assertTallLanePushesTheLaneBelow(ErDiagramLayout.loopLabelBaselines(0, 12, tall),
+            asc, desc, "ER");
+    }
+
+    /// `laneCount` lanes, each label measuring the same ascent/descent — the shape the retired
+    /// fixed-slot floor implicitly assumed for every label.
+    private static double[][] uniformMetrics(int laneCount, double asc, double desc) {
+        double[][] m = new double[laneCount][];
+        for (int k = 0; k < laneCount; k++) {
+            m[k] = new double[] {asc, desc};
+        }
+        return m;
+    }
+
+    private static void assertFlooredStack(double[] baselines, double soleLaneBaseline,
+                                           double asc, double desc, String what) {
+        double band = desc + asc + 2;   // upper label's descent + lower label's ascent + the gap
+        assertEquals(4, baselines.length, what + ": one baseline per lane");
+        assertEquals(soleLaneBaseline, baselines[baselines.length - 1], 1e-9,
+            what + ": on a short box every lane's ideal clamps to the same y — the outermost lane "
+                + "sits on that shared ideal, so the separation below really is the FLOOR at work");
+        for (int k = 1; k < baselines.length; k++) {
+            assertEquals(band, baselines[k - 1] - baselines[k], 1e-9,
+                what + ": collided lanes " + (k - 1) + " and " + k + " sit exactly one OCCUPIED-BAND "
+                    + "apart (descent + ascent + gap), lane " + k + " above (leg order)");
+        }
+    }
+
+    /// Lane 3 measures 20/20 while lanes 0-2 measure the plain font. The floor must charge lane 2 the
+    /// TALL label's descent (20) plus its own ascent plus the gap — strictly more than the uniform
+    /// separation the other pairs get, and more than any fixed slot could budget.
+    private static void assertTallLanePushesTheLaneBelow(double[] baselines, double asc, double desc,
+                                                          String what) {
+        assertEquals(20 + asc + 2, baselines[2] - baselines[3], 1e-9,
+            what + ": the 20px-descent lane pushes the lane below it by ITS OWN descent, not a slot");
+        assertEquals(desc + asc + 2, baselines[1] - baselines[2], 1e-9,
+            what + ": the untouched pairs keep the plain-metric separation");
+        assertEquals(desc + asc + 2, baselines[0] - baselines[1], 1e-9,
+            what + ": the untouched pairs keep the plain-metric separation");
+    }
+
+    /// PROPERTY 2 — pairwise label disjointness, the ER manages/uses RED: a self-loop label and a
+    /// right-NEIGHBOUR edge's own midpoint label used to physically overlap at the top-right. Centring
+    /// the loop label on the table's vertical middle drops it clear below the neighbour's centre-band
+    /// label. Both labels render (glyph boxes exist) — the disjointness is the load-bearing half.
+    @Test
+    void erSelfLoopLabelDoesNotCollideWithANeighborEdgeLabel() {
+        LaidOut laid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  EMPLOYEE ||--o{ EMPLOYEE : manages\n  EMPLOYEE ||--|| DESK : uses\n"));
+        List<Group> edges = edgeGroups(laid);   // group 0 = self-loop (manages), 1 = neighbour (uses)
+        assertEquals(2, edges.size(), "two relationships → two edge groups");
+        double[] manages = labelBbox(edges.get(0));
+        double[] uses = labelBbox(edges.get(1));
+        assertTrue(footprintsDisjoint(manages, uses),
+            "the self-loop label and the neighbour edge label overlap: "
+                + java.util.Arrays.toString(manages) + " vs " + java.util.Arrays.toString(uses));
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 3 — labels disjoint from every MARKER footprint. The marker-stack case (diamond + two
+    /// triangles stacked on A's border) with three labels: each label's glyph box clears every marker
+    /// footprint (marker lines + filled diamond paths), because the labels ride lanes OUT past the
+    /// markers (which cap at x1 + markerLength ≤ x1 + SELF_LOOP_OUT).
+    @Test
+    void selfLoopLabelsNeverTouchAMarkerFootprint() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A <|-- A : inherits\n  A <|-- A : also\n  A *-- A : owns\n"));
+        List<Group> loops = edgeGroups(laid);
+        assertEquals(3, loops.size(), "three self-relations → three edge groups");
+        List<double[]> markers = new ArrayList<>();
+        for (Group g : loops) {
+            double[] mf = markerFootprint(g, MK);   // positive control: each marker rendered
+            assertTrue(mf != null, "each loop rendered its marker footprint");
+            markers.add(mf);
+        }
+        for (int k = 0; k < loops.size(); k++) {
+            double[] lab = labelBbox(loops.get(k));
+            for (int m = 0; m < markers.size(); m++) {
+                assertTrue(footprintsDisjoint(lab, markers.get(m)),
+                    "lane " + k + " label overlaps marker " + m + ": "
+                        + java.util.Arrays.toString(lab) + " vs "
+                        + java.util.Arrays.toString(markers.get(m)));
+            }
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 4 — labels disjoint from every LANE LINE and every BOX, with canvas GROWTH. A labeled
+    /// multi-lane loop WITH a right neighbour: every label glyph sits past all legs (min label x >
+    /// every lane-line x — legs all live at x ≤ the outermost leg), no glyph lands inside the loop's
+    /// own box or the neighbour box, and every coordinate stays inside the grown viewBox.
+    @Test
+    void selfLoopLabelsClearLaneLinesAndEveryBoxWithinTheGrownCanvas() {
+        LaidOut laid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  class B\n  A --> A : alpha\n  A --> A : beta\n  A --> B\n"));
+        List<Group> loops = edgeGroups(laid);
+        List<Rect> boxes = boxRects(laid, SirentideRole.CLASS);
+        assertEquals(2, boxes.size(), "both class boxes placed");
+        List<double[]> labelPts = new ArrayList<>();
+        for (Group g : loops) {
+            g.members().stream().filter(s -> s instanceof GlyphRun)
+                .forEach(s -> pathPoints(((GlyphRun) s).pathD(), labelPts));
+        }
+        assertFalse(labelPts.isEmpty(), "loop labels rendered glyphs");   // positive control
+        // No label glyph falls inside ANY box (own node or the neighbour).
+        for (double[] p : labelPts) {
+            for (Rect b : boxes) {
+                assertFalse(inside(b, p[0], p[1]),
+                    "a loop label glyph at " + p[0] + "," + p[1] + " falls inside a box at x="
+                        + b.x() + ".." + (b.x() + b.width()));
+            }
+        }
+        // Every label glyph sits strictly past EVERY self-loop LANE line. A rectilinear loop's lane
+        // is bounded on the right by its VERTICAL leg (x1 == x2), and every horizontal leg ends at
+        // x ≤ that vertical leg — so the outermost vertical leg is the rightmost lane coordinate. (The
+        // A→B neighbour edge is a straight, non-vertical line and carries no lane leg, so it is
+        // correctly excluded.) The label column sits beyond it, so none can cross or sit on a loop leg.
+        double maxLaneX = Double.NEGATIVE_INFINITY;
+        for (Group g : loops) {
+            for (Shape s : g.members()) {
+                if (s instanceof Line l && EDGE.equals(l.stroke()) && Math.abs(l.x1() - l.x2()) < 1e-6) {
+                    maxLaneX = Math.max(maxLaneX, l.x1());
+                }
+            }
+        }
+        double minLabelX = labelPts.stream().mapToDouble(p -> p[0]).min().orElseThrow();
+        assertTrue(minLabelX > maxLaneX + 1e-6,
+            "every loop label clears every self-loop lane leg: min label x " + minLabelX
+                + " must exceed the outermost vertical leg x " + maxLaneX);
+        assertAllGeometryInside(laid);   // the canvas grew to hold the label column
+    }
+
+    /// PROPERTY 6 — labels keep a CLEAR CORRIDOR from every NON-LOOP edge segment crossing their
+    /// x-band (eye-pass finding, plan 64cf1bae). The g5 gallery shape (class-self-loops-stacked,
+    /// Charles's named "optimize text placement" case) PASSED every disjointness receipt above while
+    /// FAILING the eye: the straight A→B neighbour edge threaded RIGHT BETWEEN "refines itself" and
+    /// "delegates", so both read as labels ON the A→B edge — misattribution, worse than crowding.
+    /// Non-overlap is not unambiguity. The pin: for every self-loop label, every non-loop edge
+    /// segment crossing the label's x-band keeps at least SELF_LOOP_EDGE_CLEARANCE of vertical gap
+    /// from the label's glyph box (the layouts shift the whole fan — ordering preserved — to honour
+    /// it; the clearance constant is IMPORTED from the layout so oracle and corridor cannot drift).
+    /// The ER twin (the g4 er-self-loop shape) is held to the same corridor: "manages" used to sit
+    /// touching the uses edge. RED on the pre-fix placement for both fixtures.
+    @Test
+    void selfLoopLabelFanKeepsClearOfNeighbourEdgeCorridors() {
+        // The exact g5 fixture.
+        LaidOut classLaid = ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  class B\n  A <|-- A : refines itself\n"
+                + "  A --> A : delegates\n  A --> B\n"));
+        assertLoopLabelsClearNonLoopEdges(classLaid, EDGE,
+            ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE);
+        assertAllGeometryInside(classLaid);
+        // The ER twin (the g4 shape).
+        LaidOut erLaid = ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  EMPLOYEE ||--o{ EMPLOYEE : manages\n  EMPLOYEE ||--|| DESK : uses\n"));
+        assertLoopLabelsClearNonLoopEdges(erLaid, ER_EDGE,
+            ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE);
+        assertAllGeometryInside(erLaid);
+    }
+
+    /// The property-6 oracle: every SELF-LOOP label's glyph box keeps ≥ `clearance` of vertical gap
+    /// from the y-interval of every NON-LOOP edge segment (dash segments included; a bent route's
+    /// legs are each a segment) over the part of that segment inside the label's x-band. Segments
+    /// outside the band constrain nothing (the corridor is about what passes THROUGH the label's
+    /// column). Carries its own positive control: at least one non-loop segment must actually cross
+    /// some label's x-band — the fan shifts vertically, so the crossing survives the fix and the
+    /// clearance assertions can never go vacuously green.
+    private static void assertLoopLabelsClearNonLoopEdges(LaidOut laid, String edgeStroke,
+                                                          double clearance) {
+        List<Group> edges = edgeGroups(laid);
+        List<Group> loops = edges.stream().filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        List<Group> nonLoops = edges.stream().filter(g -> !isSelfLoopGroup(g)).toList();
+        assertFalse(loops.isEmpty(), "the fixture renders at least one self-loop");
+        assertFalse(nonLoops.isEmpty(), "the fixture renders a non-loop neighbour edge");
+        boolean crossed = false;
+        for (Group loop : loops) {
+            double[] lab = labelBbox(loop);   // positive control: the loop label rendered glyphs
+            for (Group other : nonLoops) {
+                for (Shape s : other.members()) {
+                    if (!(s instanceof Line l) || !edgeStroke.equals(l.stroke())) {
+                        continue;   // markers/labels are covered by properties 2-4; this pins EDGES
+                    }
+                    double xLo = Math.max(Math.min(l.x1(), l.x2()), lab[0]);
+                    double xHi = Math.min(Math.max(l.x1(), l.x2()), lab[2]);
+                    if (xHi < xLo) {
+                        continue;   // this segment never enters the label's x-band
+                    }
+                    crossed = true;
+                    double[] yr = segmentYRange(l, xLo, xHi);
+                    double gap = Math.max(yr[0] - lab[3], lab[1] - yr[1]);
+                    assertTrue(gap >= clearance - 1e-6,
+                        "a non-loop edge segment passes within " + gap + "px (< " + clearance
+                            + ") of a self-loop label over x=[" + xLo + ".." + xHi + "]: label "
+                            + java.util.Arrays.toString(lab) + " vs segment (" + l.x1() + ","
+                            + l.y1() + ")-(" + l.x2() + "," + l.y2() + ")");
+                }
+            }
+        }
+        assertTrue(crossed,
+            "positive control: some non-loop segment crosses a label's x-band in this fixture");
+    }
+
+    /// The y-range a segment sweeps over `[xLo, xHi]` (a sub-range of its x-span). A vertical
+    /// segment contributes its full y-span.
+    private static double[] segmentYRange(Line l, double xLo, double xHi) {
+        double dx = l.x2() - l.x1();
+        if (Math.abs(dx) < 1e-9) {
+            return new double[] {Math.min(l.y1(), l.y2()), Math.max(l.y1(), l.y2())};
+        }
+        double ya = l.y1() + (xLo - l.x1()) / dx * (l.y2() - l.y1());
+        double yb = l.y1() + (xHi - l.x1()) / dx * (l.y2() - l.y1());
+        return new double[] {Math.min(ya, yb), Math.max(ya, yb)};
+    }
+
+    /// A self-loop's edge group id is `left + "-" + right` with left == right (`A-A`,
+    /// `EMPLOYEE-EMPLOYEE`) — the two halves around the middle dash are equal.
+    ///
+    /// …EXCEPT that {@link AnchorAssigner} uniquifies a repeated id by appending `-<k>`, so a node's
+    /// SECOND self-relation is `A-A-1`. Matching only the bare form silently dropped every loop but
+    /// the first — which is exactly how a two-lane fan could be half-checked and still look green
+    /// (the corridor oracle below asserted only that SOME loop existed). So try the stripped form
+    /// too, and never treat a plain `-<k>` id as decisive on its own.
+    private static boolean isSelfLoopGroup(Group g) {
+        String id = g.anchor().id();
+        return halvesEqual(id) || halvesEqual(id.replaceFirst("-\\d+$", ""));
+    }
+
+    private static boolean halvesEqual(String id) {
+        int h = id.length() / 2;
+        return id.length() % 2 == 1 && id.charAt(h) == '-'
+            && id.substring(0, h).equals(id.substring(h + 1));
+    }
+
+    /// The bounding box {minX, minY, maxX, maxY} of a loop group's LABEL ink (a positive control in
+    /// itself — throws if the group rendered no label).
+    ///
+    /// BOTH label shapes are observed. Selecting GlyphRun only made every sweep built on this helper
+    /// structurally BLIND to a MATH label — a `$…$` fragment emits a {@link MathBox}, not glyphs, so
+    /// two colliding math labels produced NO points at all and the disjointness loops ran over an
+    /// empty set (Marlow sirentide/768 F2). A MathBox contributes its pen point `(x, baseline)`; its
+    /// full occupied band is not recoverable from the shape alone (the ink lives inside opaque
+    /// renderer markup), which is why the band receipt above reads the fragment's declared
+    /// ascent/descent instead. Here the pen point is enough to make the instrument non-blind.
+    private static double[] labelBbox(Group g) {
+        List<double[]> pts = new ArrayList<>();
+        for (Shape s : g.members()) {
+            if (s instanceof GlyphRun gr) {
+                pathPoints(gr.pathD(), pts);
+            } else if (s instanceof MathBox b) {
+                pts.add(new double[] {b.x(), b.y()});
+            }
+        }
+        assertFalse(pts.isEmpty(), "the loop group rendered a label");
+        double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
+        double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
+        for (double[] p : pts) {
+            minX = Math.min(minX, p[0]);
+            minY = Math.min(minY, p[1]);
+            maxX = Math.max(maxX, p[0]);
+            maxY = Math.max(maxY, p[1]);
+        }
+        return new double[] {minX, minY, maxX, maxY};
+    }
+
+    /// Two bboxes are DISJOINT when they share no interior (a shared edge at the touch tolerance is not
+    /// an overlap) — the negation of {@link #footprintsOverlap}.
+    private static boolean footprintsDisjoint(double[] a, double[] b) {
+        return !footprintsOverlap(a, b, 1e-6);
     }
 
     /// Rejects any POSITIVE-LENGTH collinear intersection between edge-coloured legs of DIFFERENT
@@ -608,6 +1019,516 @@ class SelfLoopGeometryTest {
         assertTrue(laid.height() >= mb.y() + 60,
             "the canvas holds the fragment's 60px descent: height=" + laid.height()
                 + " baseline=" + mb.y());
+    }
+
+    /// PROPERTY 7 — the COMPOSED contract, now with PER-LABEL selectivity (Marlow sirentide/768 F1,
+    /// re-cut for sirentide/770 amendment v3). Properties 1 and 6 each held alone: association was
+    /// pinned on a loop-ONLY fixture where nothing binds, and clearance was pinned without ever
+    /// asking where the labels ended up relative to their legs. Between them the composition was
+    /// unpinned. (The corridor oracle was itself half-blind: it matched loop groups by the bare `A-A`
+    /// anchor id, so a node's SECOND self-relation — uniquified to `A-A-1` — was silently skipped.
+    /// Fixed in isSelfLoopGroup.)
+    ///
+    /// The ROUND-4 version of this receipt asserted a UNIFORM offset — every label the same distance
+    /// off its leg, "the fan moved as a SET". That was an honest statement of what the solver did and
+    /// a wrong statement of what the contract should be: it pinned the very behaviour Marlow's 770
+    /// discriminator rejects. It is replaced, not relaxed, and the replacement is STRICTLY STRONGER
+    /// on this same fixture — a uniform offset now FAILS it.
+    ///
+    /// Asserted on the FULLY laid-out artifact — the exact `class-self-loops-stacked` gallery DSL
+    /// (two self-loops plus the crossing A→B neighbour) and its ER analogue — with WHICH labels
+    /// conflict DERIVED from the emitted shapes, never hardcoded:
+    ///
+    ///   a. CLEARANCE (hard): no label's box comes within SELF_LOOP_EDGE_CLEARANCE of the neighbour
+    ///      edge's swept band over its x-band;
+    ///   b. SELECTIVITY: a label whose OWN corridor is clear at its leg ideal AND whose ideal
+    ///      survives the disjointness floor left by the label above it sits EXACTLY on that ideal;
+    ///      every other label cleared its corridor and stayed adjacent-feasible;
+    ///   c. ORDER: label order matches leg order — the outer lane's leg is higher and so is its label;
+    ///   d. DISJOINTNESS: adjacent occupied bands stay apart by descent + ascent + the band gap.
+    ///
+    /// NON-VACUITY runs BOTH ways on this fixture: at least one label must be at its exact ideal
+    /// (selectivity is live, not a fan that happened to need no shift) and at least one must have
+    /// moved (the corridor degradation is live, not a fixture where nothing binds).
+    @Test
+    void theStackedFixtureComposesLegAssociationWithPerLabelCorridorClearance() {
+        // The exact class-self-loops-stacked gallery DSL.
+        assertPerLabelSelectivityOnTheStack(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  class B\n  A <|-- A : refines itself\n"
+                    + "  A --> A : delegates\n  A --> B\n")),
+            EDGE, SirentideRole.CLASS, ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ClassDiagramLayout.EDGE_LABEL_SIZE, List.of("refines itself", "delegates"), "class");
+        // The ER analogue: the stacked-loop gallery shape with a crossing neighbour edge added.
+        assertPerLabelSelectivityOnTheStack(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : first\n  A ||--o{ A : second\n  A ||--|| B : uses\n")),
+            ER_EDGE, SirentideRole.ENTITY, ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ErDiagramLayout.EDGE_LABEL_SIZE, List.of("first", "second"), "ER");
+    }
+
+    /// The composed oracle. `labels` are the authored loop labels in LANE order (group i = lane i);
+    /// LEG order is the reverse, since lane k's top leg sits an attach step above lane k−1's.
+    ///
+    /// The corridor each label is judged against is derived from its own INK bounding box, which is a
+    /// SUBSET of the advance box the layout reserves. That conservatism runs in the receipt's favour:
+    /// an ink-derived "this label is blocked at its ideal" is a fortiori true of the wider advance
+    /// box, and an ink-derived "this label is clear" makes the exact-ideal assertion in (b) apply to
+    /// MORE labels, never fewer. If the two ever disagreed the receipt would go RED, which is the
+    /// direction drift should fail in.
+    private static void assertPerLabelSelectivityOnTheStack(LaidOut laid, String edgeStroke,
+                                                            SirentideRole boxRole, double clearance,
+                                                            double labelSize, List<String> labels,
+                                                            String what) {
+        // (a) the HARD corridor constraint, on the emitted artifact.
+        assertLoopLabelsClearNonLoopEdges(laid, edgeStroke, clearance);
+
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        int m = labels.size();
+        assertEquals(m, loops.size(), what + ": every self-relation renders as its own loop group");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        double desc = FontMetrics.bundled().descent(labelSize);
+        double lift = asc * 0.35;
+        double[] legY = new double[m];
+        double[] baseline = new double[m];
+        double[] ideal = new double[m];
+        List<List<double[]>> ban = new ArrayList<>();
+        for (int k = 0; k < m; k++) {
+            legY[k] = topLegY(loops.get(k), edgeStroke);
+            baseline[k] = emittedBaseline(loops.get(k), labels.get(k), labelSize);
+            ideal[k] = legY[k] + lift;
+            double[] ink = labelBbox(loops.get(k));
+            assertNoBoxCrossesTheLabelColumn(laid, boxRole, ink[0],
+                ink[0] + FontMetrics.bundled().runWidth(labels.get(k), labelSize),
+                what + " lane " + k);
+            ban.add(forbiddenBaselines(laid, edgeStroke, clearance, ink[0], ink[2], asc, desc));
+        }
+        // (b) SELECTIVITY, walked in LEG order (outermost lane first) so each label is judged against
+        // the FINAL position of the label above it, exactly as the solver committed them.
+        int atIdeal = 0;
+        int movedOff = 0;
+        for (int k = m - 1; k >= 0; k--) {
+            double floor = asc + 2;                       // the canvas-top ascent floor
+            if (k < m - 1) {
+                floor = Math.max(floor, baseline[k + 1] + desc + asc + 2);   // BAND_GAP = 2
+            }
+            boolean corridorClear = !blocked(ideal[k], ban.get(k));
+            if (corridorClear && ideal[k] >= floor - 1e-6) {
+                assertEquals(ideal[k], baseline[k], 0.5,
+                    what + ": lane " + k + " (\"" + labels.get(k) + "\") has a CLEAR corridor at its "
+                        + "leg ideal " + ideal[k] + " and room under lane " + (k + 1) + ", so it must "
+                        + "ride its own leg exactly — it emitted " + baseline[k] + ". A whole-fan "
+                        + "shift is exactly what this forbids (Marlow sirentide/770).");
+                atIdeal++;
+            } else {
+                assertFalse(blocked(baseline[k], ban.get(k)),
+                    what + ": lane " + k + " (\"" + labels.get(k) + "\") is bound at its ideal "
+                        + ideal[k] + ", so its emitted baseline " + baseline[k] + " must CLEAR its "
+                        + "corridor " + banToString(ban.get(k)));
+                assertTrue(baseline[k] >= floor - 1e-6,
+                    what + ": lane " + k + " must stay below the disjointness floor " + floor
+                        + " (emitted " + baseline[k] + ")");
+                movedOff++;
+            }
+        }
+        assertTrue(atIdeal > 0,
+            what + ": NON-VACUITY — this fixture must contain a label whose own corridor is clear, "
+                + "so that per-label SELECTIVITY is actually exercised");
+        assertTrue(movedOff > 0,
+            what + ": NON-VACUITY — this fixture must contain a CONFLICTED label, so that the "
+                + "corridor degradation is actually exercised");
+        // (c) order and (d) disjointness, on the metric bands rather than glyph bboxes.
+        for (int k = 1; k < m; k++) {
+            assertTrue(legY[k] < legY[k - 1] - 1e-6,
+                what + ": lane " + k + "'s top leg sits above lane " + (k - 1) + "'s");
+            assertTrue(baseline[k] < baseline[k - 1] - 1e-6,
+                what + ": lane " + k + "'s label must stay ABOVE lane " + (k - 1) + "'s — label order "
+                    + "must match leg order whatever the corridor cost");
+            assertTrue(baseline[k] + desc <= baseline[k - 1] - asc + 1e-6,
+                what + ": lanes " + (k - 1) + " and " + k + " occupy overlapping bands ("
+                    + (baseline[k] + desc) + " vs " + (baseline[k - 1] - asc) + ")");
+        }
+        for (int i = 0; i < loops.size(); i++) {
+            for (int j = i + 1; j < loops.size(); j++) {
+                assertTrue(footprintsDisjoint(labelBbox(loops.get(i)), labelBbox(loops.get(j))),
+                    what + ": loop labels " + i + " and " + j + " overlap");
+            }
+        }
+        assertAllGeometryInside(laid);
+    }
+
+    /// DEGRADATION 2 — the METRIC FLOOR, pinned on the case the retired fixed slot could not see
+    /// (Marlow sirentide/768 F2). The old floor budgeted a flat {@code EDGE_LABEL_SIZE + 2} = 12px
+    /// per lane regardless of what the label MEASURED, so two loop labels whose fragments rise 20px
+    /// above the baseline and fall 20px below it emitted OVERLAPPING occupied bands — Marlow's probe
+    /// read [32.667, 72.667] against [14.667, 54.667], a 22px overlap — while every receipt in this
+    /// file stayed green, because the pairwise-disjointness sweep selected GlyphRun only and a math
+    /// label emits a MathBox.
+    ///
+    /// The oracle is the AUTHORITATIVE occupied band, not a glyph bbox: a MathBox is placed at the
+    /// pen `(x, baseline)` and the fragment's own contract says it rises `heightPx` above that
+    /// baseline and falls `depthPx` below it, so `[y − heightPx, y + depthPx]` is exactly the ink the
+    /// fragment claims. Both twins, because they must not drift. Non-vacuity: each lane's fragment
+    /// must actually have landed as a MathBox, and the fixture's 40px band is WIDER than the class
+    /// attach step (18px) and the ER one (20px), so nothing but a metrics-aware floor can separate
+    /// them.
+    @Test
+    void twoTallMathSelfLoopLabelsEmitDisjointOccupiedBands() {
+        double asc = 20;
+        double desc = 20;
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) ->
+            java.util.Optional.of(new com.sirentide.api.MathFragment(
+                "<g transform=\"scale(0.5 0.5)\"><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>",
+                40, asc, desc));
+        assertMathLoopLabelBandsDisjoint(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+            "classDiagram\n  class A\n  A --> A : $x$\n  A --> A : $y$\n"), fake), asc, desc, "class");
+        assertMathLoopLabelBandsDisjoint(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+            "erDiagram\n  A ||--o{ A : $x$\n  A ||--|| A : $y$\n"), fake), asc, desc, "ER");
+    }
+
+    /// The degradation-2 oracle: every self-loop label's occupied band, read off its emitted MathBox
+    /// and the fragment's declared ascent/descent, is pairwise DISJOINT — and the canvas holds it.
+    private static void assertMathLoopLabelBandsDisjoint(LaidOut laid, double asc, double desc,
+                                                         String what) {
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        assertEquals(2, loops.size(), what + ": two self-relations → two loop groups");
+        List<double[]> bands = new ArrayList<>();
+        for (int k = 0; k < loops.size(); k++) {
+            MathBox mb = loops.get(k).members().stream()
+                .filter(s -> s instanceof MathBox).map(s -> (MathBox) s)
+                .findFirst().orElseThrow(() -> new AssertionError(
+                    what + ": lane's math label rendered as a MathBox"));   // positive control
+            assertTrue(laid.height() >= mb.y() + desc - 1e-6,
+                what + ": the canvas holds lane " + k + "'s descent: height=" + laid.height()
+                    + " band bottom=" + (mb.y() + desc));
+            bands.add(new double[] {mb.y() - asc, mb.y() + desc});
+        }
+        for (int i = 0; i < bands.size(); i++) {
+            for (int j = i + 1; j < bands.size(); j++) {
+                double[] a = bands.get(i);
+                double[] b = bands.get(j);
+                assertTrue(a[1] <= b[0] + 1e-6 || b[1] <= a[0] + 1e-6,
+                    what + ": loop labels " + i + " and " + j + " occupy OVERLAPPING bands "
+                        + java.util.Arrays.toString(a) + " vs " + java.util.Arrays.toString(b)
+                        + " — the floor must consume each label's real ascent+descent");
+            }
+        }
+    }
+
+    // -- 5b) corridor avoidance is PER-LABEL (Marlow sirentide/770, amendment v3) -----------------
+
+    /// The exaggerated-metrics fragment body every fake renderer below hands back — the ink is
+    /// irrelevant, the DECLARED box is what the layout measures.
+    private static final String FRAG =
+        "<g transform=\"scale(0.5 0.5)\"><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>";
+
+    /// PROPERTY 7 — CORRIDOR AVOIDANCE IS PER-LABEL: an UNCONFLICTED label keeps its own leg
+    /// (Marlow sirentide/770, amendment v3 — his discriminator, promoted verbatim to a receipt).
+    ///
+    /// The retired solver shifted the node's whole fan by ONE scalar dy, so a single conflicted label
+    /// dragged every SIBLING off its leg — including labels whose own corridor was already clear.
+    /// Marlow's construction isolates exactly that: both loop labels ride the SAME x column, so the
+    /// only thing that differs is how far right each one REACHES. The 120px label (lane 0) reaches
+    /// into the part of the column where the A→B edge sweeps; the 8px label (lane 1, the OUTERMOST
+    /// lane) stops 8px in, where the same edge passes nowhere near its band. One is conflicted, one
+    /// is not, and there is no whole-fan dy that can be right for both.
+    ///
+    /// What is asserted, all of it derived from the EMITTED artifact (legs from the loop's horizontal
+    /// Lines exactly as property 1's oracle reads them; corridors from the neighbour edge's own
+    /// emitted Line; baselines from the MathBox pen point, which IS the baseline by the fragment
+    /// coordinate contract):
+    ///
+    ///   NON-VACUITY, both directions — the wide label's leg ideal is really INSIDE its forbidden
+    ///     band and the narrow label's really is OUTSIDE its own. Without this the receipt could go
+    ///     green on a fixture where nothing conflicts at all.
+    ///   a. the CLEAR label sits EXACTLY on its own leg (≤ 0.5px) — the round-5 failure, inverted;
+    ///   b. the CONFLICTED label clears its corridor, and does so MINIMALLY: its baseline lands ON
+    ///      the corridor's lower escape boundary (its band top exactly kissing the clearance), and
+    ///      the upward escape is unavailable at ANY distance because it would put the wide label
+    ///      above the clear one's disjointness floor — i.e. the hard ORDER/DISJOINTNESS constraints,
+    ///      not slack, are what sent it down;
+    ///   c. ORDER and pairwise DISJOINTNESS survive.
+    ///
+    /// RED on the whole-fan solver: the clear label emitted 18.14px (class) / 16.78px (ER) off the
+    /// leg it is supposed to ride, because its sibling's conflict moved the set.
+    @Test
+    void anUnconflictedSelfLoopLabelKeepsItsLegWhileItsSiblingClearsTheCorridor() {
+        // `$w$` measures 120px wide, `$n$` 8px; both declare a box shorter than the text metrics, so
+        // ascent/descent are the plain label metrics and WIDTH is the only difference between them.
+        com.sirentide.api.MathFragmentRenderer widths = (latex, size) -> java.util.Optional.of(
+            new com.sirentide.api.MathFragment(FRAG, latex.trim().equals("n") ? 8 : 120, 2, 1));
+        assertPerLabelCorridorSelectivity(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  class B\n  A --> A : $w$\n  A --> A : $n$\n  A --> B\n"),
+                widths),
+            EDGE, SirentideRole.CLASS, ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ClassDiagramLayout.EDGE_LABEL_SIZE, "class");
+        assertPerLabelCorridorSelectivity(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : $w$\n  A ||--o{ A : $n$\n  A ||--|| B : uses\n"), widths),
+            ER_EDGE, SirentideRole.ENTITY, ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ErDiagramLayout.EDGE_LABEL_SIZE, "ER");
+    }
+
+    /// Marlow's discriminator as an oracle. Lane 0 carries the 120px label, lane 1 the 8px one.
+    private static void assertPerLabelCorridorSelectivity(LaidOut laid, String edgeStroke,
+                                                          SirentideRole boxRole, double clearance,
+                                                          double labelSize, String what) {
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        assertEquals(2, loops.size(), what + ": two self-relations → two loop groups");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        double desc = FontMetrics.bundled().descent(labelSize);
+        double lift = asc * 0.35;
+        MathBox wide = mathLabel(loops.get(0), what + " lane 0 (the 120px label)");
+        MathBox narrow = mathLabel(loops.get(1), what + " lane 1 (the 8px label)");
+        double wideIdeal = topLegY(loops.get(0), edgeStroke) + lift;
+        double narrowIdeal = topLegY(loops.get(1), edgeStroke) + lift;
+        assertTrue(narrowIdeal < wideIdeal - 1e-6,
+            what + ": lane 1 is the OUTER lane — its leg (and so its ideal) sits above lane 0's");
+        assertEquals(wide.x(), narrow.x(), 1e-6,
+            what + ": both labels ride the SAME x column — width is the only difference");
+        // The corridor oracle below reads EDGE segments only, so it is sound exactly when no BOX
+        // rectangle reaches into either label's x-band. Checked, never assumed.
+        assertNoBoxCrossesTheLabelColumn(laid, boxRole, wide.x(), wide.x() + 120, what);
+        List<double[]> wideBan = forbiddenBaselines(laid, edgeStroke, clearance,
+            wide.x(), wide.x() + 120, asc, desc);
+        List<double[]> narrowBan = forbiddenBaselines(laid, edgeStroke, clearance,
+            narrow.x(), narrow.x() + 8, asc, desc);
+        // NON-VACUITY, both directions: one label really is conflicted, the other really is not.
+        assertTrue(blocked(wideIdeal, wideBan),
+            what + ": NON-VACUITY — the 120px label's leg ideal " + wideIdeal + " must actually fall "
+                + "inside its forbidden band " + banToString(wideBan));
+        assertFalse(blocked(narrowIdeal, narrowBan),
+            what + ": NON-VACUITY — the 8px label's OWN corridor must actually be CLEAR at its leg "
+                + "ideal " + narrowIdeal + " (forbidden " + banToString(narrowBan) + ")");
+        // (a) the clear label rides its own leg EXACTLY — the whole point of amendment v3.
+        assertEquals(narrowIdeal, narrow.y(), 0.5,
+            what + ": the 8px label's own corridor is CLEAR, so it must sit exactly on ITS leg ideal "
+                + narrowIdeal + " — it emitted " + narrow.y() + " ("
+                + Math.abs(narrow.y() - narrowIdeal) + "px off, dragged there by its sibling's "
+                + "conflict under a whole-fan shift)");
+        // (b) the conflicted label cleared its corridor, MINIMALLY.
+        assertFalse(blocked(wide.y(), wideBan),
+            what + ": the 120px label's emitted baseline " + wide.y() + " must clear its corridor "
+                + banToString(wideBan));
+        double floor = narrow.y() + desc + asc + 2;   // SELF_LOOP_LABEL_BAND_GAP = 2
+        assertTrue(wide.y() >= floor - 1e-6,
+            what + ": the 120px label must stay adjacent-feasible below the 8px one (floor " + floor
+                + ", emitted " + wide.y() + ")");
+        assertTrue(escapeUp(wideIdeal, wideBan) < floor - 1e-6,
+            what + ": MINIMALITY premise — every corridor-clearing position ABOVE the ideal ("
+                + escapeUp(wideIdeal, wideBan) + " and up) would break disjointness with the clear "
+                + "label (floor " + floor + "), so DOWN is the only feasible direction");
+        double down = escapeDown(wideIdeal, wideBan);
+        assertEquals(down, wide.y(), 0.5,
+            what + ": the 120px label must move the MINIMUM that clears its corridor — the lower "
+                + "escape boundary " + down + ", not further (emitted " + wide.y() + ")");
+        assertTrue(Math.abs(wide.y() - wideIdeal) <= (down - wideIdeal) + 1.0,
+            what + ": the conflicted label's deviation is bounded by the corridor-clearing minimum");
+        // (c) order + disjointness.
+        assertTrue(narrow.y() + desc <= wide.y() - asc + 1e-6,
+            what + ": the two occupied bands must stay disjoint (" + (narrow.y() + desc) + " vs "
+                + (wide.y() - asc) + ")");
+        assertAllGeometryInside(laid);
+    }
+
+    /// PROPERTY 7b — the CASCADE is contract (amendment v3). Per-label selectivity does NOT mean
+    /// per-label independence: constraint 3 (disjointness) is HARD and outranks constraint 4 (leg
+    /// alignment), so when a conflicted label's only escape is DOWNWARD it carries every label below
+    /// it down with it. That is permitted — and therefore has to be PINNED, or "minimal" would be an
+    /// unfalsifiable word. What is forbidden is moving the neighbour one px further than the cascade
+    /// forces.
+    ///
+    /// The fixture makes the escape direction unambiguous rather than incidental: lane 1 carries a
+    /// 120px-wide fragment declaring a 40px ascent AND a 40px descent, so its occupied band is TALLER
+    /// than the corridor it has to miss. Clearing upward would need a baseline above the canvas-top
+    /// ascent floor itself — arithmetically unavailable — so the only feasible side is below, and the
+    /// 8px label on lane 0 must follow even though its OWN corridor never touched it.
+    ///
+    /// Pinned: (i) lane 1 really is blocked at its ideal and really has no upward escape; (ii) it
+    /// lands ON the corridor's lower escape boundary; (iii) lane 0 lands at EXACTLY
+    /// {@code lane1 + lane1.descent + lane0.ascent + bandGap} — the cascade minimum, to 0.5px;
+    /// (iv) that position is genuinely off lane 0's own leg (the cascade is real) and is NOT itself
+    /// blocked by lane 0's own corridor (so the number is the DISJOINTNESS cascade and nothing else);
+    /// (v) the canvas grew to hold the whole thing.
+    @Test
+    void clearingAConflictedLabelDownwardCascadesToItsNeighbourByExactlyTheMinimum() {
+        // `$t$`: 120px wide with a 40/40 box — a band taller than the corridor. `$n$`: 8px, plain.
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) -> java.util.Optional.of(
+            latex.trim().equals("t")
+                ? new com.sirentide.api.MathFragment(FRAG, 120, 40, 40)
+                : new com.sirentide.api.MathFragment(FRAG, 8, 2, 1));
+        assertDownwardCascadeIsExactlyMinimal(ClassDiagramLayout.layout((ClassDiagram) DslParser.parse(
+                "classDiagram\n  class A\n  class B\n  A --> A : $n$\n  A --> A : $t$\n  A --> B\n"),
+                fake),
+            EDGE, SirentideRole.CLASS, ClassDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ClassDiagramLayout.EDGE_LABEL_SIZE, "class");
+        assertDownwardCascadeIsExactlyMinimal(ErDiagramLayout.layout((ErDiagram) DslParser.parse(
+                "erDiagram\n  A ||--o{ A : $n$\n  A ||--o{ A : $t$\n  A ||--|| B : uses\n"), fake),
+            ER_EDGE, SirentideRole.ENTITY, ErDiagramLayout.SELF_LOOP_EDGE_CLEARANCE,
+            ErDiagramLayout.EDGE_LABEL_SIZE, "ER");
+    }
+
+    /// The cascade oracle. Lane 0 carries the 8px/plain label, lane 1 the 120px 40/40 one.
+    private static void assertDownwardCascadeIsExactlyMinimal(LaidOut laid, String edgeStroke,
+                                                              SirentideRole boxRole, double clearance,
+                                                              double labelSize, String what) {
+        List<Group> loops = edgeGroups(laid).stream()
+            .filter(SelfLoopGeometryTest::isSelfLoopGroup).toList();
+        assertEquals(2, loops.size(), what + ": two self-relations → two loop groups");
+        double asc = FontMetrics.bundled().ascent(labelSize);
+        double desc = FontMetrics.bundled().descent(labelSize);
+        double lift = asc * 0.35;
+        MathBox small = mathLabel(loops.get(0), what + " lane 0 (the 8px label)");
+        MathBox tall = mathLabel(loops.get(1), what + " lane 1 (the 40/40 label)");
+        double smallIdeal = topLegY(loops.get(0), edgeStroke) + lift;
+        double tallIdeal = topLegY(loops.get(1), edgeStroke) + lift;
+        assertNoBoxCrossesTheLabelColumn(laid, boxRole, tall.x(), tall.x() + 120, what);
+        List<double[]> tallBan = forbiddenBaselines(laid, edgeStroke, clearance,
+            tall.x(), tall.x() + 120, 40, 40);
+        List<double[]> smallBan = forbiddenBaselines(laid, edgeStroke, clearance,
+            small.x(), small.x() + 8, asc, desc);
+        // (i) lane 1 is conflicted and has NO upward escape — its band is taller than the corridor,
+        // so clearing upward would need a baseline above the canvas-top ascent floor.
+        assertTrue(blocked(tallIdeal, tallBan),
+            what + ": NON-VACUITY — the 40/40 label's ideal " + tallIdeal + " must fall inside its "
+                + "forbidden band " + banToString(tallBan));
+        assertTrue(escapeUp(tallIdeal, tallBan) < 40 + 2 - 1e-6,
+            what + ": the upward escape " + escapeUp(tallIdeal, tallBan) + " must be unreachable "
+                + "above the canvas-top ascent floor " + (40 + 2) + ", so DOWN is the only side");
+        // (ii) it lands ON the lower escape boundary — the minimum move that clears the corridor.
+        double down = escapeDown(tallIdeal, tallBan);
+        assertEquals(down, tall.y(), 0.5,
+            what + ": the 40/40 label must clear its corridor by the MINIMUM — the lower escape "
+                + "boundary " + down + " (emitted " + tall.y() + ")");
+        // (iii) lane 0 follows by EXACTLY the disjointness minimum, not one px more.
+        double cascadeMinimum = tall.y() + 40 + asc + 2;   // tall descent + own ascent + BAND_GAP
+        assertEquals(cascadeMinimum, small.y(), 0.5,
+            what + ": the 8px label must move exactly the CASCADE MINIMUM " + cascadeMinimum
+                + " forced by disjointness with the label above it — it emitted " + small.y());
+        // (iv) the cascade is real, and it is the cascade and not the neighbour's own corridor.
+        assertTrue(small.y() > smallIdeal + 1,
+            what + ": NON-VACUITY — the 8px label must actually be pushed off its leg ideal "
+                + smallIdeal + " (emitted " + small.y() + ")");
+        assertFalse(blocked(small.y(), smallBan),
+            what + ": the 8px label's landing spot must not be inside its OWN corridor "
+                + banToString(smallBan) + " — otherwise (iii) would be pinning the wrong mechanism");
+        assertEquals(small.y(), escapeDown(cascadeMinimum, smallBan), 0.5,
+            what + ": the 8px label's own corridor must not push it below the cascade minimum");
+        // (v) order, disjointness, and the grown canvas.
+        assertTrue(tall.y() + 40 <= small.y() - asc + 1e-6,
+            what + ": the occupied bands must stay disjoint (" + (tall.y() + 40) + " vs "
+                + (small.y() - asc) + ")");
+        assertTrue(laid.height() >= small.y() + desc,
+            what + ": the canvas grew to hold the cascaded stack (height " + laid.height()
+                + ", band bottom " + (small.y() + desc) + ")");
+        assertAllGeometryInside(laid);
+    }
+
+    /// The MathBox a loop group emitted for its `$…$` label. Its pen `(x, y)` IS the label's origin
+    /// and BASELINE by the {@link com.sirentide.api.MathFragment} coordinate contract, so this reads
+    /// the placed baseline off the artifact without going near the layout's placement code.
+    private static MathBox mathLabel(Group g, String what) {
+        return g.members().stream().filter(s -> s instanceof MathBox).map(s -> (MathBox) s)
+            .findFirst().orElseThrow(() -> new AssertionError(
+                what + ": the math label rendered as a MathBox"));
+    }
+
+    /// The BASELINE positions a label of the given x-band and metrics may NOT take: for every
+    /// NON-LOOP edge segment crossing `[x0, x1]`, the y-interval that segment SWEEPS over the
+    /// crossing part, inflated by `clearance` and then by the label's own ascent/descent (a baseline
+    /// inside the inflated interval is exactly a baseline whose occupied band comes within the
+    /// clearance of the segment). Derived from the emitted Lines — the layout's own corridor
+    /// computation is never consulted, so oracle and solver cannot agree with each other by
+    /// construction.
+    private static List<double[]> forbiddenBaselines(LaidOut laid, String edgeStroke,
+                                                     double clearance, double x0, double x1,
+                                                     double asc, double desc) {
+        List<double[]> out = new ArrayList<>();
+        for (Group g : edgeGroups(laid)) {
+            if (isSelfLoopGroup(g)) {
+                continue;
+            }
+            for (Shape s : g.members()) {
+                if (!(s instanceof Line l) || !edgeStroke.equals(l.stroke())) {
+                    continue;
+                }
+                double xLo = Math.max(Math.min(l.x1(), l.x2()), x0);
+                double xHi = Math.min(Math.max(l.x1(), l.x2()), x1);
+                if (xHi < xLo) {
+                    continue;
+                }
+                double[] yr = segmentYRange(l, xLo, xHi);
+                out.add(new double[] {yr[0] - clearance - desc, yr[1] + clearance + asc});
+            }
+        }
+        return out;
+    }
+
+    /// True when `y` sits strictly inside one of the forbidden intervals.
+    private static boolean blocked(double y, List<double[]> ban) {
+        for (double[] b : ban) {
+            if (y > b[0] + 1e-9 && y < b[1] - 1e-9) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// The smallest baseline ≥ `y` that clears every forbidden interval (walking DOWN out of the
+    /// union component containing `y`).
+    private static double escapeDown(double y, List<double[]> ban) {
+        double cur = y;
+        for (int i = 0; i <= ban.size(); i++) {
+            boolean moved = false;
+            for (double[] b : ban) {
+                if (cur > b[0] + 1e-9 && cur < b[1] - 1e-9) {
+                    cur = b[1];
+                    moved = true;
+                }
+            }
+            if (!moved) {
+                return cur;
+            }
+        }
+        return cur;
+    }
+
+    /// The largest baseline ≤ `y` that clears every forbidden interval (walking UP out of the union).
+    private static double escapeUp(double y, List<double[]> ban) {
+        double cur = y;
+        for (int i = 0; i <= ban.size(); i++) {
+            boolean moved = false;
+            for (double[] b : ban) {
+                if (cur > b[0] + 1e-9 && cur < b[1] - 1e-9) {
+                    cur = b[0];
+                    moved = true;
+                }
+            }
+            if (!moved) {
+                return cur;
+            }
+        }
+        return cur;
+    }
+
+    private static String banToString(List<double[]> ban) {
+        StringBuilder sb = new StringBuilder("{");
+        for (double[] b : ban) {
+            sb.append('[').append(b[0]).append(", ").append(b[1]).append(']');
+        }
+        return sb.append('}').toString();
+    }
+
+    /// The edge-only corridor oracle is sound only while no BOX rectangle reaches into the label
+    /// column (the solver treats boxes as obstacles too). Assert it rather than assume it.
+    private static void assertNoBoxCrossesTheLabelColumn(LaidOut laid, SirentideRole role,
+                                                         double x0, double x1, String what) {
+        for (Rect b : boxRects(laid, role)) {
+            assertTrue(b.x() >= x1 - 1e-9 || b.x() + b.width() <= x0 + 1e-9,
+                what + ": a box at x=" + b.x() + ".." + (b.x() + b.width()) + " reaches into the "
+                    + "label column [" + x0 + ", " + x1 + "] — the edge-only corridor oracle would "
+                    + "be incomplete");
+        }
     }
 
     // -- helpers ----------------------------------------------------------------------------------

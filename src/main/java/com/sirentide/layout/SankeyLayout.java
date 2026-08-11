@@ -20,9 +20,11 @@ import java.util.Map;
 ///     else 1 + the max column of its in-neighbours. Computed by a BOUNDED RELAXATION — `n` passes of
 ///     `col[target] = max(col[target], col[source]+1)` over the flows in declaration order, then each
 ///     column CLAMPED to `[0, n-1]`. On a DAG that is the exact longest path; on a CYCLE the relaxation
-///     would grow without bound, so the `n`-pass + clamp bound it deterministically (the cycle's
-///     back-edge just draws a band from a higher column to a lower one — a leftward band, still a valid
-///     quad, never a throw). Documented cycle-break.
+///     would grow without bound, so the `n`-pass + clamp bound it deterministically. A fixed
+///     edge-inspection budget additionally aborts any pathological ordering/topology before `V×E`
+///     work; every graph that finishes within the budget retains the exact legacy columns. The
+///     cycle's back-edge in an in-budget graph draws a leftward band, still a valid quad. Documented
+///     cycle-break.
 ///   - COLUMNS march left→right at a fixed pitch ({@code NODE_W + COL_GAP}); every node in a column
 ///     shares one left x.
 ///   - A node's VALUE is max(sum of its inflows, sum of its outflows); its HEIGHT is that value · a
@@ -60,6 +62,16 @@ public final class SankeyLayout {
     private static final double MAX_LABEL_W = 130;    // labels ellipsize past this
     private static final double MIN_W = 140;          // empty-sankey blank canvas
     private static final double MIN_H = 70;
+
+    // Deterministic guard on COLUMN RELAXATION specifically. The shared global layout budget
+    // ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2) has now landed, but it charges SHAPE
+    // CONSTRUCTION — relaxation is pure iteration that produces no shapes, so it stays invisible to
+    // that budget and needs this one. The two are complementary, not redundant: this bounds the
+    // solver, the global budget bounds the scene.
+    // 500² edge inspections are allowed exactly; the next inspection aborts to the guarded inert
+    // shell. This bounds both cycles and adversarial reverse-declaration DAGs without changing any
+    // graph that converges within the budget.
+    static final long MAX_COLUMN_RELAXATION_WORK = 250_000;
 
     public static LaidOut layout(Sankey sankey) {
         return layout(sankey, null);
@@ -102,24 +114,9 @@ public final class SankeyLayout {
         }
 
         // 3) COLUMN by longest-path-from-a-source, via bounded relaxation (cycle-safe — see class doc).
-        int[] col = new int[n];
-        for (int pass = 0; pass < n; pass++) {
-            boolean changed = false;
-            for (SankeyFlow f : flows) {
-                int s = index.get(f.source());
-                int t = index.get(f.target());
-                if (col[t] < col[s] + 1) {
-                    col[t] = col[s] + 1;
-                    changed = true;
-                }
-            }
-            if (!changed) {
-                break;
-            }
-        }
+        int[] col = relaxColumns(flows, index, MAX_COLUMN_RELAXATION_WORK).columns();
         int maxCol = 0;
         for (int i = 0; i < n; i++) {
-            col[i] = Math.min(col[i], n - 1);   // clamp: bounds a cyclic back-edge deterministically
             maxCol = Math.max(maxCol, col[i]);
         }
 
@@ -227,6 +224,46 @@ public final class SankeyLayout {
 
         return new LaidOut(canvasW, canvasH, shapes);
     }
+
+    /// The existing `n`-pass relaxation, with one unit charged per edge inspection. Finishing on the
+    /// exact budget is allowed; attempting the next inspection throws a named, deterministic bounded
+    /// degrade. Columns are clamped exactly where the legacy loop clamped them, so every in-budget
+    /// graph retains identical geometry (including cyclic inputs).
+    static ColumnRelaxation relaxColumns(List<SankeyFlow> flows, Map<String, Integer> index,
+                                         long workBudget) {
+        if (workBudget < 0) {
+            throw new IllegalArgumentException("workBudget must be non-negative");
+        }
+        int n = index.size();
+        int[] col = new int[n];
+        long work = 0;
+        for (int pass = 0; pass < n; pass++) {
+            boolean changed = false;
+            for (SankeyFlow f : flows) {
+                if (work >= workBudget) {
+                    throw new IllegalStateException(
+                        "MAX_LAYOUT_WORK exceeded: Sankey column relaxation passed "
+                            + "MAX_COLUMN_RELAXATION_WORK=" + workBudget + " edge inspections");
+                }
+                work++;
+                int s = index.get(f.source());
+                int t = index.get(f.target());
+                if (col[t] < col[s] + 1) {
+                    col[t] = col[s] + 1;
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                break;
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            col[i] = Math.min(col[i], n - 1);   // cyclic back-edge clamp, unchanged
+        }
+        return new ColumnRelaxation(col, work);
+    }
+
+    record ColumnRelaxation(int[] columns, long work) {}
 
     /// Numbers with the emitter's rounding (integer when whole, else ≤ 3 decimals) so the laid-out `d`
     /// strings are compact + deterministic; a non-finite value degrades to 0 (never leaks Infinity/NaN).

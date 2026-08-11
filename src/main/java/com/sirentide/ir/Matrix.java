@@ -1,5 +1,7 @@
 package com.sirentide.ir;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /// A categorical comparison / verdict matrix: rows × columns of small fixed-vocabulary verdicts, the
@@ -20,8 +22,24 @@ import java.util.List;
 /// blank/-/na→na). A row is padded/truncated to exactly M cells so the grid is rectangular.
 public record Matrix(List<String> columns, List<Row> rows, String textColor) implements Diagram {
 
+    public Matrix {
+        columns = snapshot(columns);
+        rows = snapshot(rows);
+    }
+
     /// One row: a left-aligned label plus exactly {@code columns.size()} verdict cells.
-    public record Row(String label, List<Cell> cells) {}
+    public record Row(String label, List<Cell> cells) {
+
+        public Row {
+            cells = snapshot(cells);
+        }
+    }
+
+    private static <T> List<T> snapshot(List<T> source) {
+        return source == null
+            ? null
+            : Collections.unmodifiableList(new ArrayList<>(source));
+    }
 
     /// One cell: the token as authored (shown centered) plus the normalized verdict driving its fill.
     public record Cell(String text, Verdict verdict) {}

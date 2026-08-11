@@ -14,7 +14,6 @@ import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Gantt;
 import com.sirentide.ir.GitGraph;
-import com.sirentide.ir.GitOp;
 import com.sirentide.ir.Journey;
 import com.sirentide.ir.JourneySection;
 import com.sirentide.ir.JourneyTask;
@@ -32,6 +31,8 @@ import com.sirentide.ir.StateDiagram;
 import com.sirentide.ir.Task;
 import com.sirentide.ir.Timeline;
 import com.sirentide.ir.XyChart;
+import com.sirentide.layout.GitGraphReplay;
+import com.sirentide.parse.LabelRuns;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -102,8 +103,43 @@ public final class A11yDescriber {
             case com.sirentide.ir.YoungDiagram yd -> young(yd);
             case com.sirentide.ir.Knot kn -> knot(kn);
             case com.sirentide.ir.Dynkin dk -> dynkin(dk);
+            case com.sirentide.ir.RootSystem rs -> rootSystem(rs);
             case Empty ignored -> A11y.NONE;
         };
+    }
+
+    /// Teaches the finite-type/Lie-algebra correspondence and the Coxeter invariant, e.g.
+    /// "A3 root system (sl4): 12 roots, Coxeter number 4." When an authored minimal-edge graph is
+    /// over the hard line cap, the description names the exact all-or-none degrade; a sightless
+    /// reader is never told that an incomplete minimal-distance link set was shown.
+    private static A11y rootSystem(com.sirentide.ir.RootSystem r) {
+        String type = r.typeLabel();
+        String algebra = com.sirentide.ir.DynkinCartan.algebraLabel(r.family(), r.rank());
+        StringBuilder desc = new StringBuilder(type).append(" root system (").append(algebra)
+            .append("): ").append(r.rootCount()).append(" roots, Coxeter number ")
+            .append(r.coxeterNumber()).append('.');
+        if (r.edges() == com.sirentide.ir.RootSystem.Edges.MINIMAL) {
+            com.sirentide.layout.RootSystemProjection.EdgeSummary edges =
+                com.sirentide.layout.RootSystemProjection.edgeSummary(r);
+            if (edges.degraded()) {
+                if (edges.minimalEdgeCount() >= 0) {
+                    desc.append(" Minimal-distance edges omitted: ")
+                        .append(edges.minimalEdgeCount()).append(" exceeds the ")
+                        .append(com.sirentide.ir.RootSystem.MAX_MINIMAL_EDGES)
+                        .append("-edge cap; rendered as edges none.");
+                } else {
+                    desc.append(" Minimal-distance edges omitted because the bounded pair-work cap "
+                        + "was reached; rendered as edges none.");
+                }
+            } else {
+                desc.append(' ').append(edges.minimalEdgeCount())
+                    .append(" ambient minimal-distance root ")
+                    .append(edges.minimalEdgeCount() == 1 ? "link shown." : "links shown.");
+            }
+        } else {
+            desc.append(" Edges: none.");
+        }
+        return new A11y(type + " root system", desc.toString());
     }
 
     /// Knot diagram: "Trefoil knot (3₁): 3 crossings, alternating." The crossing NUMBER is a property
@@ -441,50 +477,18 @@ public final class A11yDescriber {
 
     /// Git graph: "Git graph with 4 commits across 2 branches. Branches: main, develop. Commits:
     /// (main), \"fix\" (main), (develop), (main); …. Merges: develop into main; …". The op list is
-    /// REPLAYED with the SAME inert rules the layout uses (a commit before any branch → implicit main;
-    /// an unknown-branch checkout/merge, a duplicate branch, a self-merge, a merge of an empty branch →
-    /// all dropped) so the desc reflects exactly what is drawn — branches that actually received a
-    /// commit, commits in declaration order, and the valid merges. Deterministic + bounded.
+    /// REPLAYED through the SHARED {@link GitGraphReplay} — the SAME resolved model the layout draws —
+    /// so the desc reflects exactly what is drawn: the same inert rules (a commit before any branch →
+    /// implicit main; an unknown-branch checkout/merge, a duplicate branch, a self-merge, a merge of an
+    /// empty branch → all dropped) AND the same {@link GitGraphReplay#MAX_LANES} lane cap. SIR-11a: the
+    /// describer used to run its OWN cap-less replay, so a >40-branch graph announced (e.g.) "42
+    /// branches" while only 40 lanes were drawn; sharing the one capped replay makes the announced
+    /// branch count == the rendered lane count by construction. Deterministic + bounded.
     private static A11y gitGraph(GitGraph gg) {
-        java.util.LinkedHashSet<String> declared = new java.util.LinkedHashSet<>();
-        declared.add("main");
-        java.util.Set<String> hasCommit = new java.util.HashSet<>();
-        String current = "main";
-        java.util.List<String[]> commits = new java.util.ArrayList<>();   // {branch, idOrNull}
-        java.util.List<String[]> merges = new java.util.ArrayList<>();    // {source, target}
-        for (GitOp op : gg.ops()) {
-            switch (op) {
-                case GitOp.Commit c -> {
-                    hasCommit.add(current);
-                    commits.add(new String[] {current, c.id()});
-                }
-                case GitOp.Branch b -> {
-                    if (!declared.contains(b.name())) {
-                        declared.add(b.name());
-                        current = b.name();
-                    }
-                }
-                case GitOp.Checkout co -> {
-                    if (declared.contains(co.name())) {
-                        current = co.name();
-                    }
-                }
-                case GitOp.Merge mg -> {
-                    if (declared.contains(mg.name()) && !mg.name().equals(current)
-                        && hasCommit.contains(mg.name())) {
-                        hasCommit.add(current);
-                        commits.add(new String[] {current, null});
-                        merges.add(new String[] {mg.name(), current});
-                    }
-                }
-            }
-        }
-        java.util.List<String> branches = new java.util.ArrayList<>();
-        for (String b : declared) {
-            if (hasCommit.contains(b)) {
-                branches.add(b);
-            }
-        }
+        GitGraphReplay replay = GitGraphReplay.of(gg);
+        java.util.List<GitGraphReplay.Branch> branches = replay.drawnBranches();
+        java.util.List<GitGraphReplay.Commit> commits = replay.commits();
+        java.util.List<GitGraphReplay.Merge> merges = replay.merges();
         int commitCount = commits.size();
         int branchCount = branches.size();
         StringBuilder d = new StringBuilder("Git graph with ")
@@ -498,7 +502,7 @@ public final class A11yDescriber {
                 if (i > 0) {
                     d.append(", ");
                 }
-                d.append(label(branches.get(i)));
+                d.append(label(branches.get(i).name()));
             }
             d.append(branchCount > shown ? ", …." : ".");
         }
@@ -509,11 +513,11 @@ public final class A11yDescriber {
                 if (i > 0) {
                     d.append(", ");
                 }
-                String[] c = commits.get(i);
-                if (c[1] != null && !c[1].isBlank()) {
-                    d.append('"').append(label(c[1])).append("\" ");
+                GitGraphReplay.Commit c = commits.get(i);
+                if (c.id() != null && !c.id().isBlank()) {
+                    d.append('"').append(label(c.id())).append("\" ");
                 }
-                d.append('(').append(label(c[0])).append(')');
+                d.append('(').append(label(c.branch())).append(')');
             }
             d.append(commitCount > shown ? ", …." : ".");
         }
@@ -525,7 +529,8 @@ public final class A11yDescriber {
                 if (i > 0) {
                     d.append("; ");
                 }
-                d.append(label(merges.get(i)[0])).append(" into ").append(label(merges.get(i)[1]));
+                d.append(label(merges.get(i).source())).append(" into ")
+                    .append(label(merges.get(i).target()));
             }
             d.append(mergeCount > shown ? "; …." : ".");
         }
@@ -631,8 +636,12 @@ public final class A11yDescriber {
     /// One relation as a natural phrase, keyed to the UML meaning of its marker (the whole/parent-side
     /// kinds read "child ← parent"; the arrow-side kinds read "source → target").
     private static String relationPhrase(ClassRelation r) {
-        String left = label(r.left());
-        String right = label(r.right());
+        // Multiplicity is diagram CONTENT — a `1..*` cardinality is information, not decoration —
+        // and it is not yet drawn on the edge, so verbalizing it here is what keeps it from being
+        // silently dropped at the parse boundary once the parser stopped absorbing it into the
+        // class name (plan 24d6b22f).
+        String left = withMultiplicity(label(r.left()), r.leftMultiplicity());
+        String right = withMultiplicity(label(r.right()), r.rightMultiplicity());
         return switch (r.kind()) {
             case INHERITANCE -> right + " inherits from " + left;
             case COMPOSITION -> left + " is composed of " + right;
@@ -640,6 +649,13 @@ public final class A11yDescriber {
             case ASSOCIATION -> left + " is associated with " + right;
             case DEPENDENCY -> left + " depends on " + right;
         };
+    }
+
+    /// `User` + `1` → `User (1)`. A null/blank multiplicity leaves the name untouched, so an
+    /// unannotated diagram's description is byte-identical to what it was before multiplicities
+    /// were carried at all.
+    private static String withMultiplicity(String name, String multiplicity) {
+        return multiplicity == null || multiplicity.isBlank() ? name : name + " (" + multiplicity + ")";
     }
 
     /// Math block: a GENERIC, non-empty description — "Display math expression." — that does NOT
@@ -948,14 +964,27 @@ public final class A11yDescriber {
     /// source leaks into the output text), collapse whitespace/newlines to single spaces, and cap the
     /// length (ellipsized) so no single label can inflate the `<desc>`. Deterministic. RESIDUAL: the
     /// math itself is not VERBALIZED in the desc (a mathspeak translation is a follow-up).
+    ///
+    /// SIR-11b: the math is stripped by walking the SAME {@link LabelRuns} run structure the VISUAL
+    /// label path uses — NOT a private regex. A naive `\$[^$]*\$` regex disagreed with the renderer on
+    /// an ESCAPED literal dollar: `\$` is a plain `$` to {@link LabelRuns} (unescaped into the text
+    /// run) but the regex mis-paired it with a later `$` and swallowed the prose between (e.g.
+    /// `cost \$5 and $x$` → the visual keeps "cost $5 and " but the regex desc corrupted to "cost \x$").
+    /// Keeping ONLY the {@link LabelRuns.Text} runs — already `\$`-unescaped — makes the desc's textual
+    /// content identical to what the reader SEES, and drops every {@link LabelRuns.MathRun} exactly as
+    /// the visual bakes it to glyph paths.
     private static String label(String raw) {
         if (raw == null) {
             return "";
         }
-        // Strip balanced `$…$` inline-math spans (non-greedy, single-line by construction — labels
-        // are one line). A lone unmatched `$` is left as-is (it is not a math span).
-        String noMath = raw.replaceAll("\\$[^$]*\\$", "");
-        String flat = noMath.replaceAll("\\s+", " ").trim();
+        StringBuilder textOnly = new StringBuilder();
+        for (LabelRuns.Run run : LabelRuns.split(raw)) {
+            if (run instanceof LabelRuns.Text t) {
+                textOnly.append(t.s());
+            }
+            // MathRun is dropped: it renders VISUALLY to baked glyph paths, never as desc text.
+        }
+        String flat = textOnly.toString().replaceAll("\\s+", " ").trim();
         if (flat.length() > LABEL_CAP) {
             return flat.substring(0, LABEL_CAP) + "…";
         }

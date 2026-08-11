@@ -1,6 +1,7 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.contract.SirentideContract;
@@ -76,6 +77,42 @@ class ContractDocDriftTest {
         assertTrue(!SirentideRole.isWire("fx"), "fx is not a role wire value");
         assertTrue(!SirentideContract.attributeValueValid("data-sirentide-fx", "glow"),
             "the contract must not admit data-sirentide-fx before Part 2");
+    }
+
+    /// The design notes once described deferred FX/runtime behavior in the present tense.
+    /// Keep the public contract honest until code, sanitizer admission, and a security review
+    /// make that surface real.
+    @Test
+    void deferredFxAndRuntimeCannotBePresentedAsLive() throws IOException {
+        String doc = Files.readString(DOC);
+        assertTrue(doc.contains("There is no Sirentide page runtime in `/docs` today."),
+            "the contract must state the live /docs runtime boundary explicitly");
+        assertTrue(doc.contains("`data-sirentide-fx` is Part 2 — NOT admitted today."),
+            "the effect anchor must remain explicitly deferred");
+        assertFalse(doc.contains("my runtime reads it"),
+            "the contract must not claim a personal/live runtime");
+        assertFalse(doc.contains("the runtime pins to it"),
+            "the drift section must not claim a runtime that does not exist");
+        assertFalse(doc.contains("the runtime steps through it"),
+            "the play-through design must not be presented as shipped behavior");
+    }
+
+    /// Sirentide's producer is intentionally narrower than Stafficy's generic safe-SVG
+    /// sanitizer. Keep the public contract from turning a producer invariant into a false
+    /// claim that Stafficy strips every otherwise-safe inner SVG attribute.
+    @Test
+    void producerAndStafficySanitizerBoundariesStayDistinct() throws IOException {
+        String doc = Files.readString(DOC);
+        assertTrue(doc.contains(
+            "Sirentide's emitter puts exactly these three semantic-anchor attributes"),
+            "the three-anchor rule must be attributed to the Sirentide producer");
+        assertTrue(doc.contains(
+            "its generic safe-SVG allow-list can also preserve inert inner SVG `class`, `id`, and"),
+            "the contract must disclose Stafficy's broader generic safe-SVG boundary");
+        assertFalse(doc.contains("Anything else is stripped."),
+            "the contract must not overstate the Stafficy sanitizer");
+        assertFalse(doc.contains("any non-`sirentide-*` class"),
+            "Stafficy does not strip every inner SVG class");
     }
 
     private static String docLineContaining(String needle) throws IOException {

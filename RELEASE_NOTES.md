@@ -6,6 +6,275 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ---
 
+## **0.6.0** — IN PROGRESS
+
+Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
+new feature is claimed by this version boundary alone; reviewed entries will be
+added here as they land. Source-checkout jars now identify as 0.6.0 so they
+cannot be mistaken for the published 0.5.0 artifacts.
+
+### Fixed
+
+- `render-png` now refuses an unrenderable diagram instead of writing a PNG beside
+  a failed SVG. The no-args and `render -` paths previously diverged: one refused,
+  the other continued to the write tail, so the same bad input could leave an
+  artifact on disk or not depending on how it was invoked. Both now pass through a
+  single refusal seam and reach one shared write tail, making the two forms
+  equivalent by construction rather than by matching code.
+
+## 2026-07-30 — Release **0.5.0**
+
+The version moved to 0.5.0 immediately after the 0.4.0 cut so post-release jars could never be
+mistaken for the immutable, already-vendored `sirentide-0.4.0.jar`. This cut freezes that accumulated
+surface: the `sirentide render <file.md>` parity checker and Docker watch flow, trusted frame-deck
+budgets with artifact-paired optional assets, deterministic packing and self-loop layout hardening,
+fail-closed display-label diagnostics, and one new diagram type — `rootsystem` — growing the sealed
+production inventory **22 → 23**. The detailed contracts and degradation boundaries follow below.
+
+### Source-verifiable immutable artifacts
+
+The executable jar now carries `Sirentide-Source-Revision`, an exact lowercase 40-hex git commit,
+beside its implementation version. The release-only
+`SIRENTIDE_REQUIRE_CHROME=1 ./gradlew releaseBuild` gate removes old build output, rejects an
+unresolvable revision, a dirty worktree, a non-`X.Y.Z` version, unfinished release notes, or a build
+where the real-browser pins can skip. It then runs the full build and verifies the executable,
+sources, and Javadoc jars; the paired `sirentide-frames.js` / `.css` resources; manifest version and
+source identity; and a SHA-256 sidecar for each jar. The tag and GitHub release are therefore bound to
+artifacts that can be traced back to one reviewed source commit.
+
+### Each self-loop label rides ITS OWN loop (plan 64cf1bae, reviews sirentide/761 + 768 + 770)
+
+A stacked class/ER self-loop label now tells you which loop it names. Every label sits in ONE
+column just past the node's outermost lane leg — clear of every lane line whatever the label's
+width — and its BASELINE is aligned with its own loop's top horizontal leg, so it reads as
+riding that loop the way an edge label rides its edge. The earlier cut of this work x-staggered
+the labels one lane-pitch apart, which separated them but tied none of them to its loop.
+
+Placement is a **contract hierarchy**, not one rule with silent exceptions, and both
+degradations are named:
+
+- **Ideal** — the baseline sits on its own loop's top leg, in the constant label column. This is
+  what you get whenever nothing else binds.
+- **Degradation 1, corridor.** A neighbour edge crossing the label column outranks exact
+  leg-association: a label sitting on that edge would read as a label *of* it, which is worse
+  than being a few px off its own leg. The move is **per label** (`SelfLoopLabelColumn`), never a
+  shift of the whole set: the labels share an x ORIGIN, not an x EXTENT, so a crossing edge can
+  run through a wide label's band and miss a narrow one entirely. Only a label whose OWN corridor
+  is crossed moves, and only by the minimum that clears it; a label whose corridor is clear — and
+  whose leg still fits under the label above — sits EXACTLY on its own leg. Where clearing
+  downward is the only escape, the metric floor carries that move to the labels below it: a
+  cascade, minimal, and contract too.
+- **Degradation 2, metric floor.** Consecutive baselines are separated by the upper label's real
+  DESCENT plus the lower label's real ASCENT plus a 2px gap, measured per label (inline math
+  included), so the occupied bands are disjoint by construction at any label size. A tall label
+  can push the lanes below it off their legs; order is preserved. This replaces a fixed
+  one-line-slot budget that ignored what a label actually measured — two tall math fragments
+  used to emit overlapping bands while every receipt stayed green.
+
+Both are solved ONCE in the layout pre-pass, from the full label set (floor first, then the
+per-label corridor placement over the floored stack — a forward pass in leg order followed by a
+backward relax toward the ideals), and canvas reservation and emission consume that single result
+— nothing is recomputed at emit. `SelfLoopGeometryTest` pins the ideal, each degradation, and
+their COMPOSITION on the stacked fixture (leg association for the unconflicted labels, clearance
+for the conflicted ones, the exact cascade minimum, order and pairwise disjointness together);
+gallery references `class-self-loop*` and `er-self-loop*` re-captured.
+
+### A dropped thin-slice pie label is NAMED, never silent (plan 86cee1d3)
+
+A pie slice too thin for its outside leader-label used to drop the label with no signal — a
+coloured wedge with no name and a clean OK. `renderWithDiagnostics` now reports the drop as an
+OK-with-caveat naming the slice and pointing at `pie legend`, which shows every label in the
+side key (new gallery twin `pie-thin-labels-legend`). The SVG bytes are unchanged — the caveat
+rides alongside, never in the bake. The drop caveat **composes** with the font-coverage caveat
+through one carrier (`okDiagnostics` now delegates to `withFontCoverageCaveat`), so at their
+intersection both honest notes appear instead of the last-built one shadowing the other
+(pinned by a delete-mutant-verified discriminator).
+
+### Tag-shaped display labels now FAIL CLOSED
+
+A label like `A[TRUE NEGATIVE<br/>safe to act on]` used to render `<br/>` as **visible text**
+with exit 0, a well-formed SVG, and no diagnostic — every automated check passed and only a
+human looking at the picture could tell. Sirentide renders label text literally and has never
+supported HTML; the defect was that saying so silently is indistinguishable from succeeding.
+
+Tag-shaped markup in a **display label** is now a parse-level failure: `render` degrades to the
+inert shell, `renderWithDiagnostics` reports `PARSE_ERROR` at stage `parse` naming the label's
+stable identity and a bounded token, `renderFrames` behaves identically, and
+`sirentide render <file.md>` exits **1** and writes nothing — matching what the /docs bake
+already does with a fence that will not render.
+
+**Compatibility boundary, deliberately narrow.** Two things stay legal and are pinned by
+controls:
+
+- **Ordinary comparison prose.** `x < y`, `a <- b`, `3<5` and `0<x+y>1` all render. The check is
+  tag GRAMMAR — a name that terminates at whitespace, `/` or `>` — not "contains a bracket".
+- **Inline math on the surface that supports it.** `$…$` in a flowchart node label is still
+  rendered through the math renderer and is not scanned as markup.
+
+The math exemption follows **rendering semantics**, not the label text: surfaces that emit plain
+glyph paths (config caption, GitGraph labels, mindmap nodes) are scanned in full, because on
+those surfaces `$…$` has no math meaning and would otherwise be a delimiter that smuggles markup
+past the check.
+
+**Identifiers are unaffected.** `subgraph outer<unsafe> [Outer title]` still sanitizes the id to
+`outerunsafe`; only the visible `Outer title` is validated.
+
+**The element name is the XML QName production**, not a list of characters. The first cut
+enumerated letters, digits and hyphen, so `<b>` and `<x-custom>` refused while `<svg:rect/>`,
+`<xhtml:br/>`, `<_priv>`, `<x_y>` and `<v1.2>` still rendered as visible text with a clean OK —
+the original defect on a tag variant the check was not written against. A namespaced element is
+not exotic: SVG, the output format, *is* XML. The name is now `NCName (':' NCName)?` over ASCII,
+with `NCName` = `[A-Za-z_][A-Za-z0-9_.-]*`.
+
+This is a QName and deliberately **not** "a colon is one more name character", because
+`<http://example.com>` is the ordinary way to write a URL in prose. What follows the colon must
+itself start an NCName, so bracketed URIs stay legal — `<http://example.com>`,
+`<https://x.example/p?q=1>`, `<file:///tmp/x>`, `<mailto:bob@x.com>`, `<tel:15551234>` and
+`<doi:10.1000/xyz>` all render, and so do `<u,v>` and `<a|b>`. Non-ASCII names such as `<área>`
+are **not** refused: widening to Unicode letters would reject ordinary bracketed words in
+ordinary prose for a shape neither HTML nor SVG uses in practice.
+
+Still rendered literally, pending a contract call: comments, declarations and processing
+instructions (`<!-- c -->`, `<!DOCTYPE html>`, `<![CDATA[x]]>`, `<?xml ...?>`). These are markup
+but not *tags*, which is what the policy is scoped to.
+
+### Trusted frame-deck budgets and artifact-paired optional assets
+Sirentide now exposes additive trusted-consumer input
+`FrameBudget(maxFrames, maxUtf8Bytes)` and a bounded
+`renderFramesWithDiagnostics` overload. Both limits must be positive and may only
+narrow Sirentide's independent 512-frame / 50-MB producer defenses. The frame-count
+gate runs before any emphasized frame is emitted; exact UTF-8 bytes are checked
+prospectively before each completed frame is retained. A consumer-cap hit returns
+an empty deck plus typed `OUTPUT_CAP_EXCEEDED` diagnostics identifying either
+`consumer-frame-count` or `consumer-utf8-bytes`. Existing render and frame overloads
+retain their byte-compatible behavior and degrade shapes. The bounded overload also
+applies a final invariant fence to every frame-bearing return, including parse or
+unsupported diagnostics, producer-cap degrades, and caught fallback frames: a
+sufficient budget preserves the original frames and diagnostic, while an insufficient
+budget retains no frame.
+
+The same jar now carries optional `sirentide-frames.js` and
+`sirentide-frames.css` bytes through defensive `FrameDeckAssets` accessors. The
+runtime enhances only conformant wrappers with multiple direct-child SVGs, builds
+native Previous/Next controls from fixed text, and uses no HTML sink, inline handler,
+author data, or inner-SVG vocabulary. Its stylesheet is inactive until enhancement,
+so absent or failed JavaScript leaves every inert frame visible in source order.
+Sirentide itself neither injects nor executes these assets; ordinary SVG rendering
+remains zero-runtime. The exact `sirentide-frames` fence, document-wide 32-frame /
+4-MiB consumer budget, same-origin routes, page injection, CSP proof, and live docs
+remain gated Stafficy work. No sanitizer or emitted-SVG contract grows here.
+
+### Deterministic Timeline and GitGraph displayed-label packing
+Displayed Timeline event/value labels and GitGraph commit-ID labels now use a
+compatibility-gated interval partition over their actual post-clamp emitted
+boxes. Existing clean diagrams retain their SVG bytes exactly. When a Timeline
+band or GitGraph branch lane would overprint, the earliest-finishing-row rule
+allocates the minimum deterministic row count; Timeline shifts/grows its axis
+and canvas, while GitGraph carries added label depth into later lane baselines,
+spines, and branch/merge connectors. The parser's 10,000-item bound feeds only
+linear retained placement state, with no silent display-row cap or overflow
+stack. This is deliberately a narrow claim about those displayed labels — it
+does not claim every Sirentide label or whole diagram is overlap-free, and it
+does not change Flowchart's separate actual-box decollider.
+
+### Docker CLI and watched folders
+Sirentide now ships a multi-stage Java 25 Docker build with immutable application jars under
+`/opt/sirentide` and a non-root runtime. The original one-shot CLI remains the image's default
+entry point (with `cli` as an optional explicit mode), while `watch` adds a long-running folder
+flow over `/sirentide/input` and `/sirentide/output`. Complete `.md`, `.markdown`, and
+`.sirentide` inputs are atomically claimed into `input/processing`; successful sources move to
+`input/finished`, failures move to `input/failed`, and outputs or bounded diagnostics land in
+the output mount. Publication never overwrites an existing output or archived source, abandoned
+processing claims recover on restart, and concurrent workers converge on one final state even
+when a bind-mount driver does not coordinate advisory file locks. Claim IDs and original source
+names occupy separate path components, and job-id fallbacks bound derived output and diagnostic
+names when appending a suffix would exceed a mounted filesystem's component limit.
+Unreadable eligible inputs now receive a bounded failed disposition without copying or exposing
+their bytes, and the watcher remains live to process later jobs. Their original inode stays in a
+durable `failed/pending` state until diagnostic publication succeeds, so a cleared output-mount
+fault is reconciled on restart without overwriting an existing diagnostic or failed archive.
+Shared watchers now reconcile a vanished unreadable processing path against the exact
+snapshotted inode in pending, collision, and direct failed dispositions. A same-name
+unrelated archive cannot certify completion, while losing workers stay live and continue
+with later jobs.
+
+### BrewShot gallery coverage ratchet
+The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing
+the one missing reference among Sirentide's 22 production diagram types. A headless drift guard derives
+the authoritative type set from the sealed `Diagram` IR hierarchy and requires each type to map to a
+declared gallery specimen, parse back to that exact IR class, have a committed non-empty PNG, and appear
+in the generated gallery page. Aliases may share their canonical IR representative; a newly shipped type
+can no longer leave the README's every-type gallery claim silently false. No production rendering
+behavior changed in this audit.
+
+### Bounded layout hot paths
+Duplicate semantic-anchor suffix assignment and sequence-note placement now run in linear work, while
+Sankey column relaxation has a deterministic 250,000-edge-inspection ceiling. Sequences accept 10,000
+notes; the first valid excess note now crosses parsing as a bounded rejection marker and aborts before
+caption, title, or theme decoration, yielding the literal inert SVG shell plus a named sequence-note-cap
+diagnostic.
+
+### Deterministic finite root-system Coxeter-plane projections
+The additive `rootsystem` type renders every root of `Aₙ/Bₙ/Cₙ/Dₙ` through the explicit rendering
+cap `n ≤ 24`, plus `E6/E7/E8`, `F4`, or `G2`, as a point in a deterministic Coxeter (Petrie) plane,
+with concentric distinct-radius guides and `edges: minimal|none`. Weyl-reflection closure and the
+exponent-1 Coxeter eigenspace are computed from the same refactored Dynkin/Cartan authority used by
+`dynkin` — no copied coordinate or matrix table, RNG, network, or runtime dependency.
+The shared public Dynkin/Cartan catalog now enforces its established inclusive rank-200 Dynkin
+boundary before bond/matrix allocation or arithmetic, and uses checked count/Coxeter/label
+arithmetic as defense in depth. The more expensive `rootsystem` consumer retains its independent
+rank-24 closure/pair-work cap. Its block parser is permissive around prose and malformed type
+candidates: the first valid type wins; a recognized invalid `edges:` directive still rejects the
+block because that vocabulary is closed.
+Rank/root/reflection/pair-work caps keep the bake bounded; an over-dense minimal graph degrades
+all-or-none to points/rings with `edges:none`, and the accessible description names the cap rather
+than silently drawing a partial graph. Malformed and over-cap types use the universal inert shell.
+Guide rings are distinct projected radii, not generically one ring per Coxeter orbit: separate orbits
+can coincide radially (A3 has three h=4 orbits but only two radii, with root multiplicities 8 and 4).
+The E8 showpiece does satisfy the stronger oracle: eight distinct rings of 30 roots.
+Semantic minimal links now use a one-pixel `#8490a1` stroke (3.24:1 non-text contrast against white)
+while retaining their `edge` anchors. The complete E8 minimal figure is intentionally static-only:
+its 6,720 edge anchors plus 240 point anchors make 6,960 play-through steps, above the shared
+512-frame cap, so `render` succeeds while `renderFrames` fails closed to its documented inert frame.
+Use `edges:none` or a smaller type when a root-system play-through is required.
+
+### Deep code-audit reconciliation
+The repository now carries Marlow's source-level audit of the 2026-07-23 baseline, reconciled against
+current main after independent reproduction of all 19 findings. The report distinguishes historical
+receipts from present code state, records the focused remediation merges that have already landed,
+corrects severity ratings, and keeps the remaining global-work-budget and contract/test gaps explicit.
+
+### Cluster and axis semantic anchors
+The final two contract-reserved roles now have producer coverage. Every drawn flowchart subgraph frame
+emits one `data-sirentide-role="cluster"` group keyed by its stable subgraph id. Eight primary axis
+spines emit `role="axis"`: x/y for xychart, quadrant, and journey, plus the single time axis in timeline
+and gantt. All groups share their diagram's existing id sanitizer, collision namespace, and contiguous
+emit-order sequence; no SVG element, attribute, or value grammar was widened.
+
+### Flowchart convergent-edge label de-collision (plan ea20153b part 2)
+Two labeled edges reaching the **same target** from nearby sources used to place their labels at
+nearly the same spot, so their rendered glyph **boxes overprinted in both axes** into an
+unreadable mush — the plan's real info-loss case (two transitions into one state had to *drop* a
+label to stay legible). The label pass now de-collides on the **actual rendered box** (not the
+anchor point): keyed by shared target, when a label's box overlaps one already placed for that
+target it is **stacked one line (`EDGE_LABEL_SIZE * 1.5`) below**, greedily fanning further
+convergent labels down, and skipping any slot that would drop a label onto a **node box**. Labels
+to different targets — or already separated in x or y — are untouched, so every non-colliding
+diagram stays **byte-for-byte identical** (all pre-existing flowchart goldens unchanged; one new
+`flowchart-convergent` golden pins the stacked output). A **deep** convergent fan (a realistic
+sink/error state) can stack far enough to reach the canvas edge, so when the lowest stacked label
+would fall past the bottom the canvas **grows in height to contain it + margin** — mirroring the
+existing frame/back-edge canvas grows, and firing **only on genuine overflow** so no
+non-overflowing diagram's canvas moves (review sir/523; one new `flowchart-convergent-fan` golden
+pins the grown output — five labels into one sink, canvas height 168 → 202, every label
+in-canvas). This revives the de-collision that was withdrawn on the "x-separated by construction"
+argument: that premise was **measured false** (guard `convergentLabelsArePairwiseXDisjoint` at
+confluence/flowchart-label-guard @ 277f3f1c — two convergent labels overprinted ~14px in x AND
+~5px in y) and **retracted at sirentide/514** (anchor-x separation is not rendered-box-x
+separation). The ported guard now passes green, order-independently.
+
+---
+
 ## 2026-07-22 — Release **0.4.0**
 
 Version bump **0.3.0 → 0.4.0** (to be vendored into stafficy `/docs` as `sirentide-0.4.0.jar`,
@@ -283,7 +552,8 @@ stays inside its declared canvas — the visual class the byte-pinned goldens ca
 
 A ```` ```sirentide ```` fenced block in a Stafficy `/docs` page now bakes to a sanitized inline
 diagram (vendored jar + converter, mirroring LatteX). BrewShot bumped 0.1.0 → 0.6.0 for crisp
-gallery capture; the container-contract drift is closed with an enum-backed guard.
+gallery capture. The container contract now distinguishes Sirentide's narrow producer output from
+Stafficy's broader generic safe-SVG sanitizer, with enum- and prose-backed drift guards.
 
 ## 2026-07-10 — diagnostics twin for play-through
 

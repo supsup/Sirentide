@@ -4,4 +4,11 @@ package com.sirentide.layout;
 /// (SVG y-down space, measured clockwise from the +x axis), plus a fill colour. Emit turns this
 /// into a single `<path>` (moveto centre → lineto arc-start → arc → close).
 public record Wedge(double cx, double cy, double r, double a0, double a1, String fill)
-    implements Shape {}
+    implements Shape {
+
+    /// Charges the global layout-time work budget ({@link LayoutWorkBudget}, plan fe8c5bbc slice 2).
+    /// A no-op when no layout scope is armed.
+    public Wedge {
+        LayoutWorkBudget.charge(LayoutWorkBudget.WEIGHT_WEDGE);
+    }
+}

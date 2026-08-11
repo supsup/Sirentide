@@ -1,0 +1,22 @@
+.git
+.gitignore
+.gradle
+build
+**/build
+.idea
+.vscode
+*.iml
+.DS_Store
+
+# The image compiles only production sources plus the container worker. Browser
+# references, test-only vendored jars, reports, and prose stay out of the build
+# context; the bundled STIX font under src/main/resources remains included.
+docs
+examples
+libs
+src/test
+*.md
+*.html
+*.png
+*.gif
+*.zip

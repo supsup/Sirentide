@@ -34,6 +34,39 @@ public final class FontMetrics {
         return sfnt.advanceWidth(sfnt.glyphId(codePoint)) * fontSizePx / unitsPerEm;
     }
 
+    /// True iff the bundled label font has a REAL (non-.notdef) glyph for this code point (plan
+    /// 933eed50 F1). A code point the `cmap` does not map resolves to glyph 0 (.notdef) and bakes as a
+    /// tofu box; this is the coverage predicate that turns that silent fallback into a nameable signal.
+    /// The bundled STIX Two Math font covers Latin + mathematical symbols; non-Latin scripts and emoji
+    /// are NOT covered.
+    public boolean covers(int codePoint) {
+        return sfnt.glyphId(codePoint) != 0;
+    }
+
+    /// The DISTINCT code points in `text` that the bundled font cannot render (they bake as .notdef
+    /// tofu boxes), in first-seen order, at most `max` of them (plan 933eed50 F1). ASCII C0 controls
+    /// and DEL (`\n`, `\t`, …) are SKIPPED — they are structural, never emitted as a glyph, so they
+    /// must not be reported as "uncovered". Iterates by code point so an astral char (emoji, surrogate
+    /// pair) counts once. Read-only: it measures coverage, it never alters any geometry or output.
+    public java.util.List<Integer> uncoveredCodePoints(String text, int max) {
+        if (text == null || text.isEmpty() || max <= 0) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<Integer> out = new java.util.LinkedHashSet<>();
+        int i = 0;
+        while (i < text.length() && out.size() < max) {
+            int cp = text.codePointAt(i);
+            i += Character.charCount(cp);
+            if (cp < 0x20 || cp == 0x7F) {
+                continue;   // ASCII control / DEL — structural, never a rendered glyph
+            }
+            if (!covers(cp)) {
+                out.add(cp);
+            }
+        }
+        return List.copyOf(out);
+    }
+
     /// Width of a single (unwrapped) run of text at the given pixel size. Iterates by code
     /// point so astral characters (surrogate pairs) count once.
     public double runWidth(String text, double fontSizePx) {
@@ -142,6 +175,23 @@ public final class FontMetrics {
     /// §4/§6) — deterministic, no `<text>`, no view-time font dependency. `originX`/`baselineY`
     /// are the pen start in user (pixel) coordinates.
     public String textPathD(String text, double originX, double baselineY, double fontSizePx) {
+        // TWO INVARIANTS live at this chokepoint, IN THIS ORDER (agreed at sirentide/717→718;
+        // a third edit here should extend this comment, not discover it via merge-tree):
+        //  1. guardPlainGlyphs — the fail-closed tag gate (Confluence): a string carrying
+        //     tag-shaped markup must never become glyph contours; a rejection degrades the
+        //     whole render to the inert shell.
+        //  2. EmittedText.record — the glyph-emission tap (Fixpoint, sirentide/712 HIGH 1):
+        //     when a diagnostics render has armed the sink, record the EXACT text this call
+        //     bakes — post-ellipsization, post-math-degrade — so coverage diagnostics derive
+        //     from emitted glyphs, never a re-derivation of the IR.
+        // Guard FIRST: EmittedText means "text that actually became glyphs", so a refused
+        // string must never enter the corpus — coverage that counts refused input is a
+        // dishonest denominator. (Today the order is even observationally invisible to the
+        // coverage consumer — a guard rejection yields a non-OK outcome and the corpus is
+        // never read — which makes guard-first strictly safe now and still correct if the
+        // gate ever becomes per-label.)
+        guardPlainGlyphs(text);
+        EmittedText.record(text);
         double scale = fontSizePx / unitsPerEm;
         StringBuilder d = new StringBuilder();
         double penX = originX;
@@ -154,6 +204,51 @@ public final class FontMetrics {
             penX += sfnt.advanceWidth(gid) * scale;
         }
         return d.toString().trim();
+    }
+
+    /// THE AUTHORITATIVE TAG GATE. Every string that becomes plain glyph contours passes here
+    /// first, after ellipsization, wrapping, synthesis and every other transformation, and
+    /// immediately before any contour is appended.
+    ///
+    /// ## Why the gate is here and not on a surface map
+    ///
+    /// The earlier design classified SURFACES up front — this label is math-aware, that one is
+    /// plain — and validated the SOURCE label. Marlow broke that four times running
+    /// (sirentide/676, 680, 685, 693, 697, 699, and three more at 701), and the last one showed
+    /// the design was wrong rather than incomplete: Class/ER **ellipsize the label and only then
+    /// ask whether it has math**, so the string validation approved is not the string the
+    /// emitter renders. A legal complete `$…$` run is exempted, loses its closing delimiter to
+    /// the ellipsis, keeps the complete tag, and is emitted as plain glyphs. That is a
+    /// time-of-check/time-of-use gap, and no amount of better classification closes it.
+    ///
+    /// The census that settled it: 98 plain-glyph emission call sites across 19 layout files.
+    /// With ~2 findings per review round, patching enumerated paths does not converge.
+    ///
+    /// Here there is nothing between the check and the use. Ruling: Marlow, sirentide/703.
+    ///
+    /// ## No math-aware exemption, deliberately
+    ///
+    /// `offendingTag(text, false)` — at this point the string is DEFINITIVELY being emitted as
+    /// plain glyphs, whatever the surface once claimed. Successful math fragments never reach
+    /// here (they go through `FragmentGuard`); literal runs from `MathLabel.emit` and failed
+    /// math that degraded to glyphs DO reach here, and must be checked as plain. Applying a
+    /// math exemption at the emission point would reintroduce the dollar-wrap bypass at the one
+    /// place it is provably wrong.
+    ///
+    /// ## No allowlist
+    ///
+    /// Every string arriving here is treated as plain and validated. A safe unknown string
+    /// renders; a tag-shaped literal refuses. Identity falls back to `plain-glyph` when the
+    /// caller carried none — incomplete attribution must not become permission.
+    private static void guardPlainGlyphs(String text) {
+        String tag = com.sirentide.parse.LabelMarkup.offendingTag(text, false);
+        if (tag != null) {
+            // Same typed exception as the early pass, so `renderWithDiagnostics` classifies it
+            // as PARSE_ERROR at stage `parse` on the exception TYPE rather than on where it was
+            // thrown. Discovery during layout must not reclassify this as an ordinary layout
+            // failure (Marlow, sirentide/703).
+            throw new com.sirentide.parse.LabelMarkupException("plain-glyph", tag);
+        }
     }
 
     /// Appends one glyph's contours as transformed path commands — the TrueType quadratic

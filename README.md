@@ -15,7 +15,7 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Status
 
-Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-two diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Browser-audited renders in the [gallery](examples/gallery/GALLERY.md).
+Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-three diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Every shipped sealed-IR type also has a browser-audited BrewShot reference in the [gallery](examples/gallery/GALLERY.md), enforced by a headless type-to-capture coverage test.
 
 The six flagship types, in detail:
 
@@ -28,11 +28,133 @@ The six flagship types, in detail:
 | **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
 | **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
 
-Plus sixteen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`heatmap`** (continuous 0..1 cells on a sequential ramp, with a legend), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), and **`knot`** (classical knots — trefoil/unknot/figure-eight). The flowchart carries the full mermaid node-shape set, edge styles, and nested subgraphs; the sequence diagram carries `alt`/`loop`/`par` frames plus activation bars.
+Plus seventeen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`heatmap`** (continuous 0..1 cells on a sequential ramp, with a legend), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), **`rootsystem`** (deterministic finite-root-system Coxeter-plane projections), and **`knot`** (classical knots — trefoil/unknot/figure-eight). The flowchart carries the full mermaid node-shape set, edge styles, and nested subgraphs; the sequence diagram carries `alt`/`loop`/`par` frames plus activation bars.
 
 Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside any label typesets as real math via the LatteX bridge.
 
 Still ahead (the remaining *thesis* work): the native **effect layer** — `data-sirentide-fx`, the security-gated Part 2 the anchors were built to carry — see [SLOWSTART.md](SLOWSTART.md).
+
+## Docker
+
+Build the Java 25 image from the repository root. **The build argument is required, not
+optional** — the jar stamps `Sirentide-Source-Revision` into its manifest and refuses to
+build without an exact 40-hex commit, so a bare `docker build -t sirentide .` fails with
+`Sirentide-Source-Revision requires one exact lowercase 40-hex git commit; got ''`:
+
+```sh
+docker build --build-arg SIRENTIDE_SOURCE_REVISION="$(git rev-parse HEAD)" -t sirentide .
+```
+
+That stamp is worth understanding rather than pasting past, because it makes a Sirentide
+image self-describing: the artifact carries the commit it was built from, so "which
+Sirentide is this?" is answerable from the image alone — no build logs, no tag
+archaeology. Read it back at any time:
+
+```sh
+docker run --rm --entrypoint sh sirentide -c \
+  'unzip -p /opt/sirentide/sirentide.jar META-INF/MANIFEST.MF' \
+  | grep -E 'Implementation-Version|Sirentide-Source-Revision'
+```
+
+The image keeps its application artifacts under the immutable
+`/opt/sirentide` tree and runs as the non-root `10001:10001` user by default.
+The existing one-shot CLI remains the default entry point, so the original
+stdin-to-stdout flow is unchanged:
+
+```sh
+printf '%s\n' 'pie' '"Reviews" : 40' '"Docs" : 60' \
+  | docker run --rm -i sirentide > diagram.svg
+```
+
+`cli` is an optional explicit spelling for scripts that want to distinguish
+one-shot work from the folder worker. File input can be mounted read-only while
+the output mount stays writable:
+
+```sh
+mkdir -p Input Output
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,src="$PWD/Input",dst=/sirentide/input,readonly \
+  --mount type=bind,src="$PWD/Output",dst=/sirentide/output \
+  sirentide cli render /sirentide/input/diagram.md \
+    -o /sirentide/output/diagram.svg
+```
+
+### Watched input and output folders
+
+Run a long-lived worker with writable input and output mounts:
+
+```sh
+mkdir -p Input Output
+docker run -d --name sirentide-worker --restart unless-stopped \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,src="$PWD/Input",dst=/sirentide/input \
+  --mount type=bind,src="$PWD/Output",dst=/sirentide/output \
+  sirentide watch
+```
+
+The examples map the process to the current host UID/GID so ordinary bind
+folders stay writable on Linux. If your container runtime already translates
+ownership, omit `--user` and retain the image's non-root `10001:10001` default.
+Prefer either approach over world-writable permissions. Watch mode accepts
+complete direct children of `/sirentide/input` with these extensions:
+
+- `.md` and `.markdown` — render the first ```` ```sirentide ```` fence, using
+  the same fence extraction, source cap, and render outcome as the CLI.
+- `.sirentide` — render a raw Sirentide DSL source.
+
+Hidden names, temporary uploads, symlinks, other extensions, and the worker's
+state directories are ignored. Producers should write a hidden sibling and
+rename it into place only when complete, for example:
+
+```sh
+cp diagram.md Input/.diagram.md.tmp
+mv Input/.diagram.md.tmp Input/diagram.md
+```
+
+For `diagram.md`, a successful job creates `Output/diagram.md.svg` and moves
+the source to `Input/finished/diagram.md`. The full lifecycle is:
+
+```text
+Input/diagram.md
+  -> Input/processing/<job-id>/diagram.md
+  -> Input/finished/diagram.md
+```
+
+A failed render instead writes a bounded, content-free
+`Output/diagram.md.error.txt` and moves the source to
+`Input/failed/diagram.md`. Existing outputs and archived inputs are never
+overwritten; conflicting archives are retained below a job-id directory in
+`finished/collisions` or `failed/collisions`. A file left in `processing` by a
+stopped container is recovered on restart. Multiple workers may share the same
+mounts: atomic claims plus idempotent publication ensure one final state even on
+bind-mount drivers that do not coordinate advisory file locks.
+
+An eligible file that the non-root worker cannot open follows the same failed
+lifecycle instead of stopping the watcher: its inode is moved without reading
+or copying the source bytes, one bounded diagnostic is emitted, and later jobs
+continue normally. When a same-name failed archive already exists, the
+unreadable source remains below its job-id directory in `failed/collisions`.
+If diagnostic publication is interrupted, the inode remains durably recoverable
+below `failed/pending/<job-id>`; the next watcher publishes the same idempotent
+diagnostic before completing the final failed disposition. A temporary output
+mount fault therefore cannot leave an archived unreadable source without its
+promised diagnostic. Shared watchers snapshot that unreadable claim's filesystem
+identity; a losing worker accepts a pending, collision, or direct failed path
+only when it is the same inode and size. An unrelated same-name archive is never
+treated as proof of completion, and a completed race does not stop either watcher.
+
+The worker never lengthens the original name inside a path component. If the
+source name fits the mounted filesystem but adding `.svg` or `.error.txt` would
+not, the corresponding output uses a bounded `job-<job-id>` filename instead;
+the source is still archived under its unchanged original name. A diagnostic
+collision uses a bounded job-and-attempt filename and never overwrites the
+existing file.
+
+Set `SIRENTIDE_WATCH_POLL_MS` to an integer from `10` through `60000` to change
+the scan interval (default `500`). The watched input mount must be writable so
+the worker can move jobs between state folders; the one-shot CLI input mount can
+remain read-only.
 
 ## Docs
 
@@ -40,7 +162,26 @@ Still ahead (the remaining *thesis* work): the native **effect layer** — `data
 - **[SLOWSTART.md](SLOWSTART.md)** — the why, the differentiators, the milestone ladder.
 - **[RELEASE_NOTES.md](RELEASE_NOTES.md)** — what's shipped, dated.
 - **[docs/DESIGN.md](docs/DESIGN.md)** — full design, the LatteX dependency, the security model.
-- **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot).
+- **[examples/gallery/GALLERY.md](examples/gallery/GALLERY.md)** — real-browser renders of every shipped diagram type, captured by [BrewShot](https://github.com/supsup/BrewShot) and checked against the sealed production IR inventory.
+
+## Release provenance
+
+An immutable release carries three jars — executable, sources, and Javadoc — plus a `.sha256`
+sidecar for each. The executable jar's manifest binds `Implementation-Version` to the release
+number and `Sirentide-Source-Revision` to the exact lowercase 40-hex git commit used to build it.
+After downloading a release, verify the sidecars from the directory containing the artifacts:
+
+```sh
+shasum -a 256 -c sirentide-0.5.0.jar.sha256
+shasum -a 256 -c sirentide-0.5.0-sources.jar.sha256
+shasum -a 256 -c sirentide-0.5.0-javadoc.jar.sha256
+unzip -p sirentide-0.5.0.jar META-INF/MANIFEST.MF
+```
+
+For maintainers, `SIRENTIDE_REQUIRE_CHROME=1 ./gradlew releaseBuild` is the release-only gate. It
+requires a clean, resolvable git commit and finalized release notes, runs the clean full build with
+the browser suite unable to skip green, then checks all three jars, the paired frame-deck assets,
+manifest identity, and checksum sidecars before a tag or GitHub release is created.
 
 ## Family
 

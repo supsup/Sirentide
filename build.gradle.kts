@@ -1,3 +1,7 @@
+import java.security.MessageDigest
+import java.util.HexFormat
+import java.util.jar.JarFile
+
 plugins {
     `java-library`
     application
@@ -10,7 +14,10 @@ group = "com.sirentide"
 // pinned consumer can never silently go stale. Bump on each downstream-relevant release.
 // 0.4.0: the heatmap type (21 → 22) — continuous-score grid on a single-hue sequential
 // ramp + legend; to be vendored into stafficy /docs as sirentide-0.4.0.jar (part B).
-version = "0.4.0"
+// 0.5.0: the 2026-07-30 immutable cut — render-check CLI, bounded frame decks + paired assets,
+// rootsystem projections (22 → 23 types), Docker watch mode, and layout/diagnostic hardening.
+// 0.6.0: the post-0.5.0 development line; contents remain IN PROGRESS until the next cut.
+version = "0.6.0"
 
 java {
     toolchain {
@@ -45,6 +52,27 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // StagedReleaseNoteCountsTest reads RELEASE-NOTE-ENTRY.md, which is NOT a source file, so
+    // Gradle would consider `test` UP-TO-DATE after a doc-only edit and skip the very run that
+    // matters — the guard would be inert exactly when someone changes the number it guards.
+    // (Observed, not theorised: editing the count and re-running produced BUILD SUCCESSFUL in
+    // 252ms because the task never executed.) Declaring the file as an input makes a doc edit
+    // invalidate the task.
+    //
+    // `inputs.files` (PLURAL) and not `inputs.file(...).optional(true)`. This is the whole
+    // reason for the distinction, and my first version had it wrong: `optional(true)` does NOT
+    // tolerate an absent file. With the note deleted the `test` task fails at CONFIGURATION
+    // time — "property 'stagedReleaseNote' specifies file ... which doesn't exist" — before a
+    // single test runs. That matters more than an ordinary bug because deleting this file is
+    // the PLANNED happy path: it merges into RELEASE_NOTES and leaves this name, at which
+    // point the guard is supposed to retire itself, and StagedReleaseNoteCountsTest already
+    // handles that with a Files.exists early return. The Gradle half failed FIRST, so that
+    // graceful path was unreachable and whoever merged the note would get a red build naming
+    // a file they had just legitimately deleted. A FileCollection tolerates absent entries.
+    // (Fixpoint, sirentide/868; reproduced here before fixing.)
+    inputs.files(layout.projectDirectory.file("RELEASE-NOTE-ENTRY.md"))
+        .withPropertyName("stagedReleaseNote")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     // Forward the golden-regen switch to the forked test JVM so
     // `./gradlew test -Dsirentide.updateGolden=true` actually reaches GoldenSvgTest.
     systemProperty("sirentide.updateGolden", System.getProperty("sirentide.updateGolden", "false"))
@@ -76,8 +104,36 @@ application {
     mainClass = "com.sirentide.cli.Main"
 }
 
+// THE REVISION MAY BE SUPPLIED BY THE CALLER, because the build container has no git and
+// cannot get one. `.dockerignore` excludes `.git`, so the Docker build context contains no
+// repository at all — installing git in the build stage would NOT fix it, there is nothing
+// for git to read. Since 2026-07-30 (d7c0521, the 0.5.0 cut) `docker build` has therefore
+// failed outright on `:jar`:
+//
+//     Error while evaluating property 'sirentideSourceRevision' of task ':jar'
+//        > A problem occurred starting process 'command 'git''
+//
+// Nothing rebuilt the image after that commit, so nobody hit it: the newest sirentide image
+// on the host dates from THREE DAYS BEFORE the break.
+//
+// THE 40-HEX CHECK BELOW IS UNCHANGED AND IS THE POINT. The alternative fix — degrading the
+// revision to "unknown" when git is absent — would defeat a deliberate release-integrity
+// guarantee: an artifact must name the exact tree it was cut from. This keeps that guarantee
+// and moves only the SOURCE of the value, from "shell out to git" to "git, or whoever already
+// knows". An override that is not a real 40-hex commit still fails the build.
+val releaseSourceRevision = providers.gradleProperty("sirentideSourceRevision")
+    .orElse(providers.environmentVariable("SIRENTIDE_SOURCE_REVISION"))
+    .orElse(
+        providers.exec {
+            workingDir(layout.projectDirectory)
+            commandLine("git", "rev-parse", "--verify", "HEAD^{commit}")
+        }.standardOutput.asText
+    )
+    .map { it.trim() }
+
 // Make the plain library jar directly launchable: `java -jar build/libs/sirentide-<ver>.jar`.
 tasks.jar {
+    inputs.property("sirentideSourceRevision", releaseSourceRevision)
     manifest {
         attributes(
             "Main-Class" to "com.sirentide.cli.Main",
@@ -85,4 +141,156 @@ tasks.jar {
             "Implementation-Version" to project.version.toString(),
         )
     }
+    doFirst {
+        val revision = releaseSourceRevision.get()
+        check(revision.matches(Regex("[0-9a-f]{40}"))) {
+            "Sirentide-Source-Revision requires one exact lowercase 40-hex git commit; got '$revision'"
+        }
+        manifest.attributes("Sirentide-Source-Revision" to revision)
+    }
+}
+
+val releaseWorkingTreeStatus = providers.exec {
+    workingDir(layout.projectDirectory)
+    commandLine("git", "status", "--porcelain=v1", "--untracked-files=all")
+}.standardOutput.asText.map { it.trim() }
+
+val releaseArtifactFiles = providers.provider {
+    val baseName = "${project.name}-${project.version}"
+    listOf(
+        layout.buildDirectory.file("libs/$baseName.jar").get().asFile,
+        layout.buildDirectory.file("libs/$baseName-sources.jar").get().asFile,
+        layout.buildDirectory.file("libs/$baseName-javadoc.jar").get().asFile,
+    )
+}
+
+val releaseChecksumFiles = releaseArtifactFiles.map { artifacts ->
+    artifacts.map { artifact -> artifact.resolveSibling("${artifact.name}.sha256") }
+}
+
+val verifyReleaseSource by tasks.registering {
+    group = "verification"
+    description = "Fails unless the immutable release build is bound to a clean, resolvable git commit."
+
+    doLast {
+        val revision = releaseSourceRevision.get()
+        check(revision.matches(Regex("[0-9a-f]{40}"))) {
+            "release source revision must resolve to one exact lowercase 40-hex commit; got '$revision'"
+        }
+        val releaseNotes = layout.projectDirectory.file("RELEASE_NOTES.md").asFile.readText()
+        val quotedVersion = Regex.escape(project.version.toString())
+        check(Regex("(?m)^## \\d{4}-\\d{2}-\\d{2} — Release \\*\\*$quotedVersion\\*\\*$")
+            .containsMatchIn(releaseNotes)) {
+            "RELEASE_NOTES.md must have a dated Release $version heading before an immutable cut"
+        }
+        check(!Regex("(?m)^## \\*\\*$quotedVersion\\*\\* — IN PROGRESS")
+            .containsMatchIn(releaseNotes)) {
+            "RELEASE_NOTES.md still marks $version IN PROGRESS"
+        }
+        val requireChrome = System.getenv("SIRENTIDE_REQUIRE_CHROME")
+            ?.let { it == "1" || it.equals("true", true) || it.equals("yes", true) } ?: false
+        check(requireChrome) {
+            "releaseBuild requires SIRENTIDE_REQUIRE_CHROME=1 so browser pins cannot skip green"
+        }
+        val dirty = releaseWorkingTreeStatus.get()
+        check(dirty.isEmpty()) {
+            "immutable release builds require a clean worktree; git status reported:\n$dirty"
+        }
+        check(project.version.toString().matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) {
+            "immutable release version must be an exact X.Y.Z value; got '$version'"
+        }
+    }
+}
+
+val generateReleaseChecksums by tasks.registering {
+    group = "build"
+    description = "Writes SHA-256 sidecars for the three immutable release jars."
+    dependsOn(tasks.jar, tasks.named("sourcesJar"), tasks.named("javadocJar"))
+    inputs.files(releaseArtifactFiles)
+    outputs.files(releaseChecksumFiles)
+
+    doLast {
+        releaseArtifactFiles.get().forEach { artifact ->
+            check(artifact.isFile) { "missing release artifact: $artifact" }
+            val digest = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(artifact.readBytes())
+            )
+            artifact.resolveSibling("${artifact.name}.sha256")
+                .writeText("$digest  ${artifact.name}\n")
+        }
+    }
+}
+
+val verifyReleaseArtifacts by tasks.registering {
+    group = "verification"
+    description = "Verifies immutable release jars, provenance, paired assets, and checksums."
+    dependsOn(generateReleaseChecksums)
+    inputs.files(releaseArtifactFiles, releaseChecksumFiles)
+
+    doLast {
+        val revision = releaseSourceRevision.get()
+        check(revision.matches(Regex("[0-9a-f]{40}"))) {
+            "release source revision must resolve to one exact lowercase 40-hex commit; got '$revision'"
+        }
+
+        val artifacts = releaseArtifactFiles.get()
+        val (mainJar, sourcesJar, javadocJar) = artifacts
+        JarFile(mainJar).use { jar ->
+            val attributes = checkNotNull(jar.manifest) { "main jar has no manifest" }.mainAttributes
+            check(attributes.getValue("Main-Class") == "com.sirentide.cli.Main") {
+                "main jar has the wrong Main-Class"
+            }
+            check(attributes.getValue("Implementation-Version") == project.version.toString()) {
+                "main jar version does not match Gradle version $version"
+            }
+            check(attributes.getValue("Sirentide-Source-Revision") == revision) {
+                "main jar must carry exact source revision $revision"
+            }
+            listOf(
+                "com/sirentide/frames/sirentide-frames.js",
+                "com/sirentide/frames/sirentide-frames.css",
+            ).forEach { asset ->
+                val entry = checkNotNull(jar.getJarEntry(asset)) { "main jar is missing paired asset $asset" }
+                check(jar.getInputStream(entry).use { it.read() } != -1) {
+                    "main jar carries an empty paired asset $asset"
+                }
+            }
+        }
+        JarFile(sourcesJar).use { jar ->
+            check(jar.entries().asSequence().any { !it.isDirectory && it.name.endsWith(".java") }) {
+                "sources jar contains no Java sources"
+            }
+        }
+        JarFile(javadocJar).use { jar ->
+            check(jar.entries().asSequence().any { !it.isDirectory && it.name.endsWith(".html") }) {
+                "javadoc jar contains no HTML documentation"
+            }
+        }
+
+        artifacts.forEach { artifact ->
+            val sidecar = artifact.resolveSibling("${artifact.name}.sha256")
+            val expected = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(artifact.readBytes())
+            )
+            check(sidecar.readText() == "$expected  ${artifact.name}\n") {
+                "checksum sidecar does not match ${artifact.name}"
+            }
+        }
+    }
+}
+
+verifyReleaseSource.configure {
+    mustRunAfter("clean")
+}
+tasks.named("build") {
+    mustRunAfter(verifyReleaseSource)
+}
+verifyReleaseArtifacts.configure {
+    mustRunAfter("build")
+}
+
+tasks.register("releaseBuild") {
+    group = "build"
+    description = "Cleans, fully builds, and verifies immutable release artifacts from a clean commit."
+    dependsOn("clean", verifyReleaseSource, "build", verifyReleaseArtifacts)
 }

@@ -15,6 +15,7 @@ import com.sirentide.ir.ErEntity;
 import com.sirentide.ir.ErRelation;
 import com.sirentide.ir.FlowCluster;
 import com.sirentide.ir.RelationKind;
+import com.sirentide.ir.RootSystem;
 import com.sirentide.ir.FlowEdge;
 import com.sirentide.ir.FlowNode;
 import com.sirentide.ir.Flowchart;
@@ -37,6 +38,7 @@ import com.sirentide.ir.SankeyFlow;
 import com.sirentide.ir.TensorNetwork;
 import com.sirentide.ir.Divider;
 import com.sirentide.ir.Dynkin;
+import com.sirentide.ir.DynkinCartan;
 import com.sirentide.ir.SeqBlock;
 import com.sirentide.ir.SeqLifecycle;
 import com.sirentide.ir.SeqMessage;
@@ -99,6 +101,12 @@ public final class DslParser {
     // Sequence-diagram cap (DESIGN §6/§7): a pathological actor count would blow up the lifeline
     // grid; extra first-seen actors past this are dropped (their messages then skip in layout).
     public static final int MAX_ACTORS = 50;
+    // Sequence NOTE cap: messages already stop at MAX_DATA_ROWS, but note directives used to remain
+    // uncapped and each one emits a multi-shape annotation band. Keep the two time-axis row kinds
+    // symmetric. Unlike a silently-truncated diagram, the first valid note past this cap is retained
+    // as the Sequence IR's single MAX_NOTES+1 overflow marker and parsing stops. SequenceLayout
+    // rejects that marker before geometry; the diagnostics API reports the named cap degrade.
+    public static final int MAX_SEQUENCE_NOTES = Sequence.MAX_NOTES;
     // Sequence block-nesting cap (M2): a pathological `alt`/`loop`/`par` nesting depth would stack
     // unboundedly; opens past this are swallowed (their `end` hits an empty/other stack, inert).
     public static final int MAX_BLOCK_DEPTH = 64;
@@ -126,33 +134,42 @@ public final class DslParser {
     // total is additionally bounded by MAX_DATA_ROWS (mirrors the snake square-total discipline).
     public static final int MAX_YOUNG_ROWS = 500;
     public static final int MAX_YOUNG_PART = 1000;
-    // Dynkin-diagram rank cap (plan 8e13b196). A_n has no mathematical upper bound, but the node/bond
-    // count grows linearly with the rank and a diagram wider than this is unreadable anyway; a `type:`
-    // whose rank exceeds this degrades to the inert shell (invalid family sentinel) rather than laying
-    // out a runaway strip — mirrors the per-type cap discipline, never OOMs, never throws.
-    public static final int MAX_DYNKIN_RANK = 200;
+    // Compatibility alias for the established Dynkin-diagram/shared-catalog boundary. RootSystem
+    // independently applies its lower rank-24 closure/pair-work cap after catalog validation.
+    public static final int MAX_DYNKIN_RANK = DynkinCartan.MAX_RANK;
 
-    public static Diagram parse(String src) {
-        if (src == null || src.isBlank()) {
-            return new Empty();
-        }
-        // Oversized source degrades to inert (never parse a runaway input into millions of shapes).
-        // MAX_SOURCE_BYTES is a UTF-8 *byte* bound (DESIGN §6/§7 + the CLI stdin read cap). The cheap
-        // `length()` guard is a fast reject on UTF-16 code units (always ≤ the UTF-8 byte count for
-        // BMP, but multi-byte chars mean length() UNDER-counts bytes — a 600k-char `é` string is
-        // 1.2 MB of UTF-8 yet only 600k code units). So ALSO scan the true UTF-8 byte length with a
-        // no-alloc code-point walk (never materializes a byte[]) and reject once it exceeds the cap.
+    /// True when `src` exceeds {@link #MAX_SOURCE_BYTES} measured in UTF-8 BYTES — the ONE source-cap
+    /// envelope, shared by {@link #parse}, {@link #parseConfig} and {@link #detectUnsupportedConstruct}
+    /// (plan 933eed50, Marlow sirentide/706 Finding 3). The cheap `length()` guard is a fast reject on
+    /// UTF-16 code units (always ≤ the UTF-8 byte count for BMP, but multi-byte chars mean length()
+    /// UNDER-counts bytes — a 600k-char `é` string is 1.2 MB of UTF-8 yet only 600k code units), so
+    /// this ALSO scans the true UTF-8 byte length with a no-alloc code-point walk (never materializes
+    /// a byte[]). Before extraction the detector held only the length() half, so an over-cap multibyte
+    /// source was size-rejected by parse and then MISCLASSIFIED by the detector as an unsupported
+    /// construct — two hand-maintained copies of one bound, drifted. One envelope, three callers.
+    static boolean exceedsSourceCap(String src) {
         if (src.length() > MAX_SOURCE_BYTES) {
-            return new Empty();
+            return true;
         }
         long utf8Bytes = 0;
         for (int i = 0, n = src.length(); i < n; ) {
             int cp = src.codePointAt(i);
             utf8Bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
             if (utf8Bytes > MAX_SOURCE_BYTES) {
-                return new Empty();
+                return true;
             }
             i += Character.charCount(cp);
+        }
+        return false;
+    }
+
+    public static Diagram parse(String src) {
+        if (src == null || src.isBlank()) {
+            return new Empty();
+        }
+        // Oversized source degrades to inert (never parse a runaway input into millions of shapes).
+        if (exceedsSourceCap(src)) {
+            return new Empty();
         }
         String[] rawLines = src.strip().split("\\R");
         // Strip the OPTIONAL leading CONFIG BLOCK (an optional `sirentide` marker + `%% key: value`
@@ -171,7 +188,31 @@ public final class DslParser {
         // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
         // (DESIGN §6: never fail the bake).
         String[] header = lines[0].strip().split("\\s+");
-        String type = header[0];
+        String type = canonicalDiagramType(header[0]);
+        // THE ALIAS TABLE IS THE ONLY DOOR TO THE DISPATCH SWITCH (plan 8a991947; Fixpoint's
+        // attack at sirentide/853).
+        //
+        // Without this line, a token wired into the switch but ABSENT from the table dispatches
+        // when spelled exactly and renders a BLANK SVG at exit 0 on any other casing — which is
+        // verbatim the `stateDiagram-v2` defect this plan exists to kill, and it is how the defect
+        // arose in the first place: a new SPELLING for an EXISTING type.
+        //
+        // I first tried to DETECT that with a test that read the switch's case labels out of the
+        // source. Fixpoint defeated it in one move — the extractor's regex was line-anchored, so a
+        // formatter-realistic wrap (`case "journey"` / newline / `-> …`) silently dropped a token
+        // from its own corpus while my positive control still passed, and the same wrap readmitted
+        // the defect past the test built to catch it. The lesson I took is not "write a better
+        // regex": source-parsing a switch from a test is an arms race the test loses, because the
+        // attacker is a formatter.
+        //
+        // So the property is now STRUCTURAL rather than detected. An un-tabled token cannot reach
+        // the switch at all, which makes a switch arm without a table entry DEAD CODE — a
+        // maintenance smell — instead of a silent case-sensitivity regression. Behaviour-preserving
+        // as of this commit: the completeness suite proves every current switch token is in the
+        // table, so nothing reachable today becomes unreachable.
+        if (!DIAGRAM_TYPE_ALIASES.containsValue(type)) {
+            return new Empty();
+        }
         // The off-slice text colour (page-background labels). `color=<value>` overrides the default;
         // an unparseable/illegal colour falls back to the default (never fails the bake).
         String textColor = parseTextColor(header);
@@ -235,8 +276,77 @@ public final class DslParser {
             // finite-type semisimple-Lie-algebra classification; an unknown/out-of-range type degrades
             // to the inert shell (never throws).
             case "dynkin" -> parseDynkin(lines, textColor);
+            // All roots of a finite crystallographic type projected onto a deterministic Coxeter
+            // (Petrie) plane. Optional bounded ambient-minimal-distance links are all-or-none.
+            case "rootsystem" -> parseRootSystem(lines, textColor);
             default -> new Empty();
         };
+    }
+
+    /// Every accepted spelling of a diagram-type header, keyed by its LOWERCASED form, mapped to
+    /// the canonical token the dispatch switch keys on (plan 8a991947 slice 1).
+    ///
+    /// TWO DEFECTS THIS CLOSES, both measured against the shipped 0.6.0 jar. The dispatch was an
+    /// exact, case-SENSITIVE match, so (a) `stateDiagram` — real Mermaid, and the spelling an
+    /// author copying from Mermaid actually writes — missed the `statediagram` arm by one capital
+    /// and rendered a 0x0 SVG at exit 0, and (b) `sequenceDiagram`/`quadrantChart` had no alias at
+    /// ALL, so lowercasing alone would not have saved them. Both were silent blanks, via the CLI's
+    /// no-args stdin path, which is the README's own documented default Docker invocation.
+    ///
+    /// The inconsistency is what made it a trap rather than a limitation: `classDiagram`,
+    /// `erDiagram` and `gitGraph` already matched Mermaid 1:1, so the surface TAUGHT authors that
+    /// Mermaid spellings work — and then three of them silently did not.
+    ///
+    /// FAIL-CLOSED ON MISS: an unrecognised token is returned UNCHANGED, so it still falls to the
+    /// switch's `default` arm. Normalisation must never fuzzy-match a near-miss onto a real type —
+    /// silently rendering the WRONG diagram would be a far worse defect than the blank this
+    /// replaces. (Making the blank itself loud is slice 2 of the plan; it needs a typed
+    /// unsupported-header result the CLI can exit non-zero on, and is deliberately NOT bundled
+    /// into this parse-only change.)
+    static final java.util.Map<String, String> DIAGRAM_TYPE_ALIASES = java.util.Map.ofEntries(
+        // Mermaid spellings whose canonical Sirentide token differs.
+        java.util.Map.entry("statediagram", "state"),
+        java.util.Map.entry("statediagram-v2", "state"),
+        java.util.Map.entry("sequencediagram", "sequence"),
+        java.util.Map.entry("quadrantchart", "quadrant"),
+        // Canonical tokens that carry capitals — listed so the lookup is uniformly
+        // case-insensitive rather than case-insensitive only for the types that were broken.
+        java.util.Map.entry("classdiagram", "classDiagram"),
+        java.util.Map.entry("erdiagram", "erDiagram"),
+        java.util.Map.entry("gitgraph", "gitGraph"),
+        // All-lowercase canonical tokens, mapped to themselves so a SHOUTED or MixedCase header
+        // resolves too. Enumerated rather than derived: the switch labels are the contract, and a
+        // derived list would drift silently the day a new type is added without one.
+        java.util.Map.entry("pie", "pie"),
+        java.util.Map.entry("xychart", "xychart"),
+        java.util.Map.entry("timeline", "timeline"),
+        java.util.Map.entry("gantt", "gantt"),
+        java.util.Map.entry("flowchart", "flowchart"),
+        java.util.Map.entry("sequence", "sequence"),
+        java.util.Map.entry("state", "state"),
+        java.util.Map.entry("quadrant", "quadrant"),
+        java.util.Map.entry("matrix", "matrix"),
+        java.util.Map.entry("comparison", "comparison"),
+        java.util.Map.entry("heatmap", "heatmap"),
+        java.util.Map.entry("mathblock", "mathblock"),
+        java.util.Map.entry("journey", "journey"),
+        java.util.Map.entry("mindmap", "mindmap"),
+        java.util.Map.entry("sankey", "sankey"),
+        java.util.Map.entry("sankey-beta", "sankey-beta"),
+        java.util.Map.entry("snake", "snake"),
+        java.util.Map.entry("tensornetwork", "tensornetwork"),
+        java.util.Map.entry("young", "young"),
+        java.util.Map.entry("knot", "knot"),
+        java.util.Map.entry("dynkin", "dynkin"),
+        java.util.Map.entry("rootsystem", "rootsystem"));
+
+    /// Resolve a header token to its canonical dispatch key, case-insensitively. An unrecognised
+    /// token is returned VERBATIM so it reaches `default` — see the fail-closed note above.
+    static String canonicalDiagramType(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        return DIAGRAM_TYPE_ALIASES.getOrDefault(raw.toLowerCase(java.util.Locale.ROOT), raw);
     }
 
     /// The optional leading marker line that names the DSL (accepted + ignored, mermaid-`sirentide`
@@ -280,7 +390,7 @@ public final class DslParser {
     /// (mermaid's own init syntax) parses to key `{init…` which is unknown → ignored (inert), so a
     /// mermaid-style block is harmless rather than an error.
     public static DiagramConfig parseConfig(String src) {
-        if (src == null || src.isBlank() || src.length() > MAX_SOURCE_BYTES) {
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
             return DiagramConfig.DEFAULT;
         }
         String[] lines = src.strip().split("\\R");
@@ -586,6 +696,17 @@ public final class DslParser {
     /// round-trips — NOT degraded to Empty).
     private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
             String configDirection) {
+        // An unsupported Mermaid construct anywhere in the body (a top-level `&` fan-out, a `~~~`
+        // invisible link, a `<br/>` in a label, or a `style`/`click` directive) makes the whole bake
+        // untrustworthy: `A & B --> C` used to mint ONE literal node named `A & B`, a `<br/>` baked as
+        // literal glyphs, a `style`/`click` directive silently vanished. Degrade the WHOLE diagram to
+        // the inert shell rather than render a misleading partial — the theme: silent-WRONG becomes a
+        // LOUD signal (the diagnostic channel names the token via {@link #detectUnsupportedConstruct}).
+        // Never throws (DESIGN §6). Detection keys on statement-level positions only, so a sigil inside
+        // a quoted/bracketed label (`A[Tom & Jerry]`) is legal content and does NOT trip this.
+        if (firstUnsupportedFlowToken(lines) != null) {
+            return new Empty();
+        }
         // An explicit header token (`flowchart LR`) always wins; leave direction null until one is
         // seen so a defaulted header is distinguishable from an explicit `TD`.
         String direction = null;
@@ -912,6 +1033,203 @@ public final class DslParser {
             }
         }
         return false;
+    }
+
+    /// A recognized-but-UNSUPPORTED Mermaid construct found at a STATEMENT-LEVEL syntax position in a
+    /// flowchart body (plan 933eed50 F2). `token` is the offending sigil/keyword (`&`, `~~~`, `<br/>`,
+    /// `style`, `click`); `line` is its 1-based PHYSICAL line counted from the top of the author's
+    /// raw source — leading blank/preamble lines keep their numbers (706 Finding 3: the old
+    /// `src.strip()` renumbered a physical-line-4 token as line 2); `message` is the author-facing
+    /// sentence. It exists so the diagnostic render entry can turn the silent inert-shell degrade —
+    /// which used to mint a literal WRONG node (`A & B --> C` → one node named `A & B`) — into a
+    /// NAMED signal on the {@link com.sirentide.api.Outcome#UNSUPPORTED_CONSTRUCT} channel.
+    public record UnsupportedConstruct(String token, int line, String message) {}
+
+    /// Detect the FIRST recognized-but-unsupported Mermaid construct in a FLOWCHART source, or `null`
+    /// when the source is not a flowchart / uses no such construct (plan 933eed50 F2). PURE + separate
+    /// from {@link #parse} (mirrors {@link #parseConfig}): the diagnostic render entry calls it to NAME
+    /// the offending token, while {@link #parseFlowchart} calls the shared {@link
+    /// #firstUnsupportedFlowToken} scanner to route the WHOLE diagram to the inert shell rather than
+    /// render a misleading partial. Detection keys ONLY on statement-level positions — a sigil INSIDE a
+    /// quoted/bracketed label (`A[Tom & Jerry]`, `A[x ~~~ y]`) is legal content and never trips it.
+    /// Never throws (DESIGN §6).
+    public static UnsupportedConstruct detectUnsupportedConstruct(String src) {
+        // The SAME UTF-8 envelope parse uses (706 Finding 3): an over-cap source is a cap rejection,
+        // never a construct claim — the old length()-only half let an over-cap multibyte source fall
+        // through to the scan and come back misclassified as UNSUPPORTED_CONSTRUCT.
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
+            return null;
+        }
+        // NO strip() before the split (706 Finding 3): leading blank lines are part of the author's
+        // physical line numbering — preambleEnd already SKIPS them without renumbering, so stripping
+        // here made a physical-line-4 token report as line 2. Split the raw source.
+        String[] rawLines = src.split("\\R");
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return null;
+        }
+        String[] lines = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        // CANONICALIZE the header token rather than string-matching it. `stateDiagram-v2`,
+        // `stateDiagram` and `state` are the same diagram type, and the alias table is the single
+        // place that knows so — matching the raw spelling here would silently cover one spelling of
+        // state diagrams and miss the two the Mermaid docs actually teach.
+        String rawType = lines[0].strip().split("\\s+")[0];
+        String type = canonicalDiagramType(rawType.toLowerCase(java.util.Locale.ROOT));
+        UnsupportedConstruct u;
+        if (type.equals("flowchart")) {
+            u = firstUnsupportedFlowToken(lines);
+        } else if (type.equals("state") || type.equals("statediagram")) {
+            u = firstUnsupportedStateToken(lines);
+        } else {
+            return null;   // no other parse path has a construct detector yet
+        }
+        if (u == null) {
+            return null;
+        }
+        // The scanner reports a 0-based index into the body-relative `lines`; add the preamble
+        // offset back and convert to 1-based, so the number the author sees is the PHYSICAL line
+        // counted from the top of their raw source (706 Finding 3).
+        return new UnsupportedConstruct(u.token(), bodyStart + u.line() + 1, u.message());
+    }
+
+    /// Scan a FLOWCHART body for the first statement-level unsupported construct (plan 933eed50 F2),
+    /// returning its {@link UnsupportedConstruct} (with a 0-BASED `line` index into `lines`) or `null`.
+    /// Shared by {@link #detectUnsupportedConstruct} (which names it) and {@link #parseFlowchart}
+    /// (which degrades on it). `lines[0]` is the header; the body is `lines[1..]`. Two position
+    /// classes:
+    ///   - a leading `style`/`click` DIRECTIVE on an arrowless line (its very presence means the
+    ///     author's styling/interaction silently vanished) — matched via {@link #splitKeyword}. A BARE
+    ///     `style`/`click` with no rest stays a legal node (only the two-token directive SHAPE trips),
+    ///     mirroring {@link #isReservedDirectiveLine}.
+    ///   - an in-line sigil scanned OUTSIDE every `[]`/`{}`/`()`/`||` span ({@link
+    ///     #firstUnsupportedSigil}): a top-level `&` (edge fan-out) or `~~~` (invisible link), or a
+    ///     `<br…>` line-break tag anywhere on the statement line — span content AND bare-endpoint
+    ///     labels bake it as literal glyphs (Marlow sirentide/706 Finding 2).
+    ///
+    /// The scan's boundary is VISIBLE content (Marlow sirentide/712 HIGH 2): an arrowless line that
+    /// {@link #isReservedDirectiveLine} recognizes (`accTitle:`/`accDescr:`/`direction …`) is DROPPED
+    /// inert by {@link #parseFlowchart} — nothing on it ever renders — so its content cannot be an
+    /// unsupported VISIBLE construct and the sigil scan skips it. Without the skip, a `<br/>` inside
+    /// dropped a11y metadata degraded the whole healthy diagram to the inert shell. The
+    /// `style`/`click` naming stays AHEAD of the skip: those two are named unsupported constructs in
+    /// their own right, never silently-ignorable rows.
+    private static UnsupportedConstruct firstUnsupportedFlowToken(String[] lines) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (topLevelEdges(line).isEmpty()) {
+                String[] kw = splitKeyword(line);
+                if ((kw[0].equals("style") || kw[0].equals("click")) && !kw[1].isEmpty()) {
+                    return new UnsupportedConstruct(kw[0], i, unsupportedMessage(kw[0]));
+                }
+                if (isReservedDirectiveLine(kw)) {
+                    continue;
+                }
+            }
+            String sigil = firstUnsupportedSigil(line);
+            if (sigil != null) {
+                return new UnsupportedConstruct(sigil, i, unsupportedMessage(sigil));
+            }
+        }
+        return null;
+    }
+
+    /// Walk a flowchart body line tracking `[]`/`{}`/`()` bracket spans and `||` pipe spans (the same
+    /// span notion {@link #topLevelEdges} uses, widened to the `()` shape delimiters), returning the
+    /// first unsupported in-line sigil — a TOP-LEVEL `&` (fan-out) or `~~~` (invisible link), or a
+    /// `<br…>` tag ANYWHERE on the line (inside a span it is label content, at top level a bare
+    /// endpoint like `A<br/>B` is a parser-accepted visible label too; the span was never the
+    /// boundary that mattered — Marlow sirentide/706 Finding 2) — or `null`. The `&`/`~~~` checks
+    /// stay statement-level only: those sigils inside a span are legal label content and never trip.
+    /// Non-nesting by design (a label holds an operator, not a nested span), mirroring
+    /// {@link #topLevelEdges}. The caller has already skipped reserved (dropped, never-rendered)
+    /// directive rows — see {@link #firstUnsupportedFlowToken}.
+    private static String firstUnsupportedSigil(String line) {
+        char bracketClose = 0;   // 0 = outside a []/{}/() span, else the awaited ']' '}' or ')'
+        boolean inPipe = false;
+        int n = line.length();
+        int i = 0;
+        while (i < n) {
+            char c = line.charAt(i);
+            if (bracketClose != 0) {
+                if (c == bracketClose) {
+                    bracketClose = 0;
+                }
+            } else if (inPipe) {
+                if (c == '|') {
+                    inPipe = false;
+                }
+            } else if (c == '[') {
+                bracketClose = ']';
+            } else if (c == '{') {
+                bracketClose = '}';
+            } else if (c == '(') {
+                bracketClose = ')';
+            } else if (c == '|') {
+                inPipe = true;
+            } else if (c == '&') {
+                return "&";                        // a top-level `&` — edge fan-out
+            } else if (c == '~' && i + 2 < n && line.charAt(i + 1) == '~' && line.charAt(i + 2) == '~') {
+                return "~~~";                       // a top-level `~~~` — invisible link
+            }
+            // A `<br…>` line-break tag trips ONLY at STRUCTURAL (top-level) positions — a bare
+            // endpoint (`A<br/>B --> C`, Marlow sirentide/706 Finding 2) or stray top-level
+            // token — where no later classifier will ever run, so token+line naming here is
+            // load-bearing. INSIDE a bracket/pipe span it is label CONTENT, and content belongs
+            // to the emission-point tag fence (LabelMarkup + guardPlainGlyphs): the fence checks
+            // the string that is ACTUALLY emitted (TOCTOU-free), speaks with the label identity,
+            // and correctly exempts a `$…$` run consumed by a live math renderer — a parse-level
+            // claim on content refused that exact legal case. Precedence agreed at
+            // sirentide/725 (proposal) and 726 (Marlow's typed ruling). matchesBrTag stays
+            // precise: `a<b` and `x < y` never trip.
+            if (bracketClose == 0 && !inPipe && matchesBrTag(line, i)) {
+                return "<br/>";
+            }
+            i++;
+        }
+        return null;
+    }
+
+    /// True iff `line` at `i` begins a Mermaid `<br>` line-break tag: `<br`, optional whitespace, an
+    /// optional `/`, optional whitespace, then `>` — i.e. `<br>`, `<br/>`, `<br />`, `<br >` (case-
+    /// insensitive). Precise so a label word like `<brave>` (no `/`/`>` right after `br`) never trips.
+    private static boolean matchesBrTag(String line, int i) {
+        int n = line.length();
+        if (!line.regionMatches(true, i, "<br", 0, 3)) {
+            return false;
+        }
+        int j = i + 3;
+        while (j < n && Character.isWhitespace(line.charAt(j))) {
+            j++;
+        }
+        if (j < n && line.charAt(j) == '/') {
+            j++;
+            while (j < n && Character.isWhitespace(line.charAt(j))) {
+                j++;
+            }
+        }
+        return j < n && line.charAt(j) == '>';
+    }
+
+    /// The author-facing sentence for an unsupported flowchart token (plan 933eed50 F2) — names the
+    /// construct and states WHY the diagram degraded to the inert shell (so the signal is actionable,
+    /// not a silently-wrong render).
+    private static String unsupportedMessage(String token) {
+        String what = switch (token) {
+            case "&" -> "an `&` edge fan-out (e.g. `A & B --> C`)";
+            case "~~~" -> "a `~~~` invisible link";
+            case "<br/>" -> "a `<br/>` line break inside a label";
+            case "style" -> "a `style` directive";
+            case "click" -> "a `click` directive";
+            default -> "the `" + token + "` construct";
+        };
+        return "This flowchart uses " + what + ", which the Sirentide DSL does not support. Rather "
+            + "than silently render a misleading diagram, it degraded to the inert shell. Rewrite it "
+            + "with supported syntax (see the flowchart reference).";
     }
 
     /// The reserved leading COLOR-CLASS keywords (plan sirentide-semantic-color-classes): `classDef`
@@ -1619,10 +1937,14 @@ public final class DslParser {
     ///
     /// Both endpoints auto-register in first-seen order (a self-message `A ->> A` registers `A` once).
     /// A malformed line — no arrow token in the head, or an empty endpoint — is DROPPED whole (never
-    /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages;
-    /// ids/labels `cap()`'d. A bare `sequence` body (no non-blank lines) → a Sequence with no actors
-    /// and `bodyHadContent=false` (an intentional blank canvas). A NON-EMPTY body that parses to zero
-    /// actors (every line malformed) sets `bodyHadContent=true` so layout degrades VISIBLY.
+    /// throws, DESIGN §6). Caps: {@link #MAX_ACTORS} actors, {@link #MAX_DATA_ROWS} messages, and
+    /// {@link #MAX_SEQUENCE_NOTES} notes; ids/labels `cap()`'d. Messages past their cap are inert as
+    /// before, while the first VALID note past its cap is retained as a single bounded overflow marker
+    /// on the Sequence IR. Layout rejects that marker before producing geometry, so the cap reason
+    /// survives the parse boundary and no author-visible annotation is silently omitted. A bare
+    /// `sequence` body (no non-blank lines) → a Sequence with no actors and `bodyHadContent=false` (an
+    /// intentional blank canvas). A NON-EMPTY body that parses to zero actors (every line malformed)
+    /// sets `bodyHadContent=true` so layout degrades VISIBLY.
     ///
     /// BLOCK KEYWORDS (M2 — alt/loop/par frames). A line whose FIRST token is `alt`/`loop`/`par`,
     /// `else`/`and`, or `end` AND which carries NO arrow token is a BLOCK DIRECTIVE, not a message
@@ -1661,7 +1983,16 @@ public final class DslParser {
                 if (handleBlockKeyword(line, messages, blocks, stack)) {
                     continue;
                 }
-                if (handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size())) {
+                SeqDirectiveResult directive =
+                    handleNoteOrLifecycle(line, actors, notes, lifecycles, messages.size());
+                if (directive == SeqDirectiveResult.NOTE_CAP_EXCEEDED) {
+                    // Preserve exactly the first excess note in a bounded Sequence IR. Its count is a
+                    // truthful overflow marker across the parse boundary; SequenceLayout rejects it
+                    // before caption/title/theme can decorate a generic Empty fallback.
+                    return new Sequence(new ArrayList<>(actors), messages, textColor, nodeColor,
+                        bodyHadContent, blocks, notes, lifecycles);
+                }
+                if (directive == SeqDirectiveResult.CONSUMED) {
                     continue;
                 }
             }
@@ -1723,24 +2054,35 @@ public final class DslParser {
     /// An optional `participant` filler after `create`/`destroy` (mermaid `create participant X`).
     private static final String KW_PARTICIPANT = "participant";
 
-    /// Handles a note / create / destroy directive line (already known to be arrowless). Returns true
-    /// when the first token WAS one of those keywords (consumed — added a note / lifecycle event, or
-    /// was an inert malformed directive), false when it is none (so the caller falls through to the
-    /// normal message parse). `atMsg` is `messages.size()` — the index the NEXT message will take, so a
-    /// note/create/destroy anchors between the surrounding messages (the same index convention the
-    /// block keywords use). Robustness (DESIGN §6): a malformed note (bad position / unknown actor / no
-    /// text) or an unknown-actor create/destroy is swallowed inert, never throws.
-    private static boolean handleNoteOrLifecycle(String line, LinkedHashSet<String> actors,
-                                                 List<SeqNote> notes, List<SeqLifecycle> lifecycles,
-                                                 int atMsg) {
+    /// Handles a note / create / destroy directive line (already known to be arrowless). Returns
+    /// CONSUMED when the first token was one of those keywords (added an event or swallowed an inert
+    /// malformed directive), NOT_DIRECTIVE when the caller should fall through to message parsing,
+    /// or NOTE_CAP_EXCEEDED for the first valid note past the explicit bound. `atMsg` is
+    /// `messages.size()` — the index the NEXT message will take, so a note/create/destroy anchors
+    /// between the surrounding messages (the same convention the block keywords use). Robustness
+    /// (DESIGN §6): malformed notes and unknown-actor lifecycle events stay inert, never throw.
+    private enum SeqDirectiveResult {
+        NOT_DIRECTIVE,
+        CONSUMED,
+        NOTE_CAP_EXCEEDED
+    }
+
+    private static SeqDirectiveResult handleNoteOrLifecycle(
+        String line, LinkedHashSet<String> actors, List<SeqNote> notes,
+        List<SeqLifecycle> lifecycles, int atMsg
+    ) {
         String[] kwRest = splitKeyword(line);
         switch (kwRest[0]) {
             case KW_NOTE -> {
                 SeqNote note = parseNote(kwRest[1], actors, atMsg);
                 if (note != null) {
                     notes.add(note);
+                    if (notes.size() > MAX_SEQUENCE_NOTES) {
+                        return SeqDirectiveResult.NOTE_CAP_EXCEEDED;
+                    }
                 }
-                return true;   // a malformed note is consumed but inert (never a stray message)
+                // A malformed note is consumed but inert (never a stray message).
+                return SeqDirectiveResult.CONSUMED;
             }
             case KW_CREATE -> {
                 // `create [participant] X` REGISTERS the actor first-seen (create introduces it) and
@@ -1752,7 +2094,7 @@ public final class DslParser {
                         lifecycles.add(new SeqLifecycle(actor, true, atMsg));
                     }
                 }
-                return true;
+                return SeqDirectiveResult.CONSUMED;
             }
             case KW_DESTROY -> {
                 // `destroy [participant] X` ends an ALREADY-REGISTERED actor's lifeline. An unknown /
@@ -1761,10 +2103,11 @@ public final class DslParser {
                 if (!actor.isEmpty() && actors.contains(actor)) {
                     lifecycles.add(new SeqLifecycle(actor, false, atMsg));
                 }
-                return true;
+                return SeqDirectiveResult.CONSUMED;
             }
             default -> {
-                return false;   // not a note/lifecycle keyword → fall through to the message parse
+                // Not a note/lifecycle keyword → fall through to the message parse.
+                return SeqDirectiveResult.NOT_DIRECTIVE;
             }
         }
     }
@@ -1984,11 +2327,82 @@ public final class DslParser {
     /// arrows, or a state DISPLAY NAME when it does not. On a chained transition the label applies to
     /// the LAST hop only (mermaid semantics). `[*]` is the START pseudostate (id `__start__`) when it
     /// is a hop SOURCE and the END pseudostate (id `__end__`) when it is a hop TARGET; both carry an
+    /// The `state` keyword that opens a declaration or a composite block.
+    private static final String KW_STATE = "state";
+
+    /// Scan a STATE-DIAGRAM body for the first composite-state block opener (plan 8a991947 slice 2),
+    /// returning its {@link UnsupportedConstruct} with a 0-BASED `line` index into `lines`, or `null`.
+    /// Shared by {@link #detectUnsupportedConstruct} (which names it) and {@link #parseStateDiagram}
+    /// (which degrades on it) — the same two-part shape {@link #firstUnsupportedFlowToken} has.
+    ///
+    /// A composite state is `state X { … }`: nested states inside a block. This parser has no notion
+    /// of nesting, so before this guard the opener became a LITERAL box labelled `state Active {`,
+    /// the closing `}` became a box labelled `}`, and — the part that makes this silent-WRONG
+    /// rather than silent-MISSING — the nested `[*]` fused with the OUTER start pseudostate,
+    /// emitting a start transition the author never wrote.
+    ///
+    /// WHY THAT FORCES DEGRADING THE WHOLE DIAGRAM RATHER THAN RENDERING THE SUPPORTED SUBSET, and
+    /// this is Fixpoint's argument from the review (sirentide/874), sharper than the one I first
+    /// wrote here: the fabricated edge sits BESIDE a structurally identical AUTHORED edge from the
+    /// SAME source node. Measured on the pre-guard parser:
+    ///
+    ///     stateDiagram-v2          edges: __start__ -> Idle      (AUTHORED)
+    ///       [*] --> Idle                  __start__ -> Running   (FABRICATED)
+    ///       state Active {                Idle -> Active         (AUTHORED)
+    ///         [*] --> Running
+    ///       }
+    ///       Idle --> Active
+    ///
+    /// Same shape, same style, same origin node — so a reader has no positional or syntactic cue to
+    /// tell the invented edge from the real one. That is what makes "render what we understand and
+    /// drop the rest" wrong HERE specifically, rather than merely inadvisable in general: the
+    /// surviving output is not a subset of the author's diagram, it is a different diagram that
+    /// looks equally authored.
+    ///
+    /// (Note the fabricated edge is whichever transition the NESTED `[*]` opens; in the fixture used
+    /// by {@code CompositeStateGuardTest} the nesting targets `Idle`, so there it is
+    /// `__start__ -> Idle` that is invented and `__start__ -> Active` that is authored. The identity
+    /// of the invented edge moves with the fixture — the property does not.)
+    ///
+    /// POSITION CLASS, mirroring the flowchart scanner's rule that a sigil inside a span is content:
+    /// detection keys on the STATEMENT, after {@link #peelLabel} removes any `: label` tail, so a
+    /// brace the author typed inside a transition label (`Idle --> Running : retry {3}`) is text and
+    /// never trips this. It also requires the `state` KEYWORD to open the statement AND a brace to be
+    /// present, so a bare `state Foo` declaration — legal Mermaid, and supported here — is untouched.
+    private static UnsupportedConstruct firstUnsupportedStateToken(String[] lines) {
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // Peel the `: label` tail FIRST, exactly as parseStateDiagram does, so the scanner and the
+            // parser agree on what counts as the statement. Scanning the raw line instead would read a
+            // brace inside a label as a block opener.
+            String statement = peelLabel(line)[0].strip();
+            if (splitKeyword(statement)[0].equals(KW_STATE) && statement.indexOf('{') >= 0) {
+                return new UnsupportedConstruct(statement, i,
+                    "composite (nested) states are not supported: `" + cap(statement) + "` opens a "
+                        + "state block. Sirentide's state diagrams are flat, and rendering the "
+                        + "supported subset would emit boxes named after the block delimiters plus a "
+                        + "start transition into the nested state that you did not write. Flatten the "
+                        + "nested states, or split them into a second diagram.");
+            }
+        }
+        return null;
+    }
+
     /// EMPTY label so layout draws a disc/bullseye with no text. Arrow splitting reuses
     /// {@link #topLevelArrows}. Malformed rows (empty endpoint, bare `[*]`) drop, never throw
     /// (DESIGN §6). Caps {@link #MAX_NODES}/{@link #MAX_EDGES} bound the graph. Empty body → a state
     /// diagram with no states (round-trips, NOT degraded to Empty).
     private static Diagram parseStateDiagram(String[] lines, String[] header, String textColor) {
+        // Composite `state X { … }` blocks degrade the WHOLE diagram to the inert shell rather than
+        // render a misleading partial — the same call parseFlowchart makes for its own unsupported
+        // constructs, and for the same reason: the wrong part is indistinguishable from the right
+        // part. The diagnostic channel NAMES the block via detectUnsupportedConstruct.
+        if (firstUnsupportedStateToken(lines) != null) {
+            return new Empty();
+        }
         // Header `nodecolor=#hex` colours every state box (null → the built-in default); a per-state
         // trailing `#hex` (`Idle #22c55e`) overrides it, riding the same endpoint parse as flowcharts.
         String nodeColor = parseNodeColor(header);
@@ -2279,6 +2693,88 @@ public final class DslParser {
         // A bare `dynkin` with no type line → the universal inert shell (Empty), consistent with every
         // other empty/malformed degrade (review 368) — no invalid Dynkin sentinel is ever constructed.
         return new Empty();
+    }
+
+    /// Parse a finite root-system Coxeter-plane projection.
+    /// ```
+    /// rootsystem
+    /// type: E8
+    /// edges: minimal
+    /// ```
+    /// The type token is exactly one family letter glued to a positive rank; the finite-type validity
+    /// comes from the shared {@link com.sirentide.ir.DynkinCartan} catalog, and the classical-family
+    /// rendering cap from {@link RootSystem#MAX_RANK}. Parsing follows Sirentide's established
+    /// permissive-block convention: the first syntactically and semantically valid {@code type:}
+    /// value or bare type token wins; blank/malformed/unknown type candidates, unrecognized lines,
+    /// and every later type candidate are ignored. This lets surrounding prose or a stale type line
+    /// stay inert without changing a valid authored type. {@code edges} is different because it is a
+    /// recognized closed directive: its {@code minimal|none} vocabulary defaults to {@code minimal},
+    /// later valid directives override earlier ones, and ANY malformed {@code edges:} value rejects
+    /// the whole block. If no valid type is found, the universal {@link Empty} shell is returned. No
+    /// invalid RootSystem IR reaches layout.
+    private static Diagram parseRootSystem(String[] lines, String textColor) {
+        int[] type = null;
+        RootSystem.Edges edges = RootSystem.Edges.MINIMAL;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.regionMatches(true, 0, "edges:", 0, 6)) {
+                String value = line.substring(6).strip().toLowerCase(java.util.Locale.ROOT);
+                edges = switch (value) {
+                    case "none" -> RootSystem.Edges.NONE;
+                    case "minimal" -> RootSystem.Edges.MINIMAL;
+                    default -> null;
+                };
+                if (edges == null) {
+                    return new Empty();
+                }
+                continue;
+            }
+            if (line.regionMatches(true, 0, "type:", 0, 5)) {
+                if (type == null) {
+                    type = parseRootSystemType(line.substring(5).strip());
+                }
+                continue;
+            }
+            // A colon names an unknown directive, not a bare type. Unknown directives and junk are
+            // permissively inert; a later valid type may still establish the diagram.
+            if (type == null && line.indexOf(':') < 0) {
+                type = parseRootSystemType(line);
+            }
+        }
+        if (type == null) {
+            return new Empty();
+        }
+        return new RootSystem((char) type[0], type[1], edges, textColor);
+    }
+
+    /// Parse one root-system type candidate, returning {@code {family, rank}} only when it belongs to
+    /// the bounded shared catalog. Invalid/huge candidates are inert so the caller can keep scanning.
+    private static int[] parseRootSystemType(String typeToken) {
+        if (typeToken == null || typeToken.length() < 2
+                || !Character.isLetter(typeToken.charAt(0))) {
+            return null;
+        }
+        for (int i = 1; i < typeToken.length(); i++) {
+            if (!Character.isDigit(typeToken.charAt(i))) {
+                return null;
+            }
+        }
+        int rank;
+        try {
+            long parsed = Long.parseLong(typeToken.substring(1));
+            if (parsed <= 0 || parsed > Integer.MAX_VALUE) {
+                return null;
+            }
+            rank = (int) parsed;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        RootSystem probe = new RootSystem(typeToken.charAt(0), rank, RootSystem.Edges.NONE,
+            "currentColor");
+        return probe.valid() ? new int[] {probe.family(), probe.rank()} : null;
     }
 
     /// Parse a comparison / verdict matrix (plan sirentide-comparison-matrix-type). A `cols:` (alias
@@ -2576,6 +3072,20 @@ public final class DslParser {
     /// {@link #MAX_EDGES} relationships; names/members `cap()`'d. Empty body → a ClassDiagram with no
     /// classes (round-trips, NOT degraded to Empty).
     private static Diagram parseClassDiagram(String[] lines, String textColor) {
+        // DECLARED NAMES, collected in a PRE-PASS so the reference grammar can agree with the
+        // declaration grammar (plan 24d6b22f; Fixpoint sirentide/851).
+        //
+        // The defect this closes is a DIVERGENCE, not a bad predicate. `class <Name>` accepts any
+        // name, quotes included; a relation endpoint then peeled a trailing quoted token off it.
+        // So `class Foo"Bar"` + `Foo"Bar" --> Baz` minted a phantom `Foo` and hung the members on
+        // a different box. A shape gate NARROWS that (a name has to look like a cardinality to be
+        // eaten) but cannot CLOSE it: `class Foo "123"` is still shape-valid and still diverged.
+        // Only agreement between the two productions closes it — if a name was declared, an
+        // endpoint spelling it exactly means THAT class, and nothing is peeled.
+        //
+        // A pre-pass, not incremental, because declaration order is the author's business: a
+        // relation may legitimately precede the `class` block it references.
+        java.util.Set<String> declaredNames = collectDeclaredClassNames(lines);
         // Insertion-ordered name → member accumulator: preserves first-seen class order (declared or
         // relationship-referenced). A relationship-referenced name auto-vivifies an empty accumulator.
         LinkedHashMap<String, ClassAcc> classes = new LinkedHashMap<>();
@@ -2634,8 +3144,16 @@ public final class DslParser {
             if (op == null) {
                 continue;   // no operator (and not a class directive) → malformed, drop (never throw)
             }
-            String left = cap(head.substring(0, op.pos()).strip());
-            String right = cap(head.substring(op.pos() + op.len()).strip());
+            // Peel the optional UML multiplicity — a QUOTED token adjacent to the operator, as in
+            // `User "1" --> "*" Order`. It must come off BEFORE the name is taken: absorbed into
+            // the name it mints a phantom class (`User "1"`) that is a DIFFERENT box from the
+            // declared `User`, so members land on one and edges on the other (plan 24d6b22f).
+            Multiplicity leftEnd = peelTrailingMultiplicity(
+                head.substring(0, op.pos()).strip(), declaredNames);
+            Multiplicity rightEnd = peelLeadingMultiplicity(
+                head.substring(op.pos() + op.len()).strip(), declaredNames);
+            String left = cap(leftEnd.name());
+            String right = cap(rightEnd.name());
             if (left.isEmpty() || right.isEmpty()) {
                 continue;   // an empty endpoint → malformed relation, drop
             }
@@ -2644,7 +3162,8 @@ public final class DslParser {
             registerClass(classes, right);
             if (relations.size() < MAX_EDGES
                 && classes.containsKey(left) && classes.containsKey(right)) {
-                relations.add(new ClassRelation(left, right, op.kind(), label));
+                relations.add(new ClassRelation(left, right, op.kind(), label,
+                    leftEnd.multiplicity(), rightEnd.multiplicity()));
             }
         }
         List<ClassBox> boxes = new ArrayList<>();
@@ -3323,6 +3842,190 @@ public final class DslParser {
     /// glyph run / output size (DESIGN §6/§7: bounded, inert degrade — never throw).
     private static String cap(String label) {
         return label.length() > MAX_LABEL_LEN ? label.substring(0, MAX_LABEL_LEN) : label;
+    }
+
+    /// Collect every name a `class` directive DECLARES, in one pre-pass, so the reference
+    /// grammar can agree with the declaration grammar. Mirrors the declaration parsing in
+    /// {@link #parseClassDiagram} exactly — bare `class Name` and `class Name {` — because a
+    /// collector that recognised a DIFFERENT set than the parser would reintroduce the very
+    /// divergence it exists to close.
+    private static java.util.Set<String> collectDeclaredClassNames(String[] lines) {
+        java.util.Set<String> declared = new java.util.LinkedHashSet<>();
+        boolean insideBlock = false;
+        for (String raw : lines) {
+            String line = raw.strip();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (insideBlock) {
+                if (line.equals("}") || line.endsWith("}")) {
+                    insideBlock = false;
+                }
+                continue;
+            }
+            String[] kwRest = splitKeyword(line);
+            if (!kwRest[0].equals(KW_CLASS) || kwRest[1].isEmpty()) {
+                continue;
+            }
+            String rest = kwRest[1];
+            int brace = rest.indexOf('{');
+            if (brace < 0) {
+                declared.add(cap(rest.strip()));
+                continue;
+            }
+            String name = cap(rest.substring(0, brace).strip());
+            if (!name.isEmpty()) {
+                declared.add(name);
+                insideBlock = !rest.substring(brace + 1).strip().startsWith("}");
+            }
+        }
+        return declared;
+    }
+
+    /// A relation endpoint split into its class NAME and its optional UML multiplicity
+    /// (`null` when absent — never `""`, so "no annotation" stays distinguishable from
+    /// "empty annotation"). Plan 24d6b22f.
+    private record Multiplicity(String name, String multiplicity) {}
+
+    /// Hard ceiling on a peelable multiplicity, counted in CODE POINTS (not UTF-16 units, so an
+    /// astral-character token is not penalised for its encoding). This is a resource bound only —
+    /// SHAPE, below, is the semantic filter. Generous on purpose: the longest real UML idiom I
+    /// know, `0..* {ordered, nonunique}`, is 25.
+    private static final int MAX_MULTIPLICITY_LEN = 64;
+
+    /// Does this quoted token LOOK like a UML cardinality?
+    ///
+    /// THIS REPLACED A LENGTH CAP, and the reason is the review finding at sirentide/845. Length
+    /// alone cannot tell a 5-character NAME (`"Order"`) from a 5-character cardinality (`"0..*"`),
+    /// so the old cap ate names that were short and rejected cardinalities that were long: the
+    /// real UML property string `1..* {ordered, unique}` is 22 characters and was refused.
+    ///
+    /// AND THE OLD FAILURE WAS NOT NEUTRAL, which is the part I had mis-stated. Failing closed
+    /// does not mean "the annotation is ignored" — it means the quoted token stays in the NAME,
+    /// which mints the phantom class this whole plan exists to eliminate. So the true trade was
+    /// never "missed annotation vs eaten identity"; it was MISSED ANNOTATION → PHANTOM CLASS,
+    /// which is strictly worse and has to be named that way.
+    ///
+    /// The grammar accepted here is deliberately narrow: digits, `*`, `.` (for `0..*`), plus an
+    /// optional trailing `{…}` property string with its commas and spaces. A token containing
+    /// anything else — a letter outside a property string, punctuation UML does not use — is NOT
+    /// a cardinality and is left in the name, where it belongs.
+    private static boolean looksLikeMultiplicity(String token) {
+        if (token.isEmpty() || token.codePointCount(0, token.length()) > MAX_MULTIPLICITY_LEN) {
+            return false;
+        }
+        String cardinality = token;
+        int brace = token.indexOf('{');
+        if (brace >= 0) {
+            if (!token.endsWith("}")) {
+                return false;   // an unbalanced property string is not a cardinality
+            }
+            String properties = token.substring(brace + 1, token.length() - 1);
+            for (int i = 0; i < properties.length(); i++) {
+                char c = properties.charAt(i);
+                if (!Character.isLetter(c) && c != ',' && c != ' ' && c != '-' && c != '_') {
+                    return false;
+                }
+            }
+            cardinality = token.substring(0, brace).strip();
+        }
+        cardinality = cardinality.strip();
+        if (cardinality.isEmpty()) {
+            // `"{ordered}"` alone, or a whitespace-only token. The latter would otherwise yield a
+            // BLANK multiplicity, breaking ClassRelation's own never-empty contract (null or a
+            // real value, never "") — Fixpoint's direction-B note at sirentide/851.
+            return false;
+        }
+        // A cardinality is `term` or `term..term`, where a term is digits or the variable bound
+        // `n`. Mermaid documents `n`, `0..n`, `1..n` alongside `1`, `0..1`, `1..*`, `*` — my first
+        // gate admitted only digits, `*`, `.` and space, so `n` (a LETTER) failed on the first
+        // character and FOUR documented cardinalities minted the phantom class this plan exists
+        // to eliminate. Same failure as the length cap it replaced, one notch narrower: the cap
+        // cut through `1..* {ordered, unique}`, the first gate cut through `1..n`.
+        int sep = cardinality.indexOf("..");
+        if (sep >= 0) {
+            return isCardinalityTerm(cardinality.substring(0, sep).strip())
+                && isCardinalityTerm(cardinality.substring(sep + 2).strip());
+        }
+        return isCardinalityTerm(cardinality);
+    }
+
+    /// One bound of a cardinality: all digits, a lone `*`, or the variable bound `n`. Anything
+    /// else — a letter that is not `n`, punctuation UML does not use — is part of a NAME.
+    private static boolean isCardinalityTerm(String term) {
+        if (term.isEmpty()) {
+            return false;
+        }
+        if (term.equals("*") || term.equals("n")) {
+            return true;
+        }
+        for (int i = 0; i < term.length(); i++) {
+            if (!Character.isDigit(term.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Peel a trailing quoted multiplicity off a LEFT endpoint: `User "1"` → (`User`, `1`).
+    ///
+    /// Fails closed to the whole string as the NAME whenever the shape is not an unambiguous
+    /// quoted-token-at-the-end: no trailing quote, no opening quote, an over-long token, or a
+    /// token that consumes the ENTIRE endpoint (`"1" --> X` — a quoted token that IS the whole
+    /// endpoint is a degenerate NAME, not a cardinality qualifying something, and peeling it
+    /// would empty the endpoint and drop the relation).
+    private static Multiplicity peelTrailingMultiplicity(String endpoint,
+            java.util.Set<String> declaredNames) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
+            return new Multiplicity(endpoint, null);   // declared verbatim → never peel
+        }
+        if (endpoint.length() < 2 || endpoint.charAt(endpoint.length() - 1) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int open = endpoint.lastIndexOf('"', endpoint.length() - 2);
+        if (open < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(open + 1, endpoint.length() - 1);
+        String name = endpoint.substring(0, open).strip();
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
+    }
+
+    /// Peel a leading quoted multiplicity off a RIGHT endpoint: `"*" Order` → (`Order`, `*`).
+    /// Same fail-closed rules as {@link #peelTrailingMultiplicity}, mirrored.
+    private static Multiplicity peelLeadingMultiplicity(String endpoint,
+            java.util.Set<String> declaredNames) {
+        // cap() BOTH SIDES. collectDeclaredClassNames stores capped names, so comparing the raw
+        // endpoint made this lookup unanswerable above MAX_LABEL_LEN — the set could not contain
+        // what was being asked for, agreement never fired, and the three-box defect this whole
+        // mechanism exists to prevent returned verbatim (Fixpoint E8, sirentide/859). Capping
+        // here is not a widening: the declaration is capped when the box is named, so two
+        // spellings agreeing on their first MAX_LABEL_LEN chars ARE the same box downstream.
+        if (declaredNames.contains(cap(endpoint))) {
+            return new Multiplicity(endpoint, null);   // declared verbatim → never peel
+        }
+        if (endpoint.length() < 2 || endpoint.charAt(0) != '"') {
+            return new Multiplicity(endpoint, null);
+        }
+        int close = endpoint.indexOf('"', 1);
+        if (close < 0) {
+            return new Multiplicity(endpoint, null);   // unterminated → the name is intact
+        }
+        String inner = endpoint.substring(1, close);
+        String name = endpoint.substring(close + 1).strip();
+        if (name.isEmpty() || !looksLikeMultiplicity(inner)) {
+            return new Multiplicity(endpoint, null);
+        }
+        return new Multiplicity(name, inner);
     }
 
     /// The reserved tensor-network CHAIN keywords — the first token of a `tensornetwork` body line

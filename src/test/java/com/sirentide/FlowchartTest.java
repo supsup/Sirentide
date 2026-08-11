@@ -528,25 +528,38 @@ class FlowchartTest {
     }
 
     @Test
-    void reservedDirectiveLinesDropInertNeverMintNodes() {
-        // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): a directive-shaped
-        // line whose keyword this parser does not implement (`style`, `click`, `direction`, …)
-        // used to fall through to the lone-node path and mint a phantom node wearing its own
-        // directive text as a name. Recognized-but-unimplemented directives now drop inert —
-        // the loud-or-dropped forward-compat rule.
-        Flowchart fc = parse("flowchart\nA[Start] --> B[End]\n"
-            + "style A fill:#f9f,stroke:#333\n"
-            + "click A callback \"tooltip\"\n"
-            + "direction LR\n");
+    void directionDirectiveDropsInertRestRenders() {
+        // REGRESSION (playground silent-mint finding, plan 66572bcd slice 1): a `direction` directive
+        // line used to mint a phantom node wearing its own text as a name. It still DROPS inert while
+        // the rest of the flowchart renders — `direction` is NOT in the unsupported-token set (plan
+        // 933eed50 F2 promotes only `style`/`click` to a whole-diagram degrade, see below).
+        Flowchart fc = parse("flowchart\nA[Start] --> B[End]\ndirection LR\n");
         assertEquals(List.of("A", "B"),
             fc.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
-            "no phantom 'style …' / 'click …' / 'direction …' nodes");
+            "no phantom 'direction …' node; the A --> B edge still renders");
         // Only the two-token directive SHAPE is reserved: a deliberate lone node whose id is a
         // bare directive keyword still parses as a node.
         Flowchart bare = parse("flowchart\nstyle\n");
         assertEquals(List.of("style"),
             bare.nodes().stream().map(FlowNode::id).collect(Collectors.toList()),
             "a bare keyword with no rest is still a node");
+    }
+
+    @Test
+    void styleAndClickDirectivesDegradeWholeDiagram() {
+        // PLAN 933eed50 F2: a `style`/`click` directive is a Mermaid construct the DSL does not
+        // support, and silently dropping it (the old drop-line-render-rest) made the author's styling/
+        // interaction vanish with no signal. The whole flowchart now degrades to the inert shell —
+        // silent-WRONG becomes LOUD — rather than render a misleading partial. NEVER a phantom node.
+        assertTrue(DslParser.parse("flowchart\nA[Start] --> B[End]\nstyle A fill:#f9f,stroke:#333\n")
+            instanceof com.sirentide.ir.Empty, "a `style` directive degrades the whole diagram to inert");
+        assertTrue(DslParser.parse("flowchart\nA[Start] --> B[End]\nclick A callback \"tip\"\n")
+            instanceof com.sirentide.ir.Empty, "a `click` directive degrades the whole diagram to inert");
+        // The diagnostic channel NAMES the offending token on the UNSUPPORTED_CONSTRUCT channel.
+        com.sirentide.api.RenderResult r = Sirentide.renderWithDiagnostics(
+            "flowchart\nA[Start] --> B[End]\nstyle A fill:#f9f\n");
+        assertEquals(com.sirentide.api.Outcome.UNSUPPORTED_CONSTRUCT, r.diagnostics().outcome());
+        assertTrue(r.diagnostics().detail().contains("style"), "detail names the token: " + r.diagnostics().detail());
     }
 
     @Test

@@ -5,12 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.api.Outcome;
 import com.sirentide.api.Sirentide;
 import com.sirentide.emit.SvgEmitter;
 import com.sirentide.font.FontMetrics;
+import com.sirentide.ir.Timeline;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.LaidOut;
 import com.sirentide.layout.Shape;
+import com.sirentide.layout.TimelineLayout;
+import com.sirentide.parse.DslParser;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,6 +66,54 @@ class TimelineOomGuardTest {
         assertTrue(svg[0].startsWith("<svg"), "well-formed SVG (real or inert shell)");
         assertTrue(svg[0].length() <= MAX_OUTPUT_BYTES,
             "output bounded to MAX_OUTPUT_BYTES, was " + svg[0].length());
+    }
+
+    /// The interval-packing worst row count, not merely the worst label width: all 10,000 legal
+    /// events project to one x and therefore need 10,000 top rows + 10,000 value rows. Layout retains
+    /// only linear interval/row state and numeric canvas growth; emission either succeeds under the
+    /// existing whole-render cap or degrades to the inert shell, but it never silently stacks or OOMs.
+    @Test
+    void parserScaleCoincidentRowsStayBoundedByTheExistingOutputGuard() {
+        StringBuilder dsl = new StringBuilder("timeline\n");
+        for (int i = 0; i < MAX_DATA_ROWS; i++) {
+            dsl.append("  \"x\" : 7\n");
+        }
+        String[] svg = new String[1];
+        assertTimeoutPreemptively(Duration.ofSeconds(30),
+            () -> svg[0] = Sirentide.render(dsl.toString()));
+        assertTrue(svg[0].startsWith("<svg") && svg[0].endsWith("</svg>"),
+            "worst-row result is still a complete SVG (real or inert)");
+        assertTrue(svg[0].length() <= MAX_OUTPUT_BYTES,
+            "worst-row output is bounded to MAX_OUTPUT_BYTES, was " + svg[0].length());
+    }
+
+    /// A renderer miss degrades `$…$` to the raw source. That path intentionally skips Timeline's
+    /// ordinary ellipsis, so enough legal 512-character formulas could otherwise retain many large
+    /// glyph paths during layout, before SvgEmitter gets a chance to enforce its output cap. The
+    /// layout's named materialization budget must stop that work and use the existing typed cap
+    /// classification rather than misreporting a renderer bug.
+    @Test
+    void mathFallbackTripsTheNamedLayoutBudgetBeforeUnsafeGlyphRetention() {
+        String rawMath = "$" + "W".repeat(MAX_LABEL_LEN - 2) + "$";
+        StringBuilder dsl = new StringBuilder("timeline\n");
+        for (int i = 0; i < 16; i++) {
+            dsl.append("  \"").append(rawMath).append("\" : 7\n");
+        }
+        Timeline timeline = (Timeline) DslParser.parse(dsl.toString());
+        MathFragmentRenderer unavailable = (latex, size) -> java.util.Optional.empty();
+
+        IllegalStateException direct = assertThrows(IllegalStateException.class,
+            () -> TimelineLayout.layout(timeline, unavailable));
+        assertTrue(direct.getMessage().contains("MAX_LAYOUT_WORK"));
+        assertTrue(direct.getMessage().contains("MAX_TIMELINE_LABEL_WORK"));
+
+        var diagnosed = Sirentide.renderWithDiagnostics(dsl.toString(), unavailable);
+        assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, diagnosed.diagnostics().outcome());
+        assertEquals("layout", diagnosed.diagnostics().stage());
+        assertTrue(diagnosed.diagnostics().detail().contains("MAX_TIMELINE_LABEL_WORK"));
+        assertEquals(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\" viewBox=\"0 0 0 0\"></svg>",
+            diagnosed.svg());
     }
 
     /// Non-vacuity for T1: the timeline MUST actually call FONT.ellipsize on its event labels.

@@ -4,9 +4,9 @@ Turn a tiny diagram DSL into a self-contained SVG, then drop it straight into yo
 
 > **Status note.** Sirentide is early but real. What's **built**: the render pipeline
 > (DSL → IR → layout → SVG), the clean-room **font-metrics oracle**, labels baked to `<path>`
-> glyphs, and **twenty-two diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
+> glyphs, and **twenty-three diagram types** — `pie`, `xychart`, `timeline`, `gantt`, `flowchart`,
 > `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`,
-> `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
+> `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `rootsystem`, and `knot`. Also built: **LaTeX math in labels** (the LatteX bridge), **semantic
 > anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`),
 > `classDef`/`class` **semantic colour classes** (incl. built-in `status-danger`/`-warn`/`-ok`/`-neutral`
 > **status roles** — a closed **theme-durable** palette (one fill/stroke set chosen to read on both the
@@ -32,6 +32,13 @@ It's the diagram sibling of [LatteX](https://github.com/supsup/LatteX) (the LaTe
 renderer), and shares its discipline — and its font, so a diagram label can *contain* a real
 LaTeX formula, rendered at bake.
 
+> **Label font coverage.** Labels bake to `<path>` glyphs from the bundled **STIX Two Math** font,
+> which covers **Latin text and mathematical symbols**. Code points outside that coverage —
+> non-Latin scripts (CJK, Arabic, …) and emoji — have no glyph and bake today as empty `.notdef`
+> boxes. The bake never fails on them; it stays inert and deterministic. `renderWithDiagnostics`
+> surfaces the boundary as an `OK` result whose message/detail **names the out-of-coverage
+> `U+XXXX` code points**, so an unexplained box is a nameable signal rather than a silent surprise.
+
 ## 2. Render a diagram
 
 The whole pipeline is one call. Give it a Sirentide DSL source, get back a self-contained SVG
@@ -50,7 +57,9 @@ String svg = Sirentide.render("""
 ```
 
 `legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
-colour. Swap the source and you get a different diagram from the same call. A **flowchart**:
+colour. A **very thin slice's** outside label may not fit and gets dropped (its wedge still draws;
+`renderWithDiagnostics` names the dropped label) — use `pie legend` to show every label in the side
+key. Swap the source and you get a different diagram from the same call. A **flowchart**:
 
 ```java
 String flow = Sirentide.render("""
@@ -87,10 +96,21 @@ types, `timeline` and `gantt` included, with real-browser renders.)
 
 ## 3. From the command line
 
+**Getting the CLI from a source checkout** — build the executable jar once, then (optionally)
+alias it:
+
+```bash
+./gradlew jar                # produces build/libs/sirentide-0.6.0.jar (Main-Class is set)
+# The double quotes are load-bearing: $PWD expands NOW, while you are still in the checkout,
+# baking the absolute jar path into the alias — so it keeps working after you cd anywhere else.
+# (Single-quoting the alias would defer $PWD to each invocation and break outside the checkout.)
+alias sirentide="java -jar '$PWD/build/libs/sirentide-0.6.0.jar'"
+```
+
 ```bash
 echo 'pie
   "A" : 60
-  "B" : 40' | java -jar build/libs/sirentide-0.4.0.jar
+  "B" : 40' | sirentide
 ```
 
 Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
@@ -100,6 +120,33 @@ invocation, one JVM.)*
 > at the API (`Sirentide.render(dsl, mathRenderer)`). The CLI path injects none, so a `$…$` label
 > bakes as its **raw LaTeX source text** rather than typeset glyphs — the documented per-fragment
 > fail-soft, not an error. To bake real math, call the two-arg API with a renderer.
+
+**Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
+extracts the first ```` ```sirentide ```` fence **the Stafficy `/docs` bake would capture** from a
+markdown file and bakes it —
+```bash
+sirentide render notes/some-page.md          # SVG to stdout
+sirentide render notes/some-page.md -o out.svg   # SVG to a file (atomic write)
+```
+The exit code tells you what `/docs` would do with the page:
+
+- **`0`** — the fence renders; the SVG you got is what the page will embed.
+- **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
+  on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
+  is on stderr.
+- **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
+  the bake leaves those literal), unreadable input, or an unwritable `-o` destination. Nothing
+  is written.
+
+`-o` writes are **atomic — unconditionally**: the SVG is fully written to a temp sibling and then
+*atomically* moved onto the destination, so a failed run never truncates or corrupts an existing
+file. On a filesystem that cannot replace atomically, the CLI **refuses with exit 2** and leaves
+the destination untouched — there is no non-atomic fallback. (A destination that is a directory
+is refused; a symlink destination — even one pointing at a directory — is replaced as a path
+entry, not written through, its target untouched; `-o` naming the input file is a safe full
+replace.) Fence **extraction is scanner-parity** with
+the `/docs` bake's `SirentideDiagramConverter` (the Stafficy-repo pre-flexmark pass) — see the
+contract note on `FenceExtractor` and its cross-repository fixture test.
 
 ## 4. Why it's safe to inline
 
@@ -111,7 +158,7 @@ site baking untrusted-author content, that's the whole point.
 
 | Mark | Meaning |
 |---|---|
-| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-two** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
+| **built** | Works today: the pipeline, the font-metrics oracle, labels-as-paths, all **twenty-three** diagram types (`pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram`, `erDiagram`, `gitGraph`, `journey`, `mindmap`, `sankey`, `mathblock`, `matrix`, `heatmap`, `snake`, `tensornetwork`, `young`, `dynkin`, `rootsystem`, `knot`), semantic anchors (`data-sirentide-role/id/seq`), LatteX-math-in-labels, `alt`/`loop`/`par` sequence frames **and activation bars**, the baked-frame play-through API (`renderFrames`), and the `/docs` ```` ```sirentide ```` fence. |
 | *planned* | Designed, not yet built: the native **effect layer** (`data-sirentide-fx`, the security-gated Part 2). |
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design and [`SLOWSTART.md`](SLOWSTART.md) for

@@ -1,0 +1,452 @@
+package com.sirentide.parse;
+
+import com.sirentide.ir.Diagram;
+import com.sirentide.ir.Flowchart;
+import com.sirentide.ir.Matrix;
+import com.sirentide.ir.StateDiagram;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+/// Enumerates the DISPLAY-LABEL fields of a `Diagram`, and nothing else.
+///
+/// ## Why this type exists rather than a check at the parser call sites
+///
+/// Marlow's ruling (sirentide/671) scopes the label-markup policy to *visually rendered text*
+/// — node, edge, row, item, legend, visible caption, cluster title — and explicitly NOT to
+/// identifiers. `cap` is not that boundary: it is a generic bounding primitive shared by
+/// titles, captions, series names, class names, identifiers and labels alike. Wiring the
+/// validator to `cap` would reject identifiers, and the giveaway would be
+/// `subgraph outer<unsafe> [Outer title]` failing — there `outer<unsafe>` is an IDENTIFIER
+/// bound for {@code Anchor.sanitizeId} (which correctly yields `outerunsafe`), and
+/// `Outer title` is the display label. If this class ever rejects that source, it has been
+/// wired to an id or to `cap` rather than to a label surface.
+///
+/// So the policy needs a seam that knows what a field MEANS, which is after the parser has
+/// built the IR. This class is that seam.
+///
+/// ## The exhaustiveness discriminator is the COMPILER
+///
+/// The ruling requires that omitting one label-bearing type turns a test red. The switch
+/// below has **no `default` branch** over a `sealed` interface, so omitting a type does not
+/// turn a test red — it **fails compilation**, which is strictly stronger and cannot be
+/// skipped, silenced, or left unrun. `LabelSurfacesTest` additionally pins that the switch is
+/// non-vacuous, because an exhaustive switch that returns empty everywhere would compile
+/// perfectly and validate nothing.
+///
+/// ## Incompleteness is LOUD, not silent
+///
+/// Several diagram types are not yet audited for which of their string fields are display
+/// text versus identifiers versus enum-ish tokens. Returning an empty list for those would be
+/// a silent hole of exactly the kind this whole plan exists to remove — an instrument that
+/// reports nothing and a surface that genuinely has nothing look identical.
+///
+/// So they are named in {@link #UNAUDITED} and a test FAILS while that set is non-empty. The
+/// incompleteness is a visible, failing fact rather than a quiet absence.
+public final class LabelSurfaces {
+
+    private LabelSurfaces() {}
+
+    /// One display label, with the stable identity the diagnostic needs.
+    ///
+    /// `id` is a node id where one exists, else the diagram type plus a stable index — never
+    /// the label text itself, which is unbounded and attacker-influenced.
+    /// One display label, with the stable identity the diagnostic needs and the rendering
+    /// capability of the surface it came from.
+    ///
+    /// `id` is a node id where one exists, else the diagram type plus a stable index — never
+    /// the label text itself, which is unbounded and attacker-influenced.
+    ///
+    /// ## mathAware is the fix for a defect the first version shipped
+    ///
+    /// `LabelMarkup` used to skip every `MathRun` GLOBALLY, which I described as exempting
+    /// inline math "structurally rather than by a special case". That reasoning was wrong in a
+    /// way that reopened the original defect: it assumed every display surface RENDERS math.
+    /// Most do not. Marlow's discriminators (sirentide/680): `%% caption: unsafe $<br/>$`,
+    /// `gitGraph commit id: "$<br/>$"` and `mindmap root $<br/>$` all came back OK/emit with a
+    /// non-inert SVG, because on those surfaces `$…$` has no math semantics and the WHOLE
+    /// authored string is emitted as plain glyph text. Wrapping the tag in dollars restored the
+    /// exact failure this plan exists to close.
+    ///
+    /// So the exemption now follows RENDERING SEMANTICS, and the default is PLAIN — a surface
+    /// is treated as math-capable only where the API documents it. Getting this wrong in the
+    /// plain direction over-rejects loudly; getting it wrong in the math direction re-opens a
+    /// silent bypass, so the default fails closed.
+    public record Labeled(String id, String text, boolean mathAware) {}
+
+    /// Diagram types whose display-vs-identifier field split has NOT yet been audited.
+    ///
+    /// Now EMPTY: every permitted type has been walked field by field. Kept (rather than
+    /// deleted with its test) because it is the honest shape for this class — if a future
+    /// type arrives whose fields are ambiguous, the author can park it here and the
+    /// accompanying test goes red rather than the type silently contributing no labels.
+    ///
+    /// TWO FIELDS WERE EXCLUDED AS IDENTIFIERS, and both are judgement calls rather than
+    /// obvious ones, so they are named here instead of buried:
+    ///
+    ///  - ~~`GitOp.Commit.id`~~ — I excluded this and was WRONG; it is now collected. Marlow
+    ///    overturned it at sirentide/676 with three citations: the IR contract calls it the
+    ///    optional author label, the parser documents it as an optional id label, and
+    ///    GitGraphLayout emits it as glyph paths. Kept here as a record that the
+    ///    identifier-vs-label judgement failed in the UNDER-validating direction.
+    ///  - `Knot.type` — a selector naming which knot to draw (`trefoil`, `figure8`), not
+    ///    free author text. A tag-shaped value here would fail the knot lookup long before
+    ///    it could reach a label surface.
+    ///
+    /// If either judgement is wrong the fix is one line each, and the cost of being wrong is
+    /// an under-validated surface — so they are called out for review rather than assumed.
+    static final Set<String> UNAUDITED = Set.of();
+
+    /// Every display label in `diagram`, in a stable order.
+    ///
+    /// The switch is exhaustive over the sealed `Diagram` hierarchy WITHOUT a default, so a
+    /// new permitted type breaks this file at compile time and forces an explicit decision.
+    public static List<Labeled> of(Diagram diagram) {
+        List<Labeled> out = new ArrayList<>();
+        switch (diagram) {
+            case Flowchart f -> flowchart(f, "", out);
+            // A state diagram IS a flowchart in the IR, so it inherits the same surfaces
+            // rather than a parallel copy that could drift.
+            case StateDiagram s -> flowchart(s.graph(), "state.", out);
+            case Matrix m -> matrix(m, out);
+
+            case com.sirentide.ir.Pie p -> pie(p, out);
+            case com.sirentide.ir.Timeline t -> slices(nz(t.events()), "timeline", out);
+            case com.sirentide.ir.XyChart x -> {
+                slices(nz(x.bars()), "xychart.bar", out);
+                // seriesNames IS the legend, which Marlow's list names explicitly.
+                for (int i = 0; i < nz(x.seriesNames()).size(); i++) {
+                    add(out, "xychart.series[" + i + "]", nz(x.seriesNames()).get(i));
+                }
+            }
+            case com.sirentide.ir.Gantt g -> {
+                for (int i = 0; i < nz(g.tasks()).size(); i++) {
+                    add(out, "gantt.task[" + i + "]", nz(g.tasks()).get(i).label());
+                }
+            }
+            case com.sirentide.ir.Sequence sq -> {
+                // actors ARE the displayed lifeline captions. SeqMessage.from/to and
+                // SeqLifecycle.actor merely REFERENCE them, so validating the actor list
+                // covers the text exactly once instead of three times.
+                for (int i = 0; i < nz(sq.actors()).size(); i++) {
+                    add(out, "sequence.actor[" + i + "]", nz(sq.actors()).get(i));
+                }
+                for (int i = 0; i < nz(sq.messages()).size(); i++) {
+                    add(out, "sequence.message[" + i + "]", nz(sq.messages()).get(i).label());
+                }
+                for (int i = 0; i < nz(sq.notes()).size(); i++) {
+                    addPlain(out, "sequence.note[" + i + "]", nz(sq.notes()).get(i).text());
+                }
+                for (int i = 0; i < nz(sq.blocks()).size(); i++) {
+                    // .kind is a keyword (alt/opt/loop); .label is the author's text.
+                    var blk = nz(sq.blocks()).get(i);
+                    addPlain(out, "sequence.block[" + i + "]", blk.label());
+                    // Dividers inside a block carry their own author text -- also missed on
+                    // the first pass, same cause as the heatmap legend.
+                    for (int d = 0; d < nz(blk.dividers()).size(); d++) {
+                        addPlain(out, "sequence.block[" + i + "].divider[" + d + "]",
+                            nz(blk.dividers()).get(d).label());
+                    }
+                }
+            }
+            case com.sirentide.ir.QuadrantChart q -> {
+                add(out, "quadrant.xLo", q.xLo());
+                add(out, "quadrant.xHi", q.xHi());
+                add(out, "quadrant.yLo", q.yLo());
+                add(out, "quadrant.yHi", q.yHi());
+                String[] ql = q.quadrantLabels();
+                for (int i = 0; ql != null && i < ql.length; i++) {
+                    add(out, "quadrant.label[" + i + "]", ql[i]);
+                }
+                for (int i = 0; i < nz(q.points()).size(); i++) {
+                    add(out, "quadrant.point[" + i + "]", nz(q.points()).get(i).label());
+                }
+            }
+            case com.sirentide.ir.ClassDiagram c -> {
+                for (var box : nz(c.classes())) {
+                    add(out, "class:" + box.name(), box.name());
+                    for (int i = 0; i < nz(box.attributes()).size(); i++) {
+                        add(out, "class:" + box.name() + ".attr[" + i + "]", nz(box.attributes()).get(i));
+                    }
+                    for (int i = 0; i < nz(box.methods()).size(); i++) {
+                        add(out, "class:" + box.name() + ".method[" + i + "]", nz(box.methods()).get(i));
+                    }
+                }
+                for (var rel : nz(c.relations())) {
+                    // left/right name existing classes -> references, not new display text.
+                    add(out, "class-rel:" + rel.left() + "->" + rel.right(), rel.label());
+                }
+            }
+            case com.sirentide.ir.ErDiagram er -> {
+                for (var ent : nz(er.entities())) {
+                    add(out, "er:" + ent.name(), ent.name());
+                    for (int i = 0; i < nz(ent.attributes()).size(); i++) {
+                        var a = nz(ent.attributes()).get(i);
+                        // type and name both render inside the entity box; key is a marker.
+                        add(out, "er:" + ent.name() + ".attr[" + i + "].type", a.type());
+                        add(out, "er:" + ent.name() + ".attr[" + i + "].name", a.name());
+                    }
+                }
+                for (var rel : nz(er.relations())) {
+                    add(out, "er-rel:" + rel.left() + "->" + rel.right(), rel.label());
+                }
+            }
+            case com.sirentide.ir.GitGraph gg -> {
+                for (int i = 0; i < nz(gg.ops()).size(); i++) {
+                    var op = nz(gg.ops()).get(i);
+                    // Branch.name labels a lane and IS display text.
+                    if (op instanceof com.sirentide.ir.GitOp.Branch b) {
+                        addPlain(out, "gitgraph.branch[" + i + "]", b.name());
+                    }
+                    // Commit.id IS display text too. I excluded it as an identifier and
+                    // Marlow overturned that with evidence (sirentide/676): the IR contract
+                    // calls it the optional author LABEL, the parser documents it as an
+                    // optional id label, and GitGraphLayout emits it as glyph paths. It
+                    // doubles as an anchor identity, but a field being an identity does not
+                    // exempt the text it visibly renders -- which is precisely the direction
+                    // I warned was under-validated, and was.
+                    if (op instanceof com.sirentide.ir.GitOp.Commit c2) {
+                        addPlain(out, "gitgraph.commit[" + i + "]", c2.id());
+                    }
+                }
+            }
+            case com.sirentide.ir.Journey j -> {
+                addPlain(out, "journey.title", j.title());
+                for (int si = 0; si < nz(j.sections()).size(); si++) {
+                    var sec = nz(j.sections()).get(si);
+                    addPlain(out, "journey.section[" + si + "]", sec.name());
+                    for (int ti = 0; ti < nz(sec.tasks()).size(); ti++) {
+                        var task = nz(sec.tasks()).get(ti);
+                        addPlain(out, "journey.section[" + si + "].task[" + ti + "]", task.name());
+                        for (int ai = 0; ai < nz(task.actors()).size(); ai++) {
+                            addPlain(out, "journey.section[" + si + "].task[" + ti + "].actor[" + ai + "]",
+                                nz(task.actors()).get(ai));
+                        }
+                    }
+                }
+            }
+            case com.sirentide.ir.Mindmap mm -> mindmap(mm.root(), "mindmap", out);
+            case com.sirentide.ir.Sankey sk -> {
+                for (int i = 0; i < nz(sk.flows()).size(); i++) {
+                    // In a sankey the endpoint NAMES are the rendered node labels; there is
+                    // no separate label field, so these are display text, not references.
+                    var flow = nz(sk.flows()).get(i);
+                    addPlain(out, "sankey.flow[" + i + "].source", flow.source());
+                    addPlain(out, "sankey.flow[" + i + "].target", flow.target());
+                }
+            }
+            case com.sirentide.ir.Heatmap h -> {
+                // lowLabel/highLabel are the SCALE LEGEND captions. I missed these on the
+                // first pass and only caught them by reading the full record signature
+                // rather than the first line -- an omission the compiler cannot see,
+                // because a missing FIELD is not a missing CASE.
+                addPlain(out, "heatmap.lowLabel", h.lowLabel());
+                addPlain(out, "heatmap.highLabel", h.highLabel());
+                for (int i = 0; i < nz(h.columns()).size(); i++) {
+                    addPlain(out, "heatmap.column[" + i + "]", nz(h.columns()).get(i));
+                }
+                for (int r = 0; r < nz(h.rows()).size(); r++) {
+                    var row = nz(h.rows()).get(r);
+                    addPlain(out, "heatmap.row[" + r + "]", row.label());
+                    for (int c = 0; c < nz(row.cells()).size(); c++) {
+                        addPlain(out, "heatmap.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
+                    }
+                }
+            }
+            case com.sirentide.ir.TensorNetwork tn -> {
+                for (int i = 0; i < nz(tn.cores()).size(); i++) {
+                    addPlain(out, "tensor.core[" + i + "]", nz(tn.cores()).get(i));
+                }
+            }
+
+            // --- No free display text. A fact about the type, not an unaudited gap.
+            case com.sirentide.ir.Empty e -> { }                 // renders nothing
+            case com.sirentide.ir.MathBlock mb -> { }            // latex, exempt by design
+            case com.sirentide.ir.Snake sn -> { }                // integer quotients only
+            case com.sirentide.ir.YoungDiagram y -> { }          // integer row lengths only
+            case com.sirentide.ir.Dynkin d -> { }                // family char + rank
+            case com.sirentide.ir.RootSystem r -> { }            // family char + rank
+            case com.sirentide.ir.Knot k -> { }                  // selector, see UNAUDITED
+        }
+        return out;
+    }
+
+    /// Flowchart display surfaces: node label, edge label, cluster TITLE.
+    ///
+    /// Note what is absent. `FlowNode.id`, `FlowEdge.from` and `FlowEdge.to`, and
+    /// `FlowCluster.id` are identifiers and are deliberately NOT collected — they are bound
+    /// for {@code Anchor.sanitizeId}, and rejecting them here is the precise failure Marlow
+    /// named in ruling point 2.
+    private static void flowchart(Flowchart f, String prefix, List<Labeled> out) {
+        for (int i = 0; i < nz(f.nodes()).size(); i++) {
+            var n = nz(f.nodes()).get(i);
+            // A node has a real id, so use it: a stable identity a human can find in source.
+            add(out, prefix + "node:" + n.id(), n.label());
+        }
+        for (int i = 0; i < nz(f.edges()).size(); i++) {
+            var e = nz(f.edges()).get(i);
+            // Edges have no id of their own; from->to is stable and human-locatable.
+            add(out, prefix + "edge:" + e.from() + "->" + e.to(), e.label());
+        }
+        for (int i = 0; i < nz(f.clusters()).size(); i++) {
+            var c = nz(f.clusters()).get(i);
+            addPlain(out, prefix + "cluster:" + c.id(), c.title());  // TITLE only, never c.id()
+        }
+    }
+
+    /// Pie's capability is CONDITIONAL ON RUNTIME MODE, which is the fourth granularity this
+    /// class has needed. Marlow found it at sirentide/699.
+    ///
+    /// `PieLayout` has three emit paths, not one:
+    ///  - `pie.legend()` true  -> `layoutLegend` runs WITHOUT the math renderer entirely and
+    ///    emits label+value rows through `FONT.ellipsize`/`textPathD`. PLAIN.
+    ///  - non-legend, `sweep <  THIN_SLICE` (15 degrees) -> bypasses `MathLabel` and keeps an
+    ///    ellipsized OUTSIDE label. PLAIN.
+    ///  - non-legend, `sweep >= THIN_SLICE` -> bakes through `MathLabel`. MATH.
+    ///
+    /// So `pie legend` with `"$<br/>$" : 60`, and a 1-of-100 thin slice, both returned OK with
+    /// the renderer called ZERO times. My previous guard sampled a `legend=true` Pie, saw the
+    /// string `MathLabel` somewhere in PieLayout.java, and certified the legend label
+    /// math-aware -- a load-bearing false green, and exactly the file-level reasoning I had
+    /// already been told twice was too coarse.
+    ///
+    /// Both conditions are derivable from the IR: `legend` is a field, and the sweep follows
+    /// from the slice value over the POSITIVE-magnitude total, mirroring PieLayout's own
+    /// denominator choice. THIS IS A MIRROR OF A LAYOUT CONSTANT and therefore drift-prone;
+    /// it is pinned by behavioural probes on BOTH sides of the 15-degree boundary rather than
+    /// by trusting the arithmetic.
+    private static void pie(com.sirentide.ir.Pie p, List<Labeled> out) {
+        List<com.sirentide.ir.Slice> slices = nz(p.slices());
+        // PieLayout's denominator is POSITIVE magnitudes only -- summing negatives shrinks it
+        // and corrupts every sweep, which that layout documents as a fixed bug. Mirrored here
+        // so the boundary lands in the same place.
+        double positiveTotal = 0;
+        for (com.sirentide.ir.Slice sl : slices) {
+            if (sl.value() > 0) {
+                positiveTotal += sl.value();
+            }
+        }
+        for (int i = 0; i < slices.size(); i++) {
+            com.sirentide.ir.Slice sl = slices.get(i);
+            double sweepDegrees = positiveTotal <= 0 ? 0
+                : (Math.max(sl.value(), 0) / positiveTotal) * 360.0;
+            boolean mathAware = !p.legend() && sweepDegrees >= PIE_THIN_SLICE_DEGREES;
+            addLabel(out, "pie[" + i + "]", sl.label(), mathAware);
+            // the value label rides the same emitter as its slice label
+            addLabel(out, "pie[" + i + "].valueLabel", sl.valueLabel(), mathAware);
+        }
+    }
+
+    /// Mirrors `PieLayout.THIN_SLICE` (15 degrees). A slice narrower than this keeps an
+    /// ellipsized outside label and never reaches the MathLabel seam.
+    private static final double PIE_THIN_SLICE_DEGREES = 15.0;
+
+    /// Slice-backed diagrams (pie, timeline, xychart bars) share one shape, so they share
+    /// one walker rather than three copies that could drift apart.
+    private static void slices(List<com.sirentide.ir.Slice> slices, String kind, List<Labeled> out) {
+        for (int i = 0; i < nz(slices).size(); i++) {
+            var sl = nz(slices).get(i);
+            add(out, kind + "[" + i + "]", sl.label());
+            add(out, kind + "[" + i + "].valueLabel", sl.valueLabel());
+        }
+    }
+
+    /// Mindmap nodes nest arbitrarily, so the walk is recursive and the identity encodes the
+    /// PATH — a bare index would not locate a node three levels down.
+    private static void mindmap(com.sirentide.ir.MindmapNode node, String path, List<Labeled> out) {
+        if (node == null) {
+            return;
+        }
+        addPlain(out, path, node.text());
+        for (int i = 0; i < nz(node.children()).size(); i++) {
+            mindmap(nz(node.children()).get(i), path + "." + i, out);
+        }
+    }
+
+    /// Matrix display surfaces: column headers (the legend), row labels, and cell text.
+    private static void matrix(Matrix m, List<Labeled> out) {
+        for (int i = 0; i < nz(m.columns()).size(); i++) {
+            addPlain(out, "matrix.column[" + i + "]", nz(m.columns()).get(i));
+        }
+        for (int r = 0; r < nz(m.rows()).size(); r++) {
+            var row = nz(m.rows()).get(r);
+            addPlain(out, "matrix.row[" + r + "]", row.label());
+            for (int c = 0; c < nz(row.cells()).size(); c++) {
+                addPlain(out, "matrix.cell[" + r + "][" + c + "]", nz(row.cells()).get(c).text());
+            }
+        }
+    }
+
+    /// Null-safe list access. Several IR records keep their list fields NULLABLE by design --
+    /// `XyChart.series`/`seriesNames` are the legacy single-series path, and a null there is a
+    /// legitimate diagram, not a malformed one.
+    ///
+    /// The first version of this walker called `.size()` on them directly. That threw an NPE
+    /// which `Sirentide.render` dutifully caught and degraded to the INERT SHELL -- so a
+    /// perfectly legal chart silently rendered as an empty box. 29 tests across 12 suites went
+    /// red at once, which is the only reason it was not shipped: the vacuity battery used
+    /// fully-populated fixtures and could not see it.
+    ///
+    /// The lesson is narrower than "handle nulls": a validator that DEGRADES THE THING IT
+    /// VALIDATES is worse than no validator, because the failure looks exactly like the
+    /// renderer's own inert-shell degrade.
+    private static <T> List<T> nz(List<T> list) {
+        return list == null ? List.of() : list;
+    }
+
+    /// MATH-AWARE surface -- the DEFAULT, because that is the product's actual contract.
+    ///
+    /// ## I had this backwards, and the correction is instructive
+    ///
+    /// The first version made only flowchart NODE labels math-aware, derived from one javadoc
+    /// line on `render(dsl, math)`. Marlow showed that contradicts the shipped product
+    /// (sirentide/685): README says a math fragment inside ANY label typesets; DESIGN.md says
+    /// real baked LaTeX renders in EVERY label-bearing type, naming node, edge, message, state
+    /// and quadrant; `FlowchartLayout` routes EDGE labels through `MathLabel`;
+    /// `SequenceLayout` routes MESSAGE labels through it; and a test literally called
+    /// `MathInAllLabelsRealRenderTest` is the cross-type contract.
+    ///
+    /// So `$0<x>1$` on a sequence message -- a VALID formula on a surface that renders math --
+    /// was rejected at parse. My conservative default did not merely record a cautious
+    /// internal assumption; it REMOVED SUPPORTED INPUT.
+    ///
+    /// The derivation that actually holds: a surface is math-aware iff its layout routes
+    /// through `MathLabel`. Twelve layouts do. The four that do not -- Caption, GitGraph,
+    /// Mindmap, Matrix -- each say so in their own javadoc, and those are exactly the surfaces
+    /// Marlow used for the dollar-wrap bypass at sirentide/680.
+    private static void add(List<Labeled> out, String id, String text) {
+        addLabel(out, id, text, true);
+    }
+
+    /// PLAIN surface: its EMITTER does not route through `MathLabel`, so `$…$` is literal
+    /// glyph text there and the whole authored string must be scanned.
+    ///
+    /// ## Capability is per SURFACE, not per LAYOUT -- the third granularity I got wrong
+    ///
+    /// I first classified per DIAGRAM TYPE, then per LAYOUT FILE. Both are too coarse, and
+    /// Marlow showed why at sirentide/697: a single layout emits several label surfaces
+    /// through DIFFERENT paths.
+    ///
+    ///  - `FlowchartLayout` routes node and edge labels through `MathLabel`, but
+    ///    `emitClusterFrame` emits the cluster TITLE via `FONT.runWidth`/`textPathD` only.
+    ///  - `SequenceLayout` routes actor heads and message labels through `MathLabel`, but
+    ///    notes, block labels and divider labels go through `FONT.ellipsize`/`runWidth`/
+    ///    `textPathD`.
+    ///
+    /// So `subgraph grp [$<br/>$]` and a `note over … : $<br/>$` both returned OK with the
+    /// math renderer invoked ZERO times -- the dollar-wrap bypass, on surfaces inside layouts
+    /// I had classified wholesale as math-aware.
+    ///
+    /// The lesson is not the two layouts. A file-level boolean cannot describe a file with
+    /// mixed behaviour, and my guard could not see it because each fixture exercised ONE
+    /// prefix per layout and I let that stand for the layout.
+    private static void addPlain(List<Labeled> out, String id, String text) {
+        addLabel(out, id, text, false);
+    }
+
+    private static void addLabel(List<Labeled> out, String id, String text, boolean mathAware) {
+        if (text != null && !text.isEmpty()) {
+            out.add(new Labeled(id, text, mathAware));
+        }
+    }
+}
