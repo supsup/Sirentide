@@ -33,13 +33,28 @@ class ClassDiagramMultiplicityRenderTest {
         return svg.split("<path", -1).length - 1;
     }
 
-    /// THE INSTRUMENT CONTROL, and it is not decoration. My first structural check on this feature
-    /// asked whether any `<text>` element carried the cardinality, got no, and proved nothing: this
-    /// renderer emits glyphs as PATHS, so there are zero `<text>` elements in any diagram and the
-    /// same query "proves" the class names are not drawn either. A counter that cannot see drawn
-    /// text would report delta 0 for every case below and every assertion would pass vacuously. So
-    /// prove the counter moves for text we already know is drawn, before trusting it about text we
-    /// are asking about.
+    /// THE INSTRUMENT CONTROL, and it is not decoration -- but NOT for the reason I first wrote
+    /// (Fixpoint, sirentide/895).
+    ///
+    /// I ORIGINALLY CLAIMED that without this test a blind counter would make every assertion below
+    /// pass vacuously. THAT IS FALSE, and leaving it would have been worse than saying nothing: the
+    /// other tests assert an EXACT DELTA, so a counter returning a constant makes `constant + 1 ==
+    /// constant` FAIL, not pass. The tests were more robust than the reason I gave for them, and a
+    /// reader who checked the justification would have found it did not hold and might have dropped
+    /// this test on that basis. A false rationale attached to a real test is a liability, because it
+    /// is the rationale the next person deletes it by.
+    ///
+    /// THE REAL AND NARROWER PROPERTY IT GUARDS: a counter that MOVES but measures something merely
+    /// CORRELATED with the label rather than drawn glyphs. The delta assertions cannot see that --
+    /// they only require the number to change by the right amount, which a correlated proxy can also
+    /// do. This pins the counter against text everybody already agrees is drawn, so the quantity is
+    /// anchored to glyphs and not to a coincidence.
+    ///
+    /// WHY THE HAZARD IS LIVE HERE: my first structural check on this feature asked whether any
+    /// `<text>` element carried the cardinality, got no, and proved nothing. This renderer emits
+    /// glyphs as PATHS, so there are zero `<text>` elements in any diagram and the same query
+    /// "proves" the class names are not drawn either. That is exactly a proxy that answers a
+    /// question adjacent to the one being asked.
     @Test
     void theCounterRespondsToDrawnTextAtAll() {
         int withLabel = glyphRuns(Sirentide.render(BASE));
@@ -47,7 +62,8 @@ class ClassDiagramMultiplicityRenderTest {
         assertTrue(withLabel > 0, "a rendered class diagram draws SOMETHING: " + withLabel);
         assertEquals(withoutLabel + 1, withLabel,
             "dropping the `: places` label must remove exactly one glyph run — if this fails the "
-                + "counter is not measuring drawn text and every other assertion here is vacuous");
+                + "counter is measuring something other than drawn glyphs, and the exact-delta "
+                + "assertions below are anchored to a proxy rather than to text");
     }
 
     @Test

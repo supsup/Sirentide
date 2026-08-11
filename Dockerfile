@@ -3,6 +3,18 @@
 # non-root Java 25 runtime.
 
 FROM eclipse-temurin:25-jdk AS build
+
+# The jar stamps Sirentide-Source-Revision and REQUIRES an exact 40-hex commit. This context
+# has no repository — .dockerignore excludes .git — so git cannot supply it here and adding
+# git to this stage would not help. The caller passes it in:
+#
+#     docker build --build-arg SIRENTIDE_SOURCE_REVISION="$(git rev-parse HEAD)" .
+#
+# Left unset, the build FAILS rather than producing an unstamped jar, which is the correct
+# posture for an artifact whose whole contract is naming the tree it was cut from.
+ARG SIRENTIDE_SOURCE_REVISION
+ENV SIRENTIDE_SOURCE_REVISION=${SIRENTIDE_SOURCE_REVISION}
+
 WORKDIR /src
 COPY . .
 
