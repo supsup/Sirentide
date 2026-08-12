@@ -55,6 +55,39 @@ class UnknownDirectiveShapeTest {
                 + a11y);
     }
 
+    // ---- the drop is NAMED, not merely silent (ruling 923 Correction 2) ---------------------
+
+    @Test
+    void theDropRidesAnOkCaveatThatNamesTheLineAndTheDiagramStillRenders() {
+        // The whole point of the channel choice. A silent drop would trade a loud-wrong phantom
+        // node for a quiet-right disappearance, which is not obviously better for the author:
+        // either way the line vanishes and the verdict says "Rendered successfully."
+        RenderResult r = Sirentide.renderWithDiagnostics(
+            "flowchart TD\n    A[One] --> B[Two]\n    quuxStyle zork fill:#f00\n");
+        assertEquals(Outcome.OK, r.diagnostics().outcome(),
+            "line-scoped: the render genuinely succeeded, so the outcome stays OK");
+        assertTrue(String.valueOf(r.svg()).contains("<path"),
+            "and the diagram is REAL CONTENT, never the inert shell");
+        assertTrue(r.diagnostics().message().contains("dropped"),
+            "the author-facing message must say something was lost: " + r.diagnostics().message());
+        assertEquals(3, r.diagnostics().line(), "and point at the offending physical line");
+        assertTrue(r.diagnostics().detail().contains("quuxStyle"),
+            "the detail names the dropped text: " + r.diagnostics().detail());
+    }
+
+    @Test
+    void aCleanBodyCarriesNoDropCaveat() {
+        // THE CONTROL for the test above. Without it, a caveat that fired on EVERY render would
+        // pass that assertion just as well, and "names the drop" would be indistinguishable from
+        // "always says something dropped".
+        RenderResult r = Sirentide.renderWithDiagnostics("flowchart TD\n    A[One] --> B[Two]\n");
+        assertEquals(Outcome.OK, r.diagnostics().outcome());
+        assertFalse(r.diagnostics().message().contains("dropped"),
+            "a clean body must NOT claim a loss: " + r.diagnostics().message());
+        assertFalse(r.diagnostics().detail().contains("dropped statement"),
+            "and its detail stays clean: " + r.diagnostics().detail());
+    }
+
     // ---- the seven refuting behaviours, pinned as CONTROLS (ruling's requirement) -----------
     // Each of these is a family the earlier whitespace-at-top-level design condemned wrongly.
     // They are the reason the rule is narrow, so they are pinned one family at a time rather
