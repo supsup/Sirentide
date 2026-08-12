@@ -8,10 +8,108 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
+  an unknown directive-shaped statement and records a line-scoped caveat on an otherwise-`OK`
+  render, specifically so a lost line is not lost silently — but the caveat lived only in the API.
+  Through the `render` verb, which the authoring docs name as *the* local check, an author saw
+  exit `0`, no output, and a diagram quietly missing their line. A caveat channel nothing reads is
+  not a channel. The verb now prints `sirentide: rendered, with caveats — dropped statement(s): 1;
+  line 3: <the statement>` to stderr, naming the statement that vanished rather than only
+  reporting that one did. The exit code stays `0` and the SVG is still written: the render
+  genuinely succeeded and `/docs` genuinely serves it, so failing here would claim a bake outcome
+  that does not happen. A diagram that lost nothing stays silent — asserted by its own control,
+  because a warning that fires on every render is noise an author learns to ignore.
+  **`--strict` promotes such a caveat to exit `1`** for unattended callers (ruling
+  `PROJECT/sirentide` 977): stderr is the right author channel and the wrong CI channel,
+  because CI is exactly where nobody reads stderr, and a caveat that cannot gate anything
+  in the one environment that runs unattended is recorded-but-unseeable one level up. The
+  flag is opt-in so the default stays honest, it does **not** manufacture a failure on a
+  clean render, and unlike the exit-`1` unrenderable arm the SVG **is** still written —
+  there the artifact would be a lie about what `/docs` serves, here it is exactly what
+  `/docs` serves and a caller whose gate just rejected something wants to see it.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
+
+### A `%%` comment in the diagram body no longer renders as a node
+
+**Behaviour change, and it is scriptable.** Mermaid's comment syntax is `%% text`. Sirentide
+honors `%%` in the *preamble* as its config channel, and used to hand a `%%` line in the
+**body** straight to the type parser — which parsed it as a lone node declaration. The most
+copied line in any mermaid snippet became a drawn, labelled box wearing the comment as its
+name, and the render reported `outcome=OK`.
+
+Measured across types before the fix, so the scope is a fact rather than a guess: **flowchart,
+`stateDiagram-v2` and `mindmap` all leaked** the comment into the diagram; `sequenceDiagram`
+and `pie` already dropped it. The fix is therefore at the shared body seam rather than in one
+type parser — all three public entry points (`parse`, `detectUnsupportedConstruct`,
+`flowchartBodyCensus`) now take the body from one producer, so they cannot disagree about what
+a body *is*.
+
+```
+flowchart TD
+    %% the happy path
+    A[One] --> B[Two]
+```
+renders two nodes. It used to render **three**, the third named `%% the happy path`.
+
+**Comments are blanked, not removed**, and that is deliberate: diagnostics report 1-based
+*physical* line numbers, so deleting the line would silently shift every later line's reported
+position — a diagnostic pointing at the wrong line is worse than one pointing nowhere. A
+comment on line 2 leaves a bad statement on line 3 still reported as line 3.
+
+**A comment is not a dropped statement.** It carries no "statement was dropped" caveat, because
+it was never a lost statement — it is intentional syntax. A body of *only* comments declares
+nothing and reports success, exactly as an empty body does.
+
+### An unknown directive no longer mints a node wearing its own text as a name
+
+**Behaviour change, and it is scriptable.** A line shaped like a directive this parser has
+never met — a bare first word followed by a `key:value` payload — used to parse as a *node
+declaration*, so the diagram grew a phantom box with CSS for a name and returned
+`outcome=OK` with `"Rendered successfully."`. That is how `classDef critical fill:#fee2e2`
+rendered as a labelled box on a parser built before `classDef` existed. It is the failure
+mode you hit every time the DSL grows a keyword your vendored jar predates.
+
+Such a line is now **dropped and named**, and the rest of the diagram still renders:
+
+```
+$ printf 'flowchart TD\n    A[One] --> B[Two]\n    quuxStyle zork fill:#f00\n' | sirentide
+(SVG written — A and B render normally)
+
+Rendered successfully. Note: 1 statement was dropped from this body and did not
+render; line 3 uses a directive-shaped line whose keyword this parser does not
+know (a bare first word carrying no `[`/`{`/`(`/`"` delimiter, followed by a
+`key:value` payload) — it would otherwise mint a node wearing its own directive
+text as a name.
+```
+
+Note the verdict still opens with **"Rendered successfully."** — the caveat is appended to
+it, never substituted for it. That is the whole shape of an OK caveat: a script checking
+the exit code or the `outcome` field sees no change, while a human or a log reader gains
+the sentence that was missing.
+
+`outcome` stays **`OK`** and the SVG is real content — this is a *caveat on a success*,
+not a refusal. A diagram must not go blank because one line was unreadable, so the drop is
+line-scoped and composes with the existing pie and font-coverage caveats rather than
+replacing the verdict.
+
+**The rule is deliberately narrow**, and the two edges are worth knowing:
+
+- A multi-word bare line stays a node. `Two Words Bare` is legal here — this parser
+  diverges from mermaid at exactly that point, and an earlier, wider design was refuted by
+  the test corpus. The `key:value` payload is what separates a CSS-carrying directive from
+  an ordinary multi-word label.
+- **A payload-LESS directive still mints.** `animate fast` has no `key:value`, so by shape
+  alone it is indistinguishable from a legal multi-word node. That residual is the cost of
+  the narrowness, it is stated rather than hidden, and closing it needs the vendored-jar
+  version-skew work, not a wider guess here.
+
+Known keywords are unaffected: `classDef`, `class`, `style`, `click`, `direction`,
+`accTitle:`/`accDescr:` keep their own existing treatment, so "we do not know this keyword"
+is never said about a keyword we do know.
 
 ### A flowchart that renders empty no longer reports success
 

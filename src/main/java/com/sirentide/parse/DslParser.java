@@ -180,9 +180,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return new Empty();   // a config block with no diagram body → inert (never throws)
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         // The header is a TYPE token plus optional whitespace-split MODIFIER tokens (e.g.
         // `pie legend`). Bare `pie`/`xychart`/… stay exactly as before (a lone type token, no
         // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
@@ -384,6 +382,43 @@ public final class DslParser {
     /// line spelled like a directive is NOT at risk: the scan only consumes preamble UP TO the first
     /// non-preamble (type) line, so a `%%` inside the body (after the type line) is left to the type
     /// parser exactly as before.
+    /// The diagram BODY: the source minus the preamble, with `%%` COMMENT lines blanked.
+    ///
+    /// <p>Mermaid's comment syntax is `%% text`. Sirentide honors `%%` in the PREAMBLE as its config
+    /// channel ({@link #parseConfig}), and until now left a `%%` line in the body to the type parser —
+    /// which is how the most-copied line in any mermaid snippet became a DRAWN NODE wearing the comment
+    /// as its name. Measured before the fix: flowchart, stateDiagram-v2 and mindmap all leaked it at
+    /// outcome=OK; sequence and pie already dropped it. A comment rendering as content is the
+    /// silent-WRONG class this parser keeps closing one member at a time.
+    ///
+    /// <p>BLANKED, NOT REMOVED, and that is load-bearing: diagnostics report 1-based PHYSICAL line
+    /// numbers, so deleting a line would silently shift every later line's reported position. Blank
+    /// lines are already skipped by every type parser, so blanking is a no-op for them.
+    ///
+    /// <p>ONE PRODUCER for all three public entry points ({@link #parse}, {@link
+    /// #detectUnsupportedConstruct}, {@link #flowchartBodyCensus}) so they cannot disagree about what
+    /// the body IS. That matters beyond tidiness: the census feeds the dropped-statement caveat, so a
+    /// comment visible to the census but not to the parse would report a phantom "1 statement was
+    /// dropped" on every commented diagram. A comment is intentional syntax, not a lost statement.
+    ///
+    /// <p>Returns the INPUT array unchanged when there is no preamble and no comment, so a plain source
+    /// still bakes byte-identically.
+    private static String[] bodyLines(String[] rawLines, int bodyStart) {
+        String[] sliced = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] out = null;
+        for (int i = 0; i < sliced.length; i++) {
+            if (sliced[i].strip().startsWith(CONFIG_DIRECTIVE)) {
+                if (out == null) {
+                    out = sliced.clone();   // copy-on-first-write: never mutate the caller's array
+                }
+                out[i] = "";
+            }
+        }
+        return out == null ? sliced : out;
+    }
+
     private static int preambleEnd(String[] lines) {
         int i = 0;
         while (i < lines.length) {
@@ -847,6 +882,17 @@ public final class DslParser {
                     // rest, no colon) still parses as a node — only the directive SHAPE is reserved.
                     continue;
                 }
+                // The FORWARD-COMPAT SHAPE RULE, ordered AFTER the allowlist above so a KNOWN
+                // keyword keeps its own already-decided treatment and only an UNKNOWN one falls
+                // here (ruling sirentide/923 answer 1c). It sits BEFORE parseEndpoint because the
+                // line IS a syntactically valid node — that is precisely why it mints — so asking
+                // the endpoint validator first would answer "valid" and settle nothing.
+                if (isUnknownDirectiveShape(kwRest)) {
+                    if (sink != null) {
+                        sink.drop(i, line, REASON_DIRECTIVE_SHAPE, false);
+                    }
+                    continue;
+                }
                 // No edge operator at top level → the whole line is a lone node declaration. A
                 // bracket-swallowed arrow (`A[Start --> B[End]`) lands here too and drops via the
                 // endpoint validator (nested `[` → malformed), NOT as a plausible node.
@@ -1119,9 +1165,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return null;
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         // CANONICALIZE the header token rather than string-matching it. `stateDiagram-v2`,
         // `stateDiagram` and `state` are the same diagram type, and the alias table is the single
         // place that knows so — matching the raw spelling here would silently cover one spelling of
@@ -1161,6 +1205,10 @@ public final class DslParser {
     static final String REASON_NODE =
         "a node declaration the parser could not read (an unterminated `[`/`{`, a nested bracket, or "
             + "trailing text after a closed label)";
+    static final String REASON_DIRECTIVE_SHAPE =
+        "a directive-shaped line whose keyword this parser does not know (a bare first word carrying "
+            + "no `[`/`{`/`(`/`\"` delimiter, followed by a `key:value` payload) — it would otherwise "
+            + "mint a node wearing its own directive text as a name";
 
     /// How many dropped statements a census RETAINS. The count is exact; only the retained sample is
     /// bounded — the same cap discipline every other list in this parser follows, so a 10k-line body
@@ -1255,9 +1303,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return null;
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         String[] header = lines[0].strip().split("\\s+");
         // Canonicalize rather than string-match the raw spelling: `Flowchart`/`FLOWCHART` are the
         // same type and the alias table is the only thing that knows so.
@@ -2419,6 +2465,96 @@ public final class DslParser {
 
     /// Splits a directive line into `[keyword, rest]` — the first whitespace-delimited token and the
     /// remaining free-text label (stripped; "" when the keyword stands alone, e.g. a bare `end`).
+    /// The FORWARD-COMPAT SHAPE RULE (plan 66572bcd, ruling sirentide/923 as amended by my 944).
+    /// True when an arrowless line looks like a directive this parser has never met: a bare first
+    /// word carrying no label delimiter, followed by a `key:value` payload. Such a line is DROPPED
+    /// and named rather than minted as a lone node wearing its own directive text — the playground
+    /// silent-mint finding, where `classDef critical fill:#fee2e2` on a pre-classDef parser rendered
+    /// a phantom node with CSS for a name.
+    ///
+    /// TWO CONDITIONS, NOT THREE — and the missing one is deliberate, so do not re-add it. The
+    /// ruling's first conjunct was "not a valid node under parseEndpoint". Measured by reflection
+    /// (my sirentide/944): parseEndpoint returns a VALID node for `quuxStyle zork fill:#f00`, for
+    /// `classDef danger fill:#ff0000`, and for every refuting family. So that conjunct is FALSE for
+    /// exactly the line this rule condemns, and an ALL-of gate containing it can never fire. The
+    /// inversion is the mechanism rather than an oversight: parseEndpoint ACCEPTING the line is not
+    /// incidental to the defect, it is WHY the line mints.
+    ///
+    /// NARROW ON PURPOSE, after a corpus refutation. An earlier design condemned any top-level
+    /// whitespace, and the corpus refuted it — FlowchartTest:203 pins a divergence from mermaid at
+    /// exactly that point, and a multi-word bare line like `Two Words Bare` is a legal node here.
+    /// The `key:value` payload is what separates a CSS-carrying directive from a multi-word label.
+    ///
+    /// THE RESIDUAL, stated rather than hidden (ruling's close): a PAYLOAD-LESS directive keyword
+    /// (`animate fast`) still mints. That is the deliberate cost of the narrowness, and it is what
+    /// the version-skew plan (B) exists to cover. This rule catches the CSS-payload family only.
+    private static boolean isUnknownDirectiveShape(String[] kwRest) {
+        String keyword = kwRest[0];
+        String rest = kwRest[1];
+        if (keyword.isEmpty() || rest.isEmpty()) {
+            return false;                       // a bare single token is a node (`style`, `A`)
+        }
+        for (int i = 0; i < keyword.length(); i++) {
+            char c = keyword.charAt(i);
+            if (c == '[' || c == '{' || c == '(' || c == '"' || c == '|') {
+                return false;                   // `A[Start] #22c55e` — a delimited node, not a directive
+            }
+        }
+        return hasKeyValuePayload(rest);
+    }
+
+    /// A `key:value` payload in the rest of a directive-shaped line: a colon with a non-blank token
+    /// on BOTH sides, scanned OUTSIDE any label span so a colon inside `A[a:b]` is label content.
+    /// The both-sides requirement is what keeps `accTitle:`-style trailing colons and a bare `:`
+    /// from reading as a payload.
+    private static boolean hasKeyValuePayload(String rest) {
+        char bracketClose = 0;
+        boolean inPipe = false;
+        boolean inQuote = false;
+        for (int i = 0; i < rest.length(); i++) {
+            char c = rest.charAt(i);
+            if (bracketClose != 0) {
+                if (c == bracketClose) {
+                    bracketClose = 0;
+                }
+                continue;
+            }
+            // A QUOTED span is a span too. Found by mutation-probing my own scan: without this
+            // arm `foo "a:b"` was CONDEMNED — a colon inside a quoted label read as a payload,
+            // the exact false positive this rule's narrowness exists to prevent. The keyword
+            // check above already treats `"` as a delimiter; this scan did not, and that
+            // asymmetry is easy to write and invisible until a case actually reaches it.
+            if (inQuote) {
+                if (c == '"') {
+                    inQuote = false;
+                }
+                continue;
+            }
+            if (inPipe) {
+                if (c == '|') {
+                    inPipe = false;
+                }
+                continue;
+            }
+            if (c == '[') {
+                bracketClose = ']';
+            } else if (c == '{') {
+                bracketClose = '}';
+            } else if (c == '(') {
+                bracketClose = ')';
+            } else if (c == '"') {
+                inQuote = true;
+            } else if (c == '|') {
+                inPipe = true;
+            } else if (c == ':' && i > 0 && i + 1 < rest.length()
+                    && !Character.isWhitespace(rest.charAt(i - 1))
+                    && !Character.isWhitespace(rest.charAt(i + 1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static String[] splitKeyword(String line) {
         int sp = line.indexOf(' ');
         int tab = line.indexOf('\t');
