@@ -13,6 +13,53 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+### An unknown directive no longer mints a node wearing its own text as a name
+
+**Behaviour change, and it is scriptable.** A line shaped like a directive this parser has
+never met — a bare first word followed by a `key:value` payload — used to parse as a *node
+declaration*, so the diagram grew a phantom box with CSS for a name and returned
+`outcome=OK` with `"Rendered successfully."`. That is how `classDef critical fill:#fee2e2`
+rendered as a labelled box on a parser built before `classDef` existed. It is the failure
+mode you hit every time the DSL grows a keyword your vendored jar predates.
+
+Such a line is now **dropped and named**, and the rest of the diagram still renders:
+
+```
+$ printf 'flowchart TD\n    A[One] --> B[Two]\n    quuxStyle zork fill:#f00\n' | sirentide
+(SVG written — A and B render normally)
+
+Rendered successfully. Note: 1 statement was dropped from this body and did not
+render; line 3 uses a directive-shaped line whose keyword this parser does not
+know (a bare first word carrying no `[`/`{`/`(`/`"` delimiter, followed by a
+`key:value` payload) — it would otherwise mint a node wearing its own directive
+text as a name.
+```
+
+Note the verdict still opens with **"Rendered successfully."** — the caveat is appended to
+it, never substituted for it. That is the whole shape of an OK caveat: a script checking
+the exit code or the `outcome` field sees no change, while a human or a log reader gains
+the sentence that was missing.
+
+`outcome` stays **`OK`** and the SVG is real content — this is a *caveat on a success*,
+not a refusal. A diagram must not go blank because one line was unreadable, so the drop is
+line-scoped and composes with the existing pie and font-coverage caveats rather than
+replacing the verdict.
+
+**The rule is deliberately narrow**, and the two edges are worth knowing:
+
+- A multi-word bare line stays a node. `Two Words Bare` is legal here — this parser
+  diverges from mermaid at exactly that point, and an earlier, wider design was refuted by
+  the test corpus. The `key:value` payload is what separates a CSS-carrying directive from
+  an ordinary multi-word label.
+- **A payload-LESS directive still mints.** `animate fast` has no `key:value`, so by shape
+  alone it is indistinguishable from a legal multi-word node. That residual is the cost of
+  the narrowness, it is stated rather than hidden, and closing it needs the vendored-jar
+  version-skew work, not a wider guess here.
+
+Known keywords are unaffected: `classDef`, `class`, `style`, `click`, `direction`,
+`accTitle:`/`accDescr:` keep their own existing treatment, so "we do not know this keyword"
+is never said about a keyword we do know.
+
 ### A flowchart that renders empty no longer reports success
 
 **Behaviour change, and it is scriptable — read this if you pipe Sirentide.** A flowchart

@@ -604,12 +604,17 @@ public final class Sirentide {
             // points at `pie legend`, which shows every label in a side key. Mirrors the caveat-on-OK
             // shape: same Outcome.OK, a richer message/detail, no record change. Composed with the
             // font-coverage caveat so neither honest note can shadow the other.
-            Diagnostics caveat = pieDropCaveat(ir);
-            if (caveat != null) {
-                return new RenderResult(svg, withFontCoverageCaveat(caveat));
+            // The OK caveats COMPOSE, so none can shadow another: pie drop, then dropped
+            // statements, then font coverage. Each takes the previous as its base and appends.
+            Diagnostics ok = pieDropCaveat(ir);
+            if (ok == null) {
+                ok = new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, "");
             }
-            return new RenderResult(svg,
-                okDiagnostics(STAGE_EMIT, "Rendered successfully."));
+            Diagnostics dropped = droppedStatementCaveat(ir, dsl, ok);
+            if (dropped != null) {
+                ok = dropped;
+            }
+            return new RenderResult(svg, withFontCoverageCaveat(ok));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
@@ -758,6 +763,50 @@ public final class Sirentide {
     /// types can also render an empty scene from a written body (a pie whose rows are all
     /// malformed, a class diagram with no parsed classes); those are the SAME defect class and are
     /// NOT closed here.
+    /// The OK CAVEAT for a body that rendered but LOST a statement (plan 66572bcd; ruling
+    /// sirentide/923 Correction 2 — "the line drops, the diagram renders, the drop is NAMED").
+    ///
+    /// {@link #emptiedGraphDiagnostics} is the all-or-nothing half of this: it speaks only when a
+    /// body drops to zero nodes AND zero edges. A body that drops ONE statement and still renders
+    /// six others was reported "Rendered successfully." with no mention of the loss — the author
+    /// watched a line vanish and the verdict said nothing. That is the same silence the empty-graph
+    /// work closed, one case narrower.
+    ///
+    /// Rides Outcome.OK deliberately, composing with the pie and font-coverage caveats: the SVG is
+    /// real content and the render genuinely succeeded. Only the verdict on top of it gets richer.
+    /// Line-SCOPED, never the inert shell — a diagram must not go blank because one line was
+    /// unreadable, which is what routing this through UNSUPPORTED_CONSTRUCT would have bought.
+    ///
+    /// Returns null when nothing dropped, or when the emptied-graph gate above already owns the
+    /// verdict (that path is strictly louder and must not be shadowed by a caveat).
+    private static Diagnostics droppedStatementCaveat(Diagram ir, String dsl, Diagnostics base) {
+        if (!(ir instanceof Flowchart fc) || (fc.nodes().isEmpty() && fc.edges().isEmpty())) {
+            return null;   // not a flowchart, or the louder emptied-graph gate owns it
+        }
+        com.sirentide.parse.DslParser.FlowchartBodyCensus census =
+            com.sirentide.parse.DslParser.flowchartBodyCensus(dsl);
+        if (census == null || census.dropped().isEmpty()) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.DroppedStatement first = census.dropped().get(0);
+        String count = census.droppedTotal() == 1 ? "1 statement was"
+            : census.droppedTotal() + " statements were";
+        StringBuilder detail = new StringBuilder("dropped statement(s): ")
+            .append(census.droppedTotal());
+        for (com.sirentide.parse.DslParser.DroppedStatement d : census.dropped()) {
+            detail.append("; line ").append(d.line()).append(": ").append(d.text());
+        }
+        if (census.droppedTotal() > census.dropped().size()) {
+            detail.append("; (")
+                .append(census.droppedTotal() - census.dropped().size())
+                .append(" more not listed)");
+        }
+        String caveat = " Note: " + count + " dropped from this body and did not render; line "
+            + first.line() + " uses " + first.reason() + ".";
+        return new Diagnostics(Outcome.OK, base.stage(), base.message() + caveat, first.line(),
+            base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
+    }
+
     private static Diagnostics emptiedGraphDiagnostics(Diagram ir, String dsl) {
         if (!(ir instanceof Flowchart fc) || !fc.nodes().isEmpty() || !fc.edges().isEmpty()) {
             return null;

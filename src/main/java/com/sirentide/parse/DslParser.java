@@ -829,6 +829,17 @@ public final class DslParser {
                     // rest, no colon) still parses as a node — only the directive SHAPE is reserved.
                     continue;
                 }
+                // The FORWARD-COMPAT SHAPE RULE, ordered AFTER the allowlist above so a KNOWN
+                // keyword keeps its own already-decided treatment and only an UNKNOWN one falls
+                // here (ruling sirentide/923 answer 1c). It sits BEFORE parseEndpoint because the
+                // line IS a syntactically valid node — that is precisely why it mints — so asking
+                // the endpoint validator first would answer "valid" and settle nothing.
+                if (isUnknownDirectiveShape(kwRest)) {
+                    if (sink != null) {
+                        sink.drop(i, line, REASON_DIRECTIVE_SHAPE, false);
+                    }
+                    continue;
+                }
                 // No edge operator at top level → the whole line is a lone node declaration. A
                 // bracket-swallowed arrow (`A[Start --> B[End]`) lands here too and drops via the
                 // endpoint validator (nested `[` → malformed), NOT as a plausible node.
@@ -1143,6 +1154,10 @@ public final class DslParser {
     static final String REASON_NODE =
         "a node declaration the parser could not read (an unterminated `[`/`{`, a nested bracket, or "
             + "trailing text after a closed label)";
+    static final String REASON_DIRECTIVE_SHAPE =
+        "a directive-shaped line whose keyword this parser does not know (a bare first word carrying "
+            + "no `[`/`{`/`(`/`\"` delimiter, followed by a `key:value` payload) — it would otherwise "
+            + "mint a node wearing its own directive text as a name";
 
     /// How many dropped statements a census RETAINS. The count is exact; only the retained sample is
     /// bounded — the same cap discipline every other list in this parser follows, so a 10k-line body
@@ -2401,6 +2416,96 @@ public final class DslParser {
 
     /// Splits a directive line into `[keyword, rest]` — the first whitespace-delimited token and the
     /// remaining free-text label (stripped; "" when the keyword stands alone, e.g. a bare `end`).
+    /// The FORWARD-COMPAT SHAPE RULE (plan 66572bcd, ruling sirentide/923 as amended by my 944).
+    /// True when an arrowless line looks like a directive this parser has never met: a bare first
+    /// word carrying no label delimiter, followed by a `key:value` payload. Such a line is DROPPED
+    /// and named rather than minted as a lone node wearing its own directive text — the playground
+    /// silent-mint finding, where `classDef critical fill:#fee2e2` on a pre-classDef parser rendered
+    /// a phantom node with CSS for a name.
+    ///
+    /// TWO CONDITIONS, NOT THREE — and the missing one is deliberate, so do not re-add it. The
+    /// ruling's first conjunct was "not a valid node under parseEndpoint". Measured by reflection
+    /// (my sirentide/944): parseEndpoint returns a VALID node for `quuxStyle zork fill:#f00`, for
+    /// `classDef danger fill:#ff0000`, and for every refuting family. So that conjunct is FALSE for
+    /// exactly the line this rule condemns, and an ALL-of gate containing it can never fire. The
+    /// inversion is the mechanism rather than an oversight: parseEndpoint ACCEPTING the line is not
+    /// incidental to the defect, it is WHY the line mints.
+    ///
+    /// NARROW ON PURPOSE, after a corpus refutation. An earlier design condemned any top-level
+    /// whitespace, and the corpus refuted it — FlowchartTest:203 pins a divergence from mermaid at
+    /// exactly that point, and a multi-word bare line like `Two Words Bare` is a legal node here.
+    /// The `key:value` payload is what separates a CSS-carrying directive from a multi-word label.
+    ///
+    /// THE RESIDUAL, stated rather than hidden (ruling's close): a PAYLOAD-LESS directive keyword
+    /// (`animate fast`) still mints. That is the deliberate cost of the narrowness, and it is what
+    /// the version-skew plan (B) exists to cover. This rule catches the CSS-payload family only.
+    private static boolean isUnknownDirectiveShape(String[] kwRest) {
+        String keyword = kwRest[0];
+        String rest = kwRest[1];
+        if (keyword.isEmpty() || rest.isEmpty()) {
+            return false;                       // a bare single token is a node (`style`, `A`)
+        }
+        for (int i = 0; i < keyword.length(); i++) {
+            char c = keyword.charAt(i);
+            if (c == '[' || c == '{' || c == '(' || c == '"' || c == '|') {
+                return false;                   // `A[Start] #22c55e` — a delimited node, not a directive
+            }
+        }
+        return hasKeyValuePayload(rest);
+    }
+
+    /// A `key:value` payload in the rest of a directive-shaped line: a colon with a non-blank token
+    /// on BOTH sides, scanned OUTSIDE any label span so a colon inside `A[a:b]` is label content.
+    /// The both-sides requirement is what keeps `accTitle:`-style trailing colons and a bare `:`
+    /// from reading as a payload.
+    private static boolean hasKeyValuePayload(String rest) {
+        char bracketClose = 0;
+        boolean inPipe = false;
+        boolean inQuote = false;
+        for (int i = 0; i < rest.length(); i++) {
+            char c = rest.charAt(i);
+            if (bracketClose != 0) {
+                if (c == bracketClose) {
+                    bracketClose = 0;
+                }
+                continue;
+            }
+            // A QUOTED span is a span too. Found by mutation-probing my own scan: without this
+            // arm `foo "a:b"` was CONDEMNED — a colon inside a quoted label read as a payload,
+            // the exact false positive this rule's narrowness exists to prevent. The keyword
+            // check above already treats `"` as a delimiter; this scan did not, and that
+            // asymmetry is easy to write and invisible until a case actually reaches it.
+            if (inQuote) {
+                if (c == '"') {
+                    inQuote = false;
+                }
+                continue;
+            }
+            if (inPipe) {
+                if (c == '|') {
+                    inPipe = false;
+                }
+                continue;
+            }
+            if (c == '[') {
+                bracketClose = ']';
+            } else if (c == '{') {
+                bracketClose = '}';
+            } else if (c == '(') {
+                bracketClose = ')';
+            } else if (c == '"') {
+                inQuote = true;
+            } else if (c == '|') {
+                inPipe = true;
+            } else if (c == ':' && i > 0 && i + 1 < rest.length()
+                    && !Character.isWhitespace(rest.charAt(i - 1))
+                    && !Character.isWhitespace(rest.charAt(i + 1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static String[] splitKeyword(String line) {
         int sp = line.indexOf(' ');
         int tab = line.indexOf('\t');
