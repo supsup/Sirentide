@@ -13,6 +13,37 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+### A `%%` comment in the diagram body no longer renders as a node
+
+**Behaviour change, and it is scriptable.** Mermaid's comment syntax is `%% text`. Sirentide
+honors `%%` in the *preamble* as its config channel, and used to hand a `%%` line in the
+**body** straight to the type parser — which parsed it as a lone node declaration. The most
+copied line in any mermaid snippet became a drawn, labelled box wearing the comment as its
+name, and the render reported `outcome=OK`.
+
+Measured across types before the fix, so the scope is a fact rather than a guess: **flowchart,
+`stateDiagram-v2` and `mindmap` all leaked** the comment into the diagram; `sequenceDiagram`
+and `pie` already dropped it. The fix is therefore at the shared body seam rather than in one
+type parser — all three public entry points (`parse`, `detectUnsupportedConstruct`,
+`flowchartBodyCensus`) now take the body from one producer, so they cannot disagree about what
+a body *is*.
+
+```
+flowchart TD
+    %% the happy path
+    A[One] --> B[Two]
+```
+renders two nodes. It used to render **three**, the third named `%% the happy path`.
+
+**Comments are blanked, not removed**, and that is deliberate: diagnostics report 1-based
+*physical* line numbers, so deleting the line would silently shift every later line's reported
+position — a diagnostic pointing at the wrong line is worse than one pointing nowhere. A
+comment on line 2 leaves a bad statement on line 3 still reported as line 3.
+
+**A comment is not a dropped statement.** It carries no "statement was dropped" caveat, because
+it was never a lost statement — it is intentional syntax. A body of *only* comments declares
+nothing and reports success, exactly as an empty body does.
+
 ### An unknown directive no longer mints a node wearing its own text as a name
 
 **Behaviour change, and it is scriptable.** A line shaped like a directive this parser has

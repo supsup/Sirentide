@@ -180,9 +180,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return new Empty();   // a config block with no diagram body → inert (never throws)
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         // The header is a TYPE token plus optional whitespace-split MODIFIER tokens (e.g.
         // `pie legend`). Bare `pie`/`xychart`/… stay exactly as before (a lone type token, no
         // modifiers). Unknown/malformed modifiers are simply ignored — the diagram still bakes
@@ -366,6 +364,43 @@ public final class DslParser {
     /// line spelled like a directive is NOT at risk: the scan only consumes preamble UP TO the first
     /// non-preamble (type) line, so a `%%` inside the body (after the type line) is left to the type
     /// parser exactly as before.
+    /// The diagram BODY: the source minus the preamble, with `%%` COMMENT lines blanked.
+    ///
+    /// <p>Mermaid's comment syntax is `%% text`. Sirentide honors `%%` in the PREAMBLE as its config
+    /// channel ({@link #parseConfig}), and until now left a `%%` line in the body to the type parser —
+    /// which is how the most-copied line in any mermaid snippet became a DRAWN NODE wearing the comment
+    /// as its name. Measured before the fix: flowchart, stateDiagram-v2 and mindmap all leaked it at
+    /// outcome=OK; sequence and pie already dropped it. A comment rendering as content is the
+    /// silent-WRONG class this parser keeps closing one member at a time.
+    ///
+    /// <p>BLANKED, NOT REMOVED, and that is load-bearing: diagnostics report 1-based PHYSICAL line
+    /// numbers, so deleting a line would silently shift every later line's reported position. Blank
+    /// lines are already skipped by every type parser, so blanking is a no-op for them.
+    ///
+    /// <p>ONE PRODUCER for all three public entry points ({@link #parse}, {@link
+    /// #detectUnsupportedConstruct}, {@link #flowchartBodyCensus}) so they cannot disagree about what
+    /// the body IS. That matters beyond tidiness: the census feeds the dropped-statement caveat, so a
+    /// comment visible to the census but not to the parse would report a phantom "1 statement was
+    /// dropped" on every commented diagram. A comment is intentional syntax, not a lost statement.
+    ///
+    /// <p>Returns the INPUT array unchanged when there is no preamble and no comment, so a plain source
+    /// still bakes byte-identically.
+    private static String[] bodyLines(String[] rawLines, int bodyStart) {
+        String[] sliced = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] out = null;
+        for (int i = 0; i < sliced.length; i++) {
+            if (sliced[i].strip().startsWith(CONFIG_DIRECTIVE)) {
+                if (out == null) {
+                    out = sliced.clone();   // copy-on-first-write: never mutate the caller's array
+                }
+                out[i] = "";
+            }
+        }
+        return out == null ? sliced : out;
+    }
+
     private static int preambleEnd(String[] lines) {
         int i = 0;
         while (i < lines.length) {
@@ -1112,9 +1147,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return null;
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         // CANONICALIZE the header token rather than string-matching it. `stateDiagram-v2`,
         // `stateDiagram` and `state` are the same diagram type, and the alias table is the single
         // place that knows so — matching the raw spelling here would silently cover one spelling of
@@ -1252,9 +1285,7 @@ public final class DslParser {
         if (bodyStart >= rawLines.length) {
             return null;
         }
-        String[] lines = bodyStart == 0
-            ? rawLines
-            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] lines = bodyLines(rawLines, bodyStart);
         String[] header = lines[0].strip().split("\\s+");
         // Canonicalize rather than string-match the raw spelling: `Flowchart`/`FLOWCHART` are the
         // same type and the alias table is the only thing that knows so.
