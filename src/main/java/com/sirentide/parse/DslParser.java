@@ -305,6 +305,24 @@ public final class DslParser {
     /// into this parse-only change.)
     static final java.util.Map<String, String> DIAGRAM_TYPE_ALIASES = java.util.Map.ofEntries(
         // Mermaid spellings whose canonical Sirentide token differs.
+        // `graph` is mermaid's ORIGINAL flowchart spelling and still the most-copied one; a
+        // snippet pasted from anywhere older than a couple of years opens with it. It resolved to
+        // nothing and the whole diagram degraded, which is the same first-contact failure the
+        // statediagram/sequencediagram/quadrantchart aliases were added to end.
+        //
+        // THE HONEST CAVEAT, and the reason this alias is defensible only NOW: mermaid's `graph`
+        // and `flowchart` are not the same dialect, and Sirentide's flowchart does not carry
+        // mermaid's full shape set or its auto-layout. Accepting the spelling therefore promises
+        // a fidelity we do not have — which is exactly why it lands in the same change that
+        // corrects README's "full mermaid node-shape set" claim to eight of fourteen and names
+        // the missing forms. A silent blank teaches nothing; a render plus a documented dialect
+        // boundary teaches what is actually true.
+        java.util.Map.entry("graph", "flowchart"),
+        // `xychart-beta` is mermaid's actual spelling. `sankey-beta` was already admitted (in the
+        // switch, at the `case "sankey", "sankey-beta"` arm), so the -beta convention was
+        // considered and then applied unevenly — this is the missing half of a decision already
+        // taken, not a new one.
+        java.util.Map.entry("xychart-beta", "xychart"),
         java.util.Map.entry("statediagram", "state"),
         java.util.Map.entry("statediagram-v2", "state"),
         java.util.Map.entry("sequencediagram", "sequence"),
