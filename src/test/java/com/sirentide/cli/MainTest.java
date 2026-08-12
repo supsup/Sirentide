@@ -261,6 +261,45 @@ class MainTest {
     }
 
     @Test
+    void anOkRenderThatDROPPEDAStatementSaysSoAndStillExitsZero() throws IOException {
+        // The directive-shape rule drops an unknown directive-shaped statement and records a
+        // line-scoped caveat on an otherwise-OK render, so a lost line is not lost silently.
+        // The caveat lived only in the API: through this verb — which the authoring docs name as
+        // THE local check — the author got exit 0, no output, and a diagram quietly missing their
+        // line. A caveat channel nothing reads is not a channel.
+        Path md = writeMd("dropped.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+                mystyle A fill:#f00
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("out.svg").toString());
+        assertEquals(0, c.exitCode,
+            "the render genuinely succeeded and /docs genuinely serves this SVG — a drop is not a failure");
+        assertTrue(c.err.contains("rendered, with caveats"), "stderr: " + c.err);
+        assertTrue(c.err.contains("mystyle A fill:#f00"),
+            "the caveat must name the statement that vanished, not merely that one did: " + c.err);
+        assertTrue(Files.exists(tmp.resolve("out.svg")), "an OK render still writes its SVG");
+    }
+
+    @Test
+    void aCleanRenderStaysSILENT() throws IOException {
+        // THE CONTROL for the test above, and the reason it is not optional: a warning that fires
+        // on every render is noise an author learns to ignore, which would cost more than the
+        // silence it replaced. Asserting empty stderr is what makes the caveat MEAN something.
+        Path md = writeMd("clean.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("clean.svg").toString());
+        assertEquals(0, c.exitCode);
+        assertEquals("", c.err, "a diagram that lost nothing must say nothing: " + c.err);
+    }
+
+    @Test
     void anUnrenderableFenceWithMinusOLeavesAnExistingDestinationByteIdentical() throws IOException {
         Path md = writeMd("bad.md", "```sirentide\nnot-a-real-diagram-type\n```\n");
         Path dest = tmp.resolve("out.svg");

@@ -191,6 +191,23 @@ public final class Main {
                 return 1;
             }
             svg = result.svg();
+
+            // AN `OK` RENDER CAN STILL HAVE LOST A LINE, and until now this verb said nothing
+            // about it. The directive-shape rule DROPS an unknown directive-shaped statement and
+            // records a line-scoped caveat on an otherwise-OK render, precisely so a lost line is
+            // not lost silently — but the caveat lived only in the API. Through this CLI, which
+            // the authoring docs name as THE local check, the author saw exit 0, no output, and a
+            // diagram quietly missing their line. A caveat channel nothing reads is not a channel.
+            //
+            // Printed to stderr, and the exit stays 0: the render genuinely succeeded and /docs
+            // genuinely serves this SVG. Turning a dropped statement into a failure here would
+            // claim a bake outcome that does not happen, which is the same untruth the exit-1 arm
+            // above exists to avoid — pointing the other way.
+            String caveat = result.diagnostics().detail();
+            if (caveat != null && !caveat.isBlank()) {
+                err.println("sirentide: rendered, with caveats — " + caveat);
+                err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
+            }
         }
 
         // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng

@@ -8,6 +8,18 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
+  an unknown directive-shaped statement and records a line-scoped caveat on an otherwise-`OK`
+  render, specifically so a lost line is not lost silently — but the caveat lived only in the API.
+  Through the `render` verb, which the authoring docs name as *the* local check, an author saw
+  exit `0`, no output, and a diagram quietly missing their line. A caveat channel nothing reads is
+  not a channel. The verb now prints `sirentide: rendered, with caveats — dropped statement(s): 1;
+  line 3: <the statement>` to stderr, naming the statement that vanished rather than only
+  reporting that one did. The exit code stays `0` and the SVG is still written: the render
+  genuinely succeeded and `/docs` genuinely serves it, so failing here would claim a bake outcome
+  that does not happen. A diagram that lost nothing stays silent — asserted by its own control,
+  because a warning that fires on every render is noise an author learns to ignore.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
