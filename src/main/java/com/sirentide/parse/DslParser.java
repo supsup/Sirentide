@@ -696,6 +696,17 @@ public final class DslParser {
     /// round-trips — NOT degraded to Empty).
     private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
             String configDirection) {
+        return parseFlowchart(lines, header, textColor, configDirection, null);
+    }
+
+    /// The flowchart parse, with an OPTIONAL {@link BodySink} that OBSERVES the walk (plan 650d6425).
+    /// `sink` is `null` for every rendering parse, so the bake is byte-identical; the diagnostics
+    /// entry passes one to learn WHY a body produced an empty graph. The sink rides the REAL loop on
+    /// purpose: a second scanner that re-derived "which lines drop" would be a copy of this method's
+    /// control flow and would drift from it the day a drop rule moves (the same one-envelope-three-
+    /// callers discipline {@link #exceedsSourceCap} exists for).
+    private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
+            String configDirection, BodySink sink) {
         // An unsupported Mermaid construct anywhere in the body (a top-level `&` fan-out, a `~~~`
         // invisible link, a `<br/>` in a label, or a `style`/`click` directive) makes the whole bake
         // untrustworthy: `A & B --> C` used to mint ONE literal node named `A & B`, a `<br/>` baked as
@@ -765,6 +776,13 @@ public final class DslParser {
             if (line.isEmpty()) {
                 continue;
             }
+            // A NON-BLANK body line: the author wrote a statement here. Counted before any drop
+            // decision, so `statements > 0` means "this body was not empty" no matter what the
+            // statement turned out to be (plan 650d6425 — the honesty trigger is non-empty-BODY,
+            // never merely empty-graph).
+            if (sink != null) {
+                sink.statement(i);
+            }
             // Operator-scan for the top-level edge operators (outside every bracket/brace/pipe span).
             // Each carries its byte offset, its length, and its (style, arrow) — the 6 mermaid forms.
             List<EdgeOp> arrows = topLevelEdges(line);
@@ -815,6 +833,9 @@ public final class DslParser {
                 // bracket-swallowed arrow (`A[Start --> B[End]`) lands here too and drops via the
                 // endpoint validator (nested `[` → malformed), NOT as a plausible node.
                 String[] nd = parseEndpoint(line);
+                if (nd == null && sink != null) {
+                    sink.drop(i, line, REASON_NODE, false);
+                }
                 if (nd != null && registerNode(nodeLabels, nodeShapes, nodeColors, nd)) {
                     joinOpenClusters(clusterStack, nd[0]);
                 }
@@ -827,6 +848,9 @@ public final class DslParser {
             // real feature, the whole line DROPS — loud-not-silent, same convention as a
             // malformed endpoint (never half-drawn, never a phantom).
             if (anyArrowPrecededByLt(line, arrows)) {
+                if (sink != null) {
+                    sink.drop(i, line, REASON_BIDIRECTIONAL, true);
+                }
                 continue;
             }
             // Tokenize the chain: endpoints[0..k] separated by k arrows, each arrow carrying an
@@ -834,12 +858,16 @@ public final class DslParser {
             // first arrow; each subsequent segment is `[|label|] endpoint`.
             String[] head = parseEndpoint(line.substring(0, arrows.get(0).pos()));
             if (head == null) {
+                if (sink != null) {
+                    sink.drop(i, line, REASON_ENDPOINT, false);
+                }
                 continue;   // malformed head endpoint → drop the whole line
             }
             List<String[]> endpoints = new ArrayList<>();
             List<String> hopLabels = new ArrayList<>();
             endpoints.add(head);
             boolean dropped = false;
+            String dropReason = null;   // which of the two chain drops fired (for the sink only)
             for (int k = 0; k < arrows.size(); k++) {
                 // The segment starts AFTER this operator (its own length, not a fixed 3 — `-.->` is 4).
                 int segStart = arrows.get(k).pos() + arrows.get(k).len();
@@ -850,6 +878,7 @@ public final class DslParser {
                     int close = seg.indexOf('|', 1);
                     if (close < 0) {
                         dropped = true;   // missing closing pipe → drop the whole line
+                        dropReason = REASON_EDGE_LABEL;
                         break;
                     }
                     String raw = seg.substring(1, close).strip();
@@ -859,12 +888,16 @@ public final class DslParser {
                 String[] ep = parseEndpoint(seg);
                 if (ep == null) {
                     dropped = true;   // any malformed endpoint drops the whole line (never half-drawn)
+                    dropReason = REASON_ENDPOINT;
                     break;
                 }
                 hopLabels.add(label);
                 endpoints.add(ep);
             }
             if (dropped) {
+                if (sink != null) {
+                    sink.drop(i, line, dropReason, false);
+                }
                 continue;
             }
             // Register every endpoint (only after the whole chain validated — a partial line never
@@ -1092,6 +1125,139 @@ public final class DslParser {
         // offset back and convert to 1-based, so the number the author sees is the PHYSICAL line
         // counted from the top of their raw source (706 Finding 3).
         return new UnsupportedConstruct(u.token(), bodyStart + u.line() + 1, u.message());
+    }
+
+    // ---- emptied-body census (plan 650d6425) ---------------------------------------------------
+
+    /// Author-facing NOUN PHRASES for the flowchart drop paths, one per `continue` in
+    /// {@link #parseFlowchart}'s body loop that discards an author statement whole. They are
+    /// constants rather than inline literals so a new drop site is a compile-visible choice
+    /// ("which of these is it, or is it a new one?") rather than a silently unnamed drop.
+    static final String REASON_BIDIRECTIONAL =
+        "a bidirectional arrow (`<-->`, `<-.->`, `<==>`), which the Sirentide DSL does not support";
+    static final String REASON_ENDPOINT =
+        "an endpoint the parser could not read (an unterminated `[`/`{`, a nested bracket, trailing "
+            + "text after a closed label, or an empty endpoint)";
+    static final String REASON_EDGE_LABEL =
+        "an edge label with no closing `|`";
+    static final String REASON_NODE =
+        "a node declaration the parser could not read (an unterminated `[`/`{`, a nested bracket, or "
+            + "trailing text after a closed label)";
+
+    /// How many dropped statements a census RETAINS. The count is exact; only the retained sample is
+    /// bounded — the same cap discipline every other list in this parser follows, so a 10k-line body
+    /// of dropped statements cannot build a runaway diagnostic.
+    static final int MAX_DROPS_REPORTED = 5;
+
+    /// How much of a dropped source line the census echoes back. The text lands in
+    /// {@link com.sirentide.api.Diagnostics#detail()} (the log-facing field), never in the
+    /// author-facing message, and it is bounded so one pathological 1 MB line cannot become a 1 MB
+    /// diagnostic string.
+    static final int MAX_DROPPED_TEXT = 60;
+
+    /// One body statement the flowchart parse DROPPED WHOLE — the loud-not-silent convention
+    /// (DESIGN §6) seen from the diagnostics side. `line` is the 1-based PHYSICAL line of the
+    /// author's raw source (same numbering as {@link UnsupportedConstruct#line()}); `text` is that
+    /// line stripped and truncated to {@link #MAX_DROPPED_TEXT}; `reason` is one of the `REASON_*`
+    /// phrases; `unsupported` is true when the construct is RECOGNIZED-but-unsupported (the
+    /// {@link com.sirentide.api.Outcome#UNSUPPORTED_CONSTRUCT} channel) rather than unparseable
+    /// (which is a {@link com.sirentide.api.Outcome#PARSE_ERROR}).
+    public record DroppedStatement(int line, String text, String reason, boolean unsupported) {}
+
+    /// What a FLOWCHART body actually contributed, as observed BY the parse itself (plan 650d6425).
+    /// `statements` counts the non-blank body lines the author wrote — the "was this body empty?"
+    /// question, which the IR alone cannot answer: `flowchart TD` and `flowchart TD` + `A <--> B`
+    /// produce the SAME zero-node, zero-edge Flowchart and the SAME 174-byte SVG. `droppedTotal` is
+    /// how many of those statements were discarded whole, and `dropped` is the first
+    /// {@link #MAX_DROPS_REPORTED} of them. `firstStatementLine` is the 1-based physical line of the
+    /// first non-blank body line, or -1 for an empty body.
+    public record FlowchartBodyCensus(int statements, int firstStatementLine, int droppedTotal,
+                                      List<DroppedStatement> dropped) {
+        public FlowchartBodyCensus {
+            dropped = List.copyOf(dropped);
+        }
+    }
+
+    /// The mutable collector {@link #parseFlowchart} writes into when the diagnostics entry asks for
+    /// a census. Package-private and never allocated on a rendering parse (the sink is `null` there,
+    /// so the bake is byte-identical). CONTRACT FOR FUTURE EDITS, and it belongs here where the drop
+    /// sites are: every `continue` in that loop that discards author content must call
+    /// {@link #drop} with a `REASON_*` phrase — a drop the sink cannot see becomes an unexplained
+    /// empty diagram, which is the exact defect this census exists to close.
+    private static final class BodySink {
+        private int statements;
+        private int firstStatementLine = -1;
+        private int droppedTotal;
+        private final List<DroppedStatement> dropped = new ArrayList<>();
+
+        /// A non-blank body line at 0-based body index `i` (converted to a physical line by the
+        /// public entry point, which owns the preamble offset).
+        void statement(int i) {
+            statements++;
+            if (firstStatementLine < 0) {
+                firstStatementLine = i;
+            }
+        }
+
+        void drop(int i, String text, String reason, boolean unsupported) {
+            droppedTotal++;
+            if (dropped.size() < MAX_DROPS_REPORTED) {
+                String shown = text.length() > MAX_DROPPED_TEXT
+                    ? text.substring(0, MAX_DROPPED_TEXT) + "..."
+                    : text;
+                dropped.add(new DroppedStatement(i, shown, reason, unsupported));
+            }
+        }
+    }
+
+    /// Census the body of a FLOWCHART source: how many statements the author wrote, and which of
+    /// them the parse dropped whole (plan 650d6425). Returns `null` when `src` is not a flowchart,
+    /// is blank, or is over the source cap — there is then nothing this can honestly say.
+    ///
+    /// It exists because a DROPPED statement leaves NO trace in the IR. A flowchart body that drops
+    /// to zero nodes and zero edges is byte-for-byte the same Flowchart — and the same SVG — as a
+    /// body the author never wrote, so the render entry reported "Rendered successfully." for a
+    /// diagram the author watched vanish. The census is the missing half of that verdict: it is the
+    /// only place that can tell an EMPTY body (legitimately empty — it must keep reporting success)
+    /// from an EMPTIED one.
+    ///
+    /// PURE and separate from {@link #parse}, mirroring {@link #parseConfig} and
+    /// {@link #detectUnsupportedConstruct}: it re-runs the real body walk with an observing sink
+    /// rather than re-deriving the drop rules, so the census cannot disagree with the parse.
+    /// `textColor`/`configDirection` are irrelevant to which statements drop, so the re-run passes
+    /// neither. Never throws (DESIGN §6).
+    public static FlowchartBodyCensus flowchartBodyCensus(String src) {
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
+            return null;
+        }
+        // The SAME envelope as detectUnsupportedConstruct — no strip() before the split, so the
+        // reported line is the author's PHYSICAL line (706 Finding 3).
+        String[] rawLines = src.split("\\R");
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return null;
+        }
+        String[] lines = bodyStart == 0
+            ? rawLines
+            : java.util.Arrays.copyOfRange(rawLines, bodyStart, rawLines.length);
+        String[] header = lines[0].strip().split("\\s+");
+        // Canonicalize rather than string-match the raw spelling: `Flowchart`/`FLOWCHART` are the
+        // same type and the alias table is the only thing that knows so.
+        if (!canonicalDiagramType(header[0]).equals("flowchart")) {
+            return null;
+        }
+        BodySink sink = new BodySink();
+        parseFlowchart(lines, header, null, null, sink);
+        // Convert the sink's 0-based body indices to 1-based physical lines (bodyStart + i + 1),
+        // exactly as detectUnsupportedConstruct does.
+        List<DroppedStatement> dropped = new ArrayList<>(sink.dropped.size());
+        for (DroppedStatement d : sink.dropped) {
+            dropped.add(new DroppedStatement(bodyStart + d.line() + 1, d.text(), d.reason(),
+                d.unsupported()));
+        }
+        return new FlowchartBodyCensus(sink.statements,
+            sink.firstStatementLine < 0 ? -1 : bodyStart + sink.firstStatementLine + 1,
+            sink.droppedTotal, dropped);
     }
 
     /// Scan a FLOWCHART body for the first statement-level unsupported construct (plan 933eed50 F2),
