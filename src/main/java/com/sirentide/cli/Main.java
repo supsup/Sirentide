@@ -64,9 +64,17 @@ public final class Main {
                            Sirentide does NOT bundle it -- same posture as the math backend, the
                            host supplies the tool -- so --png without it is a loud usage error,
                            never a silent skip.
+          --strict         treat a DROPPED statement as a failure (exit 1). A render can succeed
+                           and still drop a statement Sirentide does not recognise; the caveat
+                           naming that line goes to stderr and the exit stays 0 by default,
+                           because the bake really happens and really serves that SVG. CI is
+                           where nobody reads stderr, so an unattended caller opts in here. The
+                           SVG is still written -- it is exactly what /docs would serve, and a
+                           rejected gate is worth inspecting.
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
-        not render — /docs would keep the fence verbatim with a visible caption; nothing written.
+        not render — /docs would keep the fence verbatim with a visible caption; nothing written
+        — OR --strict was passed and the render dropped a statement, where the SVG IS written.
         2 = loud error (no fence, unreadable/over-cap input, unwritable -o); nothing written.
         -o writes are atomic: the destination is replaced only after a complete render + write, so
         a failure never truncates or corrupts an existing file. A filesystem that cannot replace
@@ -105,9 +113,17 @@ public final class Main {
         // rejected still exits 2 with the same message, which is what the arity tests pin.
         String outPath = null;
         String pngPath = null;
+        boolean strictFailed = false;
         String brewshotJar = System.getenv(BREWSHOT_JAR_ENV);
+        boolean strict = false;
         for (int i = 2; i < args.length; i++) {
             String flag = args[i];
+            // --strict is VALUELESS, so it is matched before the needs-a-value arity check below;
+            // treating it like -o would consume the next argument and silently eat a path.
+            if ("--strict".equals(flag)) {
+                strict = true;
+                continue;
+            }
             if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)) {
                 err.print(USAGE);
                 err.println("sirentide: bad arguments after the file path");
@@ -207,12 +223,29 @@ public final class Main {
             if (caveat != null && !caveat.isBlank()) {
                 err.println("sirentide: rendered, with caveats — " + caveat);
                 err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
+                // --strict, ruled at sirentide/977: stderr is the right AUTHOR channel and the
+                // wrong CI channel, because CI is exactly where nobody reads stderr. A caveat
+                // that cannot gate anything in the one environment that runs unattended is
+                // recorded-but-unseeable one level up — the same distance this change closed at
+                // the API/render seam, reopened at the render/CI seam.
+                //
+                // Opt-in, so the default stays honest: a drop is not a failed bake. The SVG IS
+                // still written, unlike the exit-1 arm above — there the artifact would have
+                // been a lie about what /docs serves, here it is exactly what /docs serves and
+                // the caller wants to inspect what its gate rejected.
+                if (strict) {
+                    err.println("  --strict: treating dropped statement(s) as a failure");
+                    strictFailed = true;
+                }
             }
         }
 
         // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
         // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
         int code = writeOutput(svg, outPath, out, err);
+        if (code == 0 && strictFailed && pngPath == null) {
+            return 1;
+        }
         if (code != 0 || pngPath == null) {
             return code;
         }

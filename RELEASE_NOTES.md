@@ -19,6 +19,14 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   genuinely succeeded and `/docs` genuinely serves it, so failing here would claim a bake outcome
   that does not happen. A diagram that lost nothing stays silent — asserted by its own control,
   because a warning that fires on every render is noise an author learns to ignore.
+  **`--strict` promotes such a caveat to exit `1`** for unattended callers (ruling
+  `PROJECT/sirentide` 977): stderr is the right author channel and the wrong CI channel,
+  because CI is exactly where nobody reads stderr, and a caveat that cannot gate anything
+  in the one environment that runs unattended is recorded-but-unseeable one level up. The
+  flag is opt-in so the default stays honest, it does **not** manufacture a failure on a
+  clean render, and unlike the exit-`1` unrenderable arm the SVG **is** still written —
+  there the artifact would be a lie about what `/docs` serves, here it is exactly what
+  `/docs` serves and a caller whose gate just rejected something wants to see it.
 
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
