@@ -818,6 +818,18 @@ public final class DslParser {
             if (sink != null) {
                 sink.statement(i);
             }
+            // FAIL-CLOSED ON PARTIAL CONSUMPTION (plan c46d3c51). Before anything is built from
+            // this line, refuse an operator run longer than any form we know. `A ---> B` matched
+            // the 3-char `---` and stranded `> B`, which then minted a drawn node named `> B` at
+            // outcome=OK. Ordered FIRST among the line's own checks so the residue is caught at
+            // the point of the partial consumption rather than downstream, where it is
+            // indistinguishable from a legal bare id.
+            if (firstOperatorResidue(line) >= 0) {
+                if (sink != null) {
+                    sink.drop(i, line, REASON_OPERATOR_RESIDUE, true);
+                }
+                continue;
+            }
             // Operator-scan for the top-level edge operators (outside every bracket/brace/pipe span).
             // Each carries its byte offset, its length, and its (style, arrow) — the 6 mermaid forms.
             List<EdgeOp> arrows = topLevelEdges(line);
@@ -1187,6 +1199,10 @@ public final class DslParser {
     static final String REASON_NODE =
         "a node declaration the parser could not read (an unterminated `[`/`{`, a nested bracket, or "
             + "trailing text after a closed label)";
+    static final String REASON_OPERATOR_RESIDUE =
+        "an edge operator longer than any this parser supports (an extra `-`, `=`, `.` or `>` after "
+            + "a recognized arrow) — consuming only the part it knows would strand the rest as a "
+            + "node name";
     static final String REASON_DIRECTIVE_SHAPE =
         "a directive-shaped line whose keyword this parser does not know (a bare first word carrying "
             + "no `[`/`{`/`(`/`\"` delimiter, followed by a `key:value` payload) — it would otherwise "
@@ -1769,6 +1785,23 @@ public final class DslParser {
     /// end-of-line simply yields no further ops (the endpoint validator then drops the malformed line).
     /// Non-nesting by design — a label may contain an operator but not a nested delimiter.
     private static List<EdgeOp> topLevelEdges(String line) {
+        return scanTopLevel(line, null);
+    }
+
+    /// The 0-based offset of the first edge-operator run this parser could only PARTIALLY consume,
+    /// or -1. See {@link #hasOperatorResidue}. Shares {@link #scanTopLevel} with
+    /// {@link #topLevelEdges} deliberately: a second span walk would be a second answer to "where
+    /// are the top-level operators", and two answers drift — the same one-producer rule the body
+    /// slice and the substitution transform already follow.
+    static int firstOperatorResidue(String line) {
+        int[] out = {-1};
+        scanTopLevel(line, out);
+        return out[0];
+    }
+
+    /// ONE span walk, two views: collect the operators, and (when {@code residueOut} is non-null)
+    /// report the first partially-consumed operator run into {@code residueOut[0]}.
+    private static List<EdgeOp> scanTopLevel(String line, int[] residueOut) {
         List<EdgeOp> arrows = new ArrayList<>();
         char bracketClose = 0;   // 0 = not in a bracket/brace span, else the awaited ']' or '}'
         boolean inPipe = false;
@@ -1798,6 +1831,10 @@ public final class DslParser {
             } else {
                 EdgeOp op = matchEdgeOp(line, i);
                 if (op != null) {
+                    if (residueOut != null && residueOut[0] < 0
+                            && hasOperatorResidue(line, i, op.len())) {
+                        residueOut[0] = i;
+                    }
                     arrows.add(op);
                     i += op.len();   // skip the WHOLE operator (never re-scan a `-.->` tail as `-->`)
                 } else {
@@ -1819,6 +1856,32 @@ public final class DslParser {
     /// family (`==>` vs `===`). A two-char run that is neither (a bare `--`, `-.`, `==`, a single `-`
     /// inside a node id like `A-B`) returns `null` so it stays inert — byte-identical to the old scanner
     /// for `-->`, and for `A-B`/`A--B` which never matched an operator before and still do not.
+    /// True when an edge-operator match at {@code i} of length {@code len} left OPERATOR RESIDUE —
+    /// the source's operator run is longer than any form this parser knows, so consuming a prefix
+    /// would strand the rest as endpoint text.
+    ///
+    /// <p>THE PARSER-CONSUMPTION BOUNDARY (plan c46d3c51; Marlow's binding condition on the crew
+    /// RFC, stafficy/16762). {@link #matchEdgeOp} matches FIXED lengths, so {@code A ---> B} matches
+    /// the 3-char {@code ---} and leaves {@code > B}, which {@link #parseEndpoint} then accepts as a
+    /// bare node id — minting a drawn node literally named {@code > B}, at {@code outcome=OK}.
+    /// Confirmed by execution before this guard existed.
+    ///
+    /// <p>The residue IS the detector, which is why this is a class-level fix rather than a fifth
+    /// entry in a growing blacklist: any operator run longer than a recognized form trips it,
+    /// including spellings nobody has enumerated ({@code ---->}, {@code -->>}, {@code ==>>}).
+    /// Marlow's other half is equally binding and is why this is NOT a character guard: a line
+    /// whose operators are all fully consumed is untouched, so legal syntax cannot be caught by
+    /// widening. A lone {@code -} inside an id ({@code A-B}) is not an operator at all and never
+    /// reaches here.
+    private static boolean hasOperatorResidue(String line, int i, int len) {
+        int after = i + len;
+        if (after >= line.length()) {
+            return false;
+        }
+        char c = line.charAt(after);
+        return c == '-' || c == '=' || c == '>' || c == '.';
+    }
+
     private static EdgeOp matchEdgeOp(String line, int i) {
         int n = line.length();
         char c = line.charAt(i);
