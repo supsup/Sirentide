@@ -261,6 +261,99 @@ class MainTest {
     }
 
     @Test
+    void anOkRenderThatDROPPEDAStatementSaysSoAndStillExitsZero() throws IOException {
+        // The directive-shape rule drops an unknown directive-shaped statement and records a
+        // line-scoped caveat on an otherwise-OK render, so a lost line is not lost silently.
+        // The caveat lived only in the API: through this verb — which the authoring docs name as
+        // THE local check — the author got exit 0, no output, and a diagram quietly missing their
+        // line. A caveat channel nothing reads is not a channel.
+        Path md = writeMd("dropped.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+                mystyle A fill:#f00
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("out.svg").toString());
+        assertEquals(0, c.exitCode,
+            "the render genuinely succeeded and /docs genuinely serves this SVG — a drop is not a failure");
+        assertTrue(c.err.contains("rendered, with caveats"), "stderr: " + c.err);
+        assertTrue(c.err.contains("mystyle A fill:#f00"),
+            "the caveat must name the statement that vanished, not merely that one did: " + c.err);
+        assertTrue(Files.exists(tmp.resolve("out.svg")), "an OK render still writes its SVG");
+    }
+
+    @Test
+    void strictPromotesADroppedStatementToExitOneAndStillWritesTheSvg() throws IOException {
+        // Ruled at sirentide/977. stderr is the right AUTHOR channel and the wrong CI channel,
+        // because CI is exactly where nobody reads stderr — a caveat that cannot gate anything
+        // in the one environment that runs unattended is recorded-but-unseeable one level up.
+        Path out = tmp.resolve("strict.svg");
+        Path md = writeMd("strict-dropped.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+                mystyle A fill:#f00
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", out.toString(), "--strict");
+        assertEquals(1, c.exitCode, "--strict gates on a dropped statement");
+        assertTrue(c.err.contains("mystyle A fill:#f00"), "the gate must name the line: " + c.err);
+        assertTrue(c.err.contains("--strict"), "and say the flag is why: " + c.err);
+        // UNLIKE the exit-1 unrenderable arm, the SVG IS written. There the artifact would be a
+        // lie about what /docs serves; here it is exactly what /docs serves, and a caller whose
+        // gate just rejected something wants to look at what was rejected.
+        assertTrue(Files.exists(out), "--strict gates the exit code, it does not withhold the artifact");
+    }
+
+    @Test
+    void strictDoesNotManufactureAFailureOnACleanRender() throws IOException {
+        // THE CONTROL Fixpoint required with the flag, and the reason is the same one that makes
+        // the silence control load-bearing: a gate that fires on every render is not a gate.
+        Path md = writeMd("strict-clean.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("sc.svg").toString(), "--strict");
+        assertEquals(0, c.exitCode, "--strict on a diagram that lost nothing is exit 0: " + c.err);
+        assertEquals("", c.err, "and silent: " + c.err);
+    }
+
+    @Test
+    void theDefaultIsUNCHANGEDByTheExistenceOfStrict() throws IOException {
+        // The third arm, because "strict works" and "the default still works" are different
+        // claims and only one of them is about the flag.
+        Path md = writeMd("default-dropped.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+                mystyle A fill:#f00
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("d.svg").toString());
+        assertEquals(0, c.exitCode, "without --strict a drop is still not a failure");
+        assertTrue(c.err.contains("rendered, with caveats"), "but it is still SAID: " + c.err);
+    }
+
+    @Test
+    void aCleanRenderStaysSILENT() throws IOException {
+        // THE CONTROL for the test above, and the reason it is not optional: a warning that fires
+        // on every render is noise an author learns to ignore, which would cost more than the
+        // silence it replaced. Asserting empty stderr is what makes the caveat MEAN something.
+        Path md = writeMd("clean.md", """
+            ```sirentide
+            flowchart TD
+                A[Start] --> B[End]
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("clean.svg").toString());
+        assertEquals(0, c.exitCode);
+        assertEquals("", c.err, "a diagram that lost nothing must say nothing: " + c.err);
+    }
+
+    @Test
     void anUnrenderableFenceWithMinusOLeavesAnExistingDestinationByteIdentical() throws IOException {
         Path md = writeMd("bad.md", "```sirentide\nnot-a-real-diagram-type\n```\n");
         Path dest = tmp.resolve("out.svg");
