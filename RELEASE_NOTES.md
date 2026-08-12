@@ -8,6 +8,14 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **`%%` comments are documented.** They have worked for some time and appeared in no
+  author-facing page: not QUICKSTART, not the README, not the docs site. A `%%` line draws
+  nothing and a diagram containing one renders byte-identically to the same diagram without it.
+  The note also states the property that motivated blanking comments rather than removing them —
+  an error further down still reports its **real source line number**, so a comment above a
+  mistake does not shift the diagnostic away from the line you are looking at — and distinguishes
+  the leading `%%` configuration block from a `%%` line in the body.
+
 - **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
   an unknown directive-shaped statement and records a line-scoped caveat on an otherwise-`OK`
   render, specifically so a lost line is not lost silently — but the caveat lived only in the API.
