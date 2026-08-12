@@ -42,8 +42,18 @@ class ReadmeCapabilityClaimTest {
 
     /// mermaid forms the README now explicitly says are NOT supported. If one of these starts
     /// rendering as its own shape, the README's exclusion list is stale and this fires.
-    private static final String[] UNSUPPORTED_FORMS = {
-        "A[/Parallelogram/]", "A[\\Trapezoid/]", "A>Asymmetric]",
+    /// Each entry pairs the mermaid FORM with the shape token that would appear in the a11y
+    /// channel if it ever gained real support. Paired deliberately: the previous version looped
+    /// over the forms but asserted only two tokens, so iterating the asymmetric form asserted
+    /// nothing about asymmetric - the loop LOOKED parameterized and was not. Proven by mutation:
+    /// simulating double-circle gaining support produced ZERO failures under the old assertion.
+    /// double-circle is here because the README names four and the tripwire pinned three
+    /// (Fixpoint, sirentide/1006 followup 2).
+    private static final String[][] UNSUPPORTED_FORMS = {
+        {"A[/Parallelogram/]", "shape=parallelogram"},
+        {"A[\\Trapezoid/]", "shape=trapezoid"},
+        {"A>Asymmetric]", "shape=asymmetric"},
+        {"A(((Double Circle)))", "shape=doublecircle"},
     };
 
     @Test
@@ -85,10 +95,13 @@ class ReadmeCapabilityClaimTest {
         // render as a rect with the delimiters inside the label, which is its own known defect
         // (crew RFC part 1, sirentide/948). What is asserted is that none has quietly gained
         // real support, which would make the README's exclusion list a new false claim.
-        for (String form : UNSUPPORTED_FORMS) {
+        for (String[] pair : UNSUPPORTED_FORMS) {
+            String form = pair[0];
+            String shapeToken = pair[1];
             String a11y = a11yOf("flowchart TD\n    " + form + "\n");
-            assertFalse(a11y.contains("shape=parallelogram") || a11y.contains("shape=trapezoid"),
-                "an unsupported form gained support without the README being updated: " + a11y);
+            assertFalse(a11y.contains(shapeToken),
+                "the unsupported form " + form + " gained support (" + shapeToken
+                    + ") without the README being updated: " + a11y);
         }
     }
 
