@@ -13,7 +13,10 @@ package com.sirentide.api;
 ///   outside label had no room; both OK caveats compose onto one {@link Diagnostics}, classified at
 ///   `stage` `"emit"` (the point of classification, not the layout-time fact each describes).
 /// - {@link #PARSE_ERROR} — the source didn't parse into a recognized diagram (unknown type keyword
-///   on line 1, or an over-cap / unparseable header) and degraded to the empty shell.
+///   on line 1, or an over-cap / unparseable header) and degraded to the empty shell. ALSO (plan
+///   650d6425) a recognized flowchart whose author-written body produced ZERO nodes and ZERO edges
+///   because its statements were unparseable — or declared nothing renderable at all — so the
+///   diagram rendered empty. That case carries a real 1-based {@link Diagnostics#line()}.
 /// - {@link #OUTPUT_CAP_EXCEEDED} — a KNOWN, bounded degrade: the bake passed an output-size/frame
 ///   cap or a deterministic layout-work cap, so it degraded to the inert shell rather than build or
 ///   emit a runaway document.
@@ -23,7 +26,10 @@ package com.sirentide.api;
 ///   `style`/`click` directive. Such a source degrades to the SAME Empty inert-shell target as an
 ///   unknown type, but {@link com.sirentide.parse.DslParser#detectUnsupportedConstruct} splits it out
 ///   of {@link #PARSE_ERROR} by NAMING the offending token — with a real 1-based
-///   {@link Diagnostics#line()}. (An unknown diagram TYPE still folds into PARSE_ERROR.)
+///   {@link Diagnostics#line()}. (An unknown diagram TYPE still folds into PARSE_ERROR.) The same
+///   channel carries the EMPTIED-DIAGRAM degrade (plan 650d6425) when the construct that emptied a
+///   flowchart is recognized-but-unsupported — a bidirectional `<-->`/`<-.->`/`<==>` arrow, which
+///   the parser drops whole rather than mint a phantom `A <` node from.
 /// - {@link #RENDER_BUG} — an UNEXPECTED throwable escaped layout or emit and was caught by the
 ///   last-resort bake guard. This is a renderer defect, not an author mistake — the very class of
 ///   failure this channel exists to stop converting into an indistinguishable blank.

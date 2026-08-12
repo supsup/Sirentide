@@ -13,6 +13,40 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+### A flowchart that renders empty no longer reports success
+
+**Behaviour change, and it is scriptable — read this if you pipe Sirentide.** A flowchart
+whose body has statements but produces no nodes and no edges used to return `outcome=OK`
+with `"Rendered successfully."` and exit `0`. The author got a blank picture and a success
+verdict; every automated check passed and only a human looking at the image could tell.
+
+Such a body now degrades and says which line went, and why:
+
+```
+$ printf 'flowchart TD\n    A <--> B\n' | sirentide
+sirentide: diagram did not render — This flowchart's body has 1 statement but produced
+no nodes and no edges, so the diagram rendered empty: line 2 uses a bidirectional arrow
+(`<-->`, `<-.->`, `<==>`), which the Sirentide DSL does not support, so that whole
+statement was dropped. (nothing written)
+$ echo $?
+1
+```
+
+- **A genuinely empty body is still a success.** `flowchart TD` alone, a blank source, or
+  whitespace keeps `outcome=OK` and exit `0`. The trigger is *a non-empty body that yields
+  an empty graph*, never merely an empty graph — calling every empty diagram a failure would
+  be a worse bug than the one this fixes, and it is pinned by a test.
+- **The SVG is untouched.** Rendered bytes are byte-identical before and after across every
+  probed source; only the diagnostic verdict and the exit code changed.
+- Covered drop paths include the bidirectional arrow forms, unparseable lone-node and
+  endpoint declarations, an unclosed edge label, and bodies that declare nothing renderable
+  (`direction`-only, `classDef`-only, an empty `subgraph`).
+
+Two limits stated rather than implied: this covers **flowcharts only** — other diagram types
+can still render an empty scene from a written body and report OK — and a **partial** drop
+(one line lost while others render) still reports OK, because the trigger is emptiness rather
+than "something was dropped".
+
 ### Fixed
 
 - `render-png` now refuses an unrenderable diagram instead of writing a PNG beside
