@@ -8,6 +8,18 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
+  `graph` is mermaid's original flowchart keyword and still the most-copied one in the wild;
+  `xychart-beta` is mermaid's actual spelling for the chart Sirentide already drew as
+  `xychart`. Both previously fell through the header match and degraded, so a diagram pasted
+  from mermaid's own docs lost its shape for a reason the author could not see. Both are pure
+  aliases onto shapes that already existed — no new renderer, no new grammar.
+  **The README's capability claim was corrected in the same change**, which is the point:
+  the old line overstated what Sirentide draws, so adding two spellings without fixing it
+  would have widened a claim that was already too wide. It now says **8 of 14** mermaid
+  shapes, NAMES the four that are unsupported, and states that activation bars are consumed
+  but not drawn. A capability ships with its own honesty fence or it ships a lie.
+
 - **`%%` comments are documented.** They have worked for some time and appeared in no
   author-facing page: not QUICKSTART, not the README, not the docs site. A `%%` line draws
   nothing and a diagram containing one renders byte-identically to the same diagram without it.
