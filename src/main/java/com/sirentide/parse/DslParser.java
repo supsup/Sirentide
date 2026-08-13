@@ -312,9 +312,17 @@ public final class DslParser {
         // and `flowchart` are not the same dialect, and Sirentide's flowchart does not carry
         // mermaid's full shape set or its auto-layout. Accepting the spelling therefore promises
         // a fidelity we do not have — which is exactly why it lands in the same change that
-        // corrects README's "full mermaid node-shape set" claim to eight of fourteen and names
-        // the missing forms. A silent blank teaches nothing; a render plus a documented dialect
-        // boundary teaches what is actually true.
+        // corrects README's "full mermaid node-shape set" claim to the named eight. A silent
+        // blank teaches nothing; a render plus a documented dialect boundary teaches what is
+        // actually true.
+        //
+        // Followup F1 (sirentide/1009). This comment used to say "to eight of fourteen and names
+        // the missing forms" — asserting the very denominator the README correction deliberately
+        // REFUSES. The page names the eight it supports and names forms it does not, and claims
+        // no total, because "fourteen" is a count of mermaid's set that this parser cannot verify
+        // and that moves whenever mermaid moves. Stating it here re-committed, one layer down and
+        // in the same change, the exact defect that change fixes. Name what is verifiable; do not
+        // restore a denominator to this comment.
         java.util.Map.entry("graph", "flowchart"),
         // `xychart-beta` is mermaid's actual spelling. `sankey-beta` was already admitted (in the
         // switch, at the `case "sankey", "sankey-beta"` arm), so the -beta convention was
