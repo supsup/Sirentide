@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.api.Outcome;
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
@@ -47,11 +48,16 @@ class ShowcaseGenTest {
         new Card("Pie", "pie legend",
             "Proportional wedges, on-slice contrast labels, an optional left color key.",
             "pie legend\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
-        new Card("Bars · Lines · Scatter", "xychart line",
-            "One type, three render modes, multi-series with a legend — and a missing value is an "
-                + "honest <em>gap</em>, never a fake bridge.",
+        new Card("Multi-series line chart", "xychart line",
+            "Connected points, multi-series with a legend — and a missing value is an honest "
+                + "<em>gap</em>, never a fake bridge. Bars are the default <code>xychart</code> mode.",
             "xychart line legend\nseries: Revenue, Cost\n\"Mon\" : 5 3\n\"Tue\" : 8 6\n\"Wed\" : 6\n"
                 + "\"Thu\" : 9 4\n\"Fri\" : 12 7"),
+        new Card("Scatter chart", "xychart scatter",
+            "The same categorical axes and multi-series palette, rendered as independent point "
+                + "discs with no connecting segments; negative values remain below zero.",
+            "xychart scatter legend\nseries: Latency, Throughput\n\"Mon\" : 4 -2\n"
+                + "\"Tue\" : 8 3\n\"Wed\" : 5 7\n\"Thu\" : 11 4\n\"Fri\" : 7 9"),
         new Card("Timeline", "timeline",
             "Events placed <em>proportionally</em> in time; ISO dates render as dates.",
             "timeline\n\"Founded\" : 2019-06-01\n\"Series A\" : 2021-03-15\n\"Launch\" : 2024-11-08"),
@@ -271,6 +277,11 @@ class ShowcaseGenTest {
         "sequence\nClient ->> Server : request\nServer ->> Server : process\n"
             + "Server -->> Client : response";
 
+    /// A recognized-but-unsupported Mermaid construct. The ordinary render remains safely inert;
+    /// `renderWithDiagnostics` supplies the author-facing reason without changing that SVG.
+    private static final String DIAGNOSTIC_DSL =
+        "flowchart TD\nA[Open docs] --> B[Read guide]\nclick A callback \"tooltip\"";
+
     /// The theme card is structurally different (one bake, shown in a light + a dark pane), so it is
     /// generated on its own after the grid of cards.
     private static final String THEME_DSL =
@@ -464,6 +475,34 @@ class ShowcaseGenTest {
             .append("  </div>\n")
             .append("</section>\n");
 
+        // Structured diagnostics card (plan sirentide-render-diagnostics): the side-channel names
+        // an unsupported construct while preserving the ordinary render's exact safe SVG.
+        var diagnosticBake = Sirentide.renderWithDiagnostics(DIAGNOSTIC_DSL);
+        assertEquals(Sirentide.render(DIAGNOSTIC_DSL), diagnosticBake.svg(),
+            "renderWithDiagnostics must preserve render(dsl) byte-for-byte");
+        assertEquals(Outcome.UNSUPPORTED_CONSTRUCT, diagnosticBake.diagnostics().outcome());
+        assertEquals("parse", diagnosticBake.diagnostics().stage());
+        assertEquals(3, diagnosticBake.diagnostics().line());
+        assertTrue(diagnosticBake.diagnostics().message().contains("click"),
+            "the diagnostics demo must name its unsupported construct");
+        String diagnosticReport =
+            "outcome: " + diagnosticBake.diagnostics().outcome() + "\n"
+                + "stage:   " + diagnosticBake.diagnostics().stage() + "\n"
+                + "line:    " + diagnosticBake.diagnostics().line() + "\n"
+                + "message: " + diagnosticBake.diagnostics().message() + "\n"
+                + "detail:  " + diagnosticBake.diagnostics().detail();
+        body.append("<section class=\"card\">\n")
+            .append("  <h2>Structured diagnostics<code>renderWithDiagnostics</code></h2>\n")
+            .append("  <p class=\"desc\"><code>Sirentide.renderWithDiagnostics(dsl)</code> returns "
+                + "the exact SVG from <code>render(dsl)</code> plus a structured "
+                + "<code>outcome</code>, <code>stage</code>, author-facing <code>message</code>, "
+                + "source <code>line</code>, and lower-level <code>detail</code>. Here an unsupported "
+                + "Mermaid <code>click</code> directive still fails closed to the inert SVG shell, "
+                + "but the side channel says why.</p>\n")
+            .append("  <div class=\"duo\"><pre>").append(escape(DIAGNOSTIC_DSL))
+            .append("</pre><pre>").append(escape(diagnosticReport)).append("</pre></div>\n")
+            .append("</section>\n");
+
         // Play-through card (plan sirentide-play-through-frames): the FIRST consumer of the semantic
         // seq anchors. `renderFrames` turns the already-assigned `data-sirentide-seq` step-ordering
         // into N STATIC SVG frames — a slideshow a doc flips through, zero JS. Frame k accents the
@@ -472,17 +511,23 @@ class ShowcaseGenTest {
         // no script/animation/:target — and shares the ONE layout's geometry byte-for-byte. Here: 3
         // consecutive message frames of a request/response sequence, the active step advancing.
         List<String> playFrames = Sirentide.renderFrames(PLAY_DSL);
+        var diagnosedFrames = Sirentide.renderFramesWithDiagnostics(PLAY_DSL);
+        assertEquals(playFrames, diagnosedFrames.frames(),
+            "renderFramesWithDiagnostics must preserve every frame byte-for-byte");
+        assertEquals(Outcome.OK, diagnosedFrames.diagnostics().outcome());
         assertTrue(playFrames.size() >= 3, "the play-through demo must have at least 3 frames");
         assertFalse(playFrames.get(0).equals(playFrames.get(1)),
             "play-through frames must differ (a different active step per frame)");
         body.append("<section class=\"card\">\n")
-            .append("  <h2>Play-through frames<code>renderFrames · seq → N static SVGs</code></h2>\n")
+            .append("  <h2>Play-through frames<code>renderFrames · renderFramesWithDiagnostics</code></h2>\n")
             .append("  <p class=\"desc\">The <em>flow you play</em>: the semantic <code>data-sirentide-seq"
                 + "</code> step-ordering baked into every diagram is now <em>consumed</em> — "
                 + "<code>Sirentide.renderFrames(dsl)</code> returns one static SVG per step, each "
                 + "accenting the active step (thick accent arrow), showing earlier steps done and "
                 + "dimming later ones. No new syntax, no runtime JS, same "
-                + "<code>svg/path/rect/line</code> alphabet — a slideshow a doc flips through. Three "
+                + "<code>svg/path/rect/line</code> alphabet — a slideshow a doc flips through. "
+                + "<code>renderFramesWithDiagnostics(dsl)</code> returns those same frames "
+                + "byte-for-byte plus the structured diagnostic side channel. Three "
                 + "consecutive frames below, the active message advancing.</p>\n")
             .append("  <pre>").append(escape(PLAY_DSL)).append("</pre>\n")
             .append("  <div class=\"frames\">\n");
