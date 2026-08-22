@@ -10,11 +10,6 @@ import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
 import com.sirentide.ir.XyChart;
-import com.sirentide.layout.Group;
-import com.sirentide.layout.LaidOut;
-import com.sirentide.layout.Line;
-import com.sirentide.layout.Wedge;
-import com.sirentide.layout.XyChartLayout;
 import com.sirentide.math.LatteXMathFragmentRenderer;
 import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
@@ -42,6 +37,8 @@ class ShowcaseGenTest {
     private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateShowcase");
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
     private static final String PLAY_ACCENT = "#e8590c";
+    private static final int EXPECTED_PLAY_FRAMES = 5;
+    private static final int DISPLAYED_PLAY_FRAMES = 3;
 
     private static final String BARS_DSL =
         "xychart\n\"Reviews\" : 8\n\"Builds\" : 5\n\"Docs\" : 3";
@@ -289,8 +286,9 @@ class ShowcaseGenTest {
                 + "A --> C[Solve $\\begin{cases} x & a \\\\ y & b \\\\ z & c \\end{cases}$]", true));
 
     /// The play-through demo body (plan sirentide-play-through-frames): a small request/response
-    /// sequence whose 3 messages become 3 static frames, the active step advancing. Structurally
-    /// different from a Card (many frames, not one render), so it is generated on its own.
+    /// sequence whose 3 messages + 2 actor anchors become 5 static frames, the active step advancing.
+    /// The showcase displays the first 3 message frames from that full deck. Structurally different
+    /// from a Card (many frames, not one render), so it is generated on its own.
     private static final String PLAY_DSL =
         "sequence\nClient ->> Server : request\nServer ->> Server : process\n"
             + "Server -->> Client : response";
@@ -510,6 +508,8 @@ class ShowcaseGenTest {
             "the unsupported diagnostics example must carry an author-facing message");
         assertFalse(diagnosticBake.diagnostics().detail().isBlank(),
             "the unsupported diagnostics example must carry construct-specific detail");
+        assertTrue(diagnosticBake.diagnostics().detail().contains("click"),
+            "the diagnostics detail must identify the unsupported click construct");
         String diagnosticReport =
             "outcome: " + diagnosticBake.diagnostics().outcome() + "\n"
                 + "stage:   " + diagnosticBake.diagnostics().stage() + "\n"
@@ -540,9 +540,12 @@ class ShowcaseGenTest {
         assertEquals(playFrames, diagnosedFrames.frames(),
             "renderFramesWithDiagnostics must preserve every frame byte-for-byte");
         assertEquals(Outcome.OK, diagnosedFrames.diagnostics().outcome());
-        assertTrue(playFrames.size() >= 3, "the play-through demo must have at least 3 frames");
+        assertEquals(EXPECTED_PLAY_FRAMES, playFrames.size(),
+            "three message groups plus two actor anchors must produce exactly five frames");
+        assertEquals(3, DISPLAYED_PLAY_FRAMES,
+            "the showcase must display exactly the first three message frames");
         String staticPlayGeometry = stripPresentation(Sirentide.render(PLAY_DSL));
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < DISPLAYED_PLAY_FRAMES; i++) {
             assertEquals(1, anchoredGroupsContaining(playFrames.get(i), PLAY_ACCENT),
                 "displayed frame " + i + " must accent exactly one active semantic group");
             assertTrue(groupBySeq(playFrames.get(i), i).contains(PLAY_ACCENT),
@@ -567,7 +570,7 @@ class ShowcaseGenTest {
                 + "consecutive frames below, the active message advancing.</p>\n")
             .append("  <pre>").append(escape(PLAY_DSL)).append("</pre>\n")
             .append("  <div class=\"frames\">\n");
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < DISPLAYED_PLAY_FRAMES; i++) {
             body.append("    <div class=\"frame\"><div class=\"lbl\">frame ").append(i + 1)
                 .append(" · step ").append(i + 1).append("</div>").append(playFrames.get(i))
                 .append("</div>\n");
@@ -590,6 +593,8 @@ class ShowcaseGenTest {
         }
 
         String generatedShowcase = page(body.toString());
+        assertEquals(DISPLAYED_PLAY_FRAMES, count(generatedShowcase, "<div class=\"frame\">"),
+            "generated showcase must contain exactly the checked first three message frames");
         assertStrictHtmlComments(generatedShowcase);
         Path trackedShowcase = Path.of("examples", "showcase.html").toAbsolutePath();
         if (UPDATE) {
@@ -604,8 +609,14 @@ class ShowcaseGenTest {
     /// same class, so these assertions pin the visible examples to bars/line/scatter semantics rather
     /// than merely proving that some XyChart card exists.
     private static void assertXyModeAndSignedScatterContract() {
-        assertEquals("bars", ((XyChart) DslParser.parse(BARS_DSL)).mode(),
+        XyChart bars = (XyChart) DslParser.parse(BARS_DSL);
+        assertEquals("bars", bars.mode(),
             "the explicit bar card must exercise default mode selection");
+        String barsSvg = Sirentide.render(BARS_DSL);
+        assertEquals(3, count(barsSvg, "<g data-sirentide-role=\"bar\""),
+            "the three-category default-bars card must emit exactly three semantic bar marks");
+        assertEquals(3, count(barsSvg, "<rect"),
+            "the default-bars card must emit exactly one rectangle per bar mark");
         assertEquals("line", ((XyChart) DslParser.parse(LINE_DSL)).mode(),
             "the line card must exercise line mode");
         XyChart scatter = (XyChart) DslParser.parse(SCATTER_DSL);
@@ -615,32 +626,64 @@ class ShowcaseGenTest {
         String lineTwin = Sirentide.render(SCATTER_DSL.replaceFirst("xychart scatter", "xychart line"));
         assertEquals(8, count(lineTwin, "<line") - count(scatterSvg, "<line"),
             "five categories across two complete series add eight connectors only in line mode");
+        assertEquals(0, count(scatterSvg, "stroke-width=\"1.5\""),
+            "scatter must emit zero series connector marks");
+        assertEquals(8, count(lineTwin, "stroke-width=\"1.5\""),
+            "the line twin must emit exactly eight series connector marks");
 
         // The current line/scatter contract deliberately keeps the full x-axis at plot-bottom. Its
-        // signed y-scale still emits a zero TICK. Prove the -2 Mon point is below that emitted tick:
-        // interpolate zero from the emitted +4/-2 point centres, then require a horizontal tick at
-        // that y and the negative point lower in SVG's y-down coordinate space.
-        LaidOut laid = XyChartLayout.layout(scatter);
-        double positiveY = pointY(laid, "Mon");
-        double negativeY = pointY(laid, "Mon-1");
+        // signed y-scale still emits a zero TICK. Read the +4/-2 point centres from their emitted
+        // full-circle paths, interpolate zero, then require an emitted horizontal tick at that y and
+        // the negative point lower in SVG's y-down coordinate space.
+        double positiveY = emittedPointY(scatterSvg, "Mon");
+        double negativeY = emittedPointY(scatterSvg, "Mon-1");
         double zeroTickY = negativeY + (positiveY - negativeY) / 3.0;
         assertTrue(negativeY > zeroTickY,
             "the signed scatter's negative point must sit below the zero-tick projection");
-        assertTrue(laid.shapes().stream().anyMatch(shape -> shape instanceof Line tick
-                && Math.abs(tick.y1() - zeroTickY) < 1e-9
-                && Math.abs(tick.y2() - zeroTickY) < 1e-9
-                && Math.abs(Math.abs(tick.x2() - tick.x1()) - 4.0) < 1e-9),
+        assertTrue(hasEmittedHorizontalTick(scatterSvg, zeroTickY),
             "the interpolated zero projection must be present as the emitted four-pixel y-axis tick");
     }
 
-    private static double pointY(LaidOut laid, String id) {
-        for (var shape : laid.shapes()) {
-            if (shape instanceof Group group && group.anchor().id().equals(id)
-                && group.members().size() == 1 && group.members().get(0) instanceof Wedge point) {
-                return point.cy();
+    private static double emittedPointY(String svg, String id) {
+        String group = groupById(svg, id);
+        int move = group.indexOf("<path d=\"M ");
+        int arc = group.indexOf(" A ", move);
+        assertTrue(move >= 0 && arc > move, "point group " + id + " must emit a full-circle path");
+        String[] coordinates = group.substring(move + "<path d=\"M ".length(), arc).split("\\s+");
+        assertEquals(2, coordinates.length, "point path must begin with emitted x/y coordinates");
+        return Double.parseDouble(coordinates[1]);
+    }
+
+    private static boolean hasEmittedHorizontalTick(String svg, double expectedY) {
+        int cursor = 0;
+        while (true) {
+            int open = svg.indexOf("<line ", cursor);
+            if (open < 0) {
+                return false;
             }
+            int close = svg.indexOf("/>", open);
+            assertTrue(close > open, "emitted line must close");
+            String line = svg.substring(open, close);
+            double x1 = numericAttribute(line, "x1");
+            double x2 = numericAttribute(line, "x2");
+            double y1 = numericAttribute(line, "y1");
+            double y2 = numericAttribute(line, "y2");
+            if (Math.abs(y1 - expectedY) < 0.002 && Math.abs(y2 - expectedY) < 0.002
+                && Math.abs(Math.abs(x2 - x1) - 4.0) < 0.002) {
+                return true;
+            }
+            cursor = close + 2;
         }
-        throw new AssertionError("missing showcase scatter point group: " + id);
+    }
+
+    private static double numericAttribute(String tag, String name) {
+        String prefix = name + "=\"";
+        int start = tag.indexOf(prefix);
+        assertTrue(start >= 0, "emitted tag must carry " + name + ": " + tag);
+        start += prefix.length();
+        int end = tag.indexOf('"', start);
+        assertTrue(end > start, "emitted " + name + " must have a numeric value");
+        return Double.parseDouble(tag.substring(start, end));
     }
 
     private static int count(String haystack, String needle) {
@@ -674,6 +717,15 @@ class ShowcaseGenTest {
         int open = svg.lastIndexOf("<g data-sirentide-role=", tag);
         int close = svg.indexOf("</g>", tag);
         assertTrue(open >= 0 && close > open, "semantic group for seq " + seq + " must close");
+        return svg.substring(open, close + 4);
+    }
+
+    private static String groupById(String svg, String id) {
+        int tag = svg.indexOf("data-sirentide-id=\"" + id + "\"");
+        assertTrue(tag >= 0, "semantic group for id " + id + " must be present");
+        int open = svg.lastIndexOf("<g data-sirentide-role=", tag);
+        int close = svg.indexOf("</g>", tag);
+        assertTrue(open >= 0 && close > open, "semantic group for id " + id + " must close");
         return svg.substring(open, close + 4);
     }
 
