@@ -9,6 +9,12 @@ import com.sirentide.api.Outcome;
 import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Empty;
+import com.sirentide.ir.XyChart;
+import com.sirentide.layout.Group;
+import com.sirentide.layout.LaidOut;
+import com.sirentide.layout.Line;
+import com.sirentide.layout.Wedge;
+import com.sirentide.layout.XyChartLayout;
 import com.sirentide.math.LatteXMathFragmentRenderer;
 import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
@@ -28,13 +34,23 @@ import org.junit.jupiter.api.Test;
 ///
 /// Regen mechanism (mirrors {@link GoldenSvgTest}'s golden regen):
 ///   ./gradlew test --tests com.sirentide.ShowcaseGenTest -Dsirentide.updateShowcase=true
-/// Without the flag the test still renders every card and SMOKE-CHECKS it (non-empty, non-inert,
-/// math actually baked) so the generator can't silently rot — but it does NOT byte-assert the
-/// committed HTML, so a benign layout tweak doesn't red this test; you regen + commit the new page.
+/// Without the flag the test renders every card, checks its semantics, and BYTE-ASSERTS the generated
+/// page against the tracked artifact. A deliberate layout/content change therefore uses the explicit
+/// update switch and commits the resulting page; stale showcase HTML cannot silently remain green.
 class ShowcaseGenTest {
 
     private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateShowcase");
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
+    private static final String PLAY_ACCENT = "#e8590c";
+
+    private static final String BARS_DSL =
+        "xychart\n\"Reviews\" : 8\n\"Builds\" : 5\n\"Docs\" : 3";
+    private static final String LINE_DSL =
+        "xychart line legend\nseries: Revenue, Cost\n\"Mon\" : 5 3\n\"Tue\" : 8 6\n"
+            + "\"Wed\" : 6\n\"Thu\" : 9 4\n\"Fri\" : 12 7";
+    private static final String SCATTER_DSL =
+        "xychart scatter legend\nseries: Latency, Throughput\n\"Mon\" : 4 -2\n"
+            + "\"Tue\" : 8 3\n\"Wed\" : 5 7\n\"Thu\" : 11 4\n\"Fri\" : 7 9";
 
     /// One card per demo. `typeTag` is the little `<code>` chip after the title; `math` routes the
     /// bake through the real LatteX renderer (the moat) instead of the null renderer.
@@ -48,16 +64,18 @@ class ShowcaseGenTest {
         new Card("Pie", "pie legend",
             "Proportional wedges, on-slice contrast labels, an optional left color key.",
             "pie legend\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
+        new Card("Bar chart", "xychart · default bars",
+            "The default <code>xychart</code> mode: categorical values rise from a signed zero "
+                + "baseline with proportional y-axis ticks.",
+            BARS_DSL),
         new Card("Multi-series line chart", "xychart line",
             "Connected points, multi-series with a legend — and a missing value is an honest "
                 + "<em>gap</em>, never a fake bridge. Bars are the default <code>xychart</code> mode.",
-            "xychart line legend\nseries: Revenue, Cost\n\"Mon\" : 5 3\n\"Tue\" : 8 6\n\"Wed\" : 6\n"
-                + "\"Thu\" : 9 4\n\"Fri\" : 12 7"),
+            LINE_DSL),
         new Card("Scatter chart", "xychart scatter",
             "The same categorical axes and multi-series palette, rendered as independent point "
                 + "discs with no connecting segments; negative values remain below zero.",
-            "xychart scatter legend\nseries: Latency, Throughput\n\"Mon\" : 4 -2\n"
-                + "\"Tue\" : 8 3\n\"Wed\" : 5 7\n\"Thu\" : 11 4\n\"Fri\" : 7 9"),
+            SCATTER_DSL),
         new Card("Timeline", "timeline",
             "Events placed <em>proportionally</em> in time; ISO dates render as dates.",
             "timeline\n\"Founded\" : 2019-06-01\n\"Series A\" : 2021-03-15\n\"Launch\" : 2024-11-08"),
@@ -398,7 +416,7 @@ class ShowcaseGenTest {
             "rootsystem\ntype: E8\nedges: minimal", false));
 
     @Test
-    void showcaseRendersEveryTypeAndFeature() throws Exception {
+    void showcaseRendersEveryTypeAndFeatureAndMatchesTrackedArtifact() throws Exception {
         Set<Class<?>> shippedTypes = new LinkedHashSet<>(
             Arrays.asList(Diagram.class.getPermittedSubclasses()));
         shippedTypes.remove(Empty.class);
@@ -408,6 +426,7 @@ class ShowcaseGenTest {
         }
         assertEquals(shippedTypes, showcasedTypes,
             "every shipped sealed-IR diagram type must have a showcase card");
+        assertXyModeAndSignedScatterContract();
 
         StringBuilder body = new StringBuilder();
         for (Card c : CARDS) {
@@ -485,6 +504,12 @@ class ShowcaseGenTest {
         assertEquals(3, diagnosticBake.diagnostics().line());
         assertTrue(diagnosticBake.diagnostics().message().contains("click"),
             "the diagnostics demo must name its unsupported construct");
+        assertEquals(Sirentide.render(""), diagnosticBake.svg(),
+            "the unsupported diagnostics example must preserve the exact inert shell");
+        assertFalse(diagnosticBake.diagnostics().message().isBlank(),
+            "the unsupported diagnostics example must carry an author-facing message");
+        assertFalse(diagnosticBake.diagnostics().detail().isBlank(),
+            "the unsupported diagnostics example must carry construct-specific detail");
         String diagnosticReport =
             "outcome: " + diagnosticBake.diagnostics().outcome() + "\n"
                 + "stage:   " + diagnosticBake.diagnostics().stage() + "\n"
@@ -516,8 +541,19 @@ class ShowcaseGenTest {
             "renderFramesWithDiagnostics must preserve every frame byte-for-byte");
         assertEquals(Outcome.OK, diagnosedFrames.diagnostics().outcome());
         assertTrue(playFrames.size() >= 3, "the play-through demo must have at least 3 frames");
-        assertFalse(playFrames.get(0).equals(playFrames.get(1)),
-            "play-through frames must differ (a different active step per frame)");
+        String staticPlayGeometry = stripPresentation(Sirentide.render(PLAY_DSL));
+        for (int i = 0; i < 3; i++) {
+            assertEquals(1, anchoredGroupsContaining(playFrames.get(i), PLAY_ACCENT),
+                "displayed frame " + i + " must accent exactly one active semantic group");
+            assertTrue(groupBySeq(playFrames.get(i), i).contains(PLAY_ACCENT),
+                "displayed frame " + i + " must advance the accent to seq " + i);
+            assertEquals(staticPlayGeometry, stripPresentation(playFrames.get(i)),
+                "displayed frame " + i + " must preserve the static render's geometry");
+            if (i > 0) {
+                assertFalse(playFrames.get(i - 1).equals(playFrames.get(i)),
+                    "displayed play-through frames must progress to a different active step");
+            }
+        }
         body.append("<section class=\"card\">\n")
             .append("  <h2>Play-through frames<code>renderFrames · renderFramesWithDiagnostics</code></h2>\n")
             .append("  <p class=\"desc\">The <em>flow you play</em>: the semantic <code>data-sirentide-seq"
@@ -553,8 +589,116 @@ class ShowcaseGenTest {
             }
         }
 
+        String generatedShowcase = page(body.toString());
+        assertStrictHtmlComments(generatedShowcase);
+        Path trackedShowcase = Path.of("examples", "showcase.html").toAbsolutePath();
         if (UPDATE) {
-            Files.writeString(Path.of("examples", "showcase.html").toAbsolutePath(), page(body.toString()));
+            Files.writeString(trackedShowcase, generatedShowcase);
+        }
+        assertEquals(generatedShowcase, Files.readString(trackedShowcase),
+            "tracked showcase drifted from ShowcaseGenTest; regenerate with "
+                + "-Dsirentide.updateShowcase=true and commit the deliberate artifact change");
+    }
+
+    /// Showcase-specific XyChart contract. The broad sealed-type census sees all three modes as the
+    /// same class, so these assertions pin the visible examples to bars/line/scatter semantics rather
+    /// than merely proving that some XyChart card exists.
+    private static void assertXyModeAndSignedScatterContract() {
+        assertEquals("bars", ((XyChart) DslParser.parse(BARS_DSL)).mode(),
+            "the explicit bar card must exercise default mode selection");
+        assertEquals("line", ((XyChart) DslParser.parse(LINE_DSL)).mode(),
+            "the line card must exercise line mode");
+        XyChart scatter = (XyChart) DslParser.parse(SCATTER_DSL);
+        assertEquals("scatter", scatter.mode(), "the scatter card must exercise scatter mode");
+
+        String scatterSvg = Sirentide.render(SCATTER_DSL);
+        String lineTwin = Sirentide.render(SCATTER_DSL.replaceFirst("xychart scatter", "xychart line"));
+        assertEquals(8, count(lineTwin, "<line") - count(scatterSvg, "<line"),
+            "five categories across two complete series add eight connectors only in line mode");
+
+        // The current line/scatter contract deliberately keeps the full x-axis at plot-bottom. Its
+        // signed y-scale still emits a zero TICK. Prove the -2 Mon point is below that emitted tick:
+        // interpolate zero from the emitted +4/-2 point centres, then require a horizontal tick at
+        // that y and the negative point lower in SVG's y-down coordinate space.
+        LaidOut laid = XyChartLayout.layout(scatter);
+        double positiveY = pointY(laid, "Mon");
+        double negativeY = pointY(laid, "Mon-1");
+        double zeroTickY = negativeY + (positiveY - negativeY) / 3.0;
+        assertTrue(negativeY > zeroTickY,
+            "the signed scatter's negative point must sit below the zero-tick projection");
+        assertTrue(laid.shapes().stream().anyMatch(shape -> shape instanceof Line tick
+                && Math.abs(tick.y1() - zeroTickY) < 1e-9
+                && Math.abs(tick.y2() - zeroTickY) < 1e-9
+                && Math.abs(Math.abs(tick.x2() - tick.x1()) - 4.0) < 1e-9),
+            "the interpolated zero projection must be present as the emitted four-pixel y-axis tick");
+    }
+
+    private static double pointY(LaidOut laid, String id) {
+        for (var shape : laid.shapes()) {
+            if (shape instanceof Group group && group.anchor().id().equals(id)
+                && group.members().size() == 1 && group.members().get(0) instanceof Wedge point) {
+                return point.cy();
+            }
+        }
+        throw new AssertionError("missing showcase scatter point group: " + id);
+    }
+
+    private static int count(String haystack, String needle) {
+        int total = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+            total++;
+        }
+        return total;
+    }
+
+    private static int anchoredGroupsContaining(String svg, String token) {
+        int total = 0;
+        int cursor = 0;
+        while (true) {
+            int open = svg.indexOf("<g data-sirentide-role=", cursor);
+            if (open < 0) {
+                return total;
+            }
+            int close = svg.indexOf("</g>", open);
+            assertTrue(close > open, "semantic group must close");
+            if (svg.substring(open, close).contains(token)) {
+                total++;
+            }
+            cursor = close + 4;
+        }
+    }
+
+    private static String groupBySeq(String svg, int seq) {
+        int tag = svg.indexOf("data-sirentide-seq=\"" + seq + "\"");
+        assertTrue(tag >= 0, "semantic group for seq " + seq + " must be present");
+        int open = svg.lastIndexOf("<g data-sirentide-role=", tag);
+        int close = svg.indexOf("</g>", tag);
+        assertTrue(open >= 0 && close > open, "semantic group for seq " + seq + " must close");
+        return svg.substring(open, close + 4);
+    }
+
+    private static String stripPresentation(String svg) {
+        return svg
+            .replaceAll(" fill=\"[^\"]*\"", "")
+            .replaceAll(" stroke-width=\"[^\"]*\"", "")
+            .replaceAll(" stroke=\"[^\"]*\"", "");
+    }
+
+    private static void assertStrictHtmlComments(String html) {
+        int cursor = 0;
+        while (true) {
+            int open = html.indexOf("<!--", cursor);
+            if (open < 0) {
+                assertTrue(html.indexOf("-->", cursor) < 0, "generated HTML has an orphan comment close");
+                return;
+            }
+            assertTrue(html.indexOf("-->", cursor) < 0 || html.indexOf("-->", cursor) >= open,
+                "generated HTML has a comment close before its next open");
+            int close = html.indexOf("-->", open + 4);
+            assertTrue(close >= 0, "generated HTML comment must close");
+            assertFalse(html.substring(open + 4, close).contains("--"),
+                "HTML comment bodies must not contain an internal double hyphen");
+            cursor = close + 3;
         }
     }
 
@@ -611,7 +755,7 @@ class ShowcaseGenTest {
             <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Sirentide — showcase</title>
             <!-- GENERATED by com.sirentide.ShowcaseGenTest — do not hand-edit.
-                 Regen: ./gradlew test --tests com.sirentide.ShowcaseGenTest -Dsirentide.updateShowcase=true -->
+                 Regen: run ShowcaseGenTest with -Dsirentide.updateShowcase=true; exact command is in test source. -->
             <style>
             :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --card:#ffffff; }
             * { box-sizing: border-box; }
