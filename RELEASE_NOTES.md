@@ -8,6 +8,46 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
+  `graph` is mermaid's original flowchart keyword and still the most-copied one in the wild;
+  `xychart-beta` is mermaid's actual spelling for the chart Sirentide already drew as
+  `xychart`. Both previously fell through the header match and degraded, so a diagram pasted
+  from mermaid's own docs lost its shape for a reason the author could not see. Both are pure
+  aliases onto shapes that already existed — no new renderer, no new grammar.
+  **The README's capability claim was corrected in the same change**, which is the point:
+  the old line overstated what Sirentide draws, so adding two spellings without fixing it
+  would have widened a claim that was already too wide. It now says **8 of 14** mermaid
+  shapes, NAMES the four that are unsupported, and states that activation bars are consumed
+  but not drawn. A capability ships with its own honesty fence or it ships a lie.
+
+- **`%%` comments are documented.** They have worked for some time and appeared in no
+  author-facing page: not QUICKSTART, not the README, not the docs site. A `%%` line draws
+  nothing and a diagram containing one renders byte-identically to the same diagram without it.
+  The note also states the property that motivated blanking comments rather than removing them —
+  an error further down still reports its **real source line number**, so a comment above a
+  mistake does not shift the diagnostic away from the line you are looking at — and distinguishes
+  the leading `%%` configuration block from a `%%` line in the body.
+
+- **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
+  an unknown directive-shaped statement and records a line-scoped caveat on an otherwise-`OK`
+  render, specifically so a lost line is not lost silently — but the caveat lived only in the API.
+  Through the `render` verb, which the authoring docs name as *the* local check, an author saw
+  exit `0`, no output, and a diagram quietly missing their line. A caveat channel nothing reads is
+  not a channel. The verb now prints `sirentide: rendered, with caveats — dropped statement(s): 1;
+  line 3: <the statement>` to stderr, naming the statement that vanished rather than only
+  reporting that one did. The exit code stays `0` and the SVG is still written: the render
+  genuinely succeeded and `/docs` genuinely serves it, so failing here would claim a bake outcome
+  that does not happen. A diagram that lost nothing stays silent — asserted by its own control,
+  because a warning that fires on every render is noise an author learns to ignore.
+  **`--strict` promotes such a caveat to exit `1`** for unattended callers (ruling
+  `PROJECT/sirentide` 977): stderr is the right author channel and the wrong CI channel,
+  because CI is exactly where nobody reads stderr, and a caveat that cannot gate anything
+  in the one environment that runs unattended is recorded-but-unseeable one level up. The
+  flag is opt-in so the default stays honest, it does **not** manufacture a failure on a
+  clean render, and unlike the exit-`1` unrenderable arm the SVG **is** still written —
+  there the artifact would be a lie about what `/docs` serves, here it is exactly what
+  `/docs` serves and a caller whose gate just rejected something wants to see it.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they

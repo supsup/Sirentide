@@ -640,7 +640,7 @@ edges: minimal
 
 ![Root system — E₈ Coxeter plane (240 roots, 6,720 minimal edges)](rootsystem-e8.png)
 
-## Pie thin-slice outside labels (clipped)
+## Pie thin-slice outside labels (dropped, with the name kept in <desc>)
 
 ```
 pie
@@ -649,7 +649,7 @@ pie
 "rest" : 74
 ```
 
-![Pie thin-slice outside labels (clipped)](pie-thin-labels.png)
+![Pie thin-slice outside labels (dropped, with the name kept in <desc>)](pie-thin-labels.png)
 
 ## Pie thin-slice labels — legend shows the dropped name
 

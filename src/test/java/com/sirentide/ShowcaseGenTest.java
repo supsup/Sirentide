@@ -1,14 +1,23 @@
 package com.sirentide;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.MathFragmentRenderer;
+import com.sirentide.api.Outcome;
 import com.sirentide.api.Sirentide;
+import com.sirentide.ir.Diagram;
+import com.sirentide.ir.Empty;
+import com.sirentide.ir.XyChart;
 import com.sirentide.math.LatteXMathFragmentRenderer;
+import com.sirentide.parse.DslParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /// Source-of-truth generator for `examples/showcase.html` — the hand-authored gallery kept drifting
@@ -20,13 +29,25 @@ import org.junit.jupiter.api.Test;
 ///
 /// Regen mechanism (mirrors {@link GoldenSvgTest}'s golden regen):
 ///   ./gradlew test --tests com.sirentide.ShowcaseGenTest -Dsirentide.updateShowcase=true
-/// Without the flag the test still renders every card and SMOKE-CHECKS it (non-empty, non-inert,
-/// math actually baked) so the generator can't silently rot — but it does NOT byte-assert the
-/// committed HTML, so a benign layout tweak doesn't red this test; you regen + commit the new page.
+/// Without the flag the test renders every card, checks its semantics, and BYTE-ASSERTS the generated
+/// page against the tracked artifact. A deliberate layout/content change therefore uses the explicit
+/// update switch and commits the resulting page; stale showcase HTML cannot silently remain green.
 class ShowcaseGenTest {
 
     private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateShowcase");
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
+    private static final String PLAY_ACCENT = "#e8590c";
+    private static final int EXPECTED_PLAY_FRAMES = 5;
+    private static final int DISPLAYED_PLAY_FRAMES = 3;
+
+    private static final String BARS_DSL =
+        "xychart\n\"Reviews\" : 8\n\"Builds\" : 5\n\"Docs\" : 3";
+    private static final String LINE_DSL =
+        "xychart line legend\nseries: Revenue, Cost\n\"Mon\" : 5 3\n\"Tue\" : 8 6\n"
+            + "\"Wed\" : 6\n\"Thu\" : 9 4\n\"Fri\" : 12 7";
+    private static final String SCATTER_DSL =
+        "xychart scatter legend\nseries: Latency, Throughput\n\"Mon\" : 4 -2\n"
+            + "\"Tue\" : 8 3\n\"Wed\" : 5 7\n\"Thu\" : 11 4\n\"Fri\" : 7 9";
 
     /// One card per demo. `typeTag` is the little `<code>` chip after the title; `math` routes the
     /// bake through the real LatteX renderer (the moat) instead of the null renderer.
@@ -40,11 +61,18 @@ class ShowcaseGenTest {
         new Card("Pie", "pie legend",
             "Proportional wedges, on-slice contrast labels, an optional left color key.",
             "pie legend\n\"Reviews\" : 40\n\"Builds\" : 25\n\"Docs\" : 20\n\"Design\" : 15"),
-        new Card("Bars · Lines · Scatter", "xychart line",
-            "One type, three render modes, multi-series with a legend — and a missing value is an "
-                + "honest <em>gap</em>, never a fake bridge.",
-            "xychart line legend\nseries: Revenue, Cost\n\"Mon\" : 5 3\n\"Tue\" : 8 6\n\"Wed\" : 6\n"
-                + "\"Thu\" : 9 4\n\"Fri\" : 12 7"),
+        new Card("Bar chart", "xychart · default bars",
+            "The default <code>xychart</code> mode: categorical values rise from a signed zero "
+                + "baseline with proportional y-axis ticks.",
+            BARS_DSL),
+        new Card("Multi-series line chart", "xychart line",
+            "Connected points, multi-series with a legend — and a missing value is an honest "
+                + "<em>gap</em>, never a fake bridge. Bars are the default <code>xychart</code> mode.",
+            LINE_DSL),
+        new Card("Scatter chart", "xychart scatter",
+            "The same categorical axes and multi-series palette, rendered as independent point "
+                + "discs with no connecting segments; negative values remain below zero.",
+            SCATTER_DSL),
         new Card("Timeline", "timeline",
             "Events placed <em>proportionally</em> in time; ISO dates render as dates.",
             "timeline\n\"Founded\" : 2019-06-01\n\"Series A\" : 2021-03-15\n\"Launch\" : 2024-11-08"),
@@ -110,6 +138,11 @@ class ShowcaseGenTest {
             "heatmap\ncols: bare, snapshot, card\nscale: \"diverged\" --> \"reproduced\"\n"
                 + "\"values-boundary\" : 0.60, 0.72, 0.95\n\"card-discriminators\" : 1.00, 1.00, 1.00\n"
                 + "\"decision-replay v2\" : 0.86, 0.90, 0.93\n\"technique naming\" : -, 40%, 100%"),
+        new Card("Snake graph — √2", "snake · cf:",
+            "The canonical Çanakçı–Schiffler square snake graph for a positive continued fraction. "
+                + "The <code>cf:</code> partial quotients determine a connected strip of unit tiles; "
+                + "each block length controls how long the strip runs before its next turn.",
+            "snake\ncf: 1, 2, 2, 2"),
         new Card("Class diagram", "classDiagram",
             "UML classes with stacked attribute + method compartments, grid-placed, wired by all "
                 + "five relationship markers — inheritance (hollow triangle), composition (filled "
@@ -178,6 +211,21 @@ class ShowcaseGenTest {
                 + "chain reads as an operator acting on a state. Same core/bond geometry, two legs per "
                 + "core instead of one.",
             "tensornetwork\nmpo A B C D"),
+        new Card("Young diagram", "young · rows:",
+            "An integer partition as left-justified rows of unit boxes in English convention. "
+                + "The positive values after <code>rows:</code> are the non-increasing row lengths, "
+                + "so the partition's shape is visible directly in the baked geometry.",
+            "young\nrows: 8, 6, 4, 3, 1"),
+        new Card("Knot — figure-eight (4₁)", "knot · figure8",
+            "A classical knot projection rendered as smooth closed strands with explicit over/under "
+                + "crossing gaps. The built-in vocabulary covers the unknot, trefoil (3₁), and this "
+                + "reduced alternating four-crossing figure-eight knot.",
+            "knot\ntype: figure8"),
+        new Card("Dynkin — B₃", "dynkin · B3",
+            "A finite Dynkin diagram for semisimple Lie-algebra classification. Sirentide supports "
+                + "the classical A/B/C/D families plus E6/E7/E8/F4/G2; bond multiplicity and the "
+                + "arrow toward the shorter root distinguish this B₃ example from a simple chain.",
+            "dynkin\ntype: B3"),
         new Card("Root system — E₈ Coxeter plane", "rootsystem · edges:minimal",
             "All 240 E₈ roots, generated by bounded Weyl-reflection closure and projected into the "
                 + "deterministic exponent-1 Coxeter (Petrie) plane: eight concentric 30-point orbits. "
@@ -238,11 +286,17 @@ class ShowcaseGenTest {
                 + "A --> C[Solve $\\begin{cases} x & a \\\\ y & b \\\\ z & c \\end{cases}$]", true));
 
     /// The play-through demo body (plan sirentide-play-through-frames): a small request/response
-    /// sequence whose 3 messages become 3 static frames, the active step advancing. Structurally
-    /// different from a Card (many frames, not one render), so it is generated on its own.
+    /// sequence whose 3 messages + 2 actor anchors become 5 static frames, the active step advancing.
+    /// The showcase displays the first 3 message frames from that full deck. Structurally different
+    /// from a Card (many frames, not one render), so it is generated on its own.
     private static final String PLAY_DSL =
         "sequence\nClient ->> Server : request\nServer ->> Server : process\n"
             + "Server -->> Client : response";
+
+    /// A recognized-but-unsupported Mermaid construct. The ordinary render remains safely inert;
+    /// `renderWithDiagnostics` supplies the author-facing reason without changing that SVG.
+    private static final String DIAGNOSTIC_DSL =
+        "flowchart TD\nA[Open docs] --> B[Read guide]\nclick A callback \"tooltip\"";
 
     /// The theme card is structurally different (one bake, shown in a light + a dark pane), so it is
     /// generated on its own after the grid of cards.
@@ -360,7 +414,18 @@ class ShowcaseGenTest {
             "rootsystem\ntype: E8\nedges: minimal", false));
 
     @Test
-    void showcaseRendersEveryTypeAndFeature() throws Exception {
+    void showcaseRendersEveryTypeAndFeatureAndMatchesTrackedArtifact() throws Exception {
+        Set<Class<?>> shippedTypes = new LinkedHashSet<>(
+            Arrays.asList(Diagram.class.getPermittedSubclasses()));
+        shippedTypes.remove(Empty.class);
+        Set<Class<?>> showcasedTypes = new LinkedHashSet<>();
+        for (Card card : CARDS) {
+            showcasedTypes.add(DslParser.parse(card.dsl()).getClass());
+        }
+        assertEquals(shippedTypes, showcasedTypes,
+            "every shipped sealed-IR diagram type must have a showcase card");
+        assertXyModeAndSignedScatterContract();
+
         StringBuilder body = new StringBuilder();
         for (Card c : CARDS) {
             String svg = c.math() ? Sirentide.render(c.dsl(), REAL) : Sirentide.render(c.dsl());
@@ -427,6 +492,42 @@ class ShowcaseGenTest {
             .append("  </div>\n")
             .append("</section>\n");
 
+        // Structured diagnostics card (plan sirentide-render-diagnostics): the side-channel names
+        // an unsupported construct while preserving the ordinary render's exact safe SVG.
+        var diagnosticBake = Sirentide.renderWithDiagnostics(DIAGNOSTIC_DSL);
+        assertEquals(Sirentide.render(DIAGNOSTIC_DSL), diagnosticBake.svg(),
+            "renderWithDiagnostics must preserve render(dsl) byte-for-byte");
+        assertEquals(Outcome.UNSUPPORTED_CONSTRUCT, diagnosticBake.diagnostics().outcome());
+        assertEquals("parse", diagnosticBake.diagnostics().stage());
+        assertEquals(3, diagnosticBake.diagnostics().line());
+        assertTrue(diagnosticBake.diagnostics().message().contains("click"),
+            "the diagnostics demo must name its unsupported construct");
+        assertEquals(Sirentide.render(""), diagnosticBake.svg(),
+            "the unsupported diagnostics example must preserve the exact inert shell");
+        assertFalse(diagnosticBake.diagnostics().message().isBlank(),
+            "the unsupported diagnostics example must carry an author-facing message");
+        assertFalse(diagnosticBake.diagnostics().detail().isBlank(),
+            "the unsupported diagnostics example must carry construct-specific detail");
+        assertTrue(diagnosticBake.diagnostics().detail().contains("click"),
+            "the diagnostics detail must identify the unsupported click construct");
+        String diagnosticReport =
+            "outcome: " + diagnosticBake.diagnostics().outcome() + "\n"
+                + "stage:   " + diagnosticBake.diagnostics().stage() + "\n"
+                + "line:    " + diagnosticBake.diagnostics().line() + "\n"
+                + "message: " + diagnosticBake.diagnostics().message() + "\n"
+                + "detail:  " + diagnosticBake.diagnostics().detail();
+        body.append("<section class=\"card\">\n")
+            .append("  <h2>Structured diagnostics<code>renderWithDiagnostics</code></h2>\n")
+            .append("  <p class=\"desc\"><code>Sirentide.renderWithDiagnostics(dsl)</code> returns "
+                + "the exact SVG from <code>render(dsl)</code> plus a structured "
+                + "<code>outcome</code>, <code>stage</code>, author-facing <code>message</code>, "
+                + "source <code>line</code>, and lower-level <code>detail</code>. Here an unsupported "
+                + "Mermaid <code>click</code> directive still fails closed to the inert SVG shell, "
+                + "but the side channel says why.</p>\n")
+            .append("  <div class=\"duo\"><pre>").append(escape(DIAGNOSTIC_DSL))
+            .append("</pre><pre>").append(escape(diagnosticReport)).append("</pre></div>\n")
+            .append("</section>\n");
+
         // Play-through card (plan sirentide-play-through-frames): the FIRST consumer of the semantic
         // seq anchors. `renderFrames` turns the already-assigned `data-sirentide-seq` step-ordering
         // into N STATIC SVG frames — a slideshow a doc flips through, zero JS. Frame k accents the
@@ -435,21 +536,41 @@ class ShowcaseGenTest {
         // no script/animation/:target — and shares the ONE layout's geometry byte-for-byte. Here: 3
         // consecutive message frames of a request/response sequence, the active step advancing.
         List<String> playFrames = Sirentide.renderFrames(PLAY_DSL);
-        assertTrue(playFrames.size() >= 3, "the play-through demo must have at least 3 frames");
-        assertFalse(playFrames.get(0).equals(playFrames.get(1)),
-            "play-through frames must differ (a different active step per frame)");
+        var diagnosedFrames = Sirentide.renderFramesWithDiagnostics(PLAY_DSL);
+        assertEquals(playFrames, diagnosedFrames.frames(),
+            "renderFramesWithDiagnostics must preserve every frame byte-for-byte");
+        assertEquals(Outcome.OK, diagnosedFrames.diagnostics().outcome());
+        assertEquals(EXPECTED_PLAY_FRAMES, playFrames.size(),
+            "three message groups plus two actor anchors must produce exactly five frames");
+        assertEquals(3, DISPLAYED_PLAY_FRAMES,
+            "the showcase must display exactly the first three message frames");
+        String staticPlayGeometry = stripPresentation(Sirentide.render(PLAY_DSL));
+        for (int i = 0; i < DISPLAYED_PLAY_FRAMES; i++) {
+            assertEquals(1, anchoredGroupsContaining(playFrames.get(i), PLAY_ACCENT),
+                "displayed frame " + i + " must accent exactly one active semantic group");
+            assertTrue(groupBySeq(playFrames.get(i), i).contains(PLAY_ACCENT),
+                "displayed frame " + i + " must advance the accent to seq " + i);
+            assertEquals(staticPlayGeometry, stripPresentation(playFrames.get(i)),
+                "displayed frame " + i + " must preserve the static render's geometry");
+            if (i > 0) {
+                assertFalse(playFrames.get(i - 1).equals(playFrames.get(i)),
+                    "displayed play-through frames must progress to a different active step");
+            }
+        }
         body.append("<section class=\"card\">\n")
-            .append("  <h2>Play-through frames<code>renderFrames · seq → N static SVGs</code></h2>\n")
+            .append("  <h2>Play-through frames<code>renderFrames · renderFramesWithDiagnostics</code></h2>\n")
             .append("  <p class=\"desc\">The <em>flow you play</em>: the semantic <code>data-sirentide-seq"
                 + "</code> step-ordering baked into every diagram is now <em>consumed</em> — "
                 + "<code>Sirentide.renderFrames(dsl)</code> returns one static SVG per step, each "
                 + "accenting the active step (thick accent arrow), showing earlier steps done and "
                 + "dimming later ones. No new syntax, no runtime JS, same "
-                + "<code>svg/path/rect/line</code> alphabet — a slideshow a doc flips through. Three "
+                + "<code>svg/path/rect/line</code> alphabet — a slideshow a doc flips through. "
+                + "<code>renderFramesWithDiagnostics(dsl)</code> returns those same frames "
+                + "byte-for-byte plus the structured diagnostic side channel. Three "
                 + "consecutive frames below, the active message advancing.</p>\n")
             .append("  <pre>").append(escape(PLAY_DSL)).append("</pre>\n")
             .append("  <div class=\"frames\">\n");
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < DISPLAYED_PLAY_FRAMES; i++) {
             body.append("    <div class=\"frame\"><div class=\"lbl\">frame ").append(i + 1)
                 .append(" · step ").append(i + 1).append("</div>").append(playFrames.get(i))
                 .append("</div>\n");
@@ -471,8 +592,165 @@ class ShowcaseGenTest {
             }
         }
 
+        String generatedShowcase = page(body.toString());
+        assertEquals(DISPLAYED_PLAY_FRAMES, count(generatedShowcase, "<div class=\"frame\">"),
+            "generated showcase must contain exactly the checked first three message frames");
+        assertStrictHtmlComments(generatedShowcase);
+        Path trackedShowcase = Path.of("examples", "showcase.html").toAbsolutePath();
         if (UPDATE) {
-            Files.writeString(Path.of("examples", "showcase.html").toAbsolutePath(), page(body.toString()));
+            Files.writeString(trackedShowcase, generatedShowcase);
+        }
+        assertEquals(generatedShowcase, Files.readString(trackedShowcase),
+            "tracked showcase drifted from ShowcaseGenTest; regenerate with "
+                + "-Dsirentide.updateShowcase=true and commit the deliberate artifact change");
+    }
+
+    /// Showcase-specific XyChart contract. The broad sealed-type census sees all three modes as the
+    /// same class, so these assertions pin the visible examples to bars/line/scatter semantics rather
+    /// than merely proving that some XyChart card exists.
+    private static void assertXyModeAndSignedScatterContract() {
+        XyChart bars = (XyChart) DslParser.parse(BARS_DSL);
+        assertEquals("bars", bars.mode(),
+            "the explicit bar card must exercise default mode selection");
+        String barsSvg = Sirentide.render(BARS_DSL);
+        assertEquals(3, count(barsSvg, "<g data-sirentide-role=\"bar\""),
+            "the three-category default-bars card must emit exactly three semantic bar marks");
+        assertEquals(3, count(barsSvg, "<rect"),
+            "the default-bars card must emit exactly one rectangle per bar mark");
+        assertEquals("line", ((XyChart) DslParser.parse(LINE_DSL)).mode(),
+            "the line card must exercise line mode");
+        XyChart scatter = (XyChart) DslParser.parse(SCATTER_DSL);
+        assertEquals("scatter", scatter.mode(), "the scatter card must exercise scatter mode");
+
+        String scatterSvg = Sirentide.render(SCATTER_DSL);
+        String lineTwin = Sirentide.render(SCATTER_DSL.replaceFirst("xychart scatter", "xychart line"));
+        assertEquals(8, count(lineTwin, "<line") - count(scatterSvg, "<line"),
+            "five categories across two complete series add eight connectors only in line mode");
+        assertEquals(0, count(scatterSvg, "stroke-width=\"1.5\""),
+            "scatter must emit zero series connector marks");
+        assertEquals(8, count(lineTwin, "stroke-width=\"1.5\""),
+            "the line twin must emit exactly eight series connector marks");
+
+        // The current line/scatter contract deliberately keeps the full x-axis at plot-bottom. Its
+        // signed y-scale still emits a zero TICK. Read the +4/-2 point centres from their emitted
+        // full-circle paths, interpolate zero, then require an emitted horizontal tick at that y and
+        // the negative point lower in SVG's y-down coordinate space.
+        double positiveY = emittedPointY(scatterSvg, "Mon");
+        double negativeY = emittedPointY(scatterSvg, "Mon-1");
+        double zeroTickY = negativeY + (positiveY - negativeY) / 3.0;
+        assertTrue(negativeY > zeroTickY,
+            "the signed scatter's negative point must sit below the zero-tick projection");
+        assertTrue(hasEmittedHorizontalTick(scatterSvg, zeroTickY),
+            "the interpolated zero projection must be present as the emitted four-pixel y-axis tick");
+    }
+
+    private static double emittedPointY(String svg, String id) {
+        String group = groupById(svg, id);
+        int move = group.indexOf("<path d=\"M ");
+        int arc = group.indexOf(" A ", move);
+        assertTrue(move >= 0 && arc > move, "point group " + id + " must emit a full-circle path");
+        String[] coordinates = group.substring(move + "<path d=\"M ".length(), arc).split("\\s+");
+        assertEquals(2, coordinates.length, "point path must begin with emitted x/y coordinates");
+        return Double.parseDouble(coordinates[1]);
+    }
+
+    private static boolean hasEmittedHorizontalTick(String svg, double expectedY) {
+        int cursor = 0;
+        while (true) {
+            int open = svg.indexOf("<line ", cursor);
+            if (open < 0) {
+                return false;
+            }
+            int close = svg.indexOf("/>", open);
+            assertTrue(close > open, "emitted line must close");
+            String line = svg.substring(open, close);
+            double x1 = numericAttribute(line, "x1");
+            double x2 = numericAttribute(line, "x2");
+            double y1 = numericAttribute(line, "y1");
+            double y2 = numericAttribute(line, "y2");
+            if (Math.abs(y1 - expectedY) < 0.002 && Math.abs(y2 - expectedY) < 0.002
+                && Math.abs(Math.abs(x2 - x1) - 4.0) < 0.002) {
+                return true;
+            }
+            cursor = close + 2;
+        }
+    }
+
+    private static double numericAttribute(String tag, String name) {
+        String prefix = name + "=\"";
+        int start = tag.indexOf(prefix);
+        assertTrue(start >= 0, "emitted tag must carry " + name + ": " + tag);
+        start += prefix.length();
+        int end = tag.indexOf('"', start);
+        assertTrue(end > start, "emitted " + name + " must have a numeric value");
+        return Double.parseDouble(tag.substring(start, end));
+    }
+
+    private static int count(String haystack, String needle) {
+        int total = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+            total++;
+        }
+        return total;
+    }
+
+    private static int anchoredGroupsContaining(String svg, String token) {
+        int total = 0;
+        int cursor = 0;
+        while (true) {
+            int open = svg.indexOf("<g data-sirentide-role=", cursor);
+            if (open < 0) {
+                return total;
+            }
+            int close = svg.indexOf("</g>", open);
+            assertTrue(close > open, "semantic group must close");
+            if (svg.substring(open, close).contains(token)) {
+                total++;
+            }
+            cursor = close + 4;
+        }
+    }
+
+    private static String groupBySeq(String svg, int seq) {
+        int tag = svg.indexOf("data-sirentide-seq=\"" + seq + "\"");
+        assertTrue(tag >= 0, "semantic group for seq " + seq + " must be present");
+        int open = svg.lastIndexOf("<g data-sirentide-role=", tag);
+        int close = svg.indexOf("</g>", tag);
+        assertTrue(open >= 0 && close > open, "semantic group for seq " + seq + " must close");
+        return svg.substring(open, close + 4);
+    }
+
+    private static String groupById(String svg, String id) {
+        int tag = svg.indexOf("data-sirentide-id=\"" + id + "\"");
+        assertTrue(tag >= 0, "semantic group for id " + id + " must be present");
+        int open = svg.lastIndexOf("<g data-sirentide-role=", tag);
+        int close = svg.indexOf("</g>", tag);
+        assertTrue(open >= 0 && close > open, "semantic group for id " + id + " must close");
+        return svg.substring(open, close + 4);
+    }
+
+    private static String stripPresentation(String svg) {
+        return svg
+            .replaceAll(" fill=\"[^\"]*\"", "")
+            .replaceAll(" stroke-width=\"[^\"]*\"", "")
+            .replaceAll(" stroke=\"[^\"]*\"", "");
+    }
+
+    private static void assertStrictHtmlComments(String html) {
+        int cursor = 0;
+        while (true) {
+            int open = html.indexOf("<!--", cursor);
+            if (open < 0) {
+                assertTrue(html.indexOf("-->", cursor) < 0, "generated HTML has an orphan comment close");
+                return;
+            }
+            assertTrue(html.indexOf("-->", cursor) < 0 || html.indexOf("-->", cursor) >= open,
+                "generated HTML has a comment close before its next open");
+            int close = html.indexOf("-->", open + 4);
+            assertTrue(close >= 0, "generated HTML comment must close");
+            assertFalse(html.substring(open + 4, close).contains("--"),
+                "HTML comment bodies must not contain an internal double hyphen");
+            cursor = close + 3;
         }
     }
 
@@ -529,7 +807,7 @@ class ShowcaseGenTest {
             <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Sirentide — showcase</title>
             <!-- GENERATED by com.sirentide.ShowcaseGenTest — do not hand-edit.
-                 Regen: ./gradlew test --tests com.sirentide.ShowcaseGenTest -Dsirentide.updateShowcase=true -->
+                 Regen: run ShowcaseGenTest with -Dsirentide.updateShowcase=true; exact command is in test source. -->
             <style>
             :root { --ink:#0f172a; --sub:#475569; --line:#e2e8f0; --card:#ffffff; }
             * { box-sizing: border-box; }

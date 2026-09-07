@@ -89,6 +89,26 @@ String seq = Sirentide.render("""
 `->>` is a call (solid, filled head), `-->>` a reply (lighter, open head); `A ->> A` is a
 self-message; the `: label` after the arrow is optional. Actors register in first-seen order.
 
+### Comments
+
+A line beginning `%%` is a comment. It draws nothing, and a diagram containing one renders
+**byte-identically** to the same diagram without it:
+
+```
+flowchart TD
+    A[Start] --> B[End]
+    %% the happy path; the retry arm is added in the next section
+```
+
+Comments are *blanked* rather than removed, which is the part worth knowing: an error further
+down still reports its **real source line number**, so a comment above a mistake does not shift
+the diagnostic away from the line you are looking at. Measured — a parse error on source line 3
+reports line 3 whether or not line 2 is a comment.
+
+`%%` also introduces the optional configuration block at the very top of a diagram (title, theme,
+direction, caption). That block is consumed as configuration; a `%%` line anywhere in the body is
+a comment.
+
 Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
 page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
 bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for the diagram

@@ -290,7 +290,14 @@ class BrewShotGalleryTest {
             "rootsystem\ntype: E8\nedges: minimal"),
         // GEOMETRY-ESCAPE repros (Lattice's Sirentide review): each once drew a label OUTSIDE the
         // declared canvas — now contained by ellipsize-to-room + an in-frame clamp.
-        new Case("pie-thin-labels", "Pie thin-slice outside labels (clipped)",
+        // CAPTION SAYS DROPPED, NOT CLIPPED, because nothing clips: measured across all five pie
+        // blocks in the gallery, no render produces an ellipsis. A 1% slice's outside label has no
+        // horizontal room, ellipsizes to EMPTY, and is suppressed together with its leader — a
+        // leader pointing at an empty label is dangling residue. The code comment above has always
+        // said DROPPED; only the reader-facing caption said clipped, and the caption is the part
+        // newcomers read. Surfaced by the render verb's caveat channel (plan 34362fce), which named
+        // this exact block as the one pre-existing caveat in the gallery.
+        new Case("pie-thin-labels", "Pie thin-slice outside labels (dropped, with the name kept in <desc>)",
             "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74"),
         // The LEGEND twin of the case above (plan 64cf1bae): the 1% slice's outside label has no room
         // and is DROPPED on the bare pie (renderWithDiagnostics now NAMES it and suggests this mode);
