@@ -243,13 +243,31 @@ public final class Main {
         // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
         // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
         int code = writeOutput(svg, outPath, out, err);
-        if (code == 0 && strictFailed && pngPath == null) {
-            return 1;
-        }
-        if (code != 0 || pngPath == null) {
+        if (code != 0) {
             return code;
         }
-        return writePng(svg, pngPath, brewshotJar, err);
+
+        // THE PNG IS STILL ATTEMPTED WHEN THE STRICT GATE HAS FAILED, for the same reason the SVG is
+        // still written: you want to look at what your gate rejected. Its failure still prints to
+        // stderr. PRECEDENCE GOVERNS THE NUMBER, NEVER THE REPORT.
+        int pngCode = pngPath == null ? 0 : writePng(svg, pngPath, brewshotJar, err);
+
+        // THE STRICT FAILURE WINS over a PNG failure [ruling: PROJECT/stafficy 25843, plan b07ea58c].
+        // The principle generalises past this flag: A FAILURE WITH NO OBSERVABLE ARTIFACT MUST OUTRANK
+        // A FAILURE WHOSE ABSENCE IS DIRECTLY OBSERVABLE. A missing PNG is one stat away; a swallowed
+        // strict gate leaves nothing anywhere to test, and its only evidence went to stderr -- the
+        // channel this project's own authoring guide calls invisible to a pipeline.
+        //
+        // WHAT THIS LINE REPAIRS: the strict return used to be guarded on `pngPath == null`, so
+        // `--strict --png` on a dropping source printed "treating dropped statement(s) as a failure"
+        // and then exited 0, indistinguishable from a clean render to any caller reading the code.
+        // The flag whose entire purpose is to make a caveat fail a pipeline was silently disarmed by
+        // an unrelated output flag. Neither flag was tested with the other: --strict only with -o,
+        // --png only without --strict, so the intersection had no coverage at all.
+        if (strictFailed) {
+            return 1;
+        }
+        return pngCode;
     }
 
     /// Environment variable naming the BrewShot jar, so an author sets it once per shell instead of
