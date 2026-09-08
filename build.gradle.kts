@@ -96,6 +96,92 @@ tasks.test {
             )
         }
     }))
+
+    // THE GOLDEN WRITE AUDIT (needs-fix PROJECT/sirentide 1084). Enumerate WRITES, not writers.
+    //
+    // Three rounds of enumerating writers failed. Each pinned how a regen site SPELLS itself -- the
+    // flag literal, then the flag constant, then the directory construct -- and each round the
+    // reviewer found another spelling: a two-argument Path.of, a different package, a class named
+    // GoldenRegen.java in a subpackage. Any such scan is a spelling predicate, and a test can always
+    // reach Files.writeString with a path it computed itself.
+    //
+    // WHAT THIS CLAIMS, precisely: no golden's CONTENT changed without going through the gate.
+    // That is narrower than "no write bypassed the gate" and the difference is stated rather than
+    // glossed: a bypass that rewrites a golden with byte-identical content is invisible here. It is
+    // also harmless by construction, because nothing unverified reached the tracked artifact.
+    //
+    // So this asks the only question that cannot be spelled around: did every golden that CHANGED
+    // on disk go through the gate? GoldenRegen publishes a ledger of what it wrote; this snapshots
+    // the directory before the test JVM starts and diffs it after. The BEFORE boundary is why this
+    // lives in the build rather than in GoldenRegen: a bypass in another package need never load
+    // GoldenRegen at all, so no static initializer of ours is reliably "before" it.
+    val goldenAuditDir = layout.projectDirectory.dir("src/test/resources/golden").asFile
+    val goldenAuditLedger = layout.buildDirectory.file("golden-regen-ledger.txt").get().asFile
+    var goldenAuditBefore: Map<String, String> = emptyMap()
+
+    doFirst {
+        // A STALE ledger would credit this run with a previous run's gated writes, which is the one
+        // way this audit could report a false clean. Deleted rather than appended to.
+        goldenAuditLedger.delete()
+        goldenAuditBefore = goldenFileHashes(goldenAuditDir)
+    }
+
+    doLast {
+        val after = goldenFileHashes(goldenAuditDir)
+        val changed = (goldenAuditBefore.keys + after.keys)
+            .filter { goldenAuditBefore[it] != after[it] }
+            .sorted()
+        // A MISSING ledger reads as "nothing was gated", so every change is unrecorded. Fail closed:
+        // losing the ledger must never manufacture a pass.
+        val recorded = if (goldenAuditLedger.exists()) {
+            goldenAuditLedger.readLines().filter { it.isNotBlank() }.toSet()
+        } else {
+            emptySet()
+        }
+        val unrecorded = changed.filter { it.removeSuffix(".svg") !in recorded }
+
+        // DELIVERY TO THE OPERATOR (needs-fix 1084, second finding). announceRegen writes the
+        // banner to System.err, which lands only in the XML system-err: testLogging above does not
+        // set showStandardStreams, so an operator running the documented regen command saw BUILD
+        // SUCCESSFUL and nothing at all. GoldenRegen's own doc says a green build must never be
+        // indistinguishable from a regen; at the console it still was. Emission was asserted,
+        // DELIVERY was not. This is the delivery.
+        // KEYED ON THE REGEN HAVING HAPPENED, not on bytes having moved. A clean regen is
+        // byte-stable -- the gate rewrites 34 goldens with identical content -- so keying this on
+        // the changed set would print NOTHING on exactly the run the operator most needs told
+        // about, and "a green build must never be indistinguishable from a regen" would still be
+        // false at the console. The skipped byte-comparison is the fact worth delivering, and it
+        // is skipped whether or not the bytes moved.
+        if (recorded.isNotEmpty() || changed.isNotEmpty()) {
+            logger.lifecycle(
+                "SIRENTIDE GOLDEN REGEN: " + recorded.size + " golden(s) rewritten through the " +
+                "gate, " + changed.size + " with CHANGED content. The byte-comparison assertion " +
+                "was SKIPPED for all " + recorded.size + "; this run did NOT verify them against " +
+                "a prior expectation. Review the diff. Changed: " + changed
+            )
+        }
+
+        if (unrecorded.isNotEmpty()) {
+            throw GradleException(
+                "GOLDEN WRITE BYPASS: " + unrecorded.size + " tracked golden(s) changed WITHOUT " +
+                "going through GoldenRegen.regenerateGolden, so nothing asserted they are real " +
+                "renders before they were written: " + unrecorded + ". The gate records what it " +
+                "writes; anything changed and unrecorded was written by something that skipped " +
+                "it, however it spelled the flag or resolved the path."
+            )
+        }
+    }
+
+}
+
+/// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit on the test task
+/// to establish what CHANGED across the run, which is the half a spelling scan can never see.
+fun goldenFileHashes(dir: java.io.File): Map<String, String> {
+    val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+    return files.associate { f ->
+        val digest = MessageDigest.getInstance("SHA-256").digest(f.readBytes())
+        f.name to HexFormat.of().formatHex(digest)
+    }
 }
 
 application {

@@ -2,6 +2,7 @@ package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -115,5 +116,31 @@ final class GoldenRegenAssertsTest {
             "announceRegen must PRINT the banner, not merely be able to build one: " + emitted);
         assertTrue(emitted.contains("SKIPPED for all 7"),
             "the printed banner must carry the count at both positions: " + emitted);
+    }
+
+    @Test
+    void aGatedWriteToAnINJECTEDwriterIsNotRecordedAsATrackedGolden() {
+        // THE LEDGER RECORDS TRACKED WRITES, NOT GATED CALLS (needs-fix 1084).
+        //
+        // The build's write audit diffs the golden directory against this ledger, so a name in the
+        // ledger is a promise that the gate wrote THAT file. The three-argument gate accepts an
+        // injected writer, which the tests above use to count calls without touching the directory
+        // at all; recording at the gate credited those to the ledger and it read 35 names for 34
+        // goldens.
+        //
+        // That is not cosmetic. A ledger entry for a name never written would let a BYPASS writing
+        // that same name pass the audit unnoticed -- the audit would see the file change, find the
+        // name recorded, and clear it. So the over-count was a hole in the new guard, not an
+        // untidiness in it.
+        //
+        // I found it by reconciling 35 against 34 rather than by reading the code, which is why
+        // this test exists: the next person to move record() back to the gate should get a RED,
+        // not an arithmetic puzzle.
+        assertDoesNotThrow(() ->
+            GoldenRegen.regenerateGolden("ledger-probe", SANE, (n, s) -> { }));
+        assertFalse(GoldenRegen.sortedRecorded().contains("ledger-probe"),
+            "a gated write through an INJECTED writer touched no tracked golden, so recording it "
+                + "would promise the audit a file that does not exist: "
+                + GoldenRegen.sortedRecorded());
     }
 }

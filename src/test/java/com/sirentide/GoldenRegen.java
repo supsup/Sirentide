@@ -3,9 +3,13 @@ package com.sirentide;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /// The golden-regeneration gate, in ONE place (plan aac2500e, needs-fix PROJECT/sirentide 1072).
 ///
@@ -44,10 +48,58 @@ final class GoldenRegen {
     private GoldenRegen() {
     }
 
+    /// THE LEDGER (needs-fix 1084). Every name this gate writes, recorded as it writes it.
+    ///
+    /// This exists because THREE ROUNDS of enumerating WRITERS failed. Each round pinned how a
+    /// regen site spells itself -- the flag literal, then the flag constant, then the directory
+    /// construct -- and each round the reviewer found another spelling: a two-argument Path.of, a
+    /// different package, a class named GoldenRegen.java in a subpackage. Every such scan is a
+    /// SPELLING predicate, and a test can always reach Files.writeString with a path it computed
+    /// itself, so the next evasion is always the one nobody thought of.
+    ///
+    /// So the question changed from "does this file look like a regen site" to "was this write
+    /// gated". The gate already knows what it wrote; it counts them for the banner. Anything that
+    /// CHANGED on disk and is not in here was written by something that bypassed the gate,
+    /// regardless of how it spelled the flag, resolved the path, named itself, or which package it
+    /// sits in. The comparison is done by build.gradle.kts, which can snapshot the directory
+    /// BEFORE the test JVM starts -- a boundary this class cannot observe, because a bypass in
+    /// another package need never load GoldenRegen at all.
+    private static final Set<String> RECORDED = ConcurrentHashMap.newKeySet();
+
+    /// Where the ledger is published for the build to read. Under build/, so it is never tracked.
+    private static final Path LEDGER = Path.of("build", "golden-regen-ledger.txt");
+
     /// THE GATE: assertion and write bound together, so the write cannot happen without the check.
     static void regenerateGolden(String name, String svg, GoldenWriter writer) throws Exception {
         assertRenderIsSane(name, svg);
         writer.write(name, svg);
+    }
+
+    /// Recorded HERE rather than in regenerateGolden, and the difference is load-bearing. The
+    /// three-argument gate accepts an INJECTED writer, which the gate's own tests use to count
+    /// calls without touching the tracked directory. Recording at the gate credited those to the
+    /// ledger: 35 names for 34 goldens, a discrepancy I found by reconciling the counts rather
+    /// than by reading the code. It is not cosmetic -- a ledger entry for a name never written
+    /// tracked would let a bypass writing THAT name pass the audit unnoticed. The ledger must
+    /// contain writes to the tracked directory and nothing else.
+    ///
+    /// Recorded AFTER the write returns, deliberately: a write that threw did not happen, and
+    /// claiming it in the ledger would let a failed gated write mask a later bypass of the same
+    /// name. The set is concurrent because nothing here promises single-threaded tests.
+    private static void record(String name) {
+        RECORDED.add(name);
+        try {
+            Files.createDirectories(LEDGER.getParent());
+            Files.writeString(LEDGER, String.join("\n", sortedRecorded()) + "\n",
+                StandardCharsets.UTF_8);
+        } catch (IOException ignored) {
+            // The build treats a MISSING ledger as "nothing was gated", which fails closed: every
+            // changed golden then reads as unrecorded. Losing the ledger cannot manufacture a pass.
+        }
+    }
+
+    static List<String> sortedRecorded() {
+        return RECORDED.stream().sorted().toList();
     }
 
     /// The ordinary gate, writing into the tracked golden directory.
@@ -58,6 +110,7 @@ final class GoldenRegen {
     private static void writeTrackedGolden(String name, String svg) throws Exception {
         Files.createDirectories(GOLDEN_DIR);
         Files.writeString(GOLDEN_DIR.resolve(name + ".svg"), svg, StandardCharsets.UTF_8);
+        record(name);
     }
 
     /// Pre-write sanity. Each clause is separately bound by a fixture in GoldenRegenAssertsTest --
