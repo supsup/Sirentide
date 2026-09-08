@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -74,7 +77,43 @@ final class GoldenRegenAssertsTest {
         assertTrue(GoldenRegen.regenBanner(34).contains("SKIPPED for all 34"),
             "the skipped-count must come from the argument too -- it is a second use of the same "
                 + "value and was the one silently satisfying the weaker assertion");
+        // GAP-B (needs-fix 1077). The line above pinned position 2 at exactly ONE value, and 34 is
+        // the real golden count -- precisely the constant a hard-coder reaches for. So changing
+        // only the second use to a literal 34 stayed GREEN, and a live regen then printed
+        // self-contradicting banners: "rewrote 32 golden(s) ... SKIPPED for all 34". Position 1 was
+        // bound at two values and position 2 at one; the ASYMMETRY was the bug, and it is the same
+        // two-uses-one-assertion shape I had just finished fixing at position 1.
+        assertTrue(GoldenRegen.regenBanner(7).contains("SKIPPED for all 7"),
+            "the skipped-count must vary with the argument at a SECOND value too, or a literal "
+                + "equal to the real golden count survives here");
         assertTrue(GoldenRegen.regenBanner(34).contains("SKIPPED"),
             "the banner must name the assertion regeneration suspends");
+    }
+
+    @Test
+    void announcingActuallyPrintsTheBannerAndDoesNotMerelyBuildIt() {
+        // GAP-C (needs-fix 1077), and the doc comment on announceRegen used to claim this was
+        // already covered. It was not: the census pins that every site CALLS announceRegen, which
+        // is a different claim from announceRegen printing anything. Gutting its body to a comment
+        // left all three call sites intact, the suite GREEN, and a real regen emitting ZERO
+        // banners -- word for word the M8 defect the comment said was fixed.
+        //
+        // "Only the string BUILDER was tested and never that anything printed it" was still true
+        // of the successor to the fix for exactly that sentence.
+        PrintStream original = System.err;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        String emitted;
+        try {
+            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            GoldenRegen.announceRegen(7);
+        } finally {
+            System.setErr(original);
+            emitted = captured.toString(StandardCharsets.UTF_8);
+        }
+
+        assertTrue(emitted.contains("rewrote 7 golden(s)"),
+            "announceRegen must PRINT the banner, not merely be able to build one: " + emitted);
+        assertTrue(emitted.contains("SKIPPED for all 7"),
+            "the printed banner must carry the count at both positions: " + emitted);
     }
 }

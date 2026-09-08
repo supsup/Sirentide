@@ -261,7 +261,7 @@ class GoldenSvgTest {
                 // indistinguishable from a green run that verified something. The pre-write
                 // assertions below still run, which is the ShowcaseGenTest pattern already in this
                 // repo: that class regenerates under its OWN flag and still checks the artifact.
-                GoldenRegen.regenerateGolden(name, actual, GoldenSvgTest::writeGolden);
+                GoldenRegen.regenerateGolden(name, actual);
                 rewritten++;
             } else {
                 assertEquals(readGolden(name), actual,
@@ -286,9 +286,4 @@ class GoldenSvgTest {
 
 
 
-    private static void writeGolden(String name, String svg) throws Exception {
-        Path dir = Path.of("src/test/resources/golden");
-        Files.createDirectories(dir);
-        Files.writeString(dir.resolve(name + ".svg"), svg, StandardCharsets.UTF_8);
-    }
 }
