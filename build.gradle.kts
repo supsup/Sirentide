@@ -105,10 +105,23 @@ tasks.test {
     // GoldenRegen.java in a subpackage. Any such scan is a spelling predicate, and a test can always
     // reach Files.writeString with a path it computed itself.
     //
-    // WHAT THIS CLAIMS, precisely: no golden's CONTENT changed without going through the gate.
-    // That is narrower than "no write bypassed the gate" and the difference is stated rather than
-    // glossed: a bypass that rewrites a golden with byte-identical content is invisible here. It is
-    // also harmless by construction, because nothing unverified reached the tracked artifact.
+    // WHAT THIS CLAIMS, precisely, and it has been narrowed twice by measurement rather than by
+    // caution (needs-fix 1086, then 1088). It began as "no golden's CONTENT changed without going
+    // through the gate", which was falsified by a post-gate overwrite: the name was legitimately in a
+    // name-keyed ledger, so the audit cleared it. Content hashes fixed that and the claim widened to
+    // "every golden on disk carries the bytes the gate wrote".
+    //
+    // THEN THAT WAS FALSIFIED TOO, by forging the ledger. It is written by the same test JVM whose
+    // writes it vouches for, so a class ordered last can overwrite a golden, hash the rogue bytes
+    // itself, and append its own line. Duplicate names are now fatal, which breaks that route, because
+    // a forgery for a gated name necessarily duplicates the legitimate line.
+    //
+    // SO THE CLAIM, WITH ITS TRUST BOUNDARY NAMED: every golden on disk carries the bytes the gate
+    // recorded writing, ASSUMING THE LEDGER ITSELF IS HONEST. The ledger is self-attested. This is a
+    // defence against code that writes GOLDENS, not against code that writes the LEDGER, and full
+    // closure needs a trust anchor the test JVM cannot mint. A bypass that rewrites a golden with
+    // byte-identical content also remains invisible, and is harmless by construction since nothing
+    // unverified reached the artifact.
     //
     // So this asks the only question that cannot be spelled around: did every golden that CHANGED
     // on disk go through the gate? GoldenRegen publishes a ledger of what it wrote; this snapshots
@@ -217,15 +230,37 @@ fun goldenAuditFindings(
 
 /// Reads `name<TAB>sha256` lines. A malformed or absent ledger yields an EMPTY map, which fails
 /// closed: every changed golden is then unrecorded.
+///
+/// A DUPLICATE NAME IS FATAL, not last-wins (needs-fix 1088 finding A). The reviewer FORGED a
+/// ledger: a test class ordered last overwrote a golden with rogue bytes, hashed them itself, and
+/// APPENDED its own `pie<TAB>hash` line. `.associate{}` silently prefers the last line, so the
+/// forgery became authoritative, the run went BUILD SUCCESSFUL with the rogue bytes on disk, and
+/// the banner described the file as a reviewable gated change.
+///
+/// Two different hashes recorded for one name is a CONTRADICTION, and silently preferring either
+/// is the same shape of defect as the name-keyed ledger this replaced. Refusing outright also
+/// breaks the append route, because a forgery for a gated name necessarily duplicates the
+/// legitimate line.
+///
+/// THIS IS NOT FULL CLOSURE AND MUST NOT BE READ AS IT. The ledger is SELF-ATTESTED: it is written
+/// by the same test JVM whose writes it vouches for, with no permissions, checksum, token or lock
+/// binding a line to a write. It is a defence against code that writes GOLDENS, not against code
+/// that writes the LEDGER. Full closure needs a trust anchor the test JVM cannot mint.
 fun readGoldenLedger(file: java.io.File): Map<String, String> {
     if (!file.exists()) return emptyMap()
-    return file.readLines()
+    val entries = file.readLines()
         .filter { it.isNotBlank() && it.contains('\t') }
-        .associate { line ->
-            val name = line.substringBefore('\t')
-            val hash = line.substringAfter('\t').trim()
-            (name + ".svg") to hash
-        }
+        .map { line -> (line.substringBefore('\t') + ".svg") to line.substringAfter('\t').trim() }
+    val duplicates = entries.groupBy { it.first }.filterValues { it.size > 1 }.keys.sorted()
+    if (duplicates.isNotEmpty()) {
+        throw GradleException(
+            "GOLDEN LEDGER CONTRADICTION: " + duplicates.size + " name(s) recorded more than " +
+            "once: " + duplicates + ". The gate writes each name once per run, so a duplicate " +
+            "means something appended to the ledger. Two hashes for one name is a contradiction " +
+            "and preferring either would let an appended line overrule the gate's own record."
+        )
+    }
+    return entries.toMap()
 }
 
 /// THE BUILD-LEVEL FIXTURE (needs-fix 1086, ruled). The audit's decision lives in Kotlin and no
@@ -274,9 +309,50 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         check("new-gated-file", emptyMap(), mapOf("new.svg" to h1),
             mapOf("new.svg" to h1), emptyList())
 
-        // 7. FAIL CLOSED: a lost or unreadable ledger must not manufacture a pass.
+        // 7. FAIL CLOSED ON A REALLY-ABSENT FILE, through the REAL reader (needs-fix 1088 B).
+        //    This case used to pass emptyMap() literally, which made its inputs BYTE-IDENTICAL to
+        //    case 3: its identity came from its NAME, not from anything it exercised. The reviewer
+        //    measured the consequence -- deleting readGoldenLedger's if-not-exists guard left this
+        //    printing "8 cases pass" while an ordinary run died with FileNotFoundException. The
+        //    behaviour the case is named for was broken and the fixture never noticed.
+        val absent = layout.buildDirectory.file("golden-audit-selftest/no-such-ledger.txt")
+            .get().asFile
+        absent.parentFile.mkdirs()
+        absent.delete()
+        val fromAbsent = readGoldenLedger(absent)
+        if (fromAbsent.isNotEmpty()) {
+            failures += "missing-ledger: the reader must yield NOTHING for an absent file, got " +
+                fromAbsent
+        }
         check("missing-ledger", mapOf("a.svg" to h1), mapOf("a.svg" to h2),
-            emptyMap(), listOf("a.svg"))
+            fromAbsent, listOf("a.svg"))
+
+        // 9. A WELL-FORMED LEDGER ROUND-TRIPS. Positive control on the reader: without it, a reader
+        //    that returned empty for EVERYTHING would satisfy case 7 and look fail-closed while
+        //    being merely broken.
+        val realLedger = layout.buildDirectory.file("golden-audit-selftest/ledger.txt").get().asFile
+        realLedger.writeText("a\t" + h2 + "\n")
+        val parsed = readGoldenLedger(realLedger)
+        if (parsed != mapOf("a.svg" to h2)) {
+            failures += "ledger-round-trip: expected {a.svg=" + h2 + "} but got " + parsed
+        }
+        check("gated-write-via-real-reader", mapOf("a.svg" to h1), mapOf("a.svg" to h2),
+            parsed, emptyList())
+
+        // 10. THE FORGERY ROUTE (needs-fix 1088 A). A duplicate name must be FATAL, not last-wins.
+        //     The reviewer appended his own line for a legitimately-gated name and it silently won.
+        realLedger.writeText("a\t" + h1 + "\na\t" + h2 + "\n")
+        val refused = try {
+            readGoldenLedger(realLedger)
+            false
+        } catch (expected: GradleException) {
+            true
+        }
+        if (!refused) {
+            failures += "duplicate-ledger-line: a second line for the same name must be REFUSED, " +
+                "not silently preferred"
+        }
+        realLedger.delete()
 
         // 8. a deleted golden is a content change too, and nothing gated a deletion.
         check("deleted-golden", mapOf("a.svg" to h1), emptyMap(), emptyMap(), listOf("a.svg"))
@@ -287,7 +363,7 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
                 failures.joinToString("\n  ")
             )
         }
-        logger.lifecycle("golden audit self-test: 8 cases pass")
+        logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader")
     }
 }
 
