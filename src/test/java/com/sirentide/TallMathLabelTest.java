@@ -59,9 +59,14 @@ class TallMathLabelTest {
     void tallMathFlowchartMatchesGolden() throws Exception {
         String actual = Sirentide.render(GOLDEN_DSL, REAL);
         if (UPDATE) {
+            // Same defect and same repair as GoldenSvgTest (plan aac2500e): this branch used to
+            // write and `return` with ZERO assertions, reporting PASSED. Regeneration writes a new
+            // expected value; it does not license writing a malformed one.
+            GoldenSvgTest.assertRenderIsSane("flowchart-tallmath", actual);
             Path dir = Path.of("src/test/resources/golden");
             Files.createDirectories(dir);
             Files.writeString(dir.resolve("flowchart-tallmath.svg"), actual, StandardCharsets.UTF_8);
+            System.err.println(GoldenSvgTest.regenBanner(1));
             return;
         }
         try (InputStream in = getClass().getResourceAsStream("/golden/flowchart-tallmath.svg")) {
