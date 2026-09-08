@@ -46,11 +46,21 @@ final class GoldenRegenSiteCensusTest {
     // LOOKS like a regen site: build.gradle.kts snapshots the golden directory before the test JVM
     // starts and diffs it after, against a ledger GoldenRegen publishes of what it wrote.
     //
-    // THE TRADE, stated rather than glossed. The census ran on EVERY build; the audit only has
-    // teeth on a run where goldens actually change, which is a regen run. So a bypass can now sit
-    // in the tree unnoticed until someone regenerates. That is later, and it is the moment the
-    // bypass would first do harm -- and it is measured against a scan that missed four routes out
-    // of five on every one of those earlier runs.
+    // THE TRADE I STATED HERE WAS EXACTLY INVERTED, and the correction is the useful part
+    // (needs-fix 1086). I wrote that the census ran on every build while the audit "only has teeth
+    // on a run where goldens actually change", so a bypass could "sit in the tree unnoticed until
+    // someone regenerates".
+    //
+    // Both halves are backwards. doFirst DELETES the ledger, so on an ORDINARY run nothing is
+    // recorded and any changed golden fails the build at once: a bypass is caught on the very next
+    // build, not at the next regen. And the REGEN run is the permissive one, because that is the
+    // run where every tracked name is legitimately recorded -- which is how a post-gate overwrite
+    // survived until the ledger started carrying content hashes.
+    //
+    // I described my own mechanism from the armchair rather than running it, in the same edit that
+    // built it. That is the third time in two days a sentence of mine recorded what I believed
+    // instead of what I had measured, so the rule now is: a claim about behaviour goes in after
+    // something executed proves it, or it does not go in.
     //
     // Deletion proven lossless in the same way as the last one: routes a and b, the only two the
     // census ever caught, both FAIL the build under the audit with the census gone.

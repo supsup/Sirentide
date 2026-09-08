@@ -8,7 +8,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Set;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /// The golden-regeneration gate, in ONE place (plan aac2500e, needs-fix PROJECT/sirentide 1072).
@@ -64,7 +66,19 @@ final class GoldenRegen {
     /// sits in. The comparison is done by build.gradle.kts, which can snapshot the directory
     /// BEFORE the test JVM starts -- a boundary this class cannot observe, because a bypass in
     /// another package need never load GoldenRegen at all.
-    private static final Set<String> RECORDED = ConcurrentHashMap.newKeySet();
+    /// NAME to SHA-256 OF THE BYTES WRITTEN, not a set of names (needs-fix 1086).
+    ///
+    /// A name-keyed ledger can only answer "was this name written through the gate at some point
+    /// during this run". It cannot answer "are the bytes on disk the bytes the gate produced", and
+    /// the difference is a whole class of bypass: a rogue write landing on a tracked golden AFTER
+    /// the gate wrote it, in the same test task, is invisible. The name is legitimately recorded,
+    /// the audit sees the file change, finds the name, and clears it.
+    ///
+    /// The reviewer DEMONSTRATED that with a control rather than arguing it: on a regen run with a
+    /// rogue write ordered after the gate, BUILD SUCCESSFUL and the ROGUE bytes survived on disk;
+    /// the identical write with no flag was caught loud. I had fixed the "probe" INSTANCE of this
+    /// by moving record() into the tracked write, and left the CLASS open.
+    private static final Map<String, String> RECORDED = new ConcurrentHashMap<>();
 
     /// Where the ledger is published for the build to read. Under build/, so it is never tracked.
     private static final Path LEDGER = Path.of("build", "golden-regen-ledger.txt");
@@ -86,8 +100,8 @@ final class GoldenRegen {
     /// Recorded AFTER the write returns, deliberately: a write that threw did not happen, and
     /// claiming it in the ledger would let a failed gated write mask a later bypass of the same
     /// name. The set is concurrent because nothing here promises single-threaded tests.
-    private static void record(String name) {
-        RECORDED.add(name);
+    private static void record(String name, String svg) {
+        RECORDED.put(name, sha256(svg));
         try {
             Files.createDirectories(LEDGER.getParent());
             Files.writeString(LEDGER, String.join("\n", sortedRecorded()) + "\n",
@@ -98,8 +112,23 @@ final class GoldenRegen {
         }
     }
 
+    /// One `name<TAB>sha256` line per gated write, sorted, for the build to read.
     static List<String> sortedRecorded() {
-        return RECORDED.stream().sorted().toList();
+        return RECORDED.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(e -> e.getKey() + "\t" + e.getValue())
+            .toList();
+    }
+
+    /// Hashed over the bytes the gate WROTE, at the moment it wrote them, so a later overwrite
+    /// cannot be mistaken for it.
+    static String sha256(String svg) {
+        try {
+            return HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(svg.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required of every JVM", impossible);
+        }
     }
 
     /// The ordinary gate, writing into the tracked golden directory.
@@ -110,7 +139,7 @@ final class GoldenRegen {
     private static void writeTrackedGolden(String name, String svg) throws Exception {
         Files.createDirectories(GOLDEN_DIR);
         Files.writeString(GOLDEN_DIR.resolve(name + ".svg"), svg, StandardCharsets.UTF_8);
-        record(name);
+        record(name, svg);
     }
 
     /// Pre-write sanity. Each clause is separately bound by a fixture in GoldenRegenAssertsTest --
