@@ -32,7 +32,10 @@ import org.junit.jupiter.api.Test;
 /// renderer — a short `$E=mc^2$` node's box is unchanged, only a genuinely tall fragment grows.
 class TallMathLabelTest {
 
-    private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateGolden");
+    private static final boolean UPDATE = GoldenRegen.updating();
+
+    /// F6: this name was typed five times in this class.
+    private static final String GOLDEN_NAME = "flowchart-tallmath";
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
     private static final double NODE_H = 36;   // the fixed flowchart node height (FlowchartLayout.NODE_H)
 
@@ -62,11 +65,10 @@ class TallMathLabelTest {
             // Same defect and same repair as GoldenSvgTest (plan aac2500e): this branch used to
             // write and `return` with ZERO assertions, reporting PASSED. Regeneration writes a new
             // expected value; it does not license writing a malformed one.
-            GoldenSvgTest.assertRenderIsSane("flowchart-tallmath", actual);
-            Path dir = Path.of("src/test/resources/golden");
-            Files.createDirectories(dir);
-            Files.writeString(dir.resolve("flowchart-tallmath.svg"), actual, StandardCharsets.UTF_8);
-            System.err.println(GoldenSvgTest.regenBanner(1));
+            // Routed through the BOUND gate, not a free-standing assert beside a raw write:
+            // the reviewer's M3 deleted that assert and the suite stayed green (needs-fix 1072).
+            GoldenRegen.regenerateGolden(GOLDEN_NAME, actual);
+            GoldenRegen.announceRegen(1);
             return;
         }
         try (InputStream in = getClass().getResourceAsStream("/golden/flowchart-tallmath.svg")) {

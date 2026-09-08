@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 /// Review the resulting diff before committing — an unexpected golden change is the signal.
 class GoldenSvgTest {
 
-    private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateGolden");
+    private static final boolean UPDATE = GoldenRegen.updating();
 
     /// Fixed inputs — one per diagram type. Deterministic (finite, positive) so the golden is
     /// stable across runs and machines.
@@ -261,7 +261,7 @@ class GoldenSvgTest {
                 // indistinguishable from a green run that verified something. The pre-write
                 // assertions below still run, which is the ShowcaseGenTest pattern already in this
                 // repo: that class regenerates under its OWN flag and still checks the artifact.
-                regenerateGolden(name, actual, GoldenSvgTest::writeGolden);
+                GoldenRegen.regenerateGolden(name, actual, GoldenSvgTest::writeGolden);
                 rewritten++;
             } else {
                 assertEquals(readGolden(name), actual,
@@ -270,23 +270,10 @@ class GoldenSvgTest {
             }
         }
         if (UPDATE) {
-            System.err.println(regenBanner(rewritten));
+            GoldenRegen.announceRegen(rewritten);
         }
     }
 
-    /// The LOUD line (plan aac2500e acceptance 2). A green build must never be
-    /// INDISTINGUISHABLE from a regen, so a regenerating run says so, names HOW MANY goldens it
-    /// rewrote, and names the assertion it did NOT run -- the byte comparison, which is the entire
-    /// point of a golden and is exactly what regeneration suspends.
-    ///
-    /// Package-private and pure so a test can assert its content without setting the system
-    /// property and rewriting the tracked goldens as a side effect.
-    static String regenBanner(int rewritten) {
-        return "SIRENTIDE GOLDEN REGEN: rewrote " + rewritten + " golden(s) under "
-            + "-Dsirentide.updateGolden=true. The byte-comparison assertion was SKIPPED for all "
-            + rewritten + "; this run did NOT verify them against a prior expectation. Review the "
-            + "diff before committing.";
-    }
 
     private static String readGolden(String name) throws Exception {
         try (InputStream in = GoldenSvgTest.class.getResourceAsStream("/golden/" + name + ".svg")) {
@@ -296,35 +283,8 @@ class GoldenSvgTest {
         }
     }
 
-    /// A golden writer, so the regen STEP can be exercised with a writer that must not be called.
-    @FunctionalInterface
-    interface GoldenWriter {
-        void write(String name, String svg) throws Exception;
-    }
 
-    /// THE REGEN STEP AS ONE UNIT (plan aac2500e). The assertion and the write live together on
-    /// purpose: testing `assertRenderIsSane` alone would NOT catch someone restoring the pure-write
-    /// branch, because the helper would still exist and still work -- it would simply not be
-    /// called. Binding them here means the control below fails if the gate is removed, which is the
-    /// difference between testing a helper and testing that the helper GUARDS something.
-    static void regenerateGolden(String name, String svg, GoldenWriter writer) throws Exception {
-        assertRenderIsSane(name, svg);
-        writer.write(name, svg);
-    }
 
-    /// Pre-write sanity, run on BOTH paths (plan aac2500e). Mirrors ShowcaseGenTest's checks:
-    /// a real render, never the inert 0x0 degrade shell, and no raw LaTeX leaking into a bake.
-    /// These are the assertions that make a regenerated golden trustworthy rather than merely new.
-    ///
-    /// It is deliberately a SEPARATE method with a failing state a test can exercise directly --
-    /// "the pre-write assertions still run" means nothing unless those assertions CAN fail.
-    static void assertRenderIsSane(String name, String svg) {
-        assertTrue(svg.contains("<svg"), name + ": expected a real render, got no <svg> at all");
-        assertFalse(svg.contains("width=\"0\" height=\"0\""),
-            name + ": expected a real render, got the inert 0x0 degrade shell");
-        assertFalse(svg.contains("\\frac") || svg.contains("$"),
-            name + ": raw LaTeX leaked into the render instead of baking");
-    }
 
     private static void writeGolden(String name, String svg) throws Exception {
         Path dir = Path.of("src/test/resources/golden");

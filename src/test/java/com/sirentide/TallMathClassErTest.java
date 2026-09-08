@@ -45,7 +45,7 @@ import org.w3c.dom.NodeList;
 /// REAL LatteX renderer AND pins the GROWN geometry with a byte golden.
 class TallMathClassErTest {
 
-    private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateGolden");
+    private static final boolean UPDATE = GoldenRegen.updating();
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
     private static final String BORDER = "#475569";   // ClassDiagramLayout.BORDER (box border + dividers)
 
@@ -77,9 +77,11 @@ class TallMathClassErTest {
     void tallMatrixClassMatchesGolden() throws Exception {
         String actual = Sirentide.render(GOLDEN_DSL, REAL);
         if (UPDATE) {
-            Path dir = Path.of("src/test/resources/golden");
-            Files.createDirectories(dir);
-            Files.writeString(dir.resolve("class-tallmath.svg"), actual, StandardCharsets.UTF_8);
+            // THE THIRD SITE (needs-fix 1072 F1). This was the original defect verbatim -- write,
+            // return, zero assertions, no banner -- and it is why the banner announced 33 against
+            // 34 goldens rewritten. Two of three is not "both sites".
+            GoldenRegen.regenerateGolden("class-tallmath", actual);
+            GoldenRegen.announceRegen(1);
             return;
         }
         try (InputStream in = getClass().getResourceAsStream("/golden/class-tallmath.svg")) {
