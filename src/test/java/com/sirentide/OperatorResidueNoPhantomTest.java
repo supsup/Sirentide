@@ -83,14 +83,34 @@ final class OperatorResidueNoPhantomTest {
             assertEquals(0, f.nodes().size(),
                 body + ": an operator run longer than any recognised form must mint NOTHING, and "
                     + "this spelling is nowhere enumerated in the parser: " + f.nodes());
+
+            // LOUD, PER SPELLING (needs-fix 1099). Minting nothing is only half the guarantee; a
+            // line that vanishes QUIETLY is the "same failure wearing less" this file's own comment
+            // warns about. Asserting the count alone left that half pinned for exactly ONE spelling
+            // of six: the reviewer demoted the other five to PARSE_ERROR, leaving node counts and
+            // message text untouched, and all three tests stayed green while four real inputs
+            // silently regressed.
+            RenderResult r = Sirentide.renderWithDiagnostics("flowchart TD\n  " + body + "\n");
+            assertEquals(Outcome.UNSUPPORTED_CONSTRUCT, r.diagnostics().outcome(),
+                body + ": the refusal must be LOUD for THIS spelling, not just for the canonical "
+                    + "one. A quiet drop is the failure this guard exists to replace: "
+                    + r.diagnostics().message());
         }
     }
 
-    /// MARLOW'S BINDING CONDITION, and it is half the fix rather than a courtesy negative.
+    /// MARLOW'S BINDING CONDITION: the guard must be a RESIDUE detector and not a character guard.
+    /// A line whose operators are fully consumed is untouched, so legal syntax cannot be caught by
+    /// widening. Without this, the coverage test is satisfiable by a parser that refuses every dash.
     ///
-    /// The guard must be a RESIDUE detector and not a character guard: a line whose operators are
-    /// fully consumed is untouched, so legal syntax cannot be caught by widening. Without this, the
-    /// test above is satisfiable by a parser that simply refuses every dash it sees.
+    /// I CALLED THIS "THE ONE THAT MATTERS" AND THAT WAS WRONG (needs-fix 1099). It guards
+    /// OVER-triggering ONLY. The reviewer built the mutant I had not: an OVERFIT guard that trips
+    /// on the literal three-dash shape alone. This control stayed GREEN, because it never sees
+    /// illegal input and so cannot notice a guard that has stopped catching most of it. What killed
+    /// that mutant was the COVERAGE test, failing on `A ----> B` with expected 0 but was 2.
+    ///
+    /// TWO CONTROLS ON TWO AXES, and neither is the one: coverage catches UNDER-triggering, this
+    /// catches OVER-triggering. Recorded here so a later reader does not delete the coverage test
+    /// as redundant to this one, which is the mistake my own framing invited.
     @Test
     void legalOperatorsAreUntouchedByTheResidueGuard() {
         for (String[] legal : new String[][] {
