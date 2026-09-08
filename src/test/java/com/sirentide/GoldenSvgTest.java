@@ -1,7 +1,9 @@
 package com.sirentide;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
 import java.io.InputStream;
@@ -22,7 +24,7 @@ import org.junit.jupiter.api.Test;
 /// Review the resulting diff before committing — an unexpected golden change is the signal.
 class GoldenSvgTest {
 
-    private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateGolden");
+    private static final boolean UPDATE = GoldenRegen.updating();
 
     /// Fixed inputs — one per diagram type. Deterministic (finite, positive) so the golden is
     /// stable across runs and machines.
@@ -248,18 +250,30 @@ class GoldenSvgTest {
 
     @Test
     void everyDiagramTypeMatchesItsGolden() throws Exception {
+        int rewritten = 0;
         for (Map.Entry<String, String> e : FIXTURES.entrySet()) {
             String name = e.getKey();
             String actual = Sirentide.render(e.getValue());
             if (UPDATE) {
-                writeGolden(name, actual);
+                // REGENERATION WRITES A NEW EXPECTED VALUE; IT DOES NOT LICENSE WRITING A
+                // MALFORMED ONE (plan aac2500e). Before this, the UPDATE branch asserted NOTHING
+                // and JUnit reported the test PASSED, so a green run under the regen flag was
+                // indistinguishable from a green run that verified something. The pre-write
+                // assertions below still run, which is the ShowcaseGenTest pattern already in this
+                // repo: that class regenerates under its OWN flag and still checks the artifact.
+                GoldenRegen.regenerateGolden(name, actual);
+                rewritten++;
             } else {
                 assertEquals(readGolden(name), actual,
                     name + ".svg drifted — a layout change? Regen with -Dsirentide.updateGolden=true "
                         + "and review the diff.");
             }
         }
+        if (UPDATE) {
+            GoldenRegen.announceRegen(rewritten);
+        }
     }
+
 
     private static String readGolden(String name) throws Exception {
         try (InputStream in = GoldenSvgTest.class.getResourceAsStream("/golden/" + name + ".svg")) {
@@ -269,9 +283,7 @@ class GoldenSvgTest {
         }
     }
 
-    private static void writeGolden(String name, String svg) throws Exception {
-        Path dir = Path.of("src/test/resources/golden");
-        Files.createDirectories(dir);
-        Files.writeString(dir.resolve(name + ".svg"), svg, StandardCharsets.UTF_8);
-    }
+
+
+
 }
