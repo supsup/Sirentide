@@ -76,6 +76,16 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   with `--math` they are typeset, and one that fails to typeset is the untypeset-math caveat. The
   SVG is unchanged; only the caveat is new.
 
+- **`render --lint-overlap` (and `RenderOptions.lintOverlap` on the API) checks for colliding
+  text.** Opt-in and off by default, so no existing render gains a caveat. After a successful bake
+  it compares every text run's outline box with every text run in a *different* diagram element
+  (or outside any element) and reports each overlapping pair on the caveat channel as
+  `text overlap: ...`, so `--strict` fails on it only when the flag is set. The SVG is never
+  changed. Text is compared with text only, so an edge label on its own stroke is never a
+  finding; typeset math fragments are not checked. Measured on the 32 golden fixtures, one fires:
+  `sequence-blocks`, where the `loop` label "every retry" sits 1.8 px into the "ping" message
+  below it.
+
 - **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
   now says so: the baked SVG carries no renderer or revision attribute, and the jar's exact source
   revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`. A hash of the

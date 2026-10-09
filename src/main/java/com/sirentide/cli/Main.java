@@ -2,6 +2,7 @@ package com.sirentide.cli;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Outcome;
+import com.sirentide.api.RenderOptions;
 import com.sirentide.api.RenderResult;
 import com.sirentide.api.Sirentide;
 import com.sirentide.parse.DslParser;
@@ -87,6 +88,11 @@ public final class Main {
                            cannot typeset falls back to its raw source and is reported as a caveat,
                            so --strict fails on it.
           --lattex PATH    the LatteX jar --math loads; or set SIRENTIDE_LATTEX_JAR.
+          --lint-overlap   ALSO check every text run against text in OTHER diagram elements and
+                           report each overlapping pair as a caveat (`text overlap: ...`), so
+                           --strict fails on it. Off by default: without it no render gains a
+                           lint caveat. Text is checked against text only, so an edge label on
+                           its own stroke is never a finding; typeset math is not checked.
 
         --batch: a source is everything up to a NUL byte (a trailing NUL ends the last source; it
         does not start an empty one). Each record is the SVG `render -` would print for that source
@@ -147,6 +153,7 @@ public final class Main {
         String lattexJar = System.getenv(LATTEX_JAR_ENV);
         boolean strict = false;
         boolean math = false;
+        boolean lintOverlap = false;
         for (int i = 2; i < args.length; i++) {
             String flag = args[i];
             // VALUELESS flags are matched before the needs-a-value arity check below; treating one
@@ -157,6 +164,10 @@ public final class Main {
             }
             if ("--math".equals(flag)) {
                 math = true;
+                continue;
+            }
+            if ("--lint-overlap".equals(flag)) {
+                lintOverlap = true;
                 continue;
             }
             if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)
@@ -214,9 +225,12 @@ public final class Main {
                 return 2;
             }
         }
+        // DEFAULT unless --lint-overlap: the default options ARE the pre-lint render, so without the
+        // flag no render can gain a lint caveat (the opt-in rule of the ruling).
+        RenderOptions options = lintOverlap ? new RenderOptions(true) : RenderOptions.DEFAULT;
         try {
             if (batch) {
-                return runBatch(in, out, err, strict, backend);
+                return runBatch(in, out, err, strict, backend, options);
             }
             // Every `$...$` source the backend could not typeset during THIS render; always empty
             // without --math (no renderer, so nothing is attempted and nothing is recorded).
@@ -237,7 +251,7 @@ public final class Main {
                 // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
                 // written no PNG: verbatim the failure {@link #writePng} names as this project's
                 // signature defect.
-                RenderResult rawResult = tryRenderWithDiagnostics(readRawDsl(in), renderer);
+                RenderResult rawResult = tryRenderWithDiagnostics(readRawDsl(in), renderer, options);
                 svg = rawDslSvgOrNull(rawResult, err);
                 if (svg == null) {
                     return 1;
@@ -278,7 +292,7 @@ public final class Main {
                 // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
                 // /docs does not produce. The defensive catch mirrors the converter's tryRender
                 // (RuntimeException + StackOverflowError -> degrade, never a crash).
-                RenderResult result = tryRenderWithDiagnostics(fenceBody, renderer);
+                RenderResult result = tryRenderWithDiagnostics(fenceBody, renderer, options);
                 if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
                     String reason = result == null ? "renderer failure" : result.diagnostics().message();
                     err.println("sirentide: diagram did not render — " + reason
@@ -351,7 +365,7 @@ public final class Main {
     /// past its cap into memory), the remainder of an oversized source is read and DISCARDED byte by
     /// byte up to its NUL, so memory stays bounded by one capped source and alignment survives.
     private static int runBatch(InputStream in, PrintStream out, PrintStream err, boolean strict,
-                                LatteXBackend backend) {
+                                LatteXBackend backend, RenderOptions options) {
         InputStream src = new BufferedInputStream(in);
         int record = 0;
         boolean anyFailed = false;
@@ -394,7 +408,7 @@ public final class Main {
                 String dsl = buf.toString(StandardCharsets.UTF_8);
                 Set<String> untypeset = new LinkedHashSet<>();
                 RenderResult result = tryRenderWithDiagnostics(dsl,
-                    backend == null ? null : backend.recording(untypeset));
+                    backend == null ? null : backend.recording(untypeset), options);
                 if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
                     String reason = result == null ? "renderer failure" : result.diagnostics().message();
                     err.println("sirentide: record " + record + ": diagram did not render — " + reason);
@@ -497,7 +511,7 @@ public final class Main {
     /// through the plain `render()` which cannot distinguish "baked a blank diagram" from "did not
     /// bake". See {@link #writeRawDslOrRefuse} for why.
     private static RenderResult renderRawDsl(InputStream in) throws IOException {
-        return tryRenderWithDiagnostics(readRawDsl(in), null);
+        return tryRenderWithDiagnostics(readRawDsl(in), null, RenderOptions.DEFAULT);
     }
 
     /// The bounded stdin read both raw-DSL arms share.
@@ -607,11 +621,13 @@ public final class Main {
     /// Renders via the diagnostics API, or returns null on an unexpected throw — the same
     /// defensive net as `SirentideDiagramConverter#tryRender` (Sirentide should not throw, but a
     /// render-check that crashes where the bake degrades would misreport the bake).
-    /// `math == null` is exactly the pre-`--math` call: {@link Sirentide#renderWithDiagnostics(String)}
-    /// delegates to this overload with a null renderer, so the default bake is the same code path.
-    private static RenderResult tryRenderWithDiagnostics(String dsl, MathFragmentRenderer math) {
+    /// `math == null` with {@link RenderOptions#DEFAULT} is exactly the pre-flag call:
+    /// {@link Sirentide#renderWithDiagnostics(String)} delegates to this overload with a null renderer
+    /// and the default options, so the default bake is the same code path.
+    private static RenderResult tryRenderWithDiagnostics(String dsl, MathFragmentRenderer math,
+                                                         RenderOptions options) {
         try {
-            return Sirentide.renderWithDiagnostics(dsl, math);
+            return Sirentide.renderWithDiagnostics(dsl, math, options);
         } catch (RuntimeException | StackOverflowError e) {
             return null;
         }
