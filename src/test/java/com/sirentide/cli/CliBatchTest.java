@@ -80,6 +80,17 @@ class CliBatchTest {
         assertTrue(c.err().contains("record 2"), "stderr names the 1-based record: " + c.err());
     }
 
+    /// A blank source is a legal (empty) diagram, so it keeps its slot. LatteX's batch SKIPS blank
+    /// records; copying that here would shift every later record onto the wrong source. Added after a
+    /// skip-blanks mutant survived the rest of this file: no other cell had a blank source mid-batch.
+    @Test
+    void aBlankSourceMidBatchKeepsItsSlot() throws IOException {
+        Captured c = runWithStdin(nulJoin(false, PIE, "", FLOW), "render", "--batch");
+        assertEquals(0, c.exitCode(), c.err());
+        assertEquals(List.of(Sirentide.render(PIE), Sirentide.render(""), Sirentide.render(FLOW)),
+            records(c.outBytes()));
+    }
+
     @Test
     void anEmptyStdinIsALoudExit2() throws IOException {
         Captured c = runWithStdin(new byte[0], "render", "--batch");
