@@ -122,4 +122,24 @@ class XyChartMathLabelLossTest {
         assertFalse(Sirentide.renderFramesWithDiagnostics(MATH30, new LatteXMathFragmentRenderer())
             .diagnostics().detail().contains("xychart category-label drop"), "renderer: typeset, not dropped");
     }
+
+    @Test
+    void theLossPassRoutesOnTheRendererWithoutCallingIt() {
+        // categoryLabelLosses lays the chart out a second time. Handing that pass the caller's renderer
+        // would typeset every math label twice (a LatteX call per run) for a record it cannot change:
+        // a label on the typeset branch is never recorded, whatever the renderer returns. So the pass
+        // routes on WHETHER there is a renderer and never calls it; this pins both halves.
+        int[] calls = {0};
+        MathFragmentRenderer counting = (latex, size) -> {
+            calls[0]++;
+            return new LatteXMathFragmentRenderer().render(latex, size);
+        };
+        XyChart chart = (XyChart) DslParser.parse(MATH30);
+        assertTrue(XyChartLayout.categoryLabelLosses(chart, counting).isEmpty(),
+            "routed as typeset: not a slot loss");
+        assertEquals(0, calls[0], "the loss pass did not typeset anything");
+        Sirentide.renderWithDiagnostics(MATH30, counting);
+        assertEquals(30, calls[0], "control: the real render typesets each label exactly once, and the "
+            + "loss pass inside it adds no calls");
+    }
 }
