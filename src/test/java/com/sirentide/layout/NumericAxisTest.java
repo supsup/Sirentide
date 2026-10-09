@@ -1,5 +1,6 @@
 package com.sirentide.layout;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -16,6 +17,12 @@ class NumericAxisTest {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final double SIZE = 9;
     private static final ToDoubleFunction<String> WIDTH = s -> FONT.runWidth(s, SIZE);
+
+    /// The spacing rules as SPECIFIED (class note of NumericAxis), written out here rather than read
+    /// from the constants, so a test cannot weaken along with the constant it guards (review P1-P3).
+    private static final double SPEC_MIN_X_SPACING = 24;
+    private static final double SPEC_LABEL_GAP = 8;
+    private static final double SPEC_MIN_Y_SPACING = 32;
 
     private static List<String> labels(NumericAxis.Fit fit) {
         return fit.placed().stream().filter(NumericAxis.Placed::labelled)
@@ -139,7 +146,7 @@ class NumericAxisTest {
             List<NumericAxis.Placed> p = fit.placed();
             assertTrue(p.size() >= 2, "control: ticks at " + px1);
             for (int i = 0; i + 1 < p.size(); i++) {
-                assertTrue(p.get(i + 1).px() - p.get(i).px() >= NumericAxis.MIN_X_SPACING - 1e-9,
+                assertTrue(p.get(i + 1).px() - p.get(i).px() >= SPEC_MIN_X_SPACING - 1e-9,
                     "x ticks " + p.get(i).tick().label() + ", " + p.get(i + 1).tick().label() + " at " + px1);
             }
         }
@@ -156,12 +163,63 @@ class NumericAxisTest {
     }
 
     @Test
+    void narrowLabelsStillThinToTheTwentyFourPixelSpacing() {
+        // [0, 9] over 150px: step 1 puts ticks 16.7px apart, and single digits would clear each other
+        // by more than 8px there, so only the 24px spacing rule rejects it (review P2).
+        NumericAxis.Fit fit = NumericAxis.fitHorizontal(0, 9, 0, 150, 0, 150, WIDTH);
+        assertEquals(List.of("0", "2", "4", "6", "8"), labels(fit));
+    }
+
+    @Test
+    void labelsThatWouldTouchThinToTheEightPixelGap() {
+        // [1000, 2000] over 250px with room either side (no end nudge): step 100 puts ticks 25px apart,
+        // which passes the 24px spacing rule, but 4-digit labels then clear each other by less than
+        // 8px. Only the label gap rejects it, and the axis takes step 200 (review P3).
+        NumericAxis.Fit fit = NumericAxis.fitHorizontal(1000, 2000, 100, 350, 0, 450, WIDTH);
+        double w = WIDTH.applyAsDouble("1000");
+        assertTrue(25 - w < SPEC_LABEL_GAP && 25 - w >= 0, "control: step 100 clears by " + (25 - w) + "px");
+        assertEquals(List.of("1000", "1200", "1400", "1600", "1800", "2000"), labels(fit));
+        assertDisjoint(fit);
+    }
+
+    @Test
+    void yTicksThinToTheThirtyTwoPixelSpacing() {
+        // [0, 100] over 240px: step 10 is 24px apart, so the 32px rule takes step 20 (review P1).
+        NumericAxis.Fit fit = NumericAxis.fitVertical(0, 100, 260, 20, SIZE);
+        assertEquals(List.of("0", "20", "40", "60", "80", "100"), labels(fit));
+    }
+
+    @Test
+    void aTickJustOutsideTheDomainIsNeverChosen() {
+        // The tick search widens each end by 1e-9 of a step; the domain filter is what keeps a tick a
+        // hair outside [lo, hi] out (review P14). 1 and 3 sit 1e-12 outside these ends.
+        for (double[] d : new double[][] {{1 + 1e-12, 3}, {1, 3 - 1e-12}, {-3 + 1e-12, -1 - 1e-12}}) {
+            for (NumericAxis.Fit fit : List.of(NumericAxis.fitHorizontal(d[0], d[1], 40, 460, 0, 480, WIDTH),
+                    NumericAxis.fitVertical(d[0], d[1], 260, 20, SIZE))) {
+                assertTrue(fit.placed().size() >= 2, "control: ticks chosen for " + d[0] + ".." + d[1]);
+                for (NumericAxis.Placed p : fit.placed()) {
+                    double v = p.tick().value();
+                    assertTrue(v >= d[0] && v <= d[1], "tick " + p.tick().label() + " outside " + d[0] + ".." + d[1]);
+                }
+            }
+        }
+    }
+
+    @Test
+    void aDegenerateDomainIsWidenedByHalfItsMagnitude() {
+        // The class note's rule, exactly: one value c becomes [c - |c|/2, c + |c|/2]; 0 becomes [-1, 1].
+        assertArrayEquals(new double[] {500, 1500}, NumericAxis.pad(1000, 1000, 0.03), 1e-9);
+        assertArrayEquals(new double[] {-6, -2}, NumericAxis.pad(-4, -4, 0.05), 1e-9);
+        assertArrayEquals(new double[] {-1, 1}, NumericAxis.pad(0, 0, 0.03), 1e-9);
+    }
+
+    @Test
     void verticalTicksKeepTheirMinimumSpacing() {
         NumericAxis.Fit fit = NumericAxis.fitVertical(0, 100, 260, 20, SIZE);
         List<NumericAxis.Placed> p = fit.placed();
         assertTrue(p.size() >= 3, "control: several y ticks");
         for (int i = 0; i + 1 < p.size(); i++) {
-            assertTrue(Math.abs(p.get(i + 1).px() - p.get(i).px()) >= NumericAxis.MIN_Y_SPACING - 1e-9,
+            assertTrue(Math.abs(p.get(i + 1).px() - p.get(i).px()) >= SPEC_MIN_Y_SPACING - 1e-9,
                 "y ticks " + p.get(i).tick().label() + " and " + p.get(i + 1).tick().label());
         }
     }
@@ -193,7 +251,7 @@ class NumericAxisTest {
                 continue;
             }
             if (prev != null) {
-                assertTrue(p.labelLeft() >= prev.labelLeft() + prev.labelWidth() + NumericAxis.LABEL_GAP - 1e-9,
+                assertTrue(p.labelLeft() >= prev.labelLeft() + prev.labelWidth() + SPEC_LABEL_GAP - 1e-9,
                     prev.tick().label() + " and " + p.tick().label() + " overlap or crowd");
             }
             prev = p;
