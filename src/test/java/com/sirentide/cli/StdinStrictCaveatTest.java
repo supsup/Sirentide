@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.Sirentide;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -90,5 +91,29 @@ class StdinStrictCaveatTest {
         assertTrue(d.err().contains("dropped statement(s)") && d.err().contains("mystyle A fill:#f00"),
             "the dropped statement is still named: " + d.err());
         assertTrue(d.err().contains("--strict"), "and the flag is still why it failed: " + d.err());
+    }
+
+    // Two cells carried over from the parallel fix on the cli-math-batch branch (its StdinStrictTest),
+    // kept because they add coverage this suite lacked; the rest of that file duplicated the above.
+
+    private static final String DROPPING = "flowchart TD\n    A[Start] --> B[End]\n    mystyle A fill:#f00\n";
+
+    @Test
+    void stdinStrictGatesADroppedStatementAndWritesTheSameSvgAsTheApi() throws IOException {
+        // The third caveat kind (dropped statements), and the written bytes, not just their prefix.
+        Run r = run(DROPPING, "render", "-", "--strict");
+        assertEquals(1, r.code(), "stderr was: " + r.err());
+        assertEquals(Sirentide.render(DROPPING), r.out(), "the SVG is still written, as on the fence arm");
+        assertTrue(r.err().contains("--strict: treating the caveat as a failure"), r.err());
+    }
+
+    @Test
+    void theLegacyNoArgsShapeStaysSilent() throws IOException {
+        // The no-args shape parses no flags, so it cannot be asked for --strict; the caveat seam is
+        // deliberately NOT wired into it, and its stderr stays exactly what it was.
+        Run r = run(DROPPING);
+        assertEquals(0, r.code());
+        assertEquals("", r.err(), "the legacy shape's stderr is unchanged");
+        assertEquals(Sirentide.render(DROPPING), r.out());
     }
 }
