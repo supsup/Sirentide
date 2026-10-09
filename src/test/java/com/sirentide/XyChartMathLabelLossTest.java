@@ -112,4 +112,14 @@ class XyChartMathLabelLossTest {
         RenderResult r = Sirentide.renderWithDiagnostics(dsl);
         assertEquals("Rendered successfully.", r.diagnostics().message(), r.diagnostics().detail());
     }
+
+    @Test
+    void thePlayThroughChannelBranchesOnTheRendererToo() {
+        // renderFramesWithDiagnostics reaches labelDropCaveat at its own call sites; each must pass the
+        // renderer it laid out with, or a typeset deck would be told its labels were dropped.
+        assertTrue(Sirentide.renderFramesWithDiagnostics(MATH30).diagnostics().detail()
+            .startsWith("xychart category-label drop:"), "no renderer: the drop is named on the deck");
+        assertFalse(Sirentide.renderFramesWithDiagnostics(MATH30, new LatteXMathFragmentRenderer())
+            .diagnostics().detail().contains("xychart category-label drop"), "renderer: typeset, not dropped");
+    }
 }
