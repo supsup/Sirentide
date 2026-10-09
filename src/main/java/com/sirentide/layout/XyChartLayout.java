@@ -355,10 +355,17 @@ public final class XyChartLayout {
     /// ellipsized. Both lists are in category order. Pure and deterministic: it replays the SAME slot
     /// the layout uses (`(W - ML - MR) / n` on both paths: the multi-series key shift moves the plot but
     /// cancels out of its width) and the SAME ellipsize call {@link #emitCategory} makes, so it cannot
-    /// drift from what actually drew. A `$…$` label is skipped: with a math renderer it is never
-    /// ellipsized, and without one it degrades to plain text (a known gap, not reported here).
+    /// drift from what actually drew.
+    ///
+    /// `math` IS THE SAME RENDERER THE LAYOUT GOT, and the replay branches on it exactly as
+    /// {@link #emitCategory} does (F2 of the cli-math-batch rebuild ruling). With a renderer, a `$…$`
+    /// label is typeset and never ellipsized, so it cannot be a slot loss (a run that fails to typeset
+    /// is drawn as its raw source, un-ellipsized: the CLI names that as untypeset math). WITHOUT one,
+    /// a `$…$` label is drawn through the plain ellipsize like any other label, so it is measured as
+    /// that plain text and its loss reported. Skipping math unconditionally (the 05e243d replay) hid
+    /// 30 `$x_{i}$` labels that the default bake drew as nothing, with `--strict` exiting 0.
     /// Empty when there are no category labels (an empty chart, or a multi-series chart with no values).
-    public static LabelLosses categoryLabelLosses(XyChart chart) {
+    public static LabelLosses categoryLabelLosses(XyChart chart, MathFragmentRenderer math) {
         List<String> dropped = new ArrayList<>();
         List<String> shortened = new ArrayList<>();
         List<Slice> bars = chart.bars();
@@ -378,7 +385,7 @@ public final class XyChartLayout {
         double slot = (W - ML - MR) / n;
         for (Slice b : bars) {
             String raw = b.label();
-            if (MathLabel.hasMath(raw)) {
+            if (math != null && MathLabel.hasMath(raw)) {
                 continue;
             }
             String drawn = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);

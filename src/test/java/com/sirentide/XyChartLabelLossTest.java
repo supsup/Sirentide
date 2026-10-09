@@ -70,7 +70,7 @@ class XyChartLabelLossTest {
         }
         assertEquals(25, groups, "control: every bar group was found");
         XyChart chart = (XyChart) DslParser.parse(BARKER);
-        assertEquals(drawnWithoutLabel, XyChartLayout.categoryLabelLosses(chart).dropped(),
+        assertEquals(drawnWithoutLabel, XyChartLayout.categoryLabelLosses(chart, null).dropped(),
             "the replay names exactly the bars the SVG drew without a label");
         assertEquals(15, drawnWithoutLabel.size(), "control: the drop really happens (15 of 25)");
     }
