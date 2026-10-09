@@ -784,10 +784,28 @@ public final class DslParser {
             return new XyNum(0, "which is not finite (it overflows a double)");
         }
         double a = Math.abs(v);
-        if (a > XY_NUMERIC_MAX_MAGNITUDE || (a != 0 && a < XY_NUMERIC_MIN_MAGNITUDE)) {
+        // UNDERFLOW: `1e-400` parses to exactly 0, which the band below would take as a legal 0 and
+        // draw at 0. A zero is a zero only when its token says so: no nonzero digit in the mantissa
+        // (`0`, `-0`, `0.000`, `0e5`). Any other token that came out as 0 was below the band.
+        if (a > XY_NUMERIC_MAX_MAGNITUDE || (a != 0 && a < XY_NUMERIC_MIN_MAGNITUDE)
+                || (a == 0 && mantissaHasNonzeroDigit(tok))) {
             return new XyNum(0, "which is outside the supported magnitude range (0, or 1e-12 to 1e15)");
         }
         return new XyNum(v, null);
+    }
+
+    /// True when the part of a decimal token before its exponent holds a digit other than 0.
+    private static boolean mantissaHasNonzeroDigit(String tok) {
+        for (int i = 0; i < tok.length(); i++) {
+            char c = tok.charAt(i);
+            if (c == 'e' || c == 'E') {
+                return false;
+            }
+            if (c >= '1' && c <= '9') {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// One accepted row while the numeric parse runs: its x, the x token as written, its values, and

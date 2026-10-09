@@ -151,6 +151,8 @@ class XyChartNumericTest {
             "xychart scatter numeric\n3 : 1\n1 : 2\n2 : 3\n",                  // scatter: unsorted
             "xychart line numeric\n0.000000001 : 1\n1000000000000 : 2\n",      // huge range
             "xychart line numeric legend\nseries: a, b\n1 : 1 2\n2 : 3 4\n",   // named series
+            "xychart line numeric\n0.000000000001 : 1\n1000000000000000 : 2\n",  // both band edges
+            "xychart line numeric\n0e5 : 0.000\n1 : -0\n2 : 0e-400\n3 : -0.0e7\n", // zeros as written
             "xychart line numeric\n");                                         // empty body
     }
 
@@ -181,6 +183,13 @@ class XyChartNumericTest {
             Arguments.of("xychart line numeric\n1 : 1\njust text\n", 3, "no `:`"),
             Arguments.of("xychart line numeric\n1 : 1\n2000000000000000 : 2\n", 3, "supported magnitude"),
             Arguments.of("xychart line numeric\n1 : 1\nseries: a\n", 3, "first row"),
+            Arguments.of("xychart line numeric\n1 : 1\n0.0000000000001 : 2\n", 3, "supported magnitude"),
+            Arguments.of("xychart line numeric\n1 : 1\n2 : 1e-400\n", 3, "supported magnitude"),
+            Arguments.of("xychart line numeric\n1 : 1\n1e-400 : 2\n", 3, "supported magnitude"),
+            Arguments.of("xychart line numeric\n1 : 1\n2 : -0.5e-400\n", 3, "supported magnitude"),
+            Arguments.of("xychart line numeric\n1 : 1\n2 : 0.0001e-399\n", 3, "supported magnitude"),
+            Arguments.of("xychart line numeric\n0 : 1\n-0 : 2\n", 3, "repeats x"),
+            Arguments.of("xychart line numeric\n-0 : 1\n0.000 : 2\n", 3, "repeats x"),
             Arguments.of("xychart line numeric\n1 : 1\n1 : 2\n1 : 3\n", 3, "repeats x"),
             Arguments.of("%% title: t\nxychart line numeric\n1 : 1\nfoo : 2\n", 4, "not a number"));
     }
@@ -230,6 +239,82 @@ class XyChartNumericTest {
         XyChart c = (XyChart) DslParser.parse("xychart line numeric\n1 : 5\n1 : 9\n2 : 3\n");
         assertArrayEquals(new double[] {1, 2}, c.xValues());
         assertArrayEquals(new double[] {5}, c.series().get(0));
+    }
+
+    @Test
+    void anUnderflowingValueIsNotDrawnAsZero() {
+        // 1e-400 parses to exactly 0.0; it must not be taken as the legal zero and drawn at y = 0.
+        XyChart c = (XyChart) DslParser.parse("xychart line numeric\n1 : 1\n2 : 1e-400\n3 : 3\n");
+        assertArrayEquals(new double[] {1, 3}, c.xValues(), "the underflowing row is dropped");
+        XyChart x = (XyChart) DslParser.parse("xychart line numeric\n1e-400 : 1\n1 : 2\n");
+        assertArrayEquals(new double[] {1}, x.xValues(), "an underflowing x is not drawn at x = 0");
+    }
+
+    @Test
+    void zerosWrittenAsZeroAreZero() {
+        XyChart c = (XyChart) DslParser.parse("xychart scatter numeric\n0e5 : 0.000\n-0 : 0e-400\n0.0 : -0.0e7\n");
+        assertArrayEquals(new double[] {0, 0, 0}, c.xValues());
+        for (double[] row : c.series()) {
+            assertEquals(0.0, row[0], 0.0);
+        }
+    }
+
+    @Test
+    void negativeZeroAndZeroAreOneXOnALine() {
+        // -0 and 0 are the same x: the later row is a repeat (caveat), and one point is drawn at +0.
+        String src = "xychart line numeric\n0 : 1\n-0 : 2\n1 : 3\n";
+        XyChart c = (XyChart) DslParser.parse(src);
+        assertEquals(2, c.xValues().length, "one point at x = 0, not two");
+        assertArrayEquals(new double[] {1}, c.series().get(0), "the first row's y is kept");
+        XyChart neg = (XyChart) DslParser.parse("xychart line numeric\n-0 : 2\n1 : 3\n");
+        assertEquals(0, Double.compare(0.0, neg.xValues()[0]), "a lone -0 x is folded to +0");
+        Diagnostics d = Sirentide.renderWithDiagnostics(src).diagnostics();
+        assertTrue(d.detail().contains("repeats x -0 from line 2"), d.detail());
+    }
+
+    @Test
+    void theAccessibleDescriptionNamesTheNumericAxis() {
+        XyChart line = (XyChart) DslParser.parse("xychart line numeric\n0.5 : 1\n2 : 3\n10 : 2\n");
+        assertEquals("Line chart with 3 points on a numeric x axis: 0.5, 2, 10.",
+            com.sirentide.a11y.A11yDescriber.describe(line).desc());
+        XyChart one = (XyChart) DslParser.parse("xychart scatter numeric\n-4 : 1\n");
+        assertEquals("Scatter chart with 1 point on a numeric x axis: -4.",
+            com.sirentide.a11y.A11yDescriber.describe(one).desc());
+        assertTrue(Sirentide.render("xychart line numeric\n0.5 : 1\n2 : 3\n10 : 2\n")
+            .contains("Line chart with 3 points on a numeric x axis"), "and the SVG carries it");
+        XyChart cat = (XyChart) DslParser.parse("xychart line\n\"0.5\" : 1\n\"2\" : 3\n");
+        assertTrue(com.sirentide.a11y.A11yDescriber.describe(cat).desc().contains("2 categories"),
+            "control: the category chart still says categories");
+    }
+
+    // ---- the IR carries xValues by value -----------------------------------------------------
+
+    private static XyChart numericChart(double[] xs) {
+        return new XyChart(List.of(new com.sirentide.ir.Slice("a", 1), new com.sirentide.ir.Slice("b", 2)),
+            List.of(new double[] {1}, new double[] {2}), null, "line", false, null, xs);
+    }
+
+    @Test
+    void chartsThatDifferOnlyInXValuesAreNotEqual() {
+        XyChart a = numericChart(new double[] {1, 2});
+        XyChart same = numericChart(new double[] {1, 2});
+        XyChart other = numericChart(new double[] {1, 3});
+        assertEquals(a, same, "control: equal contents are equal");
+        assertEquals(a.hashCode(), same.hashCode(), "control: and hash alike");
+        assertFalse(a.equals(other), "x values are part of the chart");
+        assertFalse(a.hashCode() == other.hashCode(), "and of its hash (these two values differ)");
+        XyChart category = new XyChart(a.bars(), a.series(), null, "line", false, null);
+        assertFalse(a.equals(category) || category.equals(a), "a numeric chart is not its category twin");
+    }
+
+    @Test
+    void xValuesAreCopiedInAndOut() {
+        double[] xs = {1, 2};
+        XyChart c = numericChart(xs);
+        xs[0] = 99;
+        assertArrayEquals(new double[] {1, 2}, c.xValues(), "the caller's array is not retained");
+        c.xValues()[1] = 99;
+        assertArrayEquals(new double[] {1, 2}, c.xValues(), "the returned array is a copy");
     }
 
     private static List<String> concat(List<String> a, List<String> b) {
