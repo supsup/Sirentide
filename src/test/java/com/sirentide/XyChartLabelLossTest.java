@@ -169,6 +169,47 @@ class XyChartLabelLossTest {
         }
     }
 
+    @Test
+    void anEmptyCategoryLabelIsNotNamedAsDropped() {
+        // An empty label draws nothing because there is nothing to draw, not because its slot was too
+        // narrow: naming it would send the author hunting for a loss that did not happen.
+        XyChart chart = (XyChart) DslParser.parse("xychart\n\"\" : 1\n\"A\" : 2\n");
+        assertEquals("", chart.bars().get(0).label(), "control: the fixture really has an empty label");
+        assertTrue(XyChartLayout.categoryLabelLosses(chart).isEmpty(),
+            "an empty label is neither dropped nor shortened");
+    }
+
+    @Test
+    void aMathLabelIsNotReportedEvenWhenItsPlainSpellingWouldDrop() {
+        // TODAY'S BEHAVIOUR, pinned on purpose: a `$…$` label is skipped. Spelled as plain text, every
+        // multi-character Barker lag below would drop (see the bar-path checks), so this fails the moment
+        // math labels start being recorded. The math-label follow-up is expected to replace this test
+        // with the behaviour it chooses, deliberately rather than by accident.
+        StringBuilder b = new StringBuilder("xychart\n");
+        for (int lag = -12; lag <= 12; lag++) {
+            b.append("\"$").append(lag).append("$\" : 1\n");
+        }
+        assertTrue(XyChartLayout.categoryLabelLosses((XyChart) DslParser.parse(b.toString())).isEmpty(),
+            "a $...$ label is not recorded as lost");
+    }
+
+    @Test
+    void theLossPassAddsNothingToTheFontCoverageCorpus() {
+        // categoryLabelLosses LAYS THE CHART OUT a second time, without a math renderer. Unsuspended, that
+        // pass would feed the raw `$中$` (plain text, since it has no renderer) into the glyph-emission
+        // corpus of the render that asked, and the coverage caveat would report U+4E2D for a label the
+        // real render drew as math. The render below draws `中` only inside the math fragment.
+        com.sirentide.api.MathFragmentRenderer fake = (latex, size) -> java.util.Optional.of(
+            new com.sirentide.api.MathFragment("<g><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>", 20, 12, 4));
+        RenderResult r = Sirentide.renderWithDiagnostics("xychart\n\"$中$\" : 1\n\"B\" : 2\n", fake);
+        assertEquals(Outcome.OK, r.diagnostics().outcome());
+        assertEquals("Rendered successfully.", r.diagnostics().message(),
+            "no coverage caveat for a code point the real render never emitted as a glyph");
+        RenderResult plain = Sirentide.renderWithDiagnostics("xychart\n\"中\" : 1\n\"B\" : 2\n");
+        assertTrue(plain.diagnostics().detail().contains("U+4E2D"),
+            "control: the same code point drawn as plain text IS reported: " + plain.diagnostics().detail());
+    }
+
     /// FITS and AGREES (see above) for one chart of `n` categories, from its SVG alone.
     private static void assertDrawingAgrees(String dsl, int n) {
         String svg = Sirentide.render(dsl);
