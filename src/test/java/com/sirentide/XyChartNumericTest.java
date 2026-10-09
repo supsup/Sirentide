@@ -199,6 +199,15 @@ class XyChartNumericTest {
     }
 
     @Test
+    void aNaNIsNamedAsNotFiniteNotAsAnOverflow() {
+        Diagnostics d = Sirentide.renderWithDiagnostics("xychart line numeric\n1 : 1\nNaN : 2\n2 : NaN\n")
+            .diagnostics();
+        assertTrue(d.detail().contains("has x `NaN`, which is not finite, so"), d.detail());
+        assertTrue(d.detail().contains("`NaN` (series 1), which is not finite, so"), d.detail());
+        assertFalse(d.detail().contains("overflows"), d.detail());
+    }
+
+    @Test
     void manyBadRowsAreCountedExactlyAndListedBounded() {
         StringBuilder b = new StringBuilder("xychart line numeric\n0 : 0\n");
         for (int i = 0; i < 12; i++) {

@@ -121,6 +121,41 @@ class NumericAxisTest {
     }
 
     @Test
+    void wideLabelsThinPastWhatTheSpacingRuleAloneWouldAllow() {
+        // [0, 1e6] over 400px: step 100000 is 40px apart (spacing passes) but "1000000" is ~35px
+        // wide, so with the 8px gap the labels would crowd. Only the label test rejects it.
+        NumericAxis.Fit fit = NumericAxis.fitHorizontal(0, 1_000_000, 0, 400, 0, 400, WIDTH);
+        assertTrue(fit.placed().size() >= 3, "control: ticks chosen " + labels(fit));
+        double step = fit.placed().get(1).tick().value() - fit.placed().get(0).tick().value();
+        assertTrue(step > 100_000, "step " + step + " would crowd the 7-digit labels");
+        assertDisjoint(fit);
+    }
+
+    @Test
+    void horizontalTicksKeepTheirMinimumSpacingEvenWhenLabelsAreNarrow() {
+        // Single-digit labels clear each other at 14px; the 24px spacing rule is what stops a comb.
+        for (double px1 : new double[] {150, 230, 410}) {
+            NumericAxis.Fit fit = NumericAxis.fitHorizontal(0, 9, 0, px1, 0, px1, WIDTH);
+            List<NumericAxis.Placed> p = fit.placed();
+            assertTrue(p.size() >= 2, "control: ticks at " + px1);
+            for (int i = 0; i + 1 < p.size(); i++) {
+                assertTrue(p.get(i + 1).px() - p.get(i).px() >= NumericAxis.MIN_X_SPACING - 1e-9,
+                    "x ticks " + p.get(i).tick().label() + ", " + p.get(i + 1).tick().label() + " at " + px1);
+            }
+        }
+    }
+
+    @Test
+    void theLossPathDrawsOnlyLabelsThatClearTheirNeighbour() {
+        // [1.9, 4.1]: step 2 gives {2, 4}, step 5 gives nothing, so a crowded {2, 4} reaches the loss
+        // path. 30px labels on a 40px axis: "2" fits, "4" would overlap it and is reported instead.
+        NumericAxis.Fit fit = NumericAxis.fitHorizontal(1.9, 4.1, 0, 40, 0, 1000, s -> 30);
+        assertEquals(List.of("2"), labels(fit));
+        assertEquals(List.of("4"), fit.dropped());
+        assertEquals(2, fit.placed().size(), "both tick marks are placed");
+    }
+
+    @Test
     void verticalTicksKeepTheirMinimumSpacing() {
         NumericAxis.Fit fit = NumericAxis.fitVertical(0, 100, 260, 20, SIZE);
         List<NumericAxis.Placed> p = fit.placed();
