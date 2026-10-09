@@ -131,6 +131,26 @@ class IrImmutabilityTest {
     }
 
     @Test
+    void heatmapCopiesInAndOutItsExtensionLists() {
+        // Plan f4d69e44: palette / ramp / thresholds are snapshotted exactly like columns/rows.
+        List<Heatmap.Category> palette = new ArrayList<>(List.of(new Heatmap.Category("A", "#ff0000")));
+        List<String> ramp = new ArrayList<>(List.of("#000000", "#ffffff"));
+        List<Double> cuts = new ArrayList<>(List.of(0.5));
+        Heatmap heatmap = new Heatmap(List.of(), List.of(), "currentColor", null, null,
+            palette, ramp, cuts, true, false);
+        palette.clear();
+        ramp.clear();
+        cuts.clear();
+
+        assertEquals(List.of(new Heatmap.Category("A", "#ff0000")), heatmap.palette());
+        assertEquals(List.of("#000000", "#ffffff"), heatmap.ramp());
+        assertEquals(List.of(0.5), heatmap.thresholds());
+        assertThrows(UnsupportedOperationException.class, () -> heatmap.palette().clear());
+        assertThrows(UnsupportedOperationException.class, () -> heatmap.ramp().clear());
+        assertThrows(UnsupportedOperationException.class, () -> heatmap.thresholds().clear());
+    }
+
+    @Test
     void heatmapPreservesNullListReferences() {
         Heatmap heatmap = new Heatmap(null, null, "currentColor", "low", "high");
         Heatmap.Row row = new Heatmap.Row("row", null);

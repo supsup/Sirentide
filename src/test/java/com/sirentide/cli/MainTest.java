@@ -353,6 +353,65 @@ class MainTest {
         assertEquals("", c.err, "a diagram that lost nothing must say nothing: " + c.err);
     }
 
+    // A malformed heatmap-extension directive (plan f4d69e44) falls back to a default and rides the
+    // SAME caveat channel as a dropped statement, so the fence arm prints it and --strict gates it.
+    private static final String BAD_HEATMAP_MD = """
+        ```sirentide
+        heatmap
+        cols: a
+        ramp: #000000, red, #ffffff
+        "r" : 0.5
+        ```
+        """;
+
+    @Test
+    void aMalformedHeatmapDirectiveIsSaidAndStillExitsZero() throws IOException {
+        Path md = writeMd("hm-bad.md", BAD_HEATMAP_MD);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("hm.svg").toString());
+        assertEquals(0, c.exitCode, "a fallback is not a failed bake: " + c.err);
+        assertTrue(c.err.contains("line 3: ramp: \"red\" is not a #hex colour; stop ignored"),
+            "the caveat names the directive, the line and the token: " + c.err);
+    }
+
+    @Test
+    void strictGatesAMalformedHeatmapDirective() throws IOException {
+        Path out = tmp.resolve("hm-strict.svg");
+        Path md = writeMd("hm-strict.md", BAD_HEATMAP_MD);
+        Captured c = run("render", md.toString(), "-o", out.toString(), "--strict");
+        assertEquals(1, c.exitCode, "--strict gates on the heatmap caveat: " + c.err);
+        assertTrue(c.err.contains("ramp: \"red\""), c.err);
+        assertTrue(Files.exists(out), "the SVG is still written under --strict");
+    }
+
+    @Test
+    void strictPassesValidUsesOfTheHeatmapDirectives() throws IOException {
+        Path md = writeMd("hm-ok.md", """
+            ```sirentide
+            heatmap
+            cols: a, b
+            palette: A #ff0000, "B two"
+            hide: rows
+            "r" : A!, B two
+            ```
+            """);
+        Captured c = run("render", md.toString(), "-o", tmp.resolve("hm-ok.svg").toString(), "--strict");
+        assertEquals(0, c.exitCode, c.err);
+        assertEquals("", c.err, "valid directives carry no caveat: " + c.err);
+        Path md2 = writeMd("hm-ok2.md", """
+            ```sirentide
+            heatmap
+            cols: a, b
+            ramp: #fff7ec, #d7301f, #7f0000
+            bins: 0.25, 0.5
+            hide: cols
+            "r" : 0.2, 0.9
+            ```
+            """);
+        Captured c2 = run("render", md2.toString(), "-o", tmp.resolve("hm-ok2.svg").toString(), "--strict");
+        assertEquals(0, c2.exitCode, c2.err);
+        assertEquals("", c2.err, "valid directives carry no caveat: " + c2.err);
+    }
+
     @Test
     void anUnrenderableFenceWithMinusOLeavesAnExistingDestinationByteIdentical() throws IOException {
         Path md = writeMd("bad.md", "```sirentide\nnot-a-real-diagram-type\n```\n");

@@ -3601,11 +3601,31 @@ public final class DslParser {
     /// legend's low/high ends via the quadrant `-->` axis-end grammar. Rows are padded/truncated to
     /// exactly M cells so the grid is rectangular; a line with no colon is skipped — never fails
     /// the bake.
+    ///
+    /// Plan f4d69e44 adds the opt-in `palette:` / `ramp:` / `bins:` / `hide:` directives and the `!`
+    /// outline suffix (grammar in {@link Heatmap}). Because `palette:` decides how EVERY cell token
+    /// reads and may appear after the rows, cell tokens are kept raw until all lines are read and
+    /// resolved once at the end; a source using none of the extensions resolves exactly as before.
     private static Diagram parseHeatmap(String[] lines, String textColor) {
+        return parseHeatmap(lines, textColor, null);
+    }
+
+    /// The heatmap walk, optionally OBSERVED: a non-null `sink` collects every malformed extension
+    /// input the walk falls back on (see {@link #heatmapIssues}). The sink only records; it never
+    /// changes a decision, so the IR is identical with or without it, and a rendering parse passes
+    /// null.
+    private static Diagram parseHeatmap(String[] lines, String textColor, HeatSink sink) {
         List<String> columns = new ArrayList<>();
-        List<Heatmap.Row> rows = new ArrayList<>();
+        List<String> rowLabels = new ArrayList<>();
+        List<String> rowCells = new ArrayList<>();
+        List<Integer> rowLines = new ArrayList<>();
         String[] scaleEnds = new String[2];
-        for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
+        List<Heatmap.Category> palette = new ArrayList<>();
+        List<String> ramp = List.of();
+        List<Double> thresholds = List.of();
+        boolean hideRows = false;
+        boolean hideCols = false;
+        for (int i = 1; i < lines.length && rowLabels.size() < MAX_DATA_ROWS; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
                 continue;
@@ -3627,6 +3647,42 @@ public final class DslParser {
                 axisEnds(scaleEnds, line.substring(line.indexOf(':') + 1));
                 continue;
             }
+            if (line.regionMatches(true, 0, "palette:", 0, 8)) {
+                heatPalette(palette, line.substring(8), sink, i);
+                continue;
+            }
+            if (line.regionMatches(true, 0, "ramp:", 0, 5)) {
+                ramp = heatRamp(line.substring(5), sink, i);
+                continue;
+            }
+            if (line.regionMatches(true, 0, "bins:", 0, 5)) {
+                thresholds = heatBins(line.substring(5), sink, i);
+                continue;
+            }
+            if (line.regionMatches(true, 0, "hide:", 0, 5)) {
+                boolean anyTarget = false;
+                for (String tok : line.substring(5).split(",")) {
+                    String target = tok.strip();
+                    if (target.isEmpty()) {
+                        continue;   // a stray comma is not a target
+                    }
+                    anyTarget = true;
+                    switch (target.toLowerCase(java.util.Locale.ROOT)) {
+                        case "rows", "row", "labels" -> hideRows = true;
+                        case "cols", "col", "columns", "header", "headers" -> hideCols = true;
+                        case "both", "all" -> {
+                            hideRows = true;
+                            hideCols = true;
+                        }
+                        // An unknown hide target is ignored, never throws; the sink names it.
+                        default -> issue(sink, i, "hide: " + quoted(target) + " is not rows, cols or both; ignored");
+                    }
+                }
+                if (!anyTarget) {
+                    issue(sink, i, "hide: no target given; ignored");
+                }
+                continue;
+            }
             // Split label : cells. A quoted label may itself contain a colon, so find the closing
             // quote first, then the separator colon after it (matrix's exact rule).
             int sep;
@@ -3639,19 +3695,52 @@ public final class DslParser {
             if (sep < 0) {
                 continue;   // not a row (no cells) → skip, never throw
             }
-            String label = cap(unquote(line.substring(0, sep).strip()));
-            List<Heatmap.Cell> cells = new ArrayList<>();
-            for (String tok : line.substring(sep + 1).split(",", -1)) {
-                if (cells.size() >= MAX_COLUMNS) {
+            rowLabels.add(cap(unquote(line.substring(0, sep).strip())));
+            rowCells.add(line.substring(sep + 1));
+            rowLines.add(i);
+        }
+        // The cell split waits for the palette too: a CATEGORICAL row honours quotes, so a quoted
+        // `"A, B"` cell names the category `A, B` (the palette entry split honours them the same
+        // way). A magnitude row keeps the plain comma split, byte-for-byte the pre-extension rule.
+        List<Heatmap.Row> rows = new ArrayList<>();
+        List<List<String>> rowTokens = new ArrayList<>();
+        for (int r = 0; r < rowLabels.size(); r++) {
+            List<String> toks = new ArrayList<>();
+            List<String> split = palette.isEmpty()
+                ? java.util.Arrays.asList(rowCells.get(r).split(",", -1))
+                : splitOutsideQuotes(rowCells.get(r));
+            for (String tok : split) {
+                if (toks.size() >= MAX_COLUMNS) {
                     break;   // bound rows exactly like the header (matrix cap discipline)
                 }
-                cells.add(heatCell(tok));
+                toks.add(tok);
             }
-            rows.add(new Heatmap.Row(label, cells));
+            rowTokens.add(toks);
+            List<Heatmap.Cell> cells = new ArrayList<>();
+            for (String tok : toks) {
+                cells.add(heatCell(tok, palette));
+            }
+            rows.add(new Heatmap.Row(rowLabels.get(r), cells));
         }
         int m = columns.isEmpty()
             ? rows.stream().mapToInt(r -> r.cells().size()).max().orElse(0)
             : columns.size();
+        if (sink != null && !palette.isEmpty()) {
+            // A categorical cell naming no category is drawn NA. Only cells that REACH the grid
+            // (within the M columns) are named; a blank, `-` or `na` value is the legitimate NA
+            // spelling and stays silent.
+            for (int r = 0; r < rows.size(); r++) {
+                List<Heatmap.Cell> cs = rows.get(r).cells();
+                for (int j = 0; j < Math.min(m, cs.size()); j++) {
+                    String value = heatValuePart(rowTokens.get(r).get(j)).strip();
+                    if (cs.get(j).category() == null && !value.isEmpty() && !value.equals("-")
+                            && !value.equalsIgnoreCase("na")) {
+                        issue(sink, rowLines.get(r),
+                            "cell " + quoted(value) + " is not a palette category; drawn neutral (NA)");
+                    }
+                }
+            }
+        }
         List<Heatmap.Row> normalized = new ArrayList<>();
         for (Heatmap.Row r : rows) {
             List<Heatmap.Cell> cs = new ArrayList<>(r.cells());
@@ -3660,26 +3749,332 @@ public final class DslParser {
             }
             normalized.add(new Heatmap.Row(r.label(), cs.size() > m ? new ArrayList<>(cs.subList(0, m)) : cs));
         }
-        return new Heatmap(columns, normalized, textColor, scaleEnds[0], scaleEnds[1]);
+        return new Heatmap(columns, normalized, textColor, scaleEnds[0], scaleEnds[1],
+            palette, ramp, thresholds, hideRows, hideCols);
+    }
+
+    private static final int MAX_CATEGORIES = 64;
+    private static final int MAX_RAMP_STOPS = 16;
+    private static final int MAX_BINS = 64;
+
+    /// How many over-cap tokens one capped-directive issue echoes before `...`.
+    private static final int MAX_ISSUE_TOKENS = 4;
+
+    /// How much of one rejected token an issue echoes (bounded like {@link #MAX_DROPPED_TEXT}, so a
+    /// pathological token cannot become a huge diagnostic string).
+    private static final int MAX_ISSUE_TOKEN_TEXT = 40;
+
+    /// One malformed heatmap-extension input the parse FELL BACK on (plan f4d69e44 review): a bad
+    /// `ramp:` stop, a rejected `bins:` token, an unknown `hide:` target, a bad `palette:` entry,
+    /// or a categorical cell that names no category. `line` is the 1-based PHYSICAL source line
+    /// (the same numbering as {@link DroppedStatement#line()}); `text` names the directive and the
+    /// rejected token, e.g. `ramp: "red" is not a #hex colour; stop ignored`.
+    public record HeatmapIssue(int line, String text) {}
+
+    /// Every issue a heatmap source's parse fell back on: `total` counted, the first
+    /// {@link #MAX_DROPS_REPORTED} listed in WALK order — directive and row lines top to bottom,
+    /// then the categorical-cell issues (which can only be judged once the whole palette is read).
+    public record HeatmapIssues(int total, List<HeatmapIssue> listed) {
+        public HeatmapIssues {
+            listed = List.copyOf(listed);
+        }
+    }
+
+    /// The collector {@link #parseHeatmap} writes into on a diagnostics parse. Never allocated on a
+    /// rendering parse (the sink is null there). CONTRACT FOR FUTURE EDITS: every fallback in the
+    /// heatmap directive grammar that discards or substitutes author input must call {@link #issue}
+    /// — a fallback the sink cannot see is a silent one, the defect this sink exists to close.
+    private static final class HeatSink {
+        private int total;
+        private final List<HeatmapIssue> listed = new ArrayList<>();
+    }
+
+    /// Records one issue at 0-based body index `i` (converted to a physical line by
+    /// {@link #heatmapIssues}). A null sink — the rendering parse — records nothing.
+    private static void issue(HeatSink sink, int i, String text) {
+        if (sink == null) {
+            return;
+        }
+        sink.total++;
+        if (sink.listed.size() < MAX_DROPS_REPORTED) {
+            sink.listed.add(new HeatmapIssue(i, text));
+        }
+    }
+
+    /// A rejected token, double-quoted and bounded, for an issue text.
+    private static String quoted(String token) {
+        String t = token.length() > MAX_ISSUE_TOKEN_TEXT
+            ? token.substring(0, MAX_ISSUE_TOKEN_TEXT) + "..." : token;
+        return "\"" + t + "\"";
+    }
+
+    /// The malformed extension inputs of a HEATMAP source (plan f4d69e44 review): every `ramp:`,
+    /// `bins:`, `hide:` and `palette:` token the parse rejected or substituted, and every
+    /// categorical cell that names no category. Returns null when `src` is not a heatmap, is blank,
+    /// or is over the source cap. PURE and separate from {@link #parse}, like
+    /// {@link #flowchartBodyCensus}: it re-runs the real heatmap walk with an observing sink, so it
+    /// cannot disagree with the parse. A source using none of the extension directives yields an
+    /// empty result (no fallback can fire), and so does every VALID use of them. Never throws.
+    public static HeatmapIssues heatmapIssues(String src) {
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
+            return null;
+        }
+        // The census envelope: no strip() before the split, so lines are PHYSICAL lines.
+        String[] rawLines = src.split("\\R");
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return null;
+        }
+        String[] lines = bodyLines(rawLines, bodyStart);
+        String[] header = lines[0].strip().split("\\s+");
+        if (!"heatmap".equals(canonicalDiagramType(header[0]))) {
+            return null;
+        }
+        HeatSink sink = new HeatSink();
+        parseHeatmap(lines, null, sink);
+        List<HeatmapIssue> listed = new ArrayList<>(sink.listed.size());
+        for (HeatmapIssue h : sink.listed) {
+            listed.add(new HeatmapIssue(bodyStart + h.line() + 1, h.text()));
+        }
+        return new HeatmapIssues(sink.total, listed);
+    }
+
+    /// Appends `palette:` entries (comma-separated, the split honouring double quotes so a quoted
+    /// name may contain a comma). Each entry is `name [colour]`:
+    /// - a QUOTED name (`"big win"`, `"A, B"`) is everything up to its closing quote; whatever
+    ///   follows it is the colour slot;
+    /// - an UNQUOTED entry with two or more whitespace tokens: the LAST token is ALWAYS the colour
+    ///   slot and the rest is the name. So `C2 red` is category `C2` with the bad colour `red`
+    ///   (never a category named "C2 red"), and an unquoted multi-word name WITHOUT a colour
+    ///   (`big win`) reads as category `big` with the bad colour `win`. A multi-word name with no
+    ///   colour must be quoted; one followed by a colour (`big win #ff0000`) needs no quotes;
+    /// - a single unquoted token is a name with no colour, unless it starts with `#` (a colour
+    ///   with no name: skipped).
+    /// A colour is kept only if it passes the shared hex-only guard (canonicalized); a missing one
+    /// is legitimate and silent, an invalid one is named by the sink. Either way null reaches the
+    /// IR and the layout takes the default categorical colour at that index. Blank and duplicate
+    /// names are skipped (the first entry for a name wins); capped at {@link #MAX_CATEGORIES}.
+    private static void heatPalette(List<Heatmap.Category> out, String tail, HeatSink sink, int li) {
+        boolean anyEntry = false;
+        int overCap = 0;
+        for (String raw : splitOutsideQuotes(tail)) {
+            String entry = raw.strip();
+            if (entry.isEmpty()) {
+                continue;   // a stray comma is not an entry
+            }
+            anyEntry = true;
+            String nameRaw;
+            String colorTok;   // null: no colour given
+            boolean quotedName = entry.startsWith("\"") && entry.indexOf('"', 1) > 0;
+            if (quotedName) {
+                int q = entry.indexOf('"', 1);
+                nameRaw = entry.substring(0, q + 1);
+                String rest = entry.substring(q + 1).strip();
+                colorTok = rest.isEmpty() ? null : rest;
+            } else {
+                int ws = Math.max(entry.lastIndexOf(' '), entry.lastIndexOf('\t'));
+                if (ws >= 0) {
+                    nameRaw = entry.substring(0, ws).strip();
+                    colorTok = entry.substring(ws + 1);
+                } else if (entry.startsWith("#")) {
+                    nameRaw = "";
+                    colorTok = entry;
+                } else {
+                    nameRaw = entry;
+                    colorTok = null;
+                }
+            }
+            String name = cap(unquote(nameRaw));
+            if (name.isEmpty()) {
+                issue(sink, li, "palette: " + quoted(entry) + " has no category name; entry ignored");
+                continue;
+            }
+            if (out.size() >= MAX_CATEGORIES) {
+                overCap++;
+                continue;
+            }
+            boolean dup = false;
+            for (Heatmap.Category c : out) {
+                dup |= c.name().equals(name);
+            }
+            if (dup) {
+                issue(sink, li, "palette: duplicate category " + quoted(name) + "; the later entry is ignored");
+                continue;
+            }
+            String color = null;
+            if (colorTok != null) {
+                if (SirentideContract.isHexColor(colorTok)) {
+                    color = SirentideContract.normalizeColor(colorTok);
+                } else {
+                    issue(sink, li, "palette: " + quoted(colorTok) + " is not a #hex colour for category "
+                        + quoted(name) + "; the default colour is used"
+                        + (colorTok.startsWith("#") ? "" : " (quote a multi-word category name)"));
+                }
+            }
+            out.add(new Heatmap.Category(name, color));
+        }
+        if (!anyEntry) {
+            issue(sink, li, "palette: no category given; line ignored");
+        }
+        if (overCap > 0) {
+            issue(sink, li, "palette: " + overCap + (overCap == 1 ? " category" : " categories")
+                + " past the " + MAX_CATEGORIES + "-category cap dropped");
+        }
+    }
+
+    /// The `ramp:` stops: hex-only, canonicalized, capped; fewer than two valid → empty (default
+    /// ramp). Every invalid stop, every stop past the cap, and a too-short ramp is named by the sink.
+    private static List<String> heatRamp(String tail, HeatSink sink, int li) {
+        List<String> stops = new ArrayList<>();
+        List<String> overCap = new ArrayList<>();
+        for (String raw : tail.split(",")) {
+            String t = raw.strip();
+            if (t.isEmpty()) {
+                continue;   // a stray comma is not a stop
+            }
+            if (!SirentideContract.isHexColor(t)) {
+                issue(sink, li, "ramp: " + quoted(t) + " is not a #hex colour; stop ignored");
+            } else if (stops.size() < MAX_RAMP_STOPS) {
+                stops.add(SirentideContract.normalizeColor(t));
+            } else {
+                overCap.add(t);
+            }
+        }
+        if (!overCap.isEmpty()) {
+            StringBuilder named = new StringBuilder();
+            for (int k = 0; k < Math.min(overCap.size(), MAX_ISSUE_TOKENS); k++) {
+                named.append(k > 0 ? ", " : "").append(quoted(overCap.get(k)));
+            }
+            if (overCap.size() > MAX_ISSUE_TOKENS) {
+                named.append(", ...");
+            }
+            issue(sink, li, "ramp: " + overCap.size() + (overCap.size() == 1 ? " stop" : " stops")
+                + " past the " + MAX_RAMP_STOPS + "-stop cap dropped (" + named + ")");
+        }
+        if (stops.size() < 2) {
+            issue(sink, li, "ramp: fewer than 2 valid stops; the default ramp is kept");
+            return List.of();
+        }
+        return stops;
+    }
+
+    /// The `bins:` directive as sorted interior thresholds. One integer token N in 2..64 → N equal
+    /// bins (thresholds k/N); otherwise each token is a magnitude (decimal / `NN%`, via
+    /// {@link #heatValue}) kept only when strictly inside (0,1). Empty → no binning. Every rejected
+    /// token is named by the sink; unsorted or repeated cut points are sorted and deduplicated
+    /// SILENTLY, because that changes nothing the author wrote (the same bins either way).
+    private static List<Double> heatBins(String tail, HeatSink sink, int li) {
+        String[] toks = tail.split(",");
+        String single = toks.length == 1 ? toks[0].strip() : null;
+        if (single != null && single.isEmpty()) {
+            issue(sink, li, "bins: no bin count or cut point given; no bins applied");
+            return List.of();
+        }
+        String singleReject = single == null ? null : "bins: " + quoted(single)
+            + " is neither a bin count in 2..64 nor a cut point strictly inside (0, 1); no bins applied";
+        if (single != null && single.matches("[0-9]{1,3}")) {
+            int n = Integer.parseInt(single);
+            if (n < 2 || n > MAX_BINS) {
+                issue(sink, li, singleReject);
+                return List.of();
+            }
+            List<Double> eq = new ArrayList<>();
+            for (int k = 1; k < n; k++) {
+                eq.add((double) k / n);
+            }
+            return eq;
+        }
+        java.util.TreeSet<Double> cuts = new java.util.TreeSet<>();
+        int overCap = 0;
+        for (String t : toks) {
+            String raw = t.strip();
+            if (raw.isEmpty()) {
+                continue;   // a stray comma is not a cut point
+            }
+            // heatValue clamps; a clamped end (0 or 1) is not an interior cut, so it drops out here.
+            Double v = heatValue(raw);
+            if (v != null && v > 0 && v < 1) {
+                if (cuts.size() < MAX_BINS - 1) {
+                    cuts.add(v);
+                } else if (!cuts.contains(v)) {
+                    overCap++;
+                }
+            } else {
+                issue(sink, li, single != null ? singleReject
+                    : "bins: " + quoted(raw) + " is not a cut point strictly inside (0, 1); cut point ignored");
+            }
+        }
+        if (overCap > 0) {
+            issue(sink, li, "bins: " + overCap + (overCap == 1 ? " cut point" : " cut points")
+                + " past the " + (MAX_BINS - 1) + "-cut cap dropped");
+        }
+        return new ArrayList<>(cuts);
+    }
+
+    /// The value part of a heatmap cell token: the `!` outline suffix stripped, then whatever
+    /// follows the LAST colon (or the whole token when there is none). Shared by {@link #heatCell}
+    /// and the unmatched-category check so the two can never read a different value.
+    private static String heatValuePart(String token) {
+        String tok = token.strip();
+        if (tok.endsWith("!")) {
+            tok = tok.substring(0, tok.length() - 1).strip();
+        }
+        int c = tok.lastIndexOf(':');
+        return c >= 0 ? tok.substring(c + 1) : tok;
+    }
+
+    /// Splits on commas OUTSIDE double quotes, keeping empty pieces (like `split(",", -1)`). An
+    /// UNBALANCED quote falls back to the plain comma split, so a stray `"` can never swallow the
+    /// rest of the line into one token.
+    private static List<String> splitOutsideQuotes(String s) {
+        List<String> out = new ArrayList<>();
+        boolean inQuote = false;
+        int start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"') {
+                inQuote = !inQuote;
+            } else if (c == ',' && !inQuote) {
+                out.add(s.substring(start, i));
+                start = i + 1;
+            }
+        }
+        if (inQuote) {
+            return java.util.Arrays.asList(s.split(",", -1));
+        }
+        out.add(s.substring(start));
+        return out;
     }
 
     /// Parse one heatmap cell. Two shapes, mirroring matrix's: a bare magnitude token (`0.6`,
     /// `86%`) where the token is BOTH the shown text and the value source; or `display text:value`
     /// where the part before the LAST colon is shown verbatim on the value's fill (e.g.
     /// `warm:0.8`). A token whose value part doesn't parse is NA — neutral fill, never a colour,
-    /// never throws.
-    private static Heatmap.Cell heatCell(String token) {
+    /// never throws. A trailing `!` (plan f4d69e44) is stripped first and marks the cell outlined.
+    /// With a non-empty `palette` the value part is a CATEGORY name instead of a magnitude: a name
+    /// in the palette is a coloured cell, anything else NA.
+    private static Heatmap.Cell heatCell(String token, List<Heatmap.Category> palette) {
         String tok = token.strip();
-        int c = tok.lastIndexOf(':');
-        if (c >= 0) {
-            String text = cap(tok.substring(0, c).strip());
-            Double v = heatValue(tok.substring(c + 1));
-            return v == null ? new Heatmap.Cell(text, 0, true) : new Heatmap.Cell(text, v, false);
+        boolean outlined = tok.endsWith("!");
+        if (outlined) {
+            tok = tok.substring(0, tok.length() - 1).strip();
         }
-        Double v = heatValue(tok);
+        int c = tok.lastIndexOf(':');
+        String text = cap(c >= 0 ? tok.substring(0, c).strip() : tok);
+        String valuePart = heatValuePart(token);
+        if (!palette.isEmpty()) {
+            String name = cap(unquote(valuePart.strip()));
+            for (Heatmap.Category cat : palette) {
+                if (cat.name().equals(name)) {
+                    return new Heatmap.Cell(text, 0, false, cat.name(), outlined);
+                }
+            }
+            return new Heatmap.Cell(text, 0, true, null, outlined);
+        }
+        Double v = heatValue(valuePart);
         return v == null
-            ? new Heatmap.Cell(cap(tok), 0, true)
-            : new Heatmap.Cell(cap(tok), v, false);
+            ? new Heatmap.Cell(text, 0, true, null, outlined)
+            : new Heatmap.Cell(text, v, false, null, outlined);
     }
 
     /// A cell magnitude: a decimal (`0.6`, `.6`, `1`) or a percent (`86%` → 0.86), CLAMPED to

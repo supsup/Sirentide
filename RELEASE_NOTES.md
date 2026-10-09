@@ -20,6 +20,26 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   shapes, NAMES the four that are unsupported, and states that activation bars are consumed
   but not drawn. A capability ships with its own honesty fence or it ships a lie.
 
+- **Heatmap: outlined cells, categorical palettes, custom ramps + bins, hideable headers**
+  (plan f4d69e44). All opt-in, so every existing heatmap renders byte-identically:
+  a cell token ending in `!` is outlined (`4:0.125!`); `palette: C1 #4e79a7, C2 #f28e2b, S`
+  makes cell values category NAMES rather than magnitudes, with a swatch legend (hex-only
+  colours; a MISSING colour takes the default categorical palette, an INVALID one takes the same
+  default and is reported); `ramp: #fff7ec, #d7301f, #7f0000` replaces the default blue ramp;
+  `bins: 8` or `bins: 0.25, 0.5` steps the fills and the legend; `hide: rows`, `hide: cols` or
+  `hide: both` drops the row-label column or the header band. In a palette entry the LAST
+  whitespace token is the colour, so a multi-word category name with no colour must be quoted
+  (`"big win"`); unquoted, `big win` is category `big` with the invalid colour `win`. Quoted
+  names and quoted categorical cells may contain commas. **Malformed directive input never fails
+  the bake and is never silent:** a bad `ramp:` stop (or one past the 16th, or fewer than two
+  valid), a rejected `bins:` token, an unknown `hide:` target, a bad, nameless or duplicate
+  `palette:` entry, and a categorical cell naming no category each fall back to a default AND add
+  a line-scoped caveat (`line 3: ramp: "red" is not a #hex colour; stop ignored`) that
+  `sirentide render <file.md>` prints and `--strict` fails on. **Two spellings changed meaning:** a cell token that ends in `!` used to
+  show the `!` and is now an outlined cell, and an UNQUOTED row labelled `palette`, `ramp`,
+  `bins` or `hide` is now a directive (quote the label to keep it a row), the same rule
+  `cols:` and `scale:` already followed.
+
 - **`%%` comments are documented.** They have worked for some time and appeared in no
   author-facing page: not QUICKSTART, not the README, not the docs site. A `%%` line draws
   nothing and a diagram containing one renders byte-identically to the same diagram without it.
