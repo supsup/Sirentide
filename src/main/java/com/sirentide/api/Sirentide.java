@@ -614,6 +614,10 @@ public final class Sirentide {
             if (dropped != null) {
                 ok = dropped;
             }
+            Diagnostics heat = heatmapInputCaveat(ir, dsl, ok);
+            if (heat != null) {
+                ok = heat;
+            }
             return new RenderResult(svg, withFontCoverageCaveat(ok));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
@@ -804,6 +808,42 @@ public final class Sirentide {
         String caveat = " Note: " + count + " dropped from this body and did not render; line "
             + first.line() + " uses " + first.reason() + ".";
         return new Diagnostics(Outcome.OK, base.stage(), base.message() + caveat, first.line(),
+            base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
+    }
+
+    /// The OK CAVEAT for a heatmap whose extension directives (plan f4d69e44) were MALFORMED: a
+    /// bad `ramp:` stop, a rejected `bins:` token, an unknown `hide:` target, a bad `palette:`
+    /// colour or nameless/duplicate entry, or a categorical cell naming no category. Each of those
+    /// falls back to a default and never fails the bake, which is right, but until this caveat the
+    /// fallback was SILENT: "Rendered successfully.", exit 0, and nothing `--strict` could gate.
+    ///
+    /// Same shape as {@link #droppedStatementCaveat}: Outcome.OK (the SVG is real and is what /docs
+    /// serves), line-scoped to the first issue, every listed issue in {@code detail} as
+    /// `line N: <directive>: <what was rejected>`, composing after the earlier OK caveats. Returns
+    /// null for any non-heatmap, and for a heatmap whose inputs were all valid — so a source using
+    /// none of the extensions, or using them correctly, keeps its exact pre-existing diagnostics.
+    private static Diagnostics heatmapInputCaveat(Diagram ir, String dsl, Diagnostics base) {
+        if (!(ir instanceof com.sirentide.ir.Heatmap)) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.HeatmapIssues issues =
+            com.sirentide.parse.DslParser.heatmapIssues(dsl);
+        if (issues == null || issues.total() == 0 || issues.listed().isEmpty()) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.HeatmapIssue first = issues.listed().get(0);
+        StringBuilder detail = new StringBuilder("heatmap input issue(s): ").append(issues.total());
+        for (com.sirentide.parse.DslParser.HeatmapIssue h : issues.listed()) {
+            detail.append("; line ").append(h.line()).append(": ").append(h.text());
+        }
+        if (issues.total() > issues.listed().size()) {
+            detail.append("; (").append(issues.total() - issues.listed().size()).append(" more not listed)");
+        }
+        String count = issues.total() == 1 ? "1 heatmap input was" : issues.total() + " heatmap inputs were";
+        String caveat = " Note: " + count + " malformed and fell back to a default; the first is on line "
+            + first.line() + ".";
+        return new Diagnostics(Outcome.OK, base.stage(), base.message() + caveat,
+            base.line() > 0 ? base.line() : first.line(),
             base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
     }
 

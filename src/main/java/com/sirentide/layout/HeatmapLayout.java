@@ -212,10 +212,11 @@ public final class HeatmapLayout {
                 shapes.add(new Rect(lx + from * RAMP_W, ly, (to - from) * RAMP_W, RAMP_H, fills.bin(k)));
             }
         } else {
-            double stepW = RAMP_W / RAMP_STEPS;
-            for (int s = 0; s < RAMP_STEPS; s++) {
+            int steps = fills.legendSteps();
+            double stepW = RAMP_W / steps;
+            for (int s = 0; s < steps; s++) {
                 // Sample each step at its centre so the first/last steps show the ramp's true ends.
-                double v = (s + 0.5) / RAMP_STEPS;
+                double v = (s + 0.5) / steps;
                 shapes.add(new Rect(lx + s * stepW, ly, stepW, RAMP_H, fills.ramp(v)));
             }
         }
@@ -248,6 +249,14 @@ public final class HeatmapLayout {
                 return bin(binOf(c.value()));
             }
             return ramp(c.value());
+        }
+
+        /// How many steps the continuous legend samples: {@link #RAMP_STEPS} for the default ramp
+        /// (the pre-extension legend, unchanged) and for any custom ramp it already samples at least
+        /// twice per segment (up to 7 stops); a longer custom ramp gets 2 samples per segment
+        /// (16 stops → 30), so no stop's segment is aliased out of the legend.
+        int legendSteps() {
+            return stops == null ? RAMP_STEPS : Math.max(RAMP_STEPS, 2 * (stops.size() - 1));
         }
 
         /// The bin index of a value: how many thresholds it reaches (a value ON a cut goes up).
