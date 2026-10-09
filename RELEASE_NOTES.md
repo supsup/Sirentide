@@ -48,6 +48,39 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   there the artifact would be a lie about what `/docs` serves, here it is exactly what
   `/docs` serves and a caller whose gate just rejected something wants to see it.
 
+- **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
+  supplied a renderer got typeset math; through the CLI a label like `$\sqrt{2}$` baked as its raw
+  source and was then ellipsized like any other text. `--math` loads LatteX at run time from
+  `--lattex PATH` or `SIRENTIDE_LATTEX_JAR`, in an isolated class loader, and proves the load with a
+  probe render first. Sirentide still bundles nothing: `--math` without a jar, or with one that
+  cannot render, is a loud usage error (exit `2`) before any bake, never a silent raw-text fallback.
+  A run LatteX cannot typeset is drawn as its raw source **and named on stderr** as a caveat, so
+  `--strict` fails on it. The output is byte-identical to the API with the LatteX renderer; without
+  the flag every byte is unchanged.
+
+- **`render --batch` renders many raw DSL sources in one JVM.** Sources are NUL-separated on stdin
+  (a diagram is multi-line, so a newline cannot delimit it) and each produces exactly one
+  NUL-terminated record on stdout, in order: the SVG `render -` would print for that source alone,
+  or a `sirentide: error: ...` record in its slot. Record N always answers source N, including a
+  blank source (a legal empty diagram) and an over-cap source (an error record; the batch reads
+  past it and stays aligned). stderr names failures and caveats by record number; exit `1` if any
+  record failed or, under `--strict`, carried a caveat. `-o` and `--png` are refused with
+  `--batch` rather than silently ignored.
+
+- **An xychart whose `$...$` category labels are lost is now named, not silent.** The label-loss
+  caveat skipped math labels on the theory that math is never ellipsized, which holds only when a
+  math renderer is active. Without one (the default bake, or `render` without `--math`), a math
+  label is drawn through the same ellipsize as plain text, so 30 categories labelled `$x_{i}$`
+  drew no labels at all while `render - --strict` exited `0`. The check now follows the renderer:
+  without one, math labels are measured as the text actually drawn and their loss is reported;
+  with `--math` they are typeset, and one that fails to typeset is the untypeset-math caveat. The
+  SVG is unchanged; only the caveat is new.
+
+- **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
+  now says so: the baked SVG carries no renderer or revision attribute, and the jar's exact source
+  revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`. A hash of the
+  diagram source would identify the source, never the renderer.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they

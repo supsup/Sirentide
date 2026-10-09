@@ -95,6 +95,12 @@ public final class Main {
         combine with --batch (usage error). Exit 1 if any record failed (or, with --strict, carried
         a caveat); 2 on a usage error, empty stdin, or a stdout failure.
 
+        Provenance: the baked SVG carries no renderer or revision attribute. Which Sirentide
+        built it is a property of the jar, not of the output: the jar's exact source revision
+        is the Sirentide-Source-Revision line of its META-INF/MANIFEST.MF
+        (unzip -p sirentide-<version>.jar META-INF/MANIFEST.MF). A hash of the diagram source
+        would identify the SOURCE, never the renderer that baked it.
+
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written
         — OR --strict was passed and the render dropped a statement, where the SVG IS written.
