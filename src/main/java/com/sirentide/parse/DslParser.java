@@ -3264,11 +3264,22 @@ public final class DslParser {
     /// legend's low/high ends via the quadrant `-->` axis-end grammar. Rows are padded/truncated to
     /// exactly M cells so the grid is rectangular; a line with no colon is skipped — never fails
     /// the bake.
+    ///
+    /// Plan f4d69e44 adds the opt-in `palette:` / `ramp:` / `bins:` / `hide:` directives and the `!`
+    /// outline suffix (grammar in {@link Heatmap}). Because `palette:` decides how EVERY cell token
+    /// reads and may appear after the rows, cell tokens are kept raw until all lines are read and
+    /// resolved once at the end; a source using none of the extensions resolves exactly as before.
     private static Diagram parseHeatmap(String[] lines, String textColor) {
         List<String> columns = new ArrayList<>();
-        List<Heatmap.Row> rows = new ArrayList<>();
+        List<String> rowLabels = new ArrayList<>();
+        List<List<String>> rowTokens = new ArrayList<>();
         String[] scaleEnds = new String[2];
-        for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
+        List<Heatmap.Category> palette = new ArrayList<>();
+        List<String> ramp = List.of();
+        List<Double> thresholds = List.of();
+        boolean hideRows = false;
+        boolean hideCols = false;
+        for (int i = 1; i < lines.length && rowLabels.size() < MAX_DATA_ROWS; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
                 continue;
@@ -3290,6 +3301,32 @@ public final class DslParser {
                 axisEnds(scaleEnds, line.substring(line.indexOf(':') + 1));
                 continue;
             }
+            if (line.regionMatches(true, 0, "palette:", 0, 8)) {
+                heatPalette(palette, line.substring(8));
+                continue;
+            }
+            if (line.regionMatches(true, 0, "ramp:", 0, 5)) {
+                ramp = heatRamp(line.substring(5));
+                continue;
+            }
+            if (line.regionMatches(true, 0, "bins:", 0, 5)) {
+                thresholds = heatBins(line.substring(5));
+                continue;
+            }
+            if (line.regionMatches(true, 0, "hide:", 0, 5)) {
+                for (String tok : line.substring(5).split(",")) {
+                    switch (tok.strip().toLowerCase(java.util.Locale.ROOT)) {
+                        case "rows", "row", "labels" -> hideRows = true;
+                        case "cols", "col", "columns", "header", "headers" -> hideCols = true;
+                        case "both", "all" -> {
+                            hideRows = true;
+                            hideCols = true;
+                        }
+                        default -> { }   // an unknown hide target is ignored, never throws
+                    }
+                }
+                continue;
+            }
             // Split label : cells. A quoted label may itself contain a colon, so find the closing
             // quote first, then the separator colon after it (matrix's exact rule).
             int sep;
@@ -3302,15 +3339,23 @@ public final class DslParser {
             if (sep < 0) {
                 continue;   // not a row (no cells) → skip, never throw
             }
-            String label = cap(unquote(line.substring(0, sep).strip()));
-            List<Heatmap.Cell> cells = new ArrayList<>();
+            rowLabels.add(cap(unquote(line.substring(0, sep).strip())));
+            List<String> toks = new ArrayList<>();
             for (String tok : line.substring(sep + 1).split(",", -1)) {
-                if (cells.size() >= MAX_COLUMNS) {
+                if (toks.size() >= MAX_COLUMNS) {
                     break;   // bound rows exactly like the header (matrix cap discipline)
                 }
-                cells.add(heatCell(tok));
+                toks.add(tok);
             }
-            rows.add(new Heatmap.Row(label, cells));
+            rowTokens.add(toks);
+        }
+        List<Heatmap.Row> rows = new ArrayList<>();
+        for (int r = 0; r < rowLabels.size(); r++) {
+            List<Heatmap.Cell> cells = new ArrayList<>();
+            for (String tok : rowTokens.get(r)) {
+                cells.add(heatCell(tok, palette));
+            }
+            rows.add(new Heatmap.Row(rowLabels.get(r), cells));
         }
         int m = columns.isEmpty()
             ? rows.stream().mapToInt(r -> r.cells().size()).max().orElse(0)
@@ -3323,26 +3368,117 @@ public final class DslParser {
             }
             normalized.add(new Heatmap.Row(r.label(), cs.size() > m ? new ArrayList<>(cs.subList(0, m)) : cs));
         }
-        return new Heatmap(columns, normalized, textColor, scaleEnds[0], scaleEnds[1]);
+        return new Heatmap(columns, normalized, textColor, scaleEnds[0], scaleEnds[1],
+            palette, ramp, thresholds, hideRows, hideCols);
+    }
+
+    private static final int MAX_CATEGORIES = 64;
+    private static final int MAX_RAMP_STOPS = 16;
+    private static final int MAX_BINS = 64;
+
+    /// Appends `palette:` entries (`name [#hex]`, comma-separated, name optionally quoted). The
+    /// colour is the LAST whitespace token when it starts with `#`; it is kept only if it passes the
+    /// shared hex-only guard (canonicalized), else null → the layout's default categorical colour.
+    /// Blank and duplicate names are skipped (the first entry for a name wins); capped.
+    private static void heatPalette(List<Heatmap.Category> out, String tail) {
+        for (String raw : tail.split(",")) {
+            if (out.size() >= MAX_CATEGORIES) {
+                return;
+            }
+            String entry = raw.strip();
+            String color = null;
+            int ws = Math.max(entry.lastIndexOf(' '), entry.lastIndexOf('\t'));
+            String last = ws >= 0 ? entry.substring(ws + 1) : entry;
+            if (last.startsWith("#")) {
+                color = SirentideContract.isHexColor(last) ? SirentideContract.normalizeColor(last) : null;
+                entry = ws >= 0 ? entry.substring(0, ws).strip() : "";
+            }
+            String name = cap(unquote(entry));
+            if (name.isEmpty()) {
+                continue;
+            }
+            boolean dup = false;
+            for (Heatmap.Category c : out) {
+                dup |= c.name().equals(name);
+            }
+            if (!dup) {
+                out.add(new Heatmap.Category(name, color));
+            }
+        }
+    }
+
+    /// The `ramp:` stops: hex-only, canonicalized, capped; fewer than two valid → empty (default ramp).
+    private static List<String> heatRamp(String tail) {
+        List<String> stops = new ArrayList<>();
+        for (String raw : tail.split(",")) {
+            String t = raw.strip();
+            if (stops.size() < MAX_RAMP_STOPS && SirentideContract.isHexColor(t)) {
+                stops.add(SirentideContract.normalizeColor(t));
+            }
+        }
+        return stops.size() >= 2 ? stops : List.of();
+    }
+
+    /// The `bins:` directive as sorted interior thresholds. One integer token N in 2..64 → N equal
+    /// bins (thresholds k/N); otherwise each token is a magnitude (decimal / `NN%`, via
+    /// {@link #heatValue}) kept only when strictly inside (0,1). Empty → no binning.
+    private static List<Double> heatBins(String tail) {
+        String[] toks = tail.split(",");
+        if (toks.length == 1 && toks[0].strip().matches("[0-9]{1,3}")) {
+            int n = Integer.parseInt(toks[0].strip());
+            if (n < 2 || n > MAX_BINS) {
+                return List.of();
+            }
+            List<Double> eq = new ArrayList<>();
+            for (int k = 1; k < n; k++) {
+                eq.add((double) k / n);
+            }
+            return eq;
+        }
+        java.util.TreeSet<Double> cuts = new java.util.TreeSet<>();
+        for (String t : toks) {
+            String raw = t.strip();
+            if (raw.isEmpty() || cuts.size() >= MAX_BINS - 1) {
+                continue;
+            }
+            // heatValue clamps; a clamped end (0 or 1) is not an interior cut, so it drops out here.
+            Double v = heatValue(raw);
+            if (v != null && v > 0 && v < 1) {
+                cuts.add(v);
+            }
+        }
+        return new ArrayList<>(cuts);
     }
 
     /// Parse one heatmap cell. Two shapes, mirroring matrix's: a bare magnitude token (`0.6`,
     /// `86%`) where the token is BOTH the shown text and the value source; or `display text:value`
     /// where the part before the LAST colon is shown verbatim on the value's fill (e.g.
     /// `warm:0.8`). A token whose value part doesn't parse is NA — neutral fill, never a colour,
-    /// never throws.
-    private static Heatmap.Cell heatCell(String token) {
+    /// never throws. A trailing `!` (plan f4d69e44) is stripped first and marks the cell outlined.
+    /// With a non-empty `palette` the value part is a CATEGORY name instead of a magnitude: a name
+    /// in the palette is a coloured cell, anything else NA.
+    private static Heatmap.Cell heatCell(String token, List<Heatmap.Category> palette) {
         String tok = token.strip();
-        int c = tok.lastIndexOf(':');
-        if (c >= 0) {
-            String text = cap(tok.substring(0, c).strip());
-            Double v = heatValue(tok.substring(c + 1));
-            return v == null ? new Heatmap.Cell(text, 0, true) : new Heatmap.Cell(text, v, false);
+        boolean outlined = tok.endsWith("!");
+        if (outlined) {
+            tok = tok.substring(0, tok.length() - 1).strip();
         }
-        Double v = heatValue(tok);
+        int c = tok.lastIndexOf(':');
+        String text = cap(c >= 0 ? tok.substring(0, c).strip() : tok);
+        String valuePart = c >= 0 ? tok.substring(c + 1) : tok;
+        if (!palette.isEmpty()) {
+            String name = cap(unquote(valuePart.strip()));
+            for (Heatmap.Category cat : palette) {
+                if (cat.name().equals(name)) {
+                    return new Heatmap.Cell(text, 0, false, cat.name(), outlined);
+                }
+            }
+            return new Heatmap.Cell(text, 0, true, null, outlined);
+        }
+        Double v = heatValue(valuePart);
         return v == null
-            ? new Heatmap.Cell(cap(tok), 0, true)
-            : new Heatmap.Cell(cap(tok), v, false);
+            ? new Heatmap.Cell(text, 0, true, null, outlined)
+            : new Heatmap.Cell(text, v, false, null, outlined);
     }
 
     /// A cell magnitude: a decimal (`0.6`, `.6`, `1`) or a percent (`86%` → 0.86), CLAMPED to

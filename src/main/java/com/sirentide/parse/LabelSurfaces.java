@@ -245,6 +245,10 @@ public final class LabelSurfaces {
                 for (int i = 0; i < nz(h.columns()).size(); i++) {
                     addPlain(out, "heatmap.column[" + i + "]", nz(h.columns()).get(i));
                 }
+                // Categorical palette names are drawn as legend text (plan f4d69e44).
+                for (int i = 0; i < nz(h.palette()).size(); i++) {
+                    addPlain(out, "heatmap.category[" + i + "]", nz(h.palette()).get(i).name());
+                }
                 for (int r = 0; r < nz(h.rows()).size(); r++) {
                     var row = nz(h.rows()).get(r);
                     addPlain(out, "heatmap.row[" + r + "]", row.label());

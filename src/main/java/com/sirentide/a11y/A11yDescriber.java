@@ -355,6 +355,18 @@ public final class A11yDescriber {
                 .append(" to ").append(label(m.highLabel() != null ? m.highLabel() : "1"));
         }
         d.append('.');
+        // Plan f4d69e44 extensions: each sentence appears ONLY when its feature is used, so a
+        // pre-extension heatmap's description is byte-identical.
+        if (m.categorical()) {
+            d.append(" Categories: ");
+            int shownCats = Math.min(m.palette().size(), ITEM_CAP);
+            for (int k = 0; k < shownCats; k++) {
+                d.append(k > 0 ? ", " : "").append(label(m.palette().get(k).name()));
+            }
+            d.append(m.palette().size() > shownCats ? ", …." : ".");
+        } else if (m.thresholds() != null && !m.thresholds().isEmpty()) {
+            d.append(" Binned into ").append(m.thresholds().size() + 1).append(" steps.");
+        }
         if (!m.columns().isEmpty()) {
             d.append(" Columns: ");
             for (int j = 0; j < m.columns().size(); j++) {
@@ -373,11 +385,22 @@ public final class A11yDescriber {
                 d.append(label(row.label())).append(": ");
                 for (int j = 0; j < row.cells().size(); j++) {
                     com.sirentide.ir.Heatmap.Cell c = row.cells().get(j);
-                    String spoken = c.text().isEmpty() ? "n/a" : label(c.text());
+                    // A categorical `:C1` cell shows no text but IS category C1 — speak the category.
+                    String spoken = !c.text().isEmpty() ? label(c.text())
+                        : c.category() != null ? label(c.category()) : "n/a";
                     d.append(j > 0 ? ", " : "").append(spoken);
                 }
             }
             d.append(rowCount > shown ? "; …." : ".");
+        }
+        int outlined = 0;
+        for (com.sirentide.ir.Heatmap.Row row : m.rows()) {
+            for (com.sirentide.ir.Heatmap.Cell c : row.cells()) {
+                outlined += c.outlined() ? 1 : 0;
+            }
+        }
+        if (outlined > 0) {
+            d.append(' ').append(outlined).append(outlined == 1 ? " outlined cell." : " outlined cells.");
         }
         return new A11y("Heatmap", d.toString());
     }
