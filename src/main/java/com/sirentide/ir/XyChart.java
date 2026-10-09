@@ -23,8 +23,47 @@ import java.util.Objects;
 /// `textColor` fills the off-plot page-background text (category labels, y-axis tick labels, the
 /// per-bar value labels, legend text). Defaults to `currentColor` so it inherits the host page's
 /// text colour (legible on light AND dark); the DSL `color=` modifier overrides it.
+///
+/// NUMERIC X AXIS (plan c880b12e, numeric-x slice). `xValues` is null for every chart above (the
+/// category axis, unchanged). When non-null the chart is a NUMERIC-x line or scatter chart: row `i`
+/// sits at x = `xValues[i]` on a continuous axis (nice 1/2/5 x 10^k ticks, thinned so no tick label
+/// overlaps or drops, plain-decimal labels on both axes) instead of in an evenly spaced category
+/// column. `bars` then carries each row's x token AS WRITTEN (its anchor id and a11y name), `series`
+/// its per-series values, and the rows are ascending in x. DSL:
+/// ```
+/// xychart line numeric legend
+/// series: measured, fitted
+/// -12 : 1 0.9
+/// "0" : 13 12.8
+/// 0.0005 : 2 2.1
+/// ```
+/// `numeric` is a header modifier beside `line`/`scatter`/`legend`/`color=` (order-free); without
+/// `line` or `scatter` a numeric chart is a line (there is no numeric bar mode). A row is
+/// `x : y1 y2 …`; x may be quoted. Every token must be a finite decimal number whose magnitude is 0
+/// or within [1e-12, 1e15]; a token that is not written as zero but parses to 0 (`1e-400`
+/// underflows) is out of that range, while `0`, `-0`, `0.000` and `0e5` are zero.
+///
+/// GAPS (ruling R2). In a chart with more than one series, a y value written `na` (exactly that,
+/// lowercase) says the series has no value at that x: the series gets no point there and its line
+/// is BROKEN there (no segment reaches the x from either side; the parts before and after are
+/// separate runs of segments), while the other series draw as usual. `na` is SILENT, because the
+/// author stated the gap. It is stored as NaN in that row's `series` array, which the layout reads
+/// as absent. `na` is refused, with a caveat and the row dropped, as the only series' value (a gap
+/// needs another series to be missing beside) and as an x; `NA`, `Na` and `-` are not gap tokens
+/// but non-numeric values, caveated like any other. A row with FEWER values than the series count
+/// is the implicit form of the same gap and stays caveated (below), since nothing says it was meant.
+///
+/// A row the parse cannot take as written is not dropped silently: it is
+/// named, with its 1-based line, on the render's OK caveat (so `--strict` fails), and the chart
+/// renders without it. Those rows are: a non-numeric, non-finite or out-of-range x or y; no `:`; no
+/// y value; a `series:` row that is not the first row; more rows than the 10000-row cap; more
+/// values than `series:` names (extras dropped, row kept); fewer values than the series count (row
+/// kept, the missing series have no point there). LINE mode also names an x that repeats an earlier
+/// row's (the later row is dropped: a line has one y per x) and an x that is out of order (rows are
+/// drawn sorted by x). SCATTER mode takes repeated and unsorted x as written, without a caveat:
+/// a scatter is a point set. An empty body, a single point, and all-equal x in scatter are valid.
 public record XyChart(List<Slice> bars, List<double[]> series, List<String> seriesNames,
-                      String mode, boolean legend, String textColor) implements Diagram {
+                      String mode, boolean legend, String textColor, double[] xValues) implements Diagram {
 
     public XyChart {
         bars = List.copyOf(bars);
@@ -39,6 +78,19 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
         if (textColor == null) {
             textColor = "currentColor";
         }
+        xValues = xValues == null ? null : xValues.clone();
+    }
+
+    /// The category-axis construction (no numeric x): every pre-numeric caller, unchanged.
+    public XyChart(List<Slice> bars, List<double[]> series, List<String> seriesNames,
+                   String mode, boolean legend, String textColor) {
+        this(bars, series, seriesNames, mode, legend, textColor, null);
+    }
+
+    /// Defensive-copy accessor: null on a category chart, else a copy of the per-row x values.
+    @Override
+    public double[] xValues() {
+        return xValues == null ? null : xValues.clone();
     }
 
     /// Defensive-copy accessor so a caller can't mutate any stored series values.
@@ -65,7 +117,8 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
             && seriesEquals(series, that.series)
             && Objects.equals(seriesNames, that.seriesNames)
             && Objects.equals(mode, that.mode)
-            && Objects.equals(textColor, that.textColor);
+            && Objects.equals(textColor, that.textColor)
+            && Arrays.equals(xValues, that.xValues);
     }
 
     /// Hashes the same nested-array contents compared by {@link #equals(Object)}.
@@ -77,6 +130,10 @@ public record XyChart(List<Slice> bars, List<double[]> series, List<String> seri
         result = 31 * result + Objects.hashCode(mode);
         result = 31 * result + Boolean.hashCode(legend);
         result = 31 * result + Objects.hashCode(textColor);
+        if (xValues != null) {
+            // Only a numeric chart mixes this in, so a category chart's hash is what it always was.
+            result = 31 * result + Arrays.hashCode(xValues);
+        }
         return result;
     }
 

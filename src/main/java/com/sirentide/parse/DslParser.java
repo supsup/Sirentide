@@ -579,9 +579,16 @@ public final class DslParser {
     ///
     /// BYTE-COMPAT: a single-series `bars` chart routes through the LEGACY {@link XyChart} shape
     /// (a `Slice` list, `series == null`) so its layout/emit is unchanged.
+    ///
+    /// A `numeric` header modifier hands the body to {@link #parseXyNumeric} instead (a continuous x
+    /// axis; grammar and row-problem list in {@link XyChart}'s class note). Without it nothing here
+    /// changed.
     private static Diagram parseXyChart(String[] lines, String[] header, String textColor) {
         String mode = parseXyMode(header);
         boolean legend = hasLegendModifier(header);
+        if (hasNumericModifier(header)) {
+            return parseXyNumeric(lines, mode, legend, textColor, null);
+        }
 
         List<String> seriesNames = null;
         List<String> labels = new ArrayList<>();
@@ -672,6 +679,336 @@ public final class DslParser {
             bars.add(new Slice(labels.get(i), rows.get(i)[0], null, null));
         }
         return new XyChart(bars, rows, seriesNames, mode, legend, textColor);
+    }
+
+    // ---- numeric-x xychart (plan c880b12e, numeric-x slice) -----------------------------------
+
+    /// The header modifier that puts an xychart on a NUMERIC x axis. Order-free beside `line`,
+    /// `scatter`, `legend`/`key` and `color=`, like every other xychart modifier.
+    static final String XY_NUMERIC = "numeric";
+
+    /// A numeric x or y value outside this magnitude band (other than 0) is refused with a caveat:
+    /// past 1e15 a plain-decimal tick label stops being exact and grows past any axis; below 1e-12 it
+    /// needs more than a dozen leading zeros. Both ends keep every tick label a legible plain decimal.
+    static final double XY_NUMERIC_MAX_MAGNITUDE = 1e15;
+    static final double XY_NUMERIC_MIN_MAGNITUDE = 1e-12;
+
+    /// A plain decimal number token: no hex float, no `d`/`f` suffix, no `NaN`/`Infinity` (which
+    /// `Double.parseDouble` all accept).
+    private static final java.util.regex.Pattern XY_DECIMAL =
+        java.util.regex.Pattern.compile("[+-]?(\\d+(\\.\\d*)?|\\.\\d+)([eE][+-]?\\d+)?");
+
+    private static boolean hasNumericModifier(String[] header) {
+        for (int i = 1; i < header.length; i++) {
+            if (header[i].equals(XY_NUMERIC)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// One problem the numeric-x parse found with a row: `line` is a 0-based BODY index while the
+    /// parse runs (the census converts it to the 1-based physical line), `text` the row as written
+    /// (bounded), `issue` an author-facing clause that says what happened to the row.
+    public record XyRowIssue(int line, String text, String issue) {}
+
+    /// Every row problem a numeric-x xychart parse found, in line order. `total` is exact; `issues`
+    /// keeps the first {@link #MAX_DROPS_REPORTED}, the same bound the flowchart census uses.
+    public record XyNumericCensus(int total, List<XyRowIssue> issues) {
+        public XyNumericCensus {
+            issues = List.copyOf(issues);
+        }
+    }
+
+    /// The observer {@link #parseXyNumeric} reports to when the diagnostics entry asks for a census.
+    /// Null on a rendering parse, so the bake does no extra work. CONTRACT FOR FUTURE EDITS: every
+    /// path in that parse that drops, truncates, reorders or partially draws an authored row must
+    /// call {@link #issue}; a path the sink cannot see is a silent loss.
+    private static final class XyRowSink {
+        private final int bodyStart;
+        private final List<XyRowIssue> issues = new ArrayList<>();
+
+        XyRowSink(int bodyStart) {
+            this.bodyStart = bodyStart;
+        }
+
+        /// The 1-based physical line of body index `i`, for a message that cites another row.
+        int physical(int i) {
+            return bodyStart + i + 1;
+        }
+
+        void issue(int i, String text, String issue) {
+            String shown = text.length() > MAX_DROPPED_TEXT ? text.substring(0, MAX_DROPPED_TEXT) + "..." : text;
+            issues.add(new XyRowIssue(physical(i), shown, issue));
+        }
+    }
+
+    /// Census a NUMERIC-x xychart source: every row the parse could not draw as written (plan
+    /// c880b12e). Returns null when `src` is not an `xychart … numeric` source (or is blank or over
+    /// the source cap). Re-runs the real parse with an observing sink, like
+    /// {@link #flowchartBodyCensus}, so the census cannot disagree with what rendered. Never throws.
+    public static XyNumericCensus xyNumericCensus(String src) {
+        if (src == null || src.isBlank() || exceedsSourceCap(src)) {
+            return null;
+        }
+        String[] rawLines = src.split("\\R");
+        int bodyStart = preambleEnd(rawLines);
+        if (bodyStart >= rawLines.length) {
+            return null;
+        }
+        String[] lines = bodyLines(rawLines, bodyStart);
+        String[] header = lines[0].strip().split("\\s+");
+        if (!canonicalDiagramType(header[0]).equals("xychart") || !hasNumericModifier(header)) {
+            return null;
+        }
+        XyRowSink sink = new XyRowSink(bodyStart);
+        parseXyNumeric(lines, parseXyMode(header), false, null, sink);
+        List<XyRowIssue> all = new ArrayList<>(sink.issues);
+        all.sort(java.util.Comparator.comparingInt(XyRowIssue::line));   // stable: same-line order kept
+        return new XyNumericCensus(all.size(), all.subList(0, Math.min(all.size(), MAX_DROPS_REPORTED)));
+    }
+
+    /// A parsed numeric token, or the reason it is not one (exactly one of the two is set).
+    private record XyNum(double value, String problem) {}
+
+    private static XyNum xyNumber(String tok) {
+        if (!XY_DECIMAL.matcher(tok).matches()) {
+            String t = tok.toLowerCase(java.util.Locale.ROOT).replaceFirst("^[+-]", "");
+            if (t.equals("nan") || t.equals("infinity") || t.equals("inf")) {
+                return new XyNum(0, "which is not finite");
+            }
+            return new XyNum(0, "which is not a number");
+        }
+        double v = Double.parseDouble(tok);
+        if (!Double.isFinite(v)) {
+            return new XyNum(0, "which is not finite (it overflows a double)");
+        }
+        double a = Math.abs(v);
+        // UNDERFLOW: `1e-400` parses to exactly 0, which the band below would take as a legal 0 and
+        // draw at 0. A zero is a zero only when its token says so: no nonzero digit in the mantissa
+        // (`0`, `-0`, `0.000`, `0e5`). Any other token that came out as 0 was below the band.
+        if (a > XY_NUMERIC_MAX_MAGNITUDE || (a != 0 && a < XY_NUMERIC_MIN_MAGNITUDE)
+                || (a == 0 && mantissaHasNonzeroDigit(tok))) {
+            return new XyNum(0, "which is outside the supported magnitude range (0, or 1e-12 to 1e15)");
+        }
+        return new XyNum(v, null);
+    }
+
+    /// True when the part of a decimal token before its exponent holds a digit other than 0.
+    private static boolean mantissaHasNonzeroDigit(String tok) {
+        for (int i = 0; i < tok.length(); i++) {
+            char c = tok.charAt(i);
+            if (c == 'e' || c == 'E') {
+                return false;
+            }
+            if (c >= '1' && c <= '9') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// One accepted row while the numeric parse runs: its x, the x token as written, its values, and
+    /// its body index (for issues found after the walk).
+    private record XyNumRow(double x, String label, double[] values, int line, String text) {}
+
+    /// The explicit GAP token (ruling R2): a y value written `na` (exactly; `NA`, `Na` and `-` are not
+    /// it) says the series has no value at that x, so the line breaks there and nothing is drawn. It
+    /// is silent, because the author stated it; an implicit short row stays caveated.
+    static final String XY_GAP = "na";
+
+    /// One numeric parse pass: the chart, and whether it put an `na` in the only series a
+    /// single-series chart has (which the caller answers by re-running the pass to refuse those rows).
+    private record XyNumericPass(XyChart chart, boolean loneSeriesGap) {}
+
+    /// Parses an `xychart … numeric` body (see {@link XyChart}'s class note for the grammar and the
+    /// row-problem list). `sink` is null on a rendering parse.
+    ///
+    /// TWO PASSES ONLY FOR `na` IN A SINGLE-SERIES CHART. Whether a chart has one series is known only
+    /// after every row is read (an unnamed chart counts its widest row), and a refused row must not
+    /// count toward the row cap or claim its x for the duplicate check. So the first pass reads `na`
+    /// as a gap everywhere; if the chart turned out to have one series and some row's series-1 value
+    /// was `na`, the body is parsed again with those rows refused as they are met. Every other source
+    /// takes the first pass, whose issues are handed to `sink` unchanged.
+    private static Diagram parseXyNumeric(String[] lines, String mode, boolean legend, String textColor,
+                                          XyRowSink sink) {
+        XyRowSink trial = sink == null ? null : new XyRowSink(sink.bodyStart);
+        XyNumericPass first = parseXyNumericPass(lines, mode, legend, textColor, trial, false);
+        if (!first.loneSeriesGap()) {
+            if (sink != null) {
+                sink.issues.addAll(trial.issues);
+            }
+            return first.chart();
+        }
+        return parseXyNumericPass(lines, mode, legend, textColor, sink, true).chart();
+    }
+
+    private static XyNumericPass parseXyNumericPass(String[] lines, String mode, boolean legend,
+                                                    String textColor, XyRowSink sink, boolean refuseLoneGap) {
+        if (mode.equals("bars")) {
+            mode = "line";   // no numeric bar mode: a numeric chart without `scatter` is a line
+        }
+        boolean line = mode.equals("line");
+        List<String> seriesNames = null;
+        List<XyNumRow> rows = new ArrayList<>();
+        Map<Double, Integer> firstAt = new java.util.HashMap<>();
+        boolean firstBodyRow = true;
+        double maxX = Double.NEGATIVE_INFINITY;
+        for (int i = 1; i < lines.length; i++) {
+            String text = lines[i].strip();
+            if (text.isEmpty()) {
+                continue;
+            }
+            boolean wasFirst = firstBodyRow;
+            firstBodyRow = false;
+            if (rows.size() >= MAX_DATA_ROWS) {
+                if (sink != null) {
+                    sink.issue(i, text, "is past the " + MAX_DATA_ROWS
+                        + "-row cap, so it and every later row were dropped");
+                }
+                break;
+            }
+            int colon = text.lastIndexOf(':');
+            if (colon < 0) {
+                if (sink != null) {
+                    sink.issue(i, text, "has no `:` between its x and its y values, so the row was dropped");
+                }
+                continue;
+            }
+            String key = text.substring(0, colon).strip();
+            String rest = text.substring(colon + 1).strip();
+            if (key.equals("series")) {
+                if (wasFirst) {
+                    seriesNames = new ArrayList<>();
+                    for (String name : rest.split(",")) {
+                        if (seriesNames.size() >= MAX_SERIES) {
+                            break;
+                        }
+                        String n = cap(name.strip());
+                        if (!n.isEmpty()) {
+                            seriesNames.add(n);
+                        }
+                    }
+                } else if (sink != null) {
+                    sink.issue(i, text, "is a `series:` row but not the first row (only the first row can "
+                        + "name the series), so it was dropped");
+                }
+                continue;
+            }
+            String xTok = unquote(key).strip();
+            XyNum x = xyNumber(xTok);
+            if (x.problem() != null) {
+                if (sink != null) {
+                    String why = xTok.equals(XY_GAP)
+                        ? "which marks a missing y value and cannot stand for an x" : x.problem();
+                    sink.issue(i, text, "has x `" + xTok + "`, " + why + ", so the row was dropped");
+                }
+                continue;
+            }
+            if (rest.isEmpty()) {
+                if (sink != null) {
+                    sink.issue(i, text, "has no y value, so the row was dropped");
+                }
+                continue;
+            }
+            String[] toks = rest.split("\\s+");
+            double[] vals = new double[Math.min(toks.length, MAX_SERIES)];
+            String bad = null;
+            for (int t = 0; t < vals.length && bad == null; t++) {
+                if (toks[t].equals(XY_GAP)) {
+                    if (refuseLoneGap && t == 0) {
+                        bad = "has `" + XY_GAP + "` for its y, but the chart has one series and `" + XY_GAP
+                            + "` marks a series missing at an x where another series has a value, so the row"
+                            + " was dropped";
+                    } else {
+                        vals[t] = Double.NaN;   // a gap: no point, and the line breaks here
+                    }
+                    continue;
+                }
+                XyNum y = xyNumber(toks[t]);
+                if (y.problem() != null) {
+                    String hint = toks[t].equalsIgnoreCase(XY_GAP) ? " (the gap token is lowercase `"
+                        + XY_GAP + "`)" : "";
+                    bad = "has y value `" + toks[t] + "` (series " + (t + 1) + "), " + y.problem() + hint
+                        + ", so the row was dropped";
+                } else {
+                    vals[t] = y.value();
+                }
+            }
+            if (bad != null) {
+                if (sink != null) {
+                    sink.issue(i, text, bad);
+                }
+                continue;
+            }
+            if (toks.length > MAX_SERIES && sink != null) {
+                sink.issue(i, text, "has " + toks.length + " values, past the " + MAX_SERIES
+                    + "-series cap, so the values past " + MAX_SERIES + " were dropped");
+            }
+            double xv = x.value() == 0 ? 0.0 : x.value();   // -0 and 0 are one x
+            if (line) {
+                Integer first = firstAt.get(xv);
+                if (first != null) {
+                    if (sink != null) {
+                        sink.issue(i, text, "repeats x " + xTok + " from line " + sink.physical(first)
+                            + " (a line has one y per x), so the later row was dropped");
+                    }
+                    continue;
+                }
+                firstAt.put(xv, i);
+                if (xv < maxX && sink != null) {
+                    sink.issue(i, text, "has x " + xTok + " out of order (an earlier row has a larger x); "
+                        + "the line is drawn with its rows sorted by x");
+                }
+                maxX = Math.max(maxX, xv);
+            }
+            rows.add(new XyNumRow(xv, cap(xTok), vals, i, text));
+        }
+
+        int named = seriesNames == null ? 0 : seriesNames.size();
+        int seriesCount = named;
+        if (named == 0) {
+            for (XyNumRow r : rows) {
+                seriesCount = Math.max(seriesCount, r.values().length);
+            }
+        }
+        List<XyNumRow> kept = new ArrayList<>(rows.size());
+        for (XyNumRow r : rows) {
+            double[] v = r.values();
+            if (v.length > seriesCount) {
+                if (sink != null) {
+                    sink.issue(r.line(), r.text(), "has " + v.length + " values but `series:` names "
+                        + seriesCount + ", so the extra value" + (v.length - seriesCount == 1 ? " was" : "s were")
+                        + " dropped");
+                }
+                v = java.util.Arrays.copyOf(v, seriesCount);
+            } else if (v.length < seriesCount && sink != null) {
+                sink.issue(r.line(), r.text(), "has " + v.length + " of " + seriesCount
+                    + " series values, so series " + (v.length + 1)
+                    + (v.length + 1 == seriesCount ? "" : ".." + seriesCount) + " "
+                    + (v.length + 1 == seriesCount ? "has" : "have") + " no point at x " + r.label());
+            }
+            kept.add(new XyNumRow(r.x(), r.label(), v, r.line(), r.text()));
+        }
+        // Rows ascend in x (stable, so a scatter's repeated x keep their written order).
+        kept.sort(java.util.Comparator.comparingDouble(XyNumRow::x));
+        List<Slice> labels = new ArrayList<>(kept.size());
+        List<double[]> grid = new ArrayList<>(kept.size());
+        double[] xs = new double[kept.size()];
+        boolean loneSeriesGap = false;
+        for (int k = 0; k < kept.size(); k++) {
+            XyNumRow r = kept.get(k);
+            double first = r.values().length > 0 ? r.values()[0] : 0;
+            if (Double.isNaN(first)) {
+                loneSeriesGap |= seriesCount <= 1;
+                first = 0;   // the Slice carries the row's label; a gap has no value to give it
+            }
+            labels.add(new Slice(r.label(), first, null, null));
+            grid.add(r.values());
+            xs[k] = r.x();
+        }
+        return new XyNumericPass(new XyChart(labels, grid, seriesNames, mode, legend, textColor, xs),
+            loneSeriesGap);
     }
 
     /// Parses gantt rows: `"Task" : start-end` (two numbers on a shared time axis). A malformed

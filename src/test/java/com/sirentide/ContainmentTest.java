@@ -42,6 +42,10 @@ class ContainmentTest {
         // disc/segment path, the left colour key, the signed domain, and the label clamp in-set.
         "xychart line legend\n  series: Revenue, Cost\n  \"Q1\" : 5 -3\n  \"Q2\" : 8\n  \"Q3\" : -2 6\n",
         "xychart scatter\n  \"A\" : 5 8\n  \"B\" : -3 2\n",       // scatter, multi-series, negative
+        // NUMERIC x (plan c880b12e) with `na` gaps in both series: the broken lines are separate
+        // `<line>` segments, the gaps emit nothing, and every coordinate stays finite and in-set.
+        "xychart line numeric legend\n  series: a, b\n  -2 : 1 2\n  0 : na 3\n  0.5 : 2 na\n  4 : 3 1\n",
+        "xychart scatter numeric\n  series: a, b\n  1 : na na\n  2 : 0.0005 na\n",
         // timeline
         "timeline\n  \"Founded\" : 2020\n  \"Series A\" : 2021\n  \"Launch\" : 2023\n",
         // generalized rows + endpoint clamps: three coincident labels at each end of the axis.
