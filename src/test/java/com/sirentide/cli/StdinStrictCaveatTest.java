@@ -69,4 +69,26 @@ class StdinStrictCaveatTest {
             "render", "-", "--strict");
         assertEquals(1, r.code(), "the pie drop caveat now gates stdin too; stderr: " + r.err());
     }
+
+    @Test
+    void theCaveatWordingFitsEveryKindNotOnlyADroppedStatement() throws IOException {
+        // Review F3. reportCaveats was written for the dropped-statement caveat and said so in every
+        // case: "the named statement(s) are absent" and "treating dropped statement(s) as a failure"
+        // were printed under an xychart label drop, where no statement is absent and a SHORTENED label
+        // is not absent at all. The two framing lines must be true for whatever the caveat names.
+        String shortened = "xychart\n\"Monday\" : 1\n\"Wednesday afternoon session\" : 2\n";
+        String pie = "pie\n\"quarter\" : 25\n\"right outside label that should clip\" : 1\n\"rest\" : 74\n";
+        for (String dsl : new String[] {barker(), shortened, pie}) {
+            Run r = run(dsl, "render", "-", "--strict");
+            assertEquals(1, r.code(), "control: a caveat was raised; stderr: " + r.err());
+            assertFalse(r.err().contains("statement"),
+                "a label caveat is not about statements: " + r.err());
+        }
+        // The dropped-statement case keeps naming its statement: the caveat detail itself says so.
+        Run d = run("flowchart TD\n    A[Start] --> B[End]\n    mystyle A fill:#f00\n", "render", "-", "--strict");
+        assertEquals(1, d.code(), "control: the dropped statement gates; stderr: " + d.err());
+        assertTrue(d.err().contains("dropped statement(s)") && d.err().contains("mystyle A fill:#f00"),
+            "the dropped statement is still named: " + d.err());
+        assertTrue(d.err().contains("--strict"), "and the flag is still why it failed: " + d.err());
+    }
 }
