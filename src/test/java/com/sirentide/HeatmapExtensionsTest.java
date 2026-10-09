@@ -169,8 +169,15 @@ class HeatmapExtensionsTest {
     void aCategoryNameIsALabelSurfaceSoMarkupInItIsRefused() {
         // The palette names are drawn as legend text, so they go through the same label-markup
         // policy as every other label: unsupported markup degrades the whole diagram to the shell.
-        String refused = Sirentide.render("heatmap\npalette: \"a<br/>b\" #ff0000\n\"r\" : x");
+        String dsl = "heatmap\npalette: \"a<br/>b\" #ff0000\n\"r\" : x";
+        String refused = Sirentide.render(dsl);
         assertEquals(0, rects(refused, "#ff0000"), "the refused diagram draws no swatch");
+        // The render alone cannot tell WHICH layer refused: a downstream plain-glyph check also
+        // catches markup at emission (measured: deleting the LabelSurfaces palette loop leaves the
+        // render refused). The diagnostic names the surface, so it pins the parse-boundary layer.
+        com.sirentide.api.Diagnostics d = Sirentide.renderWithDiagnostics(dsl).diagnostics();
+        String said = d.message() + " | " + d.detail();
+        assertTrue(said.contains("heatmap.category[0]"), said);
         String clean = Sirentide.render("heatmap\npalette: \"ab\" #ff0000\n\"r\" : x");
         assertEquals(1, rects(clean, "#ff0000"), "control: the clean name draws its swatch");
     }
