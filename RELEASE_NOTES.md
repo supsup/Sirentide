@@ -48,6 +48,22 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   there the artifact would be a lie about what `/docs` serves, here it is exactly what
   `/docs` serves and a caller whose gate just rejected something wants to see it.
 
+- **An xychart now names the x-axis labels it could not fit, and `render - --strict` now
+  fails on caveats.** Each category label is fitted to its column; a label too wide is
+  shortened with an ellipsis, and when not even the ellipsis fits it is drawn as *nothing*. A
+  crowded chart lost labels silently: a 25-bar autocorrelation chart (lags `-12..12`) drew
+  only the ten one-character lags and still reported `"Rendered successfully."`. Such a render
+  is now an `OK` render with a caveat that lists the **dropped** and the **shortened** labels
+  by name (detail `xychart category-label drop: dropped -12; …`), the same shape as the pie
+  thin-slice caveat. The SVG is byte-identical; only the verdict gained the sentence.
+  Separately, **`render -` (DSL on stdin) used to ignore every caveat**: it never printed one
+  and `--strict` exited `0` on a render that had dropped statements or labels, while
+  `render <file.md> --strict` failed on the same source. Both arms now report caveats
+  through one shared seam, so `--strict` means the same thing on either. The two framing
+  lines printed under a caveat no longer speak of "statement(s)" when the caveat is about a
+  label: they now read `the SVG is what /docs would embed; it does not show what the caveat
+  names as written` and `--strict: treating the caveat as a failure`.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
