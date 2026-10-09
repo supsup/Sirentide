@@ -579,6 +579,10 @@ public final class DslParser {
     ///
     /// BYTE-COMPAT: a single-series `bars` chart routes through the LEGACY {@link XyChart} shape
     /// (a `Slice` list, `series == null`) so its layout/emit is unchanged.
+    ///
+    /// A `numeric` header modifier hands the body to {@link #parseXyNumeric} instead (a continuous x
+    /// axis; grammar and row-problem list in {@link XyChart}'s class note). Without it nothing here
+    /// changed.
     private static Diagram parseXyChart(String[] lines, String[] header, String textColor) {
         String mode = parseXyMode(header);
         boolean legend = hasLegendModifier(header);

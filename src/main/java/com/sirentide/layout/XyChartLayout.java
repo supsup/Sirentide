@@ -18,6 +18,8 @@ import java.util.Optional;
 /// - `line`: a small filled disc per point + N-1 connecting {@link Line} segments per series
 ///   (contract-clean — no polyline, no stroked path). A missing point BREAKS the segment.
 /// - `scatter`: the discs only, no segments.
+/// - NUMERIC x (`xValues != null`, plan c880b12e): line or scatter with rows at their x on a
+///   continuous axis, ticks from {@link NumericAxis} on both axes ({@link #layoutNumeric}).
 /// Multi-series (or any line/scatter) also supports an optional left colour KEY (mirrors the pie
 /// legend geometry). Axes are `<line>`, discs are full-circle {@link Wedge}s, labels glyph paths
 /// (docs/DESIGN.md §4/§6).

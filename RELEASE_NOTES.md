@@ -64,6 +64,24 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   label: they now read `the SVG is what /docs would embed; it does not show what the caveat
   names as written` and `--strict: treating the caveat as a failure`.
 
+- **`xychart … numeric` puts the x axis on a number line** (plan c880b12e). A new header
+  modifier, beside `line`/`scatter`/`legend`: `xychart line numeric` (or `scatter numeric`;
+  bare `numeric` is a line) reads each row as `x : y1 y2 …` and draws it at its x on a
+  continuous axis, instead of in an evenly spaced category column whose label may not fit. Both
+  axes take nice ticks (1, 2 or 5 x 10^k), **thinned** to the finest step whose labels all fit
+  whole, so a tick label is never shortened or dropped: the 25-lag Barker chart now draws the 13
+  lags `-12, -10, …, 12` and passes `--strict`, where the category chart dropped 15 of 25. Tick
+  labels are **plain decimals on both axes** (`0.0005`, never `5.0E-4`), and discs shrink with
+  density so a 140-point series reads as a curve, not a smear. Every row the numeric parse cannot
+  draw as written is **named with its line** on the OK caveat (`xychart numeric row issue(s)`),
+  so `--strict` fails on it: a non-numeric, non-finite or out-of-range value (magnitude 0 or
+  1e-12..1e15), a row with no `:` or no y value, a late `series:` row, a row with more values
+  than `series:` names or fewer than the series count, and on a line a repeated x (the later row
+  is dropped) or an out-of-order x (the line is drawn sorted by x). A scatter takes repeated and
+  unsorted x as written. Opt-in: every chart without `numeric` renders byte-identically, and
+  the default category y axis still prints its ticks the way it did, E-notation included (left
+  for a separate ruling, because changing it moves the bytes of existing charts).
+
 - **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
   supplied a renderer got typeset math; through the CLI a label like `$\sqrt{2}$` baked as its raw
   source and was then ellipsized like any other text. `--math` loads LatteX at run time from
