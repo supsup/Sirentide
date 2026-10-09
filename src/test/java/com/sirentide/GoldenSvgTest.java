@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,7 @@ import org.junit.jupiter.api.Test;
 /// output instead of asserting, e.g.
 ///   ./gradlew test --tests com.sirentide.GoldenSvgTest -Dsirentide.updateGolden=true
 /// Review the resulting diff before committing — an unexpected golden change is the signal.
-class GoldenSvgTest {
+public class GoldenSvgTest {
 
     private static final boolean UPDATE = GoldenRegen.updating();
 
@@ -274,6 +275,18 @@ class GoldenSvgTest {
         }
     }
 
+
+    /// The fixture DSLs, read-only, in declaration order: so a test elsewhere (the overlap lint's
+    /// gallery sweep, the CLI's pin of the one known lint finding) runs THESE sources rather than a
+    /// copy that could drift from the golden it claims to describe.
+    public static Map<String, String> fixtures() {
+        return Collections.unmodifiableMap(FIXTURES);
+    }
+
+    /// The committed golden SVG for `name`, as a String.
+    public static String golden(String name) throws Exception {
+        return readGolden(name);
+    }
 
     private static String readGolden(String name) throws Exception {
         try (InputStream in = GoldenSvgTest.class.getResourceAsStream("/golden/" + name + ".svg")) {

@@ -77,4 +77,25 @@ class CliLintOverlapTest {
         Captured off = runWithStdin(in, "render", "--batch", "--strict");
         assertEquals(0, off.exitCode(), off.err());
     }
+
+    /// THE NATURAL POSITIVE, pinned at the CLI: the committed golden `sequence-blocks` (not a copy of
+    /// its DSL) carries a real 1.8 px graze, the loop label "every retry" (an ungrouped frame label,
+    /// named by its position `text@80,135`) into the message label "ping" (`message:Alice-Bob-1`).
+    /// It is a KNOWN FINDING FILED FOR FOLLOW-UP, excluded by name from the clean-gallery sweep in
+    /// OverlapLintTest#KNOWN_LINT_FINDINGS. When a layout fix removes the graze, this test goes red on
+    /// purpose: retire it together with that exclusion and regenerate the golden under review.
+    @Test
+    void theSequenceBlocksGoldenFailsStrictOnlyUnderTheLint() throws Exception {
+        String dsl = com.sirentide.GoldenSvgTest.fixtures().get("sequence-blocks");
+        String golden = com.sirentide.GoldenSvgTest.golden("sequence-blocks");
+        Captured lint = runWithStdin(dsl, "render", "-", "--strict", "--lint-overlap");
+        assertEquals(1, lint.exitCode(), lint.err());
+        assertTrue(lint.err().contains("text overlap: text@80,135 x message:Alice-Bob-1 (20.3x1.8 px"),
+            "the finding names both runs: " + lint.err());
+        assertEquals(golden, lint.out(), "the lint never changes the golden SVG, which is still written");
+        Captured plain = runWithStdin(dsl, "render", "-", "--strict");
+        assertEquals(0, plain.exitCode(), plain.err());
+        assertEquals("", plain.err());
+        assertEquals(golden, plain.out());
+    }
 }
