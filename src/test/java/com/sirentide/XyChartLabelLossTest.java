@@ -103,6 +103,142 @@ class XyChartLabelLossTest {
         assertTrue(r.diagnostics().detail().startsWith("xychart category-label drop:"), r.diagnostics().detail());
     }
 
+    // -- every drawing path, checked against SVG STRUCTURE (review F1, plan c880b12e follow-up) --------
+    //
+    // The first agreement check above covers only the single-series bar path. A mutant that tripled the
+    // slot handed to the line/scatter category labels SURVIVED the full suite: nothing looked at what
+    // those paths drew. The checks below read each path's SVG with no help from the layout code: the
+    // plot box comes from the two axis lines, the n columns from the category count, and every category
+    // label is a currentColor glyph path lying wholly BELOW the plot (tick labels sit left of it, value
+    // labels above the x-axis, the key beside it). Two properties, one per conjunct of "the caveat is
+    // the truth about the drawing":
+    //   1. FITS: every drawn label lies inside its own column, so a slot fed wider (or narrower) than
+    //      the column shows up in the SVG itself, independent of anything the caveat says;
+    //   2. AGREES: the columns the SVG left without a label are exactly the labels named as dropped.
+
+    /// A chart in one drawing path with the Barker chart's lag labels (`n` = 25 gives -12..12). At 25
+    /// columns a one-character lag fits its slot and a two- or three-character one does not, so the
+    /// drawing MIXES kept and dropped labels, which both properties need to be non-vacuous.
+    private static String lags(String header, int n, String values) {
+        StringBuilder b = new StringBuilder(header).append('\n');
+        for (int i = 0; i < n; i++) {
+            int lag = i - n / 2;
+            b.append('"').append(lag).append("\" : ")
+                .append(values.replace("#", Integer.toString(1 + Math.floorMod(lag, 5)))).append('\n');
+        }
+        return b.toString();
+    }
+
+    @Test
+    void groupedBarsDrawOnlyWhatTheCaveatSays() {
+        assertDrawingAgrees(lags("xychart", 25, "# 2 3"), 25);
+    }
+
+    @Test
+    void aLineChartDrawsOnlyWhatTheCaveatSays() {
+        assertDrawingAgrees(lags("xychart line", 25, "# 2"), 25);
+    }
+
+    @Test
+    void aScatterChartDrawsOnlyWhatTheCaveatSays() {
+        assertDrawingAgrees(lags("xychart scatter", 25, "# 2"), 25);
+    }
+
+    @Test
+    void singleSeriesBarsDrawOnlyWhatTheCaveatSays() {
+        assertDrawingAgrees(BARKER, 25);
+    }
+
+    @Test
+    void aComfortableLineChartDrawsEveryLabelInsideItsColumn() {
+        // Non-vacuity for FITS: with nothing dropped, every column carries a label and all of them fit.
+        assertDrawingAgrees(lags("xychart line", 6, "# 2"), 6);
+    }
+
+    @Test
+    void eachMultiSeriesPathNamesAShortenedLabel() {
+        // The SHORTENED half of the caveat through every multi-series path (the bar path is pinned by
+        // aTruncatedLabelIsNamedAsShortened). A shortened label still draws, so structure cannot see it;
+        // the exact list is pinned instead.
+        for (String header : List.of("xychart", "xychart line", "xychart scatter")) {
+            String dsl = header + "\n\"Mon\" : 1 2\n\"Wednesday afternoon session\" : 2 3\n\"Fri\" : 3 1\n";
+            XyChart chart = (XyChart) DslParser.parse(dsl);
+            XyChartLayout.LabelLosses losses = XyChartLayout.categoryLabelLosses(chart);
+            assertEquals(List.of("Wednesday afternoon session"), losses.shortened(), header);
+            assertEquals(List.of(), losses.dropped(), header);
+        }
+    }
+
+    /// FITS and AGREES (see above) for one chart of `n` categories, from its SVG alone.
+    private static void assertDrawingAgrees(String dsl, int n) {
+        String svg = Sirentide.render(dsl);
+        double plotLeft = attr(svg, "data-sirentide-id=\"y\"", "x1");
+        double plotBottom = attr(svg, "data-sirentide-id=\"y\"", "y2");
+        double plotRight = attr(svg, "data-sirentide-id=\"x\"", "x2");
+        double slot = (plotRight - plotLeft) / n;
+        XyChart chart = (XyChart) DslParser.parse(dsl);
+        assertEquals(n, chart.bars().size(), "control: the fixture has n categories");
+
+        String[] drawn = new String[n];
+        Matcher p = Pattern.compile("<path d=\"([^\"]*)\" fill=\"currentColor\"/>").matcher(svg);
+        int labels = 0;
+        while (p.find()) {
+            double[] box = bbox(p.group(1));   // minX, minY, maxX, maxY
+            if (box[1] <= plotBottom) {
+                continue;   // not below the plot: a tick, value or key label
+            }
+            labels++;
+            int col = (int) Math.floor(((box[0] + box[2]) / 2 - plotLeft) / slot);
+            assertTrue(col >= 0 && col < n, "a category label outside every column: " + col);
+            double left = plotLeft + col * slot;
+            assertTrue(box[0] >= left - 1e-6 && box[2] <= left + slot + 1e-6,
+                "FITS: column " + col + " (" + chart.bars().get(col).label() + ") spans [" + left + ", "
+                    + (left + slot) + "] but its label ink spans [" + box[0] + ", " + box[2] + "]");
+            assertTrue(drawn[col] == null, "one label per column, column " + col);
+            drawn[col] = p.group(1);
+        }
+        List<String> unlabelled = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (drawn[i] == null) {
+                unlabelled.add(chart.bars().get(i).label());
+            }
+        }
+        assertTrue(labels > 0, "control: the SVG drew some category labels");
+        if (n == 25) {
+            assertEquals(15, unlabelled.size(), "control: the crowded fixture really drops (15 of 25)");
+        } else {
+            assertEquals(List.of(), unlabelled, "control: the comfortable fixture drops nothing");
+        }
+        assertEquals(unlabelled, XyChartLayout.categoryLabelLosses(chart).dropped(),
+            "AGREES: the caveat names exactly the columns the SVG drew without a label");
+    }
+
+    /// A numeric attribute of the first element after `marker`.
+    private static double attr(String svg, String marker, String name) {
+        int at = svg.indexOf(marker);
+        assertTrue(at >= 0, "control: found " + marker);
+        Matcher m = Pattern.compile(" " + name + "=\"([-0-9.]+)\"").matcher(svg);
+        assertTrue(m.find(at), "control: " + name + " after " + marker);
+        return Double.parseDouble(m.group(1));
+    }
+
+    /// Ink bounding box of a glyph path. Glyph outlines use only M/L/Q/Z, whose operands are all
+    /// (x, y) pairs, so the numbers alternate x, y; any other command fails loudly rather than being
+    /// misread.
+    private static double[] bbox(String d) {
+        assertTrue(d.matches("[MLQZ0-9.\\- ]*"), "a glyph path uses only M/L/Q/Z: " + d);
+        double[] box = {Double.MAX_VALUE, Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE};
+        Matcher num = Pattern.compile("-?[0-9.]+").matcher(d);
+        int k = 0;
+        while (num.find()) {
+            double v = Double.parseDouble(num.group());
+            int axis = k++ % 2;
+            box[axis] = Math.min(box[axis], v);
+            box[axis + 2] = Math.max(box[axis + 2], v);
+        }
+        return box;
+    }
+
     @Test
     void aComfortableChartCarriesNoCaveat() {
         RenderResult r = Sirentide.renderWithDiagnostics("xychart\n\"A\" : 1\n\"B\" : 2\n\"C\" : 3");
