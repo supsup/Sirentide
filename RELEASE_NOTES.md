@@ -64,6 +64,66 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   label: they now read `the SVG is what /docs would embed; it does not show what the caveat
   names as written` and `--strict: treating the caveat as a failure`.
 
+- **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
+  supplied a renderer got typeset math; through the CLI a label like `$\sqrt{2}$` baked as its raw
+  source and was then ellipsized like any other text. `--math` loads LatteX at run time from
+  `--lattex PATH` or `SIRENTIDE_LATTEX_JAR`, in an isolated class loader, and proves the load with a
+  probe render first. Sirentide still bundles nothing: `--math` without a jar, or with one that
+  cannot render, is a loud usage error (exit `2`) before any bake, never a silent raw-text fallback.
+  A run LatteX cannot typeset is drawn as its raw source **and named on stderr** as a caveat, so
+  `--strict` fails on it. The output is byte-identical to the API with the LatteX renderer; without
+  the flag every byte is unchanged.
+
+- **`render --batch` renders many raw DSL sources in one JVM.** Sources are NUL-separated on stdin
+  (a diagram is multi-line, so a newline cannot delimit it) and each produces exactly one
+  NUL-terminated record on stdout, in order: the SVG `render -` would print for that source alone,
+  or a `sirentide: error: ...` record in its slot. Record N always answers source N, including a
+  blank source (a legal empty diagram) and an over-cap source (an error record; the batch reads
+  past it and stays aligned). stderr names failures and caveats by record number; exit `1` if any
+  record failed or, under `--strict`, carried a caveat. `-o` and `--png` are refused with
+  `--batch` rather than silently ignored.
+
+- **An xychart whose `$...$` category labels are lost is now named, not silent.** The label-loss
+  caveat skipped math labels on the theory that math is never ellipsized, which holds only when a
+  math renderer is active. Without one (the default bake, or `render` without `--math`), a math
+  label is drawn through the same ellipsize as plain text, so 30 categories labelled `$x_{i}$`
+  drew no labels at all while `render - --strict` exited `0`. The check now follows the renderer:
+  without one, math labels are measured as the text actually drawn and their loss is reported;
+  with `--math` they are typeset, and one that fails to typeset is the untypeset-math caveat. The
+  SVG is unchanged; only the caveat is new.
+
+- **`render --lint-overlap` (and `RenderOptions.lintOverlap` on the API) checks for colliding
+  text.** Opt-in and off by default, so no existing render gains a caveat. After a successful bake
+  it compares every text run's outline box with every text run in a *different* diagram element
+  (or outside any element) and reports each overlapping pair on the caveat channel as
+  `text overlap: ...`, so `--strict` fails on it only when the flag is set. The SVG is never
+  changed. Text is compared with text only, so an edge label on its own stroke is never a
+  finding; typeset math fragments are not checked. Measured on the 32 golden fixtures, one fires:
+  `sequence-blocks`, where the `loop` label "every retry" sits 1.8 px into the "ping" message
+  below it.
+
+- **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
+  now says so: the baked SVG carries no renderer, revision or source attribute, and the jar's exact
+  source revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`.
+  `--source-hash` (below) identifies the source, on stderr; it never identifies the renderer.
+
+- **`render --source-hash` prints the SHA-256 of the source to stderr.** One line,
+  `sirentide: source sha256:<64 lowercase hex>`, or under `--batch` one
+  `sirentide: record N: source sha256:<hex>` line per record (N 1-based, blank records included),
+  printed before that source's other diagnostics. **Nothing is added to the SVG** (ruling
+  `PROJECT/sirentide` 1129): with or without the flag, stdout, the `-o` file and the exit code are
+  byte-identical, and `--strict` means what it meant. The hash is of the **raw bytes as received**,
+  never a decoded copy: every byte of stdin for `render -` (`sha256sum < diagram.dsl` recomputes
+  it), each record's bytes between NULs for `--batch`, and for `render f.md` the fence body as the
+  file holds it (body lines with any trailing CR, joined by LF, without the LF that ends the last
+  line). So CRLF, a BOM and invalid UTF-8 are part of the identity, and a CRLF copy of a diagram
+  hashes differently from its LF copy; a hash of the decoded text would have changed silently
+  wherever the input is not valid UTF-8. The line prints for a source that does not render too,
+  because it identifies the input, and is absent only when there is no source (usage error, no
+  fence, unreadable file). An over-cap stdin, of which only a prefix is read, says `unavailable`
+  rather than hashing the prefix; an over-cap `--batch` record is read to its NUL anyway, so it
+  is hashed in full.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they

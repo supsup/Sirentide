@@ -70,7 +70,7 @@ class XyChartLabelLossTest {
         }
         assertEquals(25, groups, "control: every bar group was found");
         XyChart chart = (XyChart) DslParser.parse(BARKER);
-        assertEquals(drawnWithoutLabel, XyChartLayout.categoryLabelLosses(chart).dropped(),
+        assertEquals(drawnWithoutLabel, XyChartLayout.categoryLabelLosses(chart, null).dropped(),
             "the replay names exactly the bars the SVG drew without a label");
         assertEquals(15, drawnWithoutLabel.size(), "control: the drop really happens (15 of 25)");
     }
@@ -163,7 +163,7 @@ class XyChartLabelLossTest {
         for (String header : List.of("xychart", "xychart line", "xychart scatter")) {
             String dsl = header + "\n\"Mon\" : 1 2\n\"Wednesday afternoon session\" : 2 3\n\"Fri\" : 3 1\n";
             XyChart chart = (XyChart) DslParser.parse(dsl);
-            XyChartLayout.LabelLosses losses = XyChartLayout.categoryLabelLosses(chart);
+            XyChartLayout.LabelLosses losses = XyChartLayout.categoryLabelLosses(chart, null);
             assertEquals(List.of("Wednesday afternoon session"), losses.shortened(), header);
             assertEquals(List.of(), losses.dropped(), header);
         }
@@ -175,28 +175,43 @@ class XyChartLabelLossTest {
         // narrow: naming it would send the author hunting for a loss that did not happen.
         XyChart chart = (XyChart) DslParser.parse("xychart\n\"\" : 1\n\"A\" : 2\n");
         assertEquals("", chart.bars().get(0).label(), "control: the fixture really has an empty label");
-        assertTrue(XyChartLayout.categoryLabelLosses(chart).isEmpty(),
+        assertTrue(XyChartLayout.categoryLabelLosses(chart, null).isEmpty(),
             "an empty label is neither dropped nor shortened");
     }
 
     @Test
-    void aMathLabelIsNotReportedEvenWhenItsPlainSpellingWouldDrop() {
-        // TODAY'S BEHAVIOUR, pinned on purpose: a `$…$` label is skipped. Spelled as plain text, every
-        // multi-character Barker lag below would drop (see the bar-path checks), so this fails the moment
-        // math labels start being recorded. The math-label follow-up is expected to replace this test
-        // with the behaviour it chooses, deliberately rather than by accident.
+    void aMathLabelIsRecordedExactlyWhenItIsDrawnAsPlainText() {
+        // F1 pinned "a `$…$` label is never recorded" and said the math-label follow-up should replace
+        // the pin deliberately. F2 is that follow-up: a `$…$` label is recorded exactly when the drawing
+        // path draws it as plain text. Without a renderer every lag below is drawn through the plain
+        // ellipsize (spelled `$-12$` it is wider than `-12`, which already drops), so the losses are
+        // what the plain ellipsize did to the raw source. With a renderer it is typeset, never
+        // ellipsized, and not a slot loss, whether the renderer succeeds or fails (a failure draws the
+        // raw source un-ellipsized and is the CLI's untypeset-math caveat).
         StringBuilder b = new StringBuilder("xychart\n");
         for (int lag = -12; lag <= 12; lag++) {
             b.append("\"$").append(lag).append("$\" : 1\n");
         }
-        assertTrue(XyChartLayout.categoryLabelLosses((XyChart) DslParser.parse(b.toString())).isEmpty(),
-            "a $...$ label is not recorded as lost");
+        XyChart chart = (XyChart) DslParser.parse(b.toString());
+        XyChartLayout.LabelLosses plain = XyChartLayout.categoryLabelLosses(chart, null);
+        assertTrue(plain.dropped().contains("$-12$") && plain.dropped().contains("$12$"),
+            "no renderer: a math label drawn as plain text is recorded: " + plain);
+        assertEquals(25, plain.dropped().size() + plain.shortened().size(),
+            "no renderer: every `$lag$` is too wide for its slot, so every one is named: " + plain);
+        com.sirentide.api.MathFragmentRenderer typesets = (latex, size) -> java.util.Optional.of(
+            new com.sirentide.api.MathFragment("<g><path d=\"M0 0L10 0\" fill=\"currentColor\"/></g>", 20, 12, 4));
+        com.sirentide.api.MathFragmentRenderer fails = (latex, size) -> java.util.Optional.empty();
+        assertTrue(XyChartLayout.categoryLabelLosses(chart, typesets).isEmpty(),
+            "renderer: a typeset label is not recorded as lost");
+        assertTrue(XyChartLayout.categoryLabelLosses(chart, fails).isEmpty(),
+            "renderer that fails: drawn raw and un-ellipsized, not a slot loss");
     }
 
     @Test
     void theLossPassAddsNothingToTheFontCoverageCorpus() {
-        // categoryLabelLosses LAYS THE CHART OUT a second time, without a math renderer. Unsuspended, that
-        // pass would feed the raw `$中$` (plain text, since it has no renderer) into the glyph-emission
+        // categoryLabelLosses LAYS THE CHART OUT a second time, with a renderer that typesets nothing (F2:
+        // it routes `$…$` labels as the real render did without typesetting them twice). Unsuspended, that
+        // pass would feed the raw `$中$` (its untypeset fallback is plain text) into the glyph-emission
         // corpus of the render that asked, and the coverage caveat would report U+4E2D for a label the
         // real render drew as math. The render below draws `中` only inside the math fragment.
         com.sirentide.api.MathFragmentRenderer fake = (latex, size) -> java.util.Optional.of(
@@ -250,7 +265,7 @@ class XyChartLabelLossTest {
         } else {
             assertEquals(List.of(), unlabelled, "control: the comfortable fixture drops nothing");
         }
-        assertEquals(unlabelled, XyChartLayout.categoryLabelLosses(chart).dropped(),
+        assertEquals(unlabelled, XyChartLayout.categoryLabelLosses(chart, null).dropped(),
             "AGREES: the caveat names exactly the columns the SVG drew without a label");
     }
 
