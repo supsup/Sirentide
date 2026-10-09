@@ -278,6 +278,15 @@ class HeatmapInputCaveatTest {
     }
 
     @Test
+    void anUnbalancedQuoteNeverSwallowsTheRestOfThePalette() {
+        // A stray `"` falls back to the plain comma split, so the B entry after it survives intact
+        // instead of being folded into one giant name.
+        String svg = Sirentide.render(
+            "heatmap\ncols: a, b\npalette: \"A #ff0000, B #00ff00\n\"r\" : x, B");
+        assertEquals(2, rects(svg, "#00ff00"), "B is its own category: cell + swatch");
+    }
+
+    @Test
     void manyIssuesAreCountedAndTheFirstFewListed() {
         String dsl = "heatmap\ncols: a\nramp: a, b, c, d, e, f, g\n\"r\" : 0.5";
         Diagnostics d = diag(dsl);
