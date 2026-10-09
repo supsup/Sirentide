@@ -78,10 +78,12 @@ public final class Main {
                            Sirentide does NOT bundle it -- same posture as the math backend, the
                            host supplies the tool -- so --png without it is a loud usage error,
                            never a silent skip.
-          --strict         treat a DROPPED statement as a failure (exit 1). A render can succeed
-                           and still drop a statement Sirentide does not recognise; the caveat
-                           naming that line goes to stderr and the exit stays 0 by default,
-                           because the bake really happens and really serves that SVG. CI is
+          --strict         treat ANY caveat as a failure (exit 1): a dropped statement, a dropped
+                           or shortened label (xychart axis labels, pie outside labels),
+                           untypeset math under --math, or a lint finding under --lint-overlap.
+                           A render can succeed and still carry a caveat; it goes to stderr,
+                           naming it, and the exit stays 0 by default, because the
+                           bake really happens and really serves that SVG. CI is
                            where nobody reads stderr, so an unattended caller opts in here. The
                            SVG is still written -- it is exactly what /docs would serve, and a
                            rejected gate is worth inspecting.
@@ -135,7 +137,8 @@ public final class Main {
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written
-        — OR --strict was passed and the render dropped a statement, where the SVG IS written.
+        — OR --strict was passed and the render carried a caveat (a dropped statement, a dropped
+        or shortened label, untypeset math, or a lint finding), where the SVG IS written.
         2 = loud error (no fence, unreadable/over-cap input, unwritable -o); nothing written.
         -o writes are atomic: the destination is replaced only after a complete render + write, so
         a failure never truncates or corrupts an existing file. A filesystem that cannot replace
