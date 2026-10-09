@@ -2,6 +2,7 @@ package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.contract.SirentideRole;
+import com.sirentide.font.EmittedText;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.Slice;
 import com.sirentide.ir.XyChart;
@@ -67,15 +68,22 @@ public final class XyChartLayout {
     /// plain text — byte-identical to {@link #layout(XyChart)}. Numeric tick/value labels never carry
     /// math, so they stay on the plain path.
     public static LaidOut layout(XyChart chart, MathFragmentRenderer math) {
+        return layout(chart, math, new LossRecorder());
+    }
+
+    /// The one layout body. Every category label it draws passes through {@link #emitCategory}, which
+    /// records the label's fate in `losses`; {@link #categoryLabelLosses} reads that record, so the
+    /// caveat is a by-product of drawing rather than a second computation that could drift from it.
+    private static LaidOut layout(XyChart chart, MathFragmentRenderer math, LossRecorder losses) {
         if (chart.series() == null) {
-            return layoutBars(chart, math);
+            return layoutBars(chart, math, losses);
         }
-        return layoutMulti(chart, math);
+        return layoutMulti(chart, math, losses);
     }
 
     /// The original single-series bar layout — UNCHANGED so its bake stays byte-identical (guarded
     /// by the xychart golden). Values → bar heights over a signed `[min(0,·), max(0,·)]` domain.
-    private static LaidOut layoutBars(XyChart chart, MathFragmentRenderer math) {
+    private static LaidOut layoutBars(XyChart chart, MathFragmentRenderer math, LossRecorder losses) {
         double plotLeft = ML;
         double plotRight = W - MR;
         double plotTop = MT;
@@ -145,7 +153,7 @@ public final class XyChartLayout {
             double categoryBaseline = plotBottom + 14;
             // Category label below the axis, ellipsized to its column slot so a long name doesn't
             // run into its neighbours (wrap-oracle wired in; docs/DESIGN.md §4).
-            emitCategory(bg, b.label(), cx, categoryBaseline, slot, textColor, math);
+            emitCategory(bg, b.label(), cx, categoryBaseline, slot, textColor, math, losses);
             // Value label at the bar's OUTER end: above a positive bar, below a descending one. For a
             // NEGATIVE bar the outer (bottom) end can reach the axis, so CLAMP the value label up to
             // stay clear of the category label below the axis (no stacked overlap).
@@ -163,7 +171,7 @@ public final class XyChartLayout {
     /// bar path but plots per-series: grouped rects (`bars`), or a disc-per-point plus per-series
     /// connecting segments (`line`) / discs alone (`scatter`). An optional left colour KEY (when
     /// `legend` is set AND there is more than one series) widens the canvas like the pie legend.
-    private static LaidOut layoutMulti(XyChart chart, MathFragmentRenderer math) {
+    private static LaidOut layoutMulti(XyChart chart, MathFragmentRenderer math, LossRecorder losses) {
         String textColor = chart.textColor();
         String mode = chart.mode();
         List<Slice> bars = chart.bars();          // category labels only
@@ -259,10 +267,10 @@ public final class XyChartLayout {
         double slot = plotW / nCat;
         if (grouped) {
             layoutGroupedBars(shapes, assigner, series, bars, seriesCount, axis,
-                plotLeft, plotBottom, plotTop, baselineY, slot, textColor, math);
+                plotLeft, plotBottom, plotTop, baselineY, slot, textColor, math, losses);
         } else {
             layoutPoints(shapes, assigner, series, bars, seriesCount, axis, mode,
-                plotLeft, plotBottom, plotTop, slot, textColor, math);
+                plotLeft, plotBottom, plotTop, slot, textColor, math, losses);
         }
 
         if (showLegend) {
@@ -277,7 +285,8 @@ public final class XyChartLayout {
                                           List<double[]> series, List<Slice> bars,
                                           int seriesCount, AxisScale axis, double plotLeft,
                                           double plotBottom, double plotTop, double baselineY,
-                                          double slot, String textColor, MathFragmentRenderer math) {
+                                          double slot, String textColor, MathFragmentRenderer math,
+                                          LossRecorder losses) {
         double groupW = slot * 0.6;
         double barW = Math.max(0.5, (groupW - (seriesCount - 1) * GROUP_GAP) / seriesCount);
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each category COLUMN → ONE
@@ -301,7 +310,7 @@ public final class XyChartLayout {
                 cg.add(new Rect(x, y, barW, h, Colors.PALETTE[s % Colors.PALETTE.length]));
             }
             double cx = plotLeft + slot * i + slot / 2;
-            emitCategory(cg, bars.get(i).label(), cx, plotBottom + 14, slot, textColor, math);
+            emitCategory(cg, bars.get(i).label(), cx, plotBottom + 14, slot, textColor, math, losses);
             shapes.add(new Group(assigner.assign(SirentideRole.BAR, bars.get(i).label()), cg));
         }
     }
@@ -314,7 +323,7 @@ public final class XyChartLayout {
                                      List<double[]> series, List<Slice> bars,
                                      int seriesCount, AxisScale axis, String mode, double plotLeft,
                                      double plotBottom, double plotTop, double slot, String textColor,
-                                     MathFragmentRenderer math) {
+                                     MathFragmentRenderer math, LossRecorder losses) {
         boolean line = mode.equals("line");
         double dotR = line ? LINE_DOT_R : SCATTER_DOT_R;
         int nCat = bars.size();
@@ -346,49 +355,50 @@ public final class XyChartLayout {
             }
         }
         for (int i = 0; i < nCat; i++) {
-            emitCategory(shapes, bars.get(i).label(), px[i], plotBottom + 14, slot, textColor, math);
+            emitCategory(shapes, bars.get(i).label(), px[i], plotBottom + 14, slot, textColor, math, losses);
         }
     }
 
     /// The category (x-axis) labels this chart cannot show in full (plan c880b12e). `dropped` are labels
     /// that drew NOTHING (not even an ellipsis fitted the column slot); `shortened` are labels drawn
-    /// ellipsized. Both lists are in category order. Pure and deterministic: it replays the SAME slot
-    /// the layout uses (`(W - ML - MR) / n` on both paths: the multi-series key shift moves the plot but
-    /// cancels out of its width) and the SAME ellipsize call {@link #emitCategory} makes, so it cannot
-    /// drift from what actually drew. A `$…$` label is skipped: with a math renderer it is never
-    /// ellipsized, and without one it degrades to plain text (a known gap, not reported here).
-    /// Empty when there are no category labels (an empty chart, or a multi-series chart with no values).
+    /// ellipsized. Both lists are in category order.
+    ///
+    /// ONE SOURCE OF TRUTH (review F1): this LAYS THE CHART OUT and returns what {@link #emitCategory}
+    /// recorded while drawing. It used to replay the slot arithmetic and the ellipsize call in parallel,
+    /// guarded only by an agreement test on the single-series bar path, so a slot change in the
+    /// line/scatter path drifted the drawing away from the caveat with every test green. Now there is
+    /// no second computation to drift: whatever slot a drawing path hands to `emitCategory` is the slot
+    /// the caveat reports on. The layout runs without a math renderer (a `$…$` label is skipped either
+    /// way, below) and with glyph-emission capture SUSPENDED, so this second pass contributes nothing
+    /// to the font-coverage corpus of the render that asked.
+    ///
+    /// A `$…$` label is skipped: with a math renderer it is never ellipsized, and without one it
+    /// degrades to plain text (a known gap, not reported here). Empty when there are no category labels
+    /// drawn (an empty chart, or a multi-series chart with no values).
     public static LabelLosses categoryLabelLosses(XyChart chart) {
-        List<String> dropped = new ArrayList<>();
-        List<String> shortened = new ArrayList<>();
-        List<Slice> bars = chart.bars();
-        int n = bars.size();
-        if (n == 0) {
-            return new LabelLosses(dropped, shortened);
+        LossRecorder losses = new LossRecorder();
+        boolean suspended = EmittedText.enterPlainRender();
+        try {
+            layout(chart, null, losses);
+        } finally {
+            EmittedText.exitPlainRender(suspended);
         }
-        if (chart.series() != null) {
-            int seriesCount = 0;
-            for (double[] row : chart.series()) {
-                seriesCount = Math.max(seriesCount, row.length);
-            }
-            if (seriesCount == 0) {
-                return new LabelLosses(dropped, shortened);
-            }
-        }
-        double slot = (W - ML - MR) / n;
-        for (Slice b : bars) {
-            String raw = b.label();
-            if (MathLabel.hasMath(raw)) {
-                continue;
-            }
-            String drawn = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);
+        return new LabelLosses(List.copyOf(losses.dropped), List.copyOf(losses.shortened));
+    }
+
+    /// The fate of each plain category label, written by {@link #emitCategory} as it draws.
+    private static final class LossRecorder {
+        private final List<String> dropped = new ArrayList<>();
+        private final List<String> shortened = new ArrayList<>();
+
+        /// `raw` is the label as authored, `drawn` what the slot let through ellipsize.
+        void record(String raw, String drawn) {
             if (drawn.isEmpty() && !raw.isEmpty()) {
                 dropped.add(raw);
             } else if (!drawn.equals(raw)) {
                 shortened.add(raw);
             }
         }
-        return new LabelLosses(List.copyOf(dropped), List.copyOf(shortened));
     }
 
     /// Category labels lost to their column slot: drawn as nothing, or drawn ellipsized.
@@ -400,15 +410,21 @@ public final class XyChartLayout {
 
     /// Emit a category (x-axis) label centred at `cx`. A `$…$` label bakes through the shared
     /// {@link MathLabel} seam (math skips the slot-ellipsize, centres on the composite width); a plain
-    /// label is ellipsized to its column slot and centred — byte-identical to the pre-feature bake.
+    /// label is ellipsized to its column slot and centred — byte-identical to the pre-feature bake —
+    /// and its fate (kept, shortened, dropped) goes to `losses`, the record {@link #categoryLabelLosses}
+    /// reports from. A `$…$` label is not recorded on either branch (see categoryLabelLosses).
     private static void emitCategory(List<Shape> shapes, String raw, double cx, double baseline,
-                                     double slot, String textColor, MathFragmentRenderer math) {
+                                     double slot, String textColor, MathFragmentRenderer math,
+                                     LossRecorder losses) {
         if (math != null && MathLabel.hasMath(raw)) {
             MathLabel.Measured mm = MathLabel.measure(raw, LABEL_SIZE, FONT, math);
             MathLabel.emit(mm, cx - mm.width() / 2, baseline, textColor, LABEL_SIZE, FONT, shapes);
         } else {
             String cat = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);
             centeredLabel(shapes, cat, cx, baseline, LABEL_SIZE, textColor);
+            if (!MathLabel.hasMath(raw)) {
+                losses.record(raw, cat);
+            }
         }
     }
 

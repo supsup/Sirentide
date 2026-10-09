@@ -377,9 +377,12 @@ public final class Main {
             return false;
         }
         err.println("sirentide: rendered, with caveats — " + caveat);
-        err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
+        // Worded for EVERY caveat kind (review F3): a dropped statement is absent, a dropped label is
+        // absent, a SHORTENED label is drawn but not in full, an out-of-coverage code point bakes as a
+        // box. The caveat names the thing; these two lines only say what that means for the artifact.
+        err.println("  the SVG is what /docs would embed; it does not show what the caveat names as written");
         if (strict) {
-            err.println("  --strict: treating dropped statement(s) as a failure");
+            err.println("  --strict: treating the caveat as a failure");
             return true;
         }
         return false;
