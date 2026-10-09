@@ -40,7 +40,20 @@ import java.util.Objects;
 /// `numeric` is a header modifier beside `line`/`scatter`/`legend`/`color=` (order-free); without
 /// `line` or `scatter` a numeric chart is a line (there is no numeric bar mode). A row is
 /// `x : y1 y2 …`; x may be quoted. Every token must be a finite decimal number whose magnitude is 0
-/// or within [1e-12, 1e15]. A row the parse cannot take as written is not dropped silently: it is
+/// or within [1e-12, 1e15]; a token that is not written as zero but parses to 0 (`1e-400`
+/// underflows) is out of that range, while `0`, `-0`, `0.000` and `0e5` are zero.
+///
+/// GAPS (ruling R2). In a chart with more than one series, a y value written `na` (exactly that,
+/// lowercase) says the series has no value at that x: the series gets no point there and its line
+/// is BROKEN there (no segment reaches the x from either side; the parts before and after are
+/// separate runs of segments), while the other series draw as usual. `na` is SILENT, because the
+/// author stated the gap. It is stored as NaN in that row's `series` array, which the layout reads
+/// as absent. `na` is refused, with a caveat and the row dropped, as the only series' value (a gap
+/// needs another series to be missing beside) and as an x; `NA`, `Na` and `-` are not gap tokens
+/// but non-numeric values, caveated like any other. A row with FEWER values than the series count
+/// is the implicit form of the same gap and stays caveated (below), since nothing says it was meant.
+///
+/// A row the parse cannot take as written is not dropped silently: it is
 /// named, with its 1-based line, on the render's OK caveat (so `--strict` fails), and the chart
 /// renders without it. Those rows are: a non-numeric, non-finite or out-of-range x or y; no `:`; no
 /// y value; a `series:` row that is not the first row; more rows than the 10000-row cap; more

@@ -812,10 +812,39 @@ public final class DslParser {
     /// its body index (for issues found after the walk).
     private record XyNumRow(double x, String label, double[] values, int line, String text) {}
 
+    /// The explicit GAP token (ruling R2): a y value written `na` (exactly; `NA`, `Na` and `-` are not
+    /// it) says the series has no value at that x, so the line breaks there and nothing is drawn. It
+    /// is silent, because the author stated it; an implicit short row stays caveated.
+    static final String XY_GAP = "na";
+
+    /// One numeric parse pass: the chart, and whether it put an `na` in the only series a
+    /// single-series chart has (which the caller answers by re-running the pass to refuse those rows).
+    private record XyNumericPass(XyChart chart, boolean loneSeriesGap) {}
+
     /// Parses an `xychart … numeric` body (see {@link XyChart}'s class note for the grammar and the
     /// row-problem list). `sink` is null on a rendering parse.
+    ///
+    /// TWO PASSES ONLY FOR `na` IN A SINGLE-SERIES CHART. Whether a chart has one series is known only
+    /// after every row is read (an unnamed chart counts its widest row), and a refused row must not
+    /// count toward the row cap or claim its x for the duplicate check. So the first pass reads `na`
+    /// as a gap everywhere; if the chart turned out to have one series and some row's series-1 value
+    /// was `na`, the body is parsed again with those rows refused as they are met. Every other source
+    /// takes the first pass, whose issues are handed to `sink` unchanged.
     private static Diagram parseXyNumeric(String[] lines, String mode, boolean legend, String textColor,
                                           XyRowSink sink) {
+        XyRowSink trial = sink == null ? null : new XyRowSink(sink.bodyStart);
+        XyNumericPass first = parseXyNumericPass(lines, mode, legend, textColor, trial, false);
+        if (!first.loneSeriesGap()) {
+            if (sink != null) {
+                sink.issues.addAll(trial.issues);
+            }
+            return first.chart();
+        }
+        return parseXyNumericPass(lines, mode, legend, textColor, sink, true).chart();
+    }
+
+    private static XyNumericPass parseXyNumericPass(String[] lines, String mode, boolean legend,
+                                                    String textColor, XyRowSink sink, boolean refuseLoneGap) {
         if (mode.equals("bars")) {
             mode = "line";   // no numeric bar mode: a numeric chart without `scatter` is a line
         }
@@ -870,7 +899,9 @@ public final class DslParser {
             XyNum x = xyNumber(xTok);
             if (x.problem() != null) {
                 if (sink != null) {
-                    sink.issue(i, text, "has x `" + xTok + "`, " + x.problem() + ", so the row was dropped");
+                    String why = xTok.equals(XY_GAP)
+                        ? "which marks a missing y value and cannot stand for an x" : x.problem();
+                    sink.issue(i, text, "has x `" + xTok + "`, " + why + ", so the row was dropped");
                 }
                 continue;
             }
@@ -884,9 +915,21 @@ public final class DslParser {
             double[] vals = new double[Math.min(toks.length, MAX_SERIES)];
             String bad = null;
             for (int t = 0; t < vals.length && bad == null; t++) {
+                if (toks[t].equals(XY_GAP)) {
+                    if (refuseLoneGap && t == 0) {
+                        bad = "has `" + XY_GAP + "` for its y, but the chart has one series and `" + XY_GAP
+                            + "` marks a series missing at an x where another series has a value, so the row"
+                            + " was dropped";
+                    } else {
+                        vals[t] = Double.NaN;   // a gap: no point, and the line breaks here
+                    }
+                    continue;
+                }
                 XyNum y = xyNumber(toks[t]);
                 if (y.problem() != null) {
-                    bad = "has y value `" + toks[t] + "` (series " + (t + 1) + "), " + y.problem()
+                    String hint = toks[t].equalsIgnoreCase(XY_GAP) ? " (the gap token is lowercase `"
+                        + XY_GAP + "`)" : "";
+                    bad = "has y value `" + toks[t] + "` (series " + (t + 1) + "), " + y.problem() + hint
                         + ", so the row was dropped";
                 } else {
                     vals[t] = y.value();
@@ -952,13 +995,20 @@ public final class DslParser {
         List<Slice> labels = new ArrayList<>(kept.size());
         List<double[]> grid = new ArrayList<>(kept.size());
         double[] xs = new double[kept.size()];
+        boolean loneSeriesGap = false;
         for (int k = 0; k < kept.size(); k++) {
             XyNumRow r = kept.get(k);
-            labels.add(new Slice(r.label(), r.values().length > 0 ? r.values()[0] : 0, null, null));
+            double first = r.values().length > 0 ? r.values()[0] : 0;
+            if (Double.isNaN(first)) {
+                loneSeriesGap |= seriesCount <= 1;
+                first = 0;   // the Slice carries the row's label; a gap has no value to give it
+            }
+            labels.add(new Slice(r.label(), first, null, null));
             grid.add(r.values());
             xs[k] = r.x();
         }
-        return new XyChart(labels, grid, seriesNames, mode, legend, textColor, xs);
+        return new XyNumericPass(new XyChart(labels, grid, seriesNames, mode, legend, textColor, xs),
+            loneSeriesGap);
     }
 
     /// Parses gantt rows: `"Task" : start-end` (two numbers on a shared time axis). A malformed

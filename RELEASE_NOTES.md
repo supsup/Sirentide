@@ -78,7 +78,15 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   1e-12..1e15), a row with no `:` or no y value, a late `series:` row, a row with more values
   than `series:` names or fewer than the series count, and on a line a repeated x (the later row
   is dropped) or an out-of-order x (the line is drawn sorted by x). A scatter takes repeated and
-  unsorted x as written. Opt-in: every chart without `numeric` renders byte-identically, and
+  unsorted x as written. A value written as a nonzero number that underflows to 0 (`1e-400`) is
+  out of range too, not drawn at 0; `0`, `-0`, `0.000` and `0e5` are zero. **Gaps:** in a chart
+  with more than one series, a y value written `na` (exactly, lowercase) says that series has no
+  value at that x: no point is drawn there and its line is broken (the runs either side are not
+  joined), while the other series draw as usual. `na` is silent, since the author said so; a
+  short row, which leaves the same gap unexplained, keeps its caveat. `na` as the only series'
+  value or as an x is refused with a caveat (a gap needs another series to be missing beside),
+  and `NA`, `Na` or `-` are not gaps but non-numeric values, caveated as such. Opt-in: every
+  chart without `numeric` renders byte-identically, and
   the default category y axis still prints its ticks the way it did, E-notation included (left
   for a separate ruling, because changing it moves the bytes of existing charts).
 

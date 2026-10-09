@@ -19,7 +19,8 @@ import java.util.Optional;
 ///   (contract-clean — no polyline, no stroked path). A missing point BREAKS the segment.
 /// - `scatter`: the discs only, no segments.
 /// - NUMERIC x (`xValues != null`, plan c880b12e): line or scatter with rows at their x on a
-///   continuous axis, ticks from {@link NumericAxis} on both axes ({@link #layoutNumeric}).
+///   continuous axis, ticks from {@link NumericAxis} on both axes ({@link #layoutNumeric}). An `na`
+///   gap (NaN in its row) gets no disc and no segment to or from it, so the line breaks there.
 /// Multi-series (or any line/scatter) also supports an optional left colour KEY (mirrors the pie
 /// legend geometry). Axes are `<line>`, discs are full-circle {@link Wedge}s, labels glyph paths
 /// (docs/DESIGN.md §4/§6).
@@ -336,13 +337,21 @@ public final class XyChartLayout {
             return new LaidOut(canvasW, canvasH, shapes);
         }
 
+        // An `na` gap is NaN in its row: it has no value, so it takes no part in the y domain (and
+        // pointY gives it no point, so no segment reaches it: the line breaks there).
         double ylo = Double.POSITIVE_INFINITY;
         double yhi = Double.NEGATIVE_INFINITY;
         for (double[] row : series) {
             for (double v : row) {
-                ylo = Math.min(ylo, v);
-                yhi = Math.max(yhi, v);
+                if (!Double.isNaN(v)) {
+                    ylo = Math.min(ylo, v);
+                    yhi = Math.max(yhi, v);
+                }
             }
+        }
+        if (ylo > yhi) {   // every value is a gap
+            ylo = 0;
+            yhi = 0;
         }
         double[] yd = NumericAxis.pad(ylo, yhi, NUM_Y_PAD);
         AxisScale yAxis = new AxisScale(yd[0], yd[1]);
