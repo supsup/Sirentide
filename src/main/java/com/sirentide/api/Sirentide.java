@@ -620,6 +620,10 @@ public final class Sirentide {
             if (ok == null) {
                 ok = new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, "");
             }
+            Diagnostics rows = xyNumericRowCaveat(ir, dsl, ok);
+            if (rows != null) {
+                ok = rows;
+            }
             Diagnostics dropped = droppedStatementCaveat(ir, dsl, ok);
             if (dropped != null) {
                 ok = dropped;
@@ -846,6 +850,40 @@ public final class Sirentide {
             base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
     }
 
+    /// The OK CAVEAT for a NUMERIC-x xychart row the parse could not draw as written (plan c880b12e,
+    /// numeric-x slice): a non-numeric or non-finite value, a repeated or out-of-order x on a line, a
+    /// row short of or past the series count, and the rest of the list in {@link
+    /// com.sirentide.ir.XyChart}'s class note. Same shape as {@link #droppedStatementCaveat}: Outcome
+    /// stays OK and the SVG is unchanged, the message names the count and the first row's line and
+    /// problem, `line` is that row's 1-based physical line, and the detail lists each row (bounded,
+    /// with the overflow counted), so `--strict` fails on it. Null for any other diagram, and for a
+    /// numeric chart whose every row drew as written.
+    private static Diagnostics xyNumericRowCaveat(Diagram ir, String dsl, Diagnostics base) {
+        if (!(ir instanceof XyChart chart) || chart.xValues() == null) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.XyNumericCensus census =
+            com.sirentide.parse.DslParser.xyNumericCensus(dsl);
+        if (census == null || census.total() == 0) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.XyRowIssue first = census.issues().get(0);
+        StringBuilder detail = new StringBuilder("xychart numeric row issue(s): ").append(census.total());
+        for (com.sirentide.parse.DslParser.XyRowIssue r : census.issues()) {
+            detail.append("; line ").append(r.line()).append(": ").append(r.text()).append(" -- ")
+                .append(r.issue());
+        }
+        if (census.total() > census.issues().size()) {
+            detail.append("; (").append(census.total() - census.issues().size()).append(" more not listed)");
+        }
+        String count = census.total() == 1 ? "1 numeric xychart row was"
+            : census.total() + " numeric xychart rows were";
+        String caveat = " Note: " + count + " not drawn as written; line " + first.line() + " "
+            + first.issue() + ".";
+        return new Diagnostics(Outcome.OK, base.stage(), base.message() + caveat, first.line(),
+            base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
+    }
+
     private static Diagnostics emptiedGraphDiagnostics(Diagram ir, String dsl) {
         if (!(ir instanceof Flowchart fc) || !fc.nodes().isEmpty() || !fc.edges().isEmpty()) {
             return null;
@@ -939,7 +977,8 @@ public final class Sirentide {
             return null;
         }
         StringBuilder msg = new StringBuilder("Rendered, but ");
-        StringBuilder detail = new StringBuilder("xychart category-label drop:");
+        StringBuilder detail = new StringBuilder(chart.xValues() == null
+            ? "xychart category-label drop:" : "xychart tick-label drop:");
         java.util.List<String> d = losses.dropped();
         java.util.List<String> s = losses.shortened();
         if (!d.isEmpty()) {
@@ -955,7 +994,16 @@ public final class Sirentide {
                 .append(String.join(", ", s)).append(")");
             detail.append(d.isEmpty() ? "" : ";").append(" shortened ").append(String.join("; ", s));
         }
-        msg.append(". Use fewer categories or shorter labels.");
+        java.util.List<String> t = losses.droppedTicks();
+        if (!t.isEmpty()) {
+            msg.append(d.isEmpty() && s.isEmpty() ? "" : ", and ").append(t.size()).append(" axis tick label")
+                .append(t.size() == 1 ? " had" : "s had").append(" no room and ")
+                .append(t.size() == 1 ? "was" : "were").append(" dropped (").append(String.join(", ", t))
+                .append(")");
+            detail.append(d.isEmpty() && s.isEmpty() ? "" : ";").append(" dropped tick ")
+                .append(String.join("; ", t));
+        }
+        msg.append(t.isEmpty() ? ". Use fewer categories or shorter labels." : ".");
         return new Diagnostics(Outcome.OK, STAGE_EMIT, msg.toString(), -1, detail.toString());
     }
 
