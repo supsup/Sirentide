@@ -166,10 +166,18 @@ public final class Main {
             // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
             // written no PNG: verbatim the failure {@link #writePng} names as this project's
             // signature defect.
-            svg = rawDslSvgOrNull(renderRawDsl(in), err);
+            RenderResult rawResult = renderRawDsl(in);
+            svg = rawDslSvgOrNull(rawResult, err);
             if (svg == null) {
                 return 1;
             }
+            // CAVEATS ON STDIN (plan c880b12e). Until this line the stdin arm never read the caveat
+            // detail, so `render - --strict` ignored EVERY caveat (dropped statements, pie label
+            // drops, xychart label drops) while `render <file.md> --strict` failed on them: the same
+            // flag meant different things on the two sources. Fixpoint's showcase audit (sirentide/1118)
+            // hit it as an xychart losing 15 of 25 axis labels with exit 0. Both arms now share
+            // {@link #reportCaveats}, so the equivalence is a property of the code, as with the refusal.
+            strictFailed = reportCaveats(rawResult, strict, err);
         } else {
 
             String markdown;
@@ -207,37 +215,7 @@ public final class Main {
                 return 1;
             }
             svg = result.svg();
-
-            // AN `OK` RENDER CAN STILL HAVE LOST A LINE, and until now this verb said nothing
-            // about it. The directive-shape rule DROPS an unknown directive-shaped statement and
-            // records a line-scoped caveat on an otherwise-OK render, precisely so a lost line is
-            // not lost silently — but the caveat lived only in the API. Through this CLI, which
-            // the authoring docs name as THE local check, the author saw exit 0, no output, and a
-            // diagram quietly missing their line. A caveat channel nothing reads is not a channel.
-            //
-            // Printed to stderr, and the exit stays 0: the render genuinely succeeded and /docs
-            // genuinely serves this SVG. Turning a dropped statement into a failure here would
-            // claim a bake outcome that does not happen, which is the same untruth the exit-1 arm
-            // above exists to avoid — pointing the other way.
-            String caveat = result.diagnostics().detail();
-            if (caveat != null && !caveat.isBlank()) {
-                err.println("sirentide: rendered, with caveats — " + caveat);
-                err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
-                // --strict, ruled at sirentide/977: stderr is the right AUTHOR channel and the
-                // wrong CI channel, because CI is exactly where nobody reads stderr. A caveat
-                // that cannot gate anything in the one environment that runs unattended is
-                // recorded-but-unseeable one level up — the same distance this change closed at
-                // the API/render seam, reopened at the render/CI seam.
-                //
-                // Opt-in, so the default stays honest: a drop is not a failed bake. The SVG IS
-                // still written, unlike the exit-1 arm above — there the artifact would have
-                // been a lie about what /docs serves, here it is exactly what /docs serves and
-                // the caller wants to inspect what its gate rejected.
-                if (strict) {
-                    err.println("  --strict: treating dropped statement(s) as a failure");
-                    strictFailed = true;
-                }
-            }
+            strictFailed = reportCaveats(result, strict, err);
         }
 
         // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
@@ -369,6 +347,42 @@ public final class Main {
             return 1;
         }
         return writeOutput(svg, outPath, out, err);
+    }
+
+    /// THE SINGLE CAVEAT SEAM, shared by `render -` and `render <file.md>` (plan c880b12e). Returns
+    /// true when `--strict` turns the caveat into a failure.
+    ///
+    /// AN `OK` RENDER CAN STILL HAVE LOST A LINE, and until this verb read the caveat it said nothing
+    /// about it. The directive-shape rule DROPS an unknown directive-shaped statement and records a
+    /// line-scoped caveat on an otherwise-OK render, precisely so a lost line is not lost silently —
+    /// but the caveat lived only in the API. Through this CLI, which the authoring docs name as THE
+    /// local check, the author saw exit 0, no output, and a diagram quietly missing their line. A
+    /// caveat channel nothing reads is not a channel.
+    ///
+    /// Printed to stderr, and the exit stays 0: the render genuinely succeeded and /docs genuinely
+    /// serves this SVG. Turning a dropped statement into a failure here would claim a bake outcome
+    /// that does not happen, which is the same untruth the exit-1 arm exists to avoid — pointing the
+    /// other way.
+    ///
+    /// --strict, ruled at sirentide/977: stderr is the right AUTHOR channel and the wrong CI channel,
+    /// because CI is exactly where nobody reads stderr. A caveat that cannot gate anything in the one
+    /// environment that runs unattended is recorded-but-unseeable one level up — the same distance
+    /// this change closed at the API/render seam, reopened at the render/CI seam. Opt-in, so the
+    /// default stays honest: a drop is not a failed bake. The SVG IS still written, unlike the exit-1
+    /// arm — there the artifact would have been a lie about what /docs serves, here it is exactly
+    /// what /docs serves and the caller wants to inspect what its gate rejected.
+    private static boolean reportCaveats(RenderResult result, boolean strict, PrintStream err) {
+        String caveat = result.diagnostics().detail();
+        if (caveat == null || caveat.isBlank()) {
+            return false;
+        }
+        err.println("sirentide: rendered, with caveats — " + caveat);
+        err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
+        if (strict) {
+            err.println("  --strict: treating dropped statement(s) as a failure");
+            return true;
+        }
+        return false;
     }
 
     /// THE SINGLE RAW-DSL REFUSAL SEAM, shared by the no-args legacy path and `render -`.

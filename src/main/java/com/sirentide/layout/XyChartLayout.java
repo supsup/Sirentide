@@ -350,6 +350,54 @@ public final class XyChartLayout {
         }
     }
 
+    /// The category (x-axis) labels this chart cannot show in full (plan c880b12e). `dropped` are labels
+    /// that drew NOTHING (not even an ellipsis fitted the column slot); `shortened` are labels drawn
+    /// ellipsized. Both lists are in category order. Pure and deterministic: it replays the SAME slot
+    /// the layout uses (`(W - ML - MR) / n` on both paths: the multi-series key shift moves the plot but
+    /// cancels out of its width) and the SAME ellipsize call {@link #emitCategory} makes, so it cannot
+    /// drift from what actually drew. A `$…$` label is skipped: with a math renderer it is never
+    /// ellipsized, and without one it degrades to plain text (a known gap, not reported here).
+    /// Empty when there are no category labels (an empty chart, or a multi-series chart with no values).
+    public static LabelLosses categoryLabelLosses(XyChart chart) {
+        List<String> dropped = new ArrayList<>();
+        List<String> shortened = new ArrayList<>();
+        List<Slice> bars = chart.bars();
+        int n = bars.size();
+        if (n == 0) {
+            return new LabelLosses(dropped, shortened);
+        }
+        if (chart.series() != null) {
+            int seriesCount = 0;
+            for (double[] row : chart.series()) {
+                seriesCount = Math.max(seriesCount, row.length);
+            }
+            if (seriesCount == 0) {
+                return new LabelLosses(dropped, shortened);
+            }
+        }
+        double slot = (W - ML - MR) / n;
+        for (Slice b : bars) {
+            String raw = b.label();
+            if (MathLabel.hasMath(raw)) {
+                continue;
+            }
+            String drawn = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);
+            if (drawn.isEmpty() && !raw.isEmpty()) {
+                dropped.add(raw);
+            } else if (!drawn.equals(raw)) {
+                shortened.add(raw);
+            }
+        }
+        return new LabelLosses(List.copyOf(dropped), List.copyOf(shortened));
+    }
+
+    /// Category labels lost to their column slot: drawn as nothing, or drawn ellipsized.
+    public record LabelLosses(List<String> dropped, List<String> shortened) {
+        public boolean isEmpty() {
+            return dropped.isEmpty() && shortened.isEmpty();
+        }
+    }
+
     /// Emit a category (x-axis) label centred at `cx`. A `$…$` label bakes through the shared
     /// {@link MathLabel} seam (math skips the slot-ellipsize, centres on the composite width); a plain
     /// label is ellipsized to its column slot and centred — byte-identical to the pre-feature bake.

@@ -351,7 +351,7 @@ public final class Sirentide {
                             consumerBudget.maxUtf8Bytes());
                     }
                 }
-                Diagnostics caveat = pieDropCaveat(ir);
+                Diagnostics caveat = labelDropCaveat(ir);
                 return new FramesResult(java.util.List.of(base), caveat != null
                     ? withFontCoverageCaveat(caveat)
                     : okDiagnostics(STAGE_EMIT,
@@ -419,7 +419,7 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            Diagnostics caveat = pieDropCaveat(ir);
+            Diagnostics caveat = labelDropCaveat(ir);
             return new FramesResult(java.util.List.copyOf(frames), caveat != null
                 ? withFontCoverageCaveat(caveat)
                 : okDiagnostics(STAGE_EMIT, "Rendered successfully."));
@@ -606,7 +606,7 @@ public final class Sirentide {
             // font-coverage caveat so neither honest note can shadow the other.
             // The OK caveats COMPOSE, so none can shadow another: pie drop, then dropped
             // statements, then font coverage. Each takes the previous as its base and appends.
-            Diagnostics ok = pieDropCaveat(ir);
+            Diagnostics ok = labelDropCaveat(ir);
             if (ok == null) {
                 ok = new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, "");
             }
@@ -859,7 +859,18 @@ public final class Sirentide {
     /// other diagram, or a pie that dropped nothing. The SVG itself is unchanged — this only turns a
     /// silent geometry outcome into a named signal that points the author at `pie legend`. Outcome
     /// stays {@link Outcome#OK} (the bake succeeded); only the message/detail carry the caveat.
-    private static Diagnostics pieDropCaveat(Diagram ir) {
+    ///
+    /// XYCHART (plan c880b12e): the same silent-geometry outcome exists for x-axis category labels. A
+    /// label wider than its column slot is ellipsized, and when not even the ellipsis fits it draws
+    /// NOTHING; Fixpoint's showcase audit (sirentide/1118) found the Barker chart losing 15 of 25 lag
+    /// labels with `--strict` exiting 0. Named here the same way, from
+    /// {@link com.sirentide.layout.XyChartLayout#categoryLabelLosses}: dropped labels and shortened
+    /// labels, each listed. Same Outcome.OK and an unchanged SVG; the CLI's `--strict` already fails on
+    /// any caveat detail, so this is what makes a lost label gate CI.
+    private static Diagnostics labelDropCaveat(Diagram ir) {
+        if (ir instanceof com.sirentide.ir.XyChart chart) {
+            return xyLabelCaveat(chart);
+        }
         if (!(ir instanceof Pie pie)) {
             return null;
         }
@@ -873,6 +884,33 @@ public final class Sirentide {
                 + " had no room outside the pie and " + (one ? "was" : "were") + " dropped ("
                 + String.join(", ", dropped) + "). Use `pie legend` to show every label in a side key.",
             -1, "pie outside-label drop: " + String.join("; ", dropped));
+    }
+
+    private static Diagnostics xyLabelCaveat(com.sirentide.ir.XyChart chart) {
+        com.sirentide.layout.XyChartLayout.LabelLosses losses =
+            com.sirentide.layout.XyChartLayout.categoryLabelLosses(chart);
+        if (losses.isEmpty()) {
+            return null;
+        }
+        StringBuilder msg = new StringBuilder("Rendered, but ");
+        StringBuilder detail = new StringBuilder("xychart category-label drop:");
+        java.util.List<String> d = losses.dropped();
+        java.util.List<String> s = losses.shortened();
+        if (!d.isEmpty()) {
+            msg.append(d.size()).append(" x-axis label").append(d.size() == 1 ? "" : "s")
+                .append(" had no room in ").append(d.size() == 1 ? "its column" : "their columns")
+                .append(" and ").append(d.size() == 1 ? "was" : "were").append(" dropped (")
+                .append(String.join(", ", d)).append(")");
+            detail.append(" dropped ").append(String.join("; ", d));
+        }
+        if (!s.isEmpty()) {
+            msg.append(d.isEmpty() ? "" : ", and ").append(s.size()).append(" x-axis label")
+                .append(s.size() == 1 ? " was" : "s were").append(" shortened to fit (")
+                .append(String.join(", ", s)).append(")");
+            detail.append(d.isEmpty() ? "" : ";").append(" shortened ").append(String.join("; ", s));
+        }
+        msg.append(". Use fewer categories or shorter labels.");
+        return new Diagnostics(Outcome.OK, STAGE_EMIT, msg.toString(), -1, detail.toString());
     }
 
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY
