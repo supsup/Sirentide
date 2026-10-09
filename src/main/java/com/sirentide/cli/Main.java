@@ -17,6 +17,9 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -45,8 +48,9 @@ import java.util.Set;
 ///   `-o` destination, or a stdout write failure. Nothing (new) is written.
 ///
 /// `render --batch` (plan d9f29911): many raw-DSL sources per JVM, NUL-separated on stdin, one
-/// NUL-terminated record per source on stdout — see {@link #runBatch}. `--math` (same plan) is an
-/// additive flag: without it, every byte this CLI writes is unchanged.
+/// NUL-terminated record per source on stdout — see {@link #runBatch}. `--math` (same plan) and
+/// `--source-hash` (ruling sirentide/1129) are additive flags: without them, every byte this CLI
+/// writes is unchanged. `--source-hash` writes only to stderr and never touches the SVG.
 public final class Main {
 
     private Main() {}
@@ -93,6 +97,9 @@ public final class Main {
                            --strict fails on it. Off by default: without it no render gains a
                            lint caveat. Text is checked against text only, so an edge label on
                            its own stroke is never a finding; typeset math is not checked.
+          --source-hash    ALSO print the SHA-256 of the RAW source bytes to stderr, as
+                           `sirentide: source sha256:<64 lowercase hex>`. The SVG, -o file and
+                           exit code are unchanged. See "Source hash" below for the exact bytes.
 
         --batch: a source is everything up to a NUL byte (a trailing NUL ends the last source; it
         does not start an empty one). Each record is the SVG `render -` would print for that source
@@ -101,11 +108,30 @@ public final class Main {
         combine with --batch (usage error). Exit 1 if any record failed (or, with --strict, carried
         a caveat); 2 on a usage error, empty stdin, or a stdout failure.
 
-        Provenance: the baked SVG carries no renderer or revision attribute. Which Sirentide
-        built it is a property of the jar, not of the output: the jar's exact source revision
-        is the Sirentide-Source-Revision line of its META-INF/MANIFEST.MF
-        (unzip -p sirentide-<version>.jar META-INF/MANIFEST.MF). A hash of the diagram source
-        would identify the SOURCE, never the renderer that baked it.
+        Source hash (--source-hash): one stderr line per source, printed before that source's
+        other diagnostics -- `sirentide: source sha256:<hex>`, or under --batch
+        `sirentide: record N: source sha256:<hex>` (N 1-based, as in the batch caveat lines). It
+        identifies the INPUT, so it prints for a source that does not render too; it never changes
+        stdout, the -o file, the exit code, or --strict. What is hashed is the raw bytes as
+        received, never a decoded or normalized copy: CRLF, a BOM and invalid UTF-8 all count, so
+        a CRLF copy and an LF copy of one diagram hash differently.
+          render -      every byte read from stdin:  sha256sum < diagram.dsl
+                        (or: printf 'pie\\n  "A" : 1\\n' | sha256sum)
+          --batch       record N's bytes, between its NULs (the NULs are not hashed); a blank
+                        record hashes the empty input (e3b0c442...b855)
+          render f.md   the fence body as the file holds it: the lines after the opener up to
+                        the closer, each with any CR it ends in, joined by LF, WITHOUT the LF
+                        that ends the last body line. To recompute, copy those bytes to a file
+                        with no final newline and run sha256sum on it.
+        No line prints when there is no source to identify: a usage error, no fence, or an
+        unreadable or over-cap .md. A stdin over the source cap prints
+        `sirentide: source sha256: unavailable ...` rather than the digest of a prefix.
+
+        Provenance: the baked SVG carries no renderer, revision or source attribute. Which
+        Sirentide built it is a property of the jar, not of the output: the jar's exact source
+        revision is the Sirentide-Source-Revision line of its META-INF/MANIFEST.MF
+        (unzip -p sirentide-<version>.jar META-INF/MANIFEST.MF). --source-hash identifies the
+        SOURCE, on stderr; it never identifies the renderer that baked it.
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written
@@ -154,6 +180,7 @@ public final class Main {
         boolean strict = false;
         boolean math = false;
         boolean lintOverlap = false;
+        boolean sourceHash = false;
         for (int i = 2; i < args.length; i++) {
             String flag = args[i];
             // VALUELESS flags are matched before the needs-a-value arity check below; treating one
@@ -168,6 +195,10 @@ public final class Main {
             }
             if ("--lint-overlap".equals(flag)) {
                 lintOverlap = true;
+                continue;
+            }
+            if ("--source-hash".equals(flag)) {
+                sourceHash = true;
                 continue;
             }
             if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)
@@ -230,7 +261,7 @@ public final class Main {
         RenderOptions options = lintOverlap ? new RenderOptions(true) : RenderOptions.DEFAULT;
         try {
             if (batch) {
-                return runBatch(in, out, err, strict, backend, options);
+                return runBatch(in, out, err, strict, backend, options, sourceHash);
             }
             // Every `$...$` source the backend could not typeset during THIS render; always empty
             // without --math (no renderer, so nothing is attempted and nothing is recorded).
@@ -251,7 +282,21 @@ public final class Main {
                 // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
                 // written no PNG: verbatim the failure {@link #writePng} names as this project's
                 // signature defect.
-                RenderResult rawResult = tryRenderWithDiagnostics(readRawDsl(in), renderer, options);
+                byte[] rawBytes = readRawDslBytes(in);
+                if (sourceHash) {
+                    // THE BYTES READ, before the UTF-8 decode below: the decode replaces invalid
+                    // sequences with U+FFFD, so a hash of the decoded string re-encoded would not
+                    // be the input. Over the cap only a prefix was read, and a digest of a prefix
+                    // would name an input nobody gave, so it says so instead.
+                    if (rawBytes.length > DslParser.MAX_SOURCE_BYTES) {
+                        err.println(CAVEAT_PREFIX + SOURCE_HASH_LABEL + " unavailable -- stdin is larger than the "
+                            + DslParser.MAX_SOURCE_BYTES + "-byte source cap and was not read in full");
+                    } else {
+                        printSourceHash(sha256Hex(rawBytes), err, CAVEAT_PREFIX);
+                    }
+                }
+                RenderResult rawResult = tryRenderWithDiagnostics(
+                    new String(rawBytes, StandardCharsets.UTF_8), renderer, options);
                 svg = rawDslSvgOrNull(rawResult, err);
                 if (svg == null) {
                     return 1;
@@ -266,6 +311,7 @@ public final class Main {
             } else {
 
                 String markdown;
+                byte[] markdownBytes;
                 try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
                     byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
                     if (bytes.length > MAX_MARKDOWN_BYTES) {
@@ -274,6 +320,7 @@ public final class Main {
                         return 2;
                     }
                     markdown = new String(bytes, StandardCharsets.UTF_8);
+                    markdownBytes = bytes;
                 } catch (IOException e) {
                     err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
                     return 2;
@@ -284,6 +331,15 @@ public final class Main {
                     err.println("sirentide: no ```sirentide fence found in '" + source + "'"
                         + " (a fence nested inside another fence is not captured — matching the /docs bake)");
                     return 2;
+                }
+                if (sourceHash) {
+                    String hex = fenceBodyHashOrNull(markdownBytes, markdown);
+                    if (hex == null) {
+                        err.println(CAVEAT_PREFIX + SOURCE_HASH_LABEL
+                            + " unavailable -- the fence body could not be located in the file's bytes");
+                    } else {
+                        printSourceHash(hex, err, CAVEAT_PREFIX);
+                    }
                 }
 
                 // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
@@ -365,11 +421,14 @@ public final class Main {
     /// past its cap into memory), the remainder of an oversized source is read and DISCARDED byte by
     /// byte up to its NUL, so memory stays bounded by one capped source and alignment survives.
     private static int runBatch(InputStream in, PrintStream out, PrintStream err, boolean strict,
-                                LatteXBackend backend, RenderOptions options) {
+                                LatteXBackend backend, RenderOptions options, boolean sourceHash) {
         InputStream src = new BufferedInputStream(in);
         int record = 0;
         boolean anyFailed = false;
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        // --source-hash only: the digest of an OVERSIZED record, which is fed the capped prefix once
+        // and then every discarded byte, so the record is hashed in full while memory stays bounded.
+        MessageDigest overflow = sourceHash ? sha256() : null;
         while (true) {
             buf.reset();
             boolean oversized = false;
@@ -386,6 +445,12 @@ public final class Main {
                     if (buf.size() < DslParser.MAX_SOURCE_BYTES) {
                         buf.write(b);
                     } else {
+                        if (overflow != null) {
+                            if (!oversized) {
+                                overflow.update(buf.toByteArray());
+                            }
+                            overflow.update((byte) b);
+                        }
                         oversized = true;
                     }
                 }
@@ -398,6 +463,11 @@ public final class Main {
                 break; // EOF: the empty tail after the last NUL (or an empty stdin) is not a source
             }
             record++;
+            String recordPrefix = "sirentide: record " + record + ": ";
+            if (sourceHash) {
+                printSourceHash(HexFormat.of().formatHex(
+                    oversized ? overflow.digest() : sha256().digest(buf.toByteArray())), err, recordPrefix);
+            }
             String body;
             if (oversized) {
                 String reason = "source larger than the " + DslParser.MAX_SOURCE_BYTES + "-byte cap";
@@ -416,7 +486,7 @@ public final class Main {
                     anyFailed = true;
                 } else {
                     body = result.svg();
-                    if (reportCaveats(result, untypeset, strict, err, "sirentide: record " + record + ": ")) {
+                    if (reportCaveats(result, untypeset, strict, err, recordPrefix)) {
                         anyFailed = true;
                     }
                 }
@@ -516,8 +586,61 @@ public final class Main {
 
     /// The bounded stdin read both raw-DSL arms share.
     private static String readRawDsl(InputStream in) throws IOException {
-        byte[] bytes = in.readNBytes(DslParser.MAX_SOURCE_BYTES + 1);
-        return new String(bytes, StandardCharsets.UTF_8);
+        return new String(readRawDslBytes(in), StandardCharsets.UTF_8);
+    }
+
+    /// The bytes of {@link #readRawDsl}, undecoded: at most the source cap + 1 (to detect overflow).
+    private static byte[] readRawDslBytes(InputStream in) throws IOException {
+        return in.readNBytes(DslParser.MAX_SOURCE_BYTES + 1);
+    }
+
+    /// The label of the `--source-hash` stderr line, after the arm's prefix.
+    static final String SOURCE_HASH_LABEL = "source sha256:";
+
+    /// `--source-hash` (ruling sirentide/1129): one STDERR line. Nothing is ever added to the SVG.
+    private static void printSourceHash(String hex, PrintStream err, String prefix) {
+        err.println(prefix + SOURCE_HASH_LABEL + hex);
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is a required JDK algorithm", e);
+        }
+    }
+
+    static String sha256Hex(byte[] bytes) {
+        return HexFormat.of().formatHex(sha256().digest(bytes));
+    }
+
+    /// The hash of the first captured fence body AS THE FILE HOLDS IT. {@link FenceExtractor} works on
+    /// the decoded text, split on `\n`; the body is the same LINES cut out of the raw bytes split on
+    /// 0x0A, joined with 0x0A. The line structure is the same in both: UTF-8 decoding maps each 0x0A
+    /// byte to one `\n` and never produces `\n` from anything else (a malformed sequence becomes
+    /// U+FFFD without consuming an ASCII byte). The newline counts are compared anyway, and a
+    /// mismatch returns null (reported as unavailable) rather than a digest: a wrong one is worse
+    /// than none.
+    private static String fenceBodyHashOrNull(byte[] raw, String markdown) {
+        int[] range = FenceExtractor.firstSirentideFenceLines(markdown);
+        List<Integer> starts = new java.util.ArrayList<>();
+        starts.add(0);
+        for (int i = 0; i < raw.length; i++) {
+            if (raw[i] == '\n') {
+                starts.add(i + 1);
+            }
+        }
+        long decodedNewlines = markdown.chars().filter(c -> c == '\n').count();
+        if (range == null || decodedNewlines != starts.size() - 1) {
+            return null;
+        }
+        int from = starts.get(range[0]);
+        // End of the last body line, excluding its LF: the closer line's start minus one. An empty
+        // body (closer right after the opener) is the empty input.
+        int to = range[1] == range[0] ? from : starts.get(range[1]) - 1;
+        MessageDigest d = sha256();
+        d.update(raw, from, to - from);
+        return HexFormat.of().formatHex(d.digest());
     }
 
     /// Write a raw-DSL bake, or refuse it LOUDLY — the truthful render-check posture the
