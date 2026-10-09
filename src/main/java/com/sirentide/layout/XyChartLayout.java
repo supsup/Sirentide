@@ -8,6 +8,7 @@ import com.sirentide.ir.Slice;
 import com.sirentide.ir.XyChart;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /// Pure xychart layout: values → geometry, categories → evenly-spaced columns. Deterministic
 /// arithmetic, no graph optimization. Three render modes share the axis/tick machinery:
@@ -368,25 +369,41 @@ public final class XyChartLayout {
     /// guarded only by an agreement test on the single-series bar path, so a slot change in the
     /// line/scatter path drifted the drawing away from the caveat with every test green. Now there is
     /// no second computation to drift: whatever slot a drawing path hands to `emitCategory` is the slot
-    /// the caveat reports on. The layout runs without a math renderer (a `$…$` label is skipped either
-    /// way, below) and with glyph-emission capture SUSPENDED, so this second pass contributes nothing
-    /// to the font-coverage corpus of the render that asked.
+    /// the caveat reports on. The layout runs with glyph-emission capture SUSPENDED, so this second
+    /// pass contributes nothing to the font-coverage corpus of the render that asked.
     ///
-    /// A `$…$` label is skipped: with a math renderer it is never ellipsized, and without one it
-    /// degrades to plain text (a known gap, not reported here). Empty when there are no category labels
-    /// drawn (an empty chart, or a multi-series chart with no values).
-    public static LabelLosses categoryLabelLosses(XyChart chart) {
+    /// `math` IS THE RENDERER THE REAL LAYOUT GOT (F2 of the cli-math-batch rebuild ruling), because
+    /// whether a `$…$` label CAN be lost depends on it, and {@link #emitCategory} decides that on
+    /// `math != null` alone. WITHOUT a renderer a `$…$` label is drawn through the plain ellipsize like
+    /// any other label, so it is recorded like any other: 30 `$x_{i}$` labels that the default bake drew
+    /// as nothing used to pass `--strict` (the 05e243d and F1 skip). WITH one it is typeset and never
+    /// ellipsized, so it is not a slot loss (a run that fails to typeset is drawn as its raw source,
+    /// un-ellipsized: the CLI names that as untypeset math).
+    ///
+    /// The second pass does NOT call the caller's renderer: it lays out with {@link #ROUTE_AS_MATH},
+    /// a renderer that typesets nothing. That is exact, not an approximation: the renderer reaches
+    /// nothing in the layout but the `math != null` branch in `emitCategory` (the slot never depends on
+    /// it), and on that branch nothing is recorded whatever the renderer returns. Passing the real one
+    /// would typeset every math label a second time (a LatteX call per run) for a result it cannot change.
+    /// Empty when there are no category labels drawn (an empty chart, or a multi-series chart with no
+    /// values).
+    public static LabelLosses categoryLabelLosses(XyChart chart, MathFragmentRenderer math) {
         LossRecorder losses = new LossRecorder();
         boolean suspended = EmittedText.enterPlainRender();
         try {
-            layout(chart, null, losses);
+            layout(chart, math == null ? null : ROUTE_AS_MATH, losses);
         } finally {
             EmittedText.exitPlainRender(suspended);
         }
         return new LabelLosses(List.copyOf(losses.dropped), List.copyOf(losses.shortened));
     }
 
-    /// The fate of each plain category label, written by {@link #emitCategory} as it draws.
+    /// Stands in for an active renderer in {@link #categoryLabelLosses}' pass: non-null, so a `$…$`
+    /// label takes the same typeset branch the real render took, and empty, so nothing is typeset.
+    private static final MathFragmentRenderer ROUTE_AS_MATH = (latex, fontSizePx) -> Optional.empty();
+
+    /// The fate of each category label drawn through the plain ellipsize, written by
+    /// {@link #emitCategory} as it draws.
     private static final class LossRecorder {
         private final List<String> dropped = new ArrayList<>();
         private final List<String> shortened = new ArrayList<>();
@@ -412,7 +429,9 @@ public final class XyChartLayout {
     /// {@link MathLabel} seam (math skips the slot-ellipsize, centres on the composite width); a plain
     /// label is ellipsized to its column slot and centred — byte-identical to the pre-feature bake —
     /// and its fate (kept, shortened, dropped) goes to `losses`, the record {@link #categoryLabelLosses}
-    /// reports from. A `$…$` label is not recorded on either branch (see categoryLabelLosses).
+    /// reports from. EVERY label on the plain branch is recorded, a `$…$` one included (without a
+    /// renderer it is drawn as plain text and can be lost like any other); a label on the typeset
+    /// branch is never ellipsized and is not recorded (see categoryLabelLosses).
     private static void emitCategory(List<Shape> shapes, String raw, double cx, double baseline,
                                      double slot, String textColor, MathFragmentRenderer math,
                                      LossRecorder losses) {
@@ -422,9 +441,7 @@ public final class XyChartLayout {
         } else {
             String cat = FONT.ellipsize(raw, slot - 2, LABEL_SIZE);
             centeredLabel(shapes, cat, cx, baseline, LABEL_SIZE, textColor);
-            if (!MathLabel.hasMath(raw)) {
-                losses.record(raw, cat);
-            }
+            losses.record(raw, cat);
         }
     }
 
