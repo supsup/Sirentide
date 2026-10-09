@@ -351,7 +351,7 @@ public final class Sirentide {
                             consumerBudget.maxUtf8Bytes());
                     }
                 }
-                Diagnostics caveat = pieDropCaveat(ir);
+                Diagnostics caveat = labelDropCaveat(ir, math);
                 return new FramesResult(java.util.List.of(base), caveat != null
                     ? withFontCoverageCaveat(caveat)
                     : okDiagnostics(STAGE_EMIT,
@@ -419,7 +419,7 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            Diagnostics caveat = pieDropCaveat(ir);
+            Diagnostics caveat = labelDropCaveat(ir, math);
             return new FramesResult(java.util.List.copyOf(frames), caveat != null
                 ? withFontCoverageCaveat(caveat)
                 : okDiagnostics(STAGE_EMIT, "Rendered successfully."));
@@ -529,18 +529,28 @@ public final class Sirentide {
     /// worker owns that file), so {@link Diagnostics#line()} is `-1` when unknown and an unknown type
     /// folds into {@link Outcome#PARSE_ERROR}. See the record javadocs for the follow-up slots.
     public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        return renderWithDiagnostics(dsl, math, RenderOptions.DEFAULT);
+    }
+
+    /// {@link #renderWithDiagnostics(String, MathFragmentRenderer)} with opt-in {@link RenderOptions}.
+    /// With {@link RenderOptions#DEFAULT} it IS that method (same SVG, same diagnostics). With
+    /// `lintOverlap`, a successful bake additionally runs {@link com.sirentide.layout.OverlapLint} and
+    /// appends any finding to the OK caveat; the SVG bytes are unchanged either way.
+    public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math,
+                                                     RenderOptions options) {
         // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
         // disarm — a leaked sink must never survive into an unrelated render on this thread.
         com.sirentide.font.EmittedText.arm();
         try {
-            return renderWithDiagnosticsArmed(dsl, math);
+            return renderWithDiagnosticsArmed(dsl, math, options == null ? RenderOptions.DEFAULT : options);
         } finally {
             com.sirentide.font.EmittedText.disarm();
         }
     }
 
     private static RenderResult renderWithDiagnosticsArmed(String dsl,
-                                                           com.sirentide.api.MathFragmentRenderer math) {
+                                                           com.sirentide.api.MathFragmentRenderer math,
+                                                           RenderOptions options) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -606,9 +616,13 @@ public final class Sirentide {
             // font-coverage caveat so neither honest note can shadow the other.
             // The OK caveats COMPOSE, so none can shadow another: pie drop, then dropped
             // statements, then font coverage. Each takes the previous as its base and appends.
-            Diagnostics ok = pieDropCaveat(ir);
+            Diagnostics ok = labelDropCaveat(ir, math);
             if (ok == null) {
                 ok = new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, "");
+            }
+            Diagnostics rows = xyNumericRowCaveat(ir, dsl, ok);
+            if (rows != null) {
+                ok = rows;
             }
             Diagnostics dropped = droppedStatementCaveat(ir, dsl, ok);
             if (dropped != null) {
@@ -618,7 +632,11 @@ public final class Sirentide {
             if (heat != null) {
                 ok = heat;
             }
-            return new RenderResult(svg, withFontCoverageCaveat(ok));
+            ok = withFontCoverageCaveat(ok);
+            if (options.lintOverlap()) {
+                ok = withOverlapLint(ok, laid);
+            }
+            return new RenderResult(svg, ok);
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
@@ -681,6 +699,31 @@ public final class Sirentide {
         String coverageDetail = "out-of-coverage code points: " + points;
         return new Diagnostics(Outcome.OK, ok.stage(), ok.message() + caveat, ok.line(),
             ok.detail().isEmpty() ? coverageDetail : ok.detail() + "; " + coverageDetail);
+    }
+
+    /// How many overlapping pairs an overlap-lint caveat names before summarising the rest.
+    private static final int MAX_OVERLAPS_REPORTED = 10;
+
+    /// The opt-in overlap lint's carrier (reached ONLY when {@link RenderOptions#lintOverlap()} is
+    /// set): appends the findings to an OK diagnostics the same way the other OK caveats compose, so it
+    /// never shadows one. No findings returns `ok` unchanged.
+    private static Diagnostics withOverlapLint(Diagnostics ok, LaidOut laid) {
+        java.util.List<com.sirentide.layout.OverlapLint.Finding> found =
+            com.sirentide.layout.OverlapLint.findings(laid);
+        if (found.isEmpty()) {
+            return ok;
+        }
+        java.util.List<String> named = new java.util.ArrayList<>();
+        for (int i = 0; i < Math.min(found.size(), MAX_OVERLAPS_REPORTED); i++) {
+            named.add(found.get(i).describe());
+        }
+        int more = found.size() - named.size();
+        String lintDetail = "text overlap: " + String.join("; ", named)
+            + (more > 0 ? "; and " + more + " more" : "");
+        String note = " Lint: " + found.size() + " pair" + (found.size() == 1 ? "" : "s")
+            + " of text runs in different elements overlap.";
+        return new Diagnostics(ok.outcome(), ok.stage(), ok.message() + note, ok.line(),
+            ok.detail().isEmpty() ? lintDetail : ok.detail() + "; " + lintDetail);
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
@@ -847,6 +890,40 @@ public final class Sirentide {
             base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
     }
 
+    /// The OK CAVEAT for a NUMERIC-x xychart row the parse could not draw as written (plan c880b12e,
+    /// numeric-x slice): a non-numeric or non-finite value, a repeated or out-of-order x on a line, a
+    /// row short of or past the series count, and the rest of the list in {@link
+    /// com.sirentide.ir.XyChart}'s class note. Same shape as {@link #droppedStatementCaveat}: Outcome
+    /// stays OK and the SVG is unchanged, the message names the count and the first row's line and
+    /// problem, `line` is that row's 1-based physical line, and the detail lists each row (bounded,
+    /// with the overflow counted), so `--strict` fails on it. Null for any other diagram, and for a
+    /// numeric chart whose every row drew as written.
+    private static Diagnostics xyNumericRowCaveat(Diagram ir, String dsl, Diagnostics base) {
+        if (!(ir instanceof XyChart chart) || chart.xValues() == null) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.XyNumericCensus census =
+            com.sirentide.parse.DslParser.xyNumericCensus(dsl);
+        if (census == null || census.total() == 0) {
+            return null;
+        }
+        com.sirentide.parse.DslParser.XyRowIssue first = census.issues().get(0);
+        StringBuilder detail = new StringBuilder("xychart numeric row issue(s): ").append(census.total());
+        for (com.sirentide.parse.DslParser.XyRowIssue r : census.issues()) {
+            detail.append("; line ").append(r.line()).append(": ").append(r.text()).append(" -- ")
+                .append(r.issue());
+        }
+        if (census.total() > census.issues().size()) {
+            detail.append("; (").append(census.total() - census.issues().size()).append(" more not listed)");
+        }
+        String count = census.total() == 1 ? "1 numeric xychart row was"
+            : census.total() + " numeric xychart rows were";
+        String caveat = " Note: " + count + " not drawn as written; line " + first.line() + " "
+            + first.issue() + ".";
+        return new Diagnostics(Outcome.OK, base.stage(), base.message() + caveat, first.line(),
+            base.detail().isEmpty() ? detail.toString() : base.detail() + "; " + detail);
+    }
+
     private static Diagnostics emptiedGraphDiagnostics(Diagram ir, String dsl) {
         if (!(ir instanceof Flowchart fc) || !fc.nodes().isEmpty() || !fc.edges().isEmpty()) {
             return null;
@@ -899,7 +976,24 @@ public final class Sirentide {
     /// other diagram, or a pie that dropped nothing. The SVG itself is unchanged — this only turns a
     /// silent geometry outcome into a named signal that points the author at `pie legend`. Outcome
     /// stays {@link Outcome#OK} (the bake succeeded); only the message/detail carry the caveat.
-    private static Diagnostics pieDropCaveat(Diagram ir) {
+    ///
+    /// XYCHART (plan c880b12e): the same silent-geometry outcome exists for x-axis category labels. A
+    /// label wider than its column slot is ellipsized, and when not even the ellipsis fits it draws
+    /// NOTHING; Fixpoint's showcase audit (sirentide/1118) found the Barker chart losing 15 of 25 lag
+    /// labels with `--strict` exiting 0. Named here the same way, from
+    /// {@link com.sirentide.layout.XyChartLayout#categoryLabelLosses}: dropped labels and shortened
+    /// labels, each listed. Same Outcome.OK and an unchanged SVG; the CLI's `--strict` already fails on
+    /// any caveat detail, so this is what makes a lost label gate CI.
+    ///
+    /// `math` is the renderer the layout ran with (null in the default bake). The xychart loss pass
+    /// needs it because whether a `$…$` label CAN be lost depends on it: typeset labels are never
+    /// ellipsized, raw-text ones are (it routes on it without typesetting again; see
+    /// categoryLabelLosses). The pie replay does not: its thin-slice outside labels are
+    /// ellipsized as plain text with or without a renderer.
+    private static Diagnostics labelDropCaveat(Diagram ir, com.sirentide.api.MathFragmentRenderer math) {
+        if (ir instanceof com.sirentide.ir.XyChart chart) {
+            return xyLabelCaveat(chart, math);
+        }
         if (!(ir instanceof Pie pie)) {
             return null;
         }
@@ -913,6 +1007,44 @@ public final class Sirentide {
                 + " had no room outside the pie and " + (one ? "was" : "were") + " dropped ("
                 + String.join(", ", dropped) + "). Use `pie legend` to show every label in a side key.",
             -1, "pie outside-label drop: " + String.join("; ", dropped));
+    }
+
+    private static Diagnostics xyLabelCaveat(com.sirentide.ir.XyChart chart,
+                                             com.sirentide.api.MathFragmentRenderer math) {
+        com.sirentide.layout.XyChartLayout.LabelLosses losses =
+            com.sirentide.layout.XyChartLayout.categoryLabelLosses(chart, math);
+        if (losses.isEmpty()) {
+            return null;
+        }
+        StringBuilder msg = new StringBuilder("Rendered, but ");
+        StringBuilder detail = new StringBuilder(chart.xValues() == null
+            ? "xychart category-label drop:" : "xychart tick-label drop:");
+        java.util.List<String> d = losses.dropped();
+        java.util.List<String> s = losses.shortened();
+        if (!d.isEmpty()) {
+            msg.append(d.size()).append(" x-axis label").append(d.size() == 1 ? "" : "s")
+                .append(" had no room in ").append(d.size() == 1 ? "its column" : "their columns")
+                .append(" and ").append(d.size() == 1 ? "was" : "were").append(" dropped (")
+                .append(String.join(", ", d)).append(")");
+            detail.append(" dropped ").append(String.join("; ", d));
+        }
+        if (!s.isEmpty()) {
+            msg.append(d.isEmpty() ? "" : ", and ").append(s.size()).append(" x-axis label")
+                .append(s.size() == 1 ? " was" : "s were").append(" shortened to fit (")
+                .append(String.join(", ", s)).append(")");
+            detail.append(d.isEmpty() ? "" : ";").append(" shortened ").append(String.join("; ", s));
+        }
+        java.util.List<String> t = losses.droppedTicks();
+        if (!t.isEmpty()) {
+            msg.append(d.isEmpty() && s.isEmpty() ? "" : ", and ").append(t.size()).append(" axis tick label")
+                .append(t.size() == 1 ? " had" : "s had").append(" no room and ")
+                .append(t.size() == 1 ? "was" : "were").append(" dropped (").append(String.join(", ", t))
+                .append(")");
+            detail.append(d.isEmpty() && s.isEmpty() ? "" : ";").append(" dropped tick ")
+                .append(String.join("; ", t));
+        }
+        msg.append(t.isEmpty() ? ". Use fewer categories or shorter labels." : ".");
+        return new Diagnostics(Outcome.OK, STAGE_EMIT, msg.toString(), -1, detail.toString());
     }
 
     /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY

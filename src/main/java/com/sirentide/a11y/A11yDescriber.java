@@ -876,8 +876,12 @@ public final class A11yDescriber {
             default -> "Bar chart";
         };
         int n = chart.bars().size();
-        StringBuilder d = new StringBuilder(mode).append(" with ").append(n)
-            .append(n == 1 ? " category" : " categories");
+        StringBuilder d = new StringBuilder(mode).append(" with ").append(n);
+        if (chart.xValues() != null) {
+            d.append(n == 1 ? " point" : " points").append(" on a numeric x axis");
+        } else {
+            d.append(n == 1 ? " category" : " categories");
+        }
         appendSliceLabels(d, chart.bars(), n);
         return new A11y(mode, d.toString());
     }

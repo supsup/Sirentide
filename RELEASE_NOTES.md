@@ -68,6 +68,108 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   there the artifact would be a lie about what `/docs` serves, here it is exactly what
   `/docs` serves and a caller whose gate just rejected something wants to see it.
 
+- **An xychart now names the x-axis labels it could not fit, and `render - --strict` now
+  fails on caveats.** Each category label is fitted to its column; a label too wide is
+  shortened with an ellipsis, and when not even the ellipsis fits it is drawn as *nothing*. A
+  crowded chart lost labels silently: a 25-bar autocorrelation chart (lags `-12..12`) drew
+  only the ten one-character lags and still reported `"Rendered successfully."`. Such a render
+  is now an `OK` render with a caveat that lists the **dropped** and the **shortened** labels
+  by name (detail `xychart category-label drop: dropped -12; …`), the same shape as the pie
+  thin-slice caveat. The SVG is byte-identical; only the verdict gained the sentence.
+  Separately, **`render -` (DSL on stdin) used to ignore every caveat**: it never printed one
+  and `--strict` exited `0` on a render that had dropped statements or labels, while
+  `render <file.md> --strict` failed on the same source. Both arms now report caveats
+  through one shared seam, so `--strict` means the same thing on either. The two framing
+  lines printed under a caveat no longer speak of "statement(s)" when the caveat is about a
+  label: they now read `the SVG is what /docs would embed; it does not show what the caveat
+  names as written` and `--strict: treating the caveat as a failure`.
+
+- **`xychart … numeric` puts the x axis on a number line** (plan c880b12e). A new header
+  modifier, beside `line`/`scatter`/`legend`: `xychart line numeric` (or `scatter numeric`;
+  bare `numeric` is a line) reads each row as `x : y1 y2 …` and draws it at its x on a
+  continuous axis, instead of in an evenly spaced category column whose label may not fit. Both
+  axes take nice ticks (1, 2 or 5 x 10^k), **thinned** to the finest step whose labels all fit
+  whole, so a tick label is never shortened or dropped: the 25-lag Barker chart now draws the 13
+  lags `-12, -10, …, 12` and passes `--strict`, where the category chart dropped 15 of 25. Tick
+  labels are **plain decimals on both axes** (`0.0005`, never `5.0E-4`), and discs shrink with
+  density so a 140-point series reads as a curve, not a smear. Every row the numeric parse cannot
+  draw as written is **named with its line** on the OK caveat (`xychart numeric row issue(s)`),
+  so `--strict` fails on it: a non-numeric, non-finite or out-of-range value (magnitude 0 or
+  1e-12..1e15), a row with no `:` or no y value, a late `series:` row, a row with more values
+  than `series:` names or fewer than the series count, and on a line a repeated x (the later row
+  is dropped) or an out-of-order x (the line is drawn sorted by x). A scatter takes repeated and
+  unsorted x as written. A value written as a nonzero number that underflows to 0 (`1e-400`) is
+  out of range too, not drawn at 0; `0`, `-0`, `0.000` and `0e5` are zero. **Gaps:** in a chart
+  with more than one series, a y value written `na` (exactly, lowercase) says that series has no
+  value at that x: no point is drawn there and its line is broken (the runs either side are not
+  joined), while the other series draw as usual. `na` is silent, since the author said so; a
+  short row, which leaves the same gap unexplained, keeps its caveat. `na` as the only series'
+  value or as an x is refused with a caveat (a gap needs another series to be missing beside),
+  and `NA`, `Na` or `-` are not gaps but non-numeric values, caveated as such. Opt-in: every
+  chart without `numeric` renders byte-identically, and
+  the default category y axis still prints its ticks the way it did, E-notation included (left
+  for a separate ruling, because changing it moves the bytes of existing charts).
+
+- **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
+  supplied a renderer got typeset math; through the CLI a label like `$\sqrt{2}$` baked as its raw
+  source and was then ellipsized like any other text. `--math` loads LatteX at run time from
+  `--lattex PATH` or `SIRENTIDE_LATTEX_JAR`, in an isolated class loader, and proves the load with a
+  probe render first. Sirentide still bundles nothing: `--math` without a jar, or with one that
+  cannot render, is a loud usage error (exit `2`) before any bake, never a silent raw-text fallback.
+  A run LatteX cannot typeset is drawn as its raw source **and named on stderr** as a caveat, so
+  `--strict` fails on it. The output is byte-identical to the API with the LatteX renderer; without
+  the flag every byte is unchanged.
+
+- **`render --batch` renders many raw DSL sources in one JVM.** Sources are NUL-separated on stdin
+  (a diagram is multi-line, so a newline cannot delimit it) and each produces exactly one
+  NUL-terminated record on stdout, in order: the SVG `render -` would print for that source alone,
+  or a `sirentide: error: ...` record in its slot. Record N always answers source N, including a
+  blank source (a legal empty diagram) and an over-cap source (an error record; the batch reads
+  past it and stays aligned). stderr names failures and caveats by record number; exit `1` if any
+  record failed or, under `--strict`, carried a caveat. `-o` and `--png` are refused with
+  `--batch` rather than silently ignored.
+
+- **An xychart whose `$...$` category labels are lost is now named, not silent.** The label-loss
+  caveat skipped math labels on the theory that math is never ellipsized, which holds only when a
+  math renderer is active. Without one (the default bake, or `render` without `--math`), a math
+  label is drawn through the same ellipsize as plain text, so 30 categories labelled `$x_{i}$`
+  drew no labels at all while `render - --strict` exited `0`. The check now follows the renderer:
+  without one, math labels are measured as the text actually drawn and their loss is reported;
+  with `--math` they are typeset, and one that fails to typeset is the untypeset-math caveat. The
+  SVG is unchanged; only the caveat is new.
+
+- **`render --lint-overlap` (and `RenderOptions.lintOverlap` on the API) checks for colliding
+  text.** Opt-in and off by default, so no existing render gains a caveat. After a successful bake
+  it compares every text run's outline box with every text run in a *different* diagram element
+  (or outside any element) and reports each overlapping pair on the caveat channel as
+  `text overlap: ...`, so `--strict` fails on it only when the flag is set. The SVG is never
+  changed. Text is compared with text only, so an edge label on its own stroke is never a
+  finding; typeset math fragments are not checked. Measured on the 32 golden fixtures, one fires:
+  `sequence-blocks`, where the `loop` label "every retry" sits 1.8 px into the "ping" message
+  below it.
+
+- **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
+  now says so: the baked SVG carries no renderer, revision or source attribute, and the jar's exact
+  source revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`.
+  `--source-hash` (below) identifies the source, on stderr; it never identifies the renderer.
+
+- **`render --source-hash` prints the SHA-256 of the source to stderr.** One line,
+  `sirentide: source sha256:<64 lowercase hex>`, or under `--batch` one
+  `sirentide: record N: source sha256:<hex>` line per record (N 1-based, blank records included),
+  printed before that source's other diagnostics. **Nothing is added to the SVG** (ruling
+  `PROJECT/sirentide` 1129): with or without the flag, stdout, the `-o` file and the exit code are
+  byte-identical, and `--strict` means what it meant. The hash is of the **raw bytes as received**,
+  never a decoded copy: every byte of stdin for `render -` (`sha256sum < diagram.dsl` recomputes
+  it), each record's bytes between NULs for `--batch`, and for `render f.md` the fence body as the
+  file holds it (body lines with any trailing CR, joined by LF, without the LF that ends the last
+  line). So CRLF, a BOM and invalid UTF-8 are part of the identity, and a CRLF copy of a diagram
+  hashes differently from its LF copy; a hash of the decoded text would have changed silently
+  wherever the input is not valid UTF-8. The line prints for a source that does not render too,
+  because it identifies the input, and is absent only when there is no source (usage error, no
+  fence, unreadable file). An over-cap stdin, of which only a prefix is read, says `unavailable`
+  rather than hashing the prefix; an over-cap `--batch` record is read to its NUL anyway, so it
+  is hashed in full.
+
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
