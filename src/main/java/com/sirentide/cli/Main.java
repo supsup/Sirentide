@@ -1,9 +1,12 @@
 package com.sirentide.cli;
 
+import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.api.Outcome;
 import com.sirentide.api.RenderResult;
 import com.sirentide.api.Sirentide;
 import com.sirentide.parse.DslParser;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
@@ -13,6 +16,12 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /// CLI entry: two shapes atop the same bake.
 ///
@@ -37,8 +46,9 @@ import java.nio.file.StandardCopyOption;
 /// - `2` — loud usage/IO error: no capturable fence, unreadable input, over-cap input, unwritable
 ///   `-o` destination, or a stdout write failure. Nothing (new) is written.
 ///
-/// `--batch` (NUL-delimited, many-per-invocation, one JVM) lands with real rendering in M1 — it is
-/// the amortization lever for many diagrams per page; still a documented stub.
+/// `render --batch` (plan d9f29911): many raw-DSL sources per JVM, NUL-separated on stdin, one
+/// NUL-terminated record per source on stdout — see {@link #runBatch}. `--math` and `--source-hash`
+/// (same plan) are additive flags: with neither given, every byte this CLI writes is unchanged.
 public final class Main {
 
     private Main() {}
@@ -55,6 +65,8 @@ public final class Main {
           sirentide                             Read a DSL source from stdin, bake to stdout (legacy M0 shape).
           sirentide render <file.md> [flags]    Render the first ```sirentide fence the /docs bake would capture.
           sirentide render - [flags]            Same as the legacy shape (raw DSL on stdin), verb spelling.
+          sirentide render --batch [flags]      Many raw DSL sources in one JVM: NUL-separated on stdin, one
+                                                NUL-terminated record per source on stdout, in order.
 
         Flags:
           -o PATH          write the SVG here instead of stdout (atomic replace)
@@ -71,6 +83,23 @@ public final class Main {
                            where nobody reads stderr, so an unattended caller opts in here. The
                            SVG is still written -- it is exactly what /docs would serve, and a
                            rejected gate is worth inspecting.
+          --math           typeset $...$ label runs with LatteX instead of baking them as raw text.
+                           The LatteX jar is located at run time (--lattex PATH or
+                           SIRENTIDE_LATTEX_JAR), never bundled; --math without it, or with a jar
+                           that cannot render, is a loud usage error (exit 2). A $...$ run LatteX
+                           cannot typeset falls back to its raw source and is reported as a caveat,
+                           so --strict fails on it.
+          --lattex PATH    the LatteX jar --math loads; or set SIRENTIDE_LATTEX_JAR.
+          --source-hash    stamp data-sirentide-source="sha256:<hex>" on the root <svg>: the SHA-256
+                           of the DSL as rendered (the fence body, or the stdin source), UTF-8.
+                           Opt-in: without it the SVG is byte-identical to the default bake.
+
+        --batch: a source is everything up to a NUL byte (a trailing NUL ends the last source; it
+        does not start an empty one). Each record is the SVG `render -` would print for that source
+        alone, or a `sirentide: error: ...` line when it does not render, so record N always answers
+        source N; stderr names failures and caveats by 1-based record number. -o and --png do not
+        combine with --batch (usage error). Exit 1 if any record failed (or, with --strict, carried
+        a caveat); 2 on a usage error, empty stdin, or a stdout failure.
 
         Exit codes: 0 = rendered (the SVG is what /docs would embed). 1 = fence found but it does
         not render — /docs would keep the fence verbatim with a visible caption; nothing written
@@ -115,16 +144,28 @@ public final class Main {
         String pngPath = null;
         boolean strictFailed = false;
         String brewshotJar = System.getenv(BREWSHOT_JAR_ENV);
+        String lattexJar = System.getenv(LATTEX_JAR_ENV);
         boolean strict = false;
+        boolean math = false;
+        boolean sourceHash = false;
         for (int i = 2; i < args.length; i++) {
             String flag = args[i];
-            // --strict is VALUELESS, so it is matched before the needs-a-value arity check below;
-            // treating it like -o would consume the next argument and silently eat a path.
+            // VALUELESS flags are matched before the needs-a-value arity check below; treating one
+            // like -o would consume the next argument and silently eat a path.
             if ("--strict".equals(flag)) {
                 strict = true;
                 continue;
             }
-            if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)) {
+            if ("--math".equals(flag)) {
+                math = true;
+                continue;
+            }
+            if ("--source-hash".equals(flag)) {
+                sourceHash = true;
+                continue;
+            }
+            if (!"-o".equals(flag) && !"--png".equals(flag) && !"--brewshot".equals(flag)
+                && !"--lattex".equals(flag)) {
                 err.print(USAGE);
                 err.println("sirentide: bad arguments after the file path");
                 return 2;
@@ -138,8 +179,29 @@ public final class Main {
             switch (flag) {
                 case "-o" -> outPath = value;
                 case "--png" -> pngPath = value;
+                case "--lattex" -> lattexJar = value;
                 default -> brewshotJar = value;
             }
+        }
+        String source = args[1];
+        boolean batch = BATCH.equals(source);
+        // --batch writes records to STDOUT and has no single SVG to screenshot, so -o and --png are
+        // refused rather than ignored: a --png that quietly produced no PNG is the defect writePng
+        // names, and an -o that quietly wrote nothing is the same shape.
+        if (batch && (outPath != null || pngPath != null)) {
+            err.print(USAGE);
+            err.println("sirentide: " + (outPath != null ? "-o" : "--png") + " cannot be combined with"
+                + " --batch: --batch writes NUL-terminated records to stdout");
+            return 2;
+        }
+        // RESOLVE THE MATH BACKEND BEFORE RENDERING (and before the screenshot backend is blamed),
+        // for the same reason as the BrewShot check below: a missing jar costs an instant usage error,
+        // not a bake that silently shows raw $...$ text.
+        if (math && (lattexJar == null || lattexJar.isBlank())) {
+            err.print(USAGE);
+            err.println("sirentide: --math needs the LatteX jar: pass --lattex PATH or set "
+                + LATTEX_JAR_ENV + ". Sirentide does not bundle it -- the host supplies the math backend.");
+            return 2;
         }
         // RESOLVE THE SCREENSHOT BACKEND BEFORE RENDERING, so a missing jar costs the author an
         // instant usage error instead of a render they then discover produced no PNG.
@@ -150,124 +212,301 @@ public final class Main {
                 + " backend, the host supplies the tool.");
             return 2;
         }
-
-        String source = args[1];
-        String svg;
-        if ("-".equals(source)) {
-            // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction.
-            // The REFUSAL is shared with the args.length == 0 path above by CONSTRUCTION — both go
-            // through rawDslSvgOrNull, so the stated equivalence is enforced by the single seam
-            // rather than asserted in a comment that a later edit can silently falsify.
-            //
-            // The TAIL is deliberately not shared with that path, and cannot diverge from it: the
-            // no-args shape parses no flags at all, so there is no input it can express on which
-            // `-o` or `--png` handling could differ. Returning here instead — which is what this
-            // arm did until sirentide/905 — put writeOutput AND writePng downstream of a return,
-            // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
-            // written no PNG: verbatim the failure {@link #writePng} names as this project's
-            // signature defect.
-            svg = rawDslSvgOrNull(renderRawDsl(in), err);
-            if (svg == null) {
-                return 1;
+        LatteXBackend backend = null;
+        if (math) {
+            backend = LatteXBackend.load(lattexJar, err);
+            if (backend == null) {
+                return 2;
             }
-        } else {
+        }
+        try {
+            if (batch) {
+                return runBatch(in, out, err, strict, backend, sourceHash);
+            }
+            Set<String> untypeset = new LinkedHashSet<>();
+            MathFragmentRenderer renderer = backend == null ? null : backend.recording(untypeset);
 
-            String markdown;
-            try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
-                byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
-                if (bytes.length > MAX_MARKDOWN_BYTES) {
-                    err.println("sirentide: cannot read '" + source + "': larger than the "
-                        + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+            String dsl;
+            String svg;
+            if ("-".equals(source)) {
+                // The verb-spelled alias of the legacy shape: raw DSL on stdin, no fence extraction.
+                // The REFUSAL is shared with the args.length == 0 path above by CONSTRUCTION — both go
+                // through rawDslSvgOrNull, so the stated equivalence is enforced by the single seam
+                // rather than asserted in a comment that a later edit can silently falsify.
+                //
+                // The TAIL is deliberately not shared with that path, and cannot diverge from it: the
+                // no-args shape parses no flags at all, so there is no input it can express on which
+                // `-o` or `--png` handling could differ. Returning here instead — which is what this
+                // arm did until sirentide/905 — put writeOutput AND writePng downstream of a return,
+                // so every --png guard was unreachable on stdin and `render - --png` exited 0 having
+                // written no PNG: verbatim the failure {@link #writePng} names as this project's
+                // signature defect.
+                dsl = readRawDsl(in);
+                RenderResult result = tryRenderWithDiagnostics(dsl, renderer);
+                svg = rawDslSvgOrNull(result, err);
+                if (svg == null) {
+                    return 1;
+                }
+                // THE CAVEAT CHANNEL ON THE STDIN ARM (plan d9f29911). Until this, `render - --strict`
+                // parsed --strict and then never read the caveat: a dropping source exited 0 with an
+                // empty stderr, the flag accepted and the gate disarmed -- the sirentide/905 shape on
+                // the source axis instead of the output axis. The same reporter as the fence arm now
+                // runs here, so the two arms cannot disagree about what --strict means.
+                strictFailed = reportCaveats(result, untypeset, strict, err, "sirentide: ");
+            } else {
+
+                String markdown;
+                try (InputStream fileIn = Files.newInputStream(Path.of(source))) {
+                    byte[] bytes = fileIn.readNBytes(MAX_MARKDOWN_BYTES + 1);
+                    if (bytes.length > MAX_MARKDOWN_BYTES) {
+                        err.println("sirentide: cannot read '" + source + "': larger than the "
+                            + MAX_MARKDOWN_BYTES + "-byte markdown cap");
+                        return 2;
+                    }
+                    markdown = new String(bytes, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
                     return 2;
                 }
-                markdown = new String(bytes, StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                err.println("sirentide: cannot read '" + source + "': " + e.getMessage());
-                return 2;
+
+                String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
+                if (fenceBody == null) {
+                    err.println("sirentide: no ```sirentide fence found in '" + source + "'"
+                        + " (a fence nested inside another fence is not captured — matching the /docs bake)");
+                    return 2;
+                }
+
+                // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
+                // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
+                // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
+                // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
+                // /docs does not produce. The defensive catch mirrors the converter's tryRender
+                // (RuntimeException + StackOverflowError -> degrade, never a crash).
+                RenderResult result = tryRenderWithDiagnostics(fenceBody, renderer);
+                if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
+                    String reason = result == null ? "renderer failure" : result.diagnostics().message();
+                    err.println("sirentide: diagram did not render — " + reason
+                        + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
+                    return 1;
+                }
+                dsl = fenceBody;
+                svg = result.svg();
+                strictFailed = reportCaveats(result, untypeset, strict, err, "sirentide: ");
+            }
+            if (sourceHash) {
+                svg = withSourceHash(svg, dsl);
             }
 
-            String fenceBody = FenceExtractor.extractFirstSirentideFence(markdown);
-            if (fenceBody == null) {
-                err.println("sirentide: no ```sirentide fence found in '" + source + "'"
-                    + " (a fence nested inside another fence is not captured — matching the /docs bake)");
-                return 2;
+            // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
+            // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
+            int code = writeOutput(svg, outPath, out, err);
+            if (code != 0) {
+                return code;
             }
 
-            // Truthful render-check posture (review sirentide/471 B3): the /docs bake NEVER serves an
-            // SVG for a fence that fails to render — SirentideDiagramConverter keeps the original
-            // fence verbatim and prepends a visible caption. So a not-OK render here is a LOUD exit 1
-            // with NOTHING written: writing the inert shell and exiting 0 would claim a bake outcome
-            // /docs does not produce. The defensive catch mirrors the converter's tryRender
-            // (RuntimeException + StackOverflowError -> degrade, never a crash).
-            RenderResult result = tryRenderWithDiagnostics(fenceBody);
-            if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
-                String reason = result == null ? "renderer failure" : result.diagnostics().message();
-                err.println("sirentide: diagram did not render — " + reason
-                    + "; /docs would keep this fence verbatim with a visible caption (nothing written)");
+            // THE PNG IS STILL ATTEMPTED WHEN THE STRICT GATE HAS FAILED, for the same reason the SVG is
+            // still written: you want to look at what your gate rejected. Its failure still prints to
+            // stderr. PRECEDENCE GOVERNS THE NUMBER, NEVER THE REPORT.
+            int pngCode = pngPath == null ? 0 : writePng(svg, pngPath, brewshotJar, err);
+
+            // THE STRICT FAILURE WINS over a PNG failure [ruling: PROJECT/stafficy 25843, plan b07ea58c].
+            // The principle generalises past this flag: A FAILURE WITH NO OBSERVABLE ARTIFACT MUST OUTRANK
+            // A FAILURE WHOSE ABSENCE IS DIRECTLY OBSERVABLE. A missing PNG is one stat away; a swallowed
+            // strict gate leaves nothing anywhere to test, and its only evidence went to stderr -- the
+            // channel this project's own authoring guide calls invisible to a pipeline.
+            //
+            // WHAT THIS LINE REPAIRS: the strict return used to be guarded on `pngPath == null`, so
+            // `--strict --png` on a dropping source printed "treating dropped statement(s) as a failure"
+            // and then exited 0, indistinguishable from a clean render to any caller reading the code.
+            // The flag whose entire purpose is to make a caveat fail a pipeline was silently disarmed by
+            // an unrelated output flag. Neither flag was tested with the other: --strict only with -o,
+            // --png only without --strict, so the intersection had no coverage at all.
+            if (strictFailed) {
                 return 1;
             }
-            svg = result.svg();
-
-            // AN `OK` RENDER CAN STILL HAVE LOST A LINE, and until now this verb said nothing
-            // about it. The directive-shape rule DROPS an unknown directive-shaped statement and
-            // records a line-scoped caveat on an otherwise-OK render, precisely so a lost line is
-            // not lost silently — but the caveat lived only in the API. Through this CLI, which
-            // the authoring docs name as THE local check, the author saw exit 0, no output, and a
-            // diagram quietly missing their line. A caveat channel nothing reads is not a channel.
-            //
-            // Printed to stderr, and the exit stays 0: the render genuinely succeeded and /docs
-            // genuinely serves this SVG. Turning a dropped statement into a failure here would
-            // claim a bake outcome that does not happen, which is the same untruth the exit-1 arm
-            // above exists to avoid — pointing the other way.
-            String caveat = result.diagnostics().detail();
-            if (caveat != null && !caveat.isBlank()) {
-                err.println("sirentide: rendered, with caveats — " + caveat);
-                err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
-                // --strict, ruled at sirentide/977: stderr is the right AUTHOR channel and the
-                // wrong CI channel, because CI is exactly where nobody reads stderr. A caveat
-                // that cannot gate anything in the one environment that runs unattended is
-                // recorded-but-unseeable one level up — the same distance this change closed at
-                // the API/render seam, reopened at the render/CI seam.
-                //
-                // Opt-in, so the default stays honest: a drop is not a failed bake. The SVG IS
-                // still written, unlike the exit-1 arm above — there the artifact would have
-                // been a lie about what /docs serves, here it is exactly what /docs serves and
-                // the caller wants to inspect what its gate rejected.
-                if (strict) {
-                    err.println("  --strict: treating dropped statement(s) as a failure");
-                    strictFailed = true;
-                }
+            return pngCode;
+        } finally {
+            if (backend != null) {
+                backend.close();
             }
         }
+    }
 
-        // THE ONE WRITE TAIL, reached by both arms. Its ordering guarantee is the reason writePng
-        // may assume the SVG is already on disk: see {@link #writePng}'s ORDER MATTERS note.
-        int code = writeOutput(svg, outPath, out, err);
-        if (code != 0) {
-            return code;
+    /// The source-slot spelling of batch mode: `render --batch`.
+    static final String BATCH = "--batch";
+
+    /// Environment variable naming the LatteX jar `--math` loads; `--lattex` overrides it. Read only
+    /// when `--math` is given, so setting it once per shell never switches math on by itself.
+    static final String LATTEX_JAR_ENV = "SIRENTIDE_LATTEX_JAR";
+
+    /// How many distinct untypeset `$...$` sources a caveat names before summarising the rest; bounds
+    /// the stderr line on a label set full of malformed math (same discipline as the font caveat).
+    private static final int MAX_UNTYPESET_REPORTED = 10;
+
+    /// THE CAVEAT REPORTER, shared by the fence arm, the stdin arm and every batch record, so the three
+    /// cannot disagree about what a caveat is or what --strict does with one. Returns whether --strict
+    /// has failed.
+    ///
+    /// Two sources, reported separately so each line says what is actually missing:
+    /// - the API's OK-with-caveat `detail` (dropped statements, pie labels, font coverage). Its two
+    ///   lines are BYTE-IDENTICAL to what the fence arm printed before this method existed.
+    /// - `--math` only: `$...$` runs LatteX could not typeset, which Sirentide shows as raw source.
+    ///   The SVG is still what was asked for; it just is not typeset where the author wrote math.
+    ///
+    /// AN `OK` RENDER CAN STILL HAVE LOST A LINE, and until the caveat channel existed this verb said
+    /// nothing about it. The directive-shape rule DROPS an unknown directive-shaped statement and
+    /// records a line-scoped caveat on an otherwise-OK render, precisely so a lost line is not lost
+    /// silently — but the caveat lived only in the API. A caveat channel nothing reads is not a
+    /// channel. Printed to stderr, and the exit stays 0: the render genuinely succeeded and /docs
+    /// genuinely serves this SVG. Turning a dropped statement into a failure by default would claim a
+    /// bake outcome that does not happen, which is the same untruth the exit-1 arm exists to avoid —
+    /// pointing the other way.
+    ///
+    /// --strict, ruled at sirentide/977: stderr is the right AUTHOR channel and the wrong CI channel,
+    /// because CI is exactly where nobody reads stderr. Opt-in, so the default stays honest: a drop is
+    /// not a failed bake. The SVG IS still written, unlike the exit-1 arm — there the artifact would
+    /// have been a lie about what /docs serves, here it is exactly what /docs serves and the caller
+    /// wants to inspect what its gate rejected.
+    private static boolean reportCaveats(RenderResult result, Set<String> untypeset, boolean strict,
+                                         PrintStream err, String prefix) {
+        boolean dropped = false;
+        boolean any = false;
+        String caveat = result.diagnostics().detail();
+        if (caveat != null && !caveat.isBlank()) {
+            err.println(prefix + "rendered, with caveats — " + caveat);
+            err.println("  the SVG is what /docs would embed; the named statement(s) are absent from it");
+            dropped = true;
+            any = true;
         }
-
-        // THE PNG IS STILL ATTEMPTED WHEN THE STRICT GATE HAS FAILED, for the same reason the SVG is
-        // still written: you want to look at what your gate rejected. Its failure still prints to
-        // stderr. PRECEDENCE GOVERNS THE NUMBER, NEVER THE REPORT.
-        int pngCode = pngPath == null ? 0 : writePng(svg, pngPath, brewshotJar, err);
-
-        // THE STRICT FAILURE WINS over a PNG failure [ruling: PROJECT/stafficy 25843, plan b07ea58c].
-        // The principle generalises past this flag: A FAILURE WITH NO OBSERVABLE ARTIFACT MUST OUTRANK
-        // A FAILURE WHOSE ABSENCE IS DIRECTLY OBSERVABLE. A missing PNG is one stat away; a swallowed
-        // strict gate leaves nothing anywhere to test, and its only evidence went to stderr -- the
-        // channel this project's own authoring guide calls invisible to a pipeline.
-        //
-        // WHAT THIS LINE REPAIRS: the strict return used to be guarded on `pngPath == null`, so
-        // `--strict --png` on a dropping source printed "treating dropped statement(s) as a failure"
-        // and then exited 0, indistinguishable from a clean render to any caller reading the code.
-        // The flag whose entire purpose is to make a caveat fail a pipeline was silently disarmed by
-        // an unrelated output flag. Neither flag was tested with the other: --strict only with -o,
-        // --png only without --strict, so the intersection had no coverage at all.
-        if (strictFailed) {
-            return 1;
+        if (!untypeset.isEmpty()) {
+            List<String> named = untypeset.stream().limit(MAX_UNTYPESET_REPORTED).map(l -> "$" + l + "$").toList();
+            int more = untypeset.size() - named.size();
+            err.println(prefix + "rendered, with caveats — " + untypeset.size()
+                + " math run(s) did not typeset and are shown as raw source: " + String.join(", ", named)
+                + (more > 0 ? " (and " + more + " more)" : ""));
+            err.println("  --math: LatteX could not render the named LaTeX; fix it to typeset");
+            any = true;
         }
-        return pngCode;
+        if (any && strict) {
+            err.println(dropped ? "  --strict: treating dropped statement(s) as a failure"
+                : "  --strict: treating untypeset math as a failure");
+            return true;
+        }
+        return false;
+    }
+
+    /// `--source-hash`: stamp `data-sirentide-source="sha256:<64 lowercase hex>"` as the LAST attribute
+    /// of the root `<svg>` tag. The hash is over the UTF-8 bytes of `dsl`, the exact string the
+    /// renderer was given, so anyone holding the fence body (or stdin source) can recompute it.
+    ///
+    /// The value is a fixed-shape hex digest, so it can carry nothing executable or markup-breaking.
+    /// It IS outside the closed SirentideContract root-attribute set (and the container contract's
+    /// "data-sirentide-* only on `<g>`" rule) — which is why it is OPT-IN and CLI-only: the /docs bake
+    /// never produces it, and the default output never contains it.
+    static String withSourceHash(String svg, String dsl) {
+        int end = svg.indexOf('>');
+        if (!svg.startsWith("<svg ") || end < 0) {
+            throw new IllegalStateException("not a root <svg> tag: cannot stamp the source hash");
+        }
+        return svg.substring(0, end) + " data-sirentide-source=\"sha256:" + sha256Hex(dsl) + "\""
+            + svg.substring(end);
+    }
+
+    private static String sha256Hex(String dsl) {
+        try {
+            return HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(dsl.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is a required JDK algorithm", e);
+        }
+    }
+
+    /// `render --batch`: render every NUL-separated source on `in`, writing one NUL-terminated record
+    /// per source to `out`, in order and as each is produced (nothing is accumulated across records).
+    ///
+    /// ALIGNMENT IS THE CONTRACT. LatteX's batch skips blank records; this one does not, because a
+    /// blank DSL is a legal (empty) diagram and skipping it would shift every later record onto the
+    /// wrong source. A failure emits a `sirentide: error: ...` record IN ITS SLOT. The single exception
+    /// is the empty tail after a final NUL, which is a terminator, not a source.
+    ///
+    /// EACH SVG RECORD IS THE SINGLE-SHOT BAKE: same renderer call, same caveat reporter, same
+    /// optional hash stamp, written with the same `PrintStream.print` as {@link #writeOutput}.
+    ///
+    /// OVERSIZED SOURCES. A source over {@link DslParser#MAX_SOURCE_BYTES} gets an error record and the
+    /// batch CONTINUES: unlike LatteX (which stops, because finding the next record would mean reading
+    /// past its cap into memory), the remainder of an oversized source is read and DISCARDED byte by
+    /// byte up to its NUL, so memory stays bounded by one capped source and alignment survives.
+    private static int runBatch(InputStream in, PrintStream out, PrintStream err, boolean strict,
+                                LatteXBackend backend, boolean sourceHash) {
+        InputStream src = new BufferedInputStream(in);
+        int record = 0;
+        boolean anyFailed = false;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        while (true) {
+            buf.reset();
+            boolean oversized = false;
+            boolean sawAny = false;
+            boolean terminated = false;
+            try {
+                int b;
+                while ((b = src.read()) != -1) {
+                    sawAny = true;
+                    if (b == 0) {
+                        terminated = true;
+                        break;
+                    }
+                    if (buf.size() < DslParser.MAX_SOURCE_BYTES) {
+                        buf.write(b);
+                    } else {
+                        oversized = true;
+                    }
+                }
+            } catch (IOException e) {
+                err.println("sirentide: --batch: failed to read stdin after " + record + " record(s): "
+                    + e.getMessage());
+                return 2;
+            }
+            if (!sawAny && !terminated) {
+                break; // EOF: the empty tail after the last NUL (or an empty stdin) is not a source
+            }
+            record++;
+            String body;
+            if (oversized) {
+                String reason = "source larger than the " + DslParser.MAX_SOURCE_BYTES + "-byte cap";
+                err.println("sirentide: record " + record + ": diagram did not render — " + reason);
+                body = "sirentide: error: " + reason;
+                anyFailed = true;
+            } else {
+                String dsl = buf.toString(StandardCharsets.UTF_8);
+                Set<String> untypeset = new LinkedHashSet<>();
+                RenderResult result = tryRenderWithDiagnostics(dsl,
+                    backend == null ? null : backend.recording(untypeset));
+                if (result == null || result.diagnostics().outcome() != Outcome.OK || result.svg() == null) {
+                    String reason = result == null ? "renderer failure" : result.diagnostics().message();
+                    err.println("sirentide: record " + record + ": diagram did not render — " + reason);
+                    body = "sirentide: error: " + reason;
+                    anyFailed = true;
+                } else {
+                    body = sourceHash ? withSourceHash(result.svg(), dsl) : result.svg();
+                    if (reportCaveats(result, untypeset, strict, err, "sirentide: record " + record + ": ")) {
+                        anyFailed = true;
+                    }
+                }
+            }
+            out.print(body);
+            out.print('\0');
+            out.flush();
+            if (out.checkError()) {
+                err.println("sirentide: error writing to stdout (record " + record + "; "
+                    + (record - 1) + " complete record(s) before it)");
+                return 2;
+            }
+        }
+        if (record == 0) {
+            err.println("sirentide: --batch got no sources on stdin");
+            return 2;
+        }
+        return anyFailed ? 1 : 0;
     }
 
     /// Environment variable naming the BrewShot jar, so an author sets it once per shell instead of
@@ -343,9 +582,13 @@ public final class Main {
     /// through the plain `render()` which cannot distinguish "baked a blank diagram" from "did not
     /// bake". See {@link #writeRawDslOrRefuse} for why.
     private static RenderResult renderRawDsl(InputStream in) throws IOException {
+        return tryRenderWithDiagnostics(readRawDsl(in), null);
+    }
+
+    /// The bounded stdin read both raw-DSL arms share (and `--source-hash` hashes the result of).
+    private static String readRawDsl(InputStream in) throws IOException {
         byte[] bytes = in.readNBytes(DslParser.MAX_SOURCE_BYTES + 1);
-        String dsl = new String(bytes, StandardCharsets.UTF_8);
-        return tryRenderWithDiagnostics(dsl);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /// Write a raw-DSL bake, or refuse it LOUDLY — the truthful render-check posture the
@@ -390,9 +633,11 @@ public final class Main {
     /// Renders via the diagnostics API, or returns null on an unexpected throw — the same
     /// defensive net as `SirentideDiagramConverter#tryRender` (Sirentide should not throw, but a
     /// render-check that crashes where the bake degrades would misreport the bake).
-    private static RenderResult tryRenderWithDiagnostics(String dsl) {
+    /// `math == null` is exactly the pre-`--math` call: {@link Sirentide#renderWithDiagnostics(String)}
+    /// delegates to this overload with a null renderer, so the default bake is the same code path.
+    private static RenderResult tryRenderWithDiagnostics(String dsl, MathFragmentRenderer math) {
         try {
-            return Sirentide.renderWithDiagnostics(dsl);
+            return Sirentide.renderWithDiagnostics(dsl, math);
         } catch (RuntimeException | StackOverflowError e) {
             return null;
         }
