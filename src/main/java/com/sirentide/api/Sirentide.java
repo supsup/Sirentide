@@ -529,18 +529,28 @@ public final class Sirentide {
     /// worker owns that file), so {@link Diagnostics#line()} is `-1` when unknown and an unknown type
     /// folds into {@link Outcome#PARSE_ERROR}. See the record javadocs for the follow-up slots.
     public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math) {
+        return renderWithDiagnostics(dsl, math, RenderOptions.DEFAULT);
+    }
+
+    /// {@link #renderWithDiagnostics(String, MathFragmentRenderer)} with opt-in {@link RenderOptions}.
+    /// With {@link RenderOptions#DEFAULT} it IS that method (same SVG, same diagnostics). With
+    /// `lintOverlap`, a successful bake additionally runs {@link com.sirentide.layout.OverlapLint} and
+    /// appends any finding to the OK caveat; the SVG bytes are unchanged either way.
+    public static RenderResult renderWithDiagnostics(String dsl, com.sirentide.api.MathFragmentRenderer math,
+                                                     RenderOptions options) {
         // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
         // disarm — a leaked sink must never survive into an unrelated render on this thread.
         com.sirentide.font.EmittedText.arm();
         try {
-            return renderWithDiagnosticsArmed(dsl, math);
+            return renderWithDiagnosticsArmed(dsl, math, options == null ? RenderOptions.DEFAULT : options);
         } finally {
             com.sirentide.font.EmittedText.disarm();
         }
     }
 
     private static RenderResult renderWithDiagnosticsArmed(String dsl,
-                                                           com.sirentide.api.MathFragmentRenderer math) {
+                                                           com.sirentide.api.MathFragmentRenderer math,
+                                                           RenderOptions options) {
         String stage = STAGE_PARSE;
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
@@ -614,7 +624,11 @@ public final class Sirentide {
             if (dropped != null) {
                 ok = dropped;
             }
-            return new RenderResult(svg, withFontCoverageCaveat(ok));
+            ok = withFontCoverageCaveat(ok);
+            if (options.lintOverlap()) {
+                ok = withOverlapLint(ok, laid);
+            }
+            return new RenderResult(svg, ok);
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror render's last-resort guard (returns INERT_SHELL) and additionally classify from
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
@@ -677,6 +691,31 @@ public final class Sirentide {
         String coverageDetail = "out-of-coverage code points: " + points;
         return new Diagnostics(Outcome.OK, ok.stage(), ok.message() + caveat, ok.line(),
             ok.detail().isEmpty() ? coverageDetail : ok.detail() + "; " + coverageDetail);
+    }
+
+    /// How many overlapping pairs an overlap-lint caveat names before summarising the rest.
+    private static final int MAX_OVERLAPS_REPORTED = 10;
+
+    /// The opt-in overlap lint's carrier (reached ONLY when {@link RenderOptions#lintOverlap()} is
+    /// set): appends the findings to an OK diagnostics the same way the other OK caveats compose, so it
+    /// never shadows one. No findings returns `ok` unchanged.
+    private static Diagnostics withOverlapLint(Diagnostics ok, LaidOut laid) {
+        java.util.List<com.sirentide.layout.OverlapLint.Finding> found =
+            com.sirentide.layout.OverlapLint.findings(laid);
+        if (found.isEmpty()) {
+            return ok;
+        }
+        java.util.List<String> named = new java.util.ArrayList<>();
+        for (int i = 0; i < Math.min(found.size(), MAX_OVERLAPS_REPORTED); i++) {
+            named.add(found.get(i).describe());
+        }
+        int more = found.size() - named.size();
+        String lintDetail = "text overlap: " + String.join("; ", named)
+            + (more > 0 ? "; and " + more + " more" : "");
+        String note = " Lint: " + found.size() + " pair" + (found.size() == 1 ? "" : "s")
+            + " of text runs in different elements overlap.";
+        return new Diagnostics(ok.outcome(), ok.stage(), ok.message() + note, ok.line(),
+            ok.detail().isEmpty() ? lintDetail : ok.detail() + "; " + lintDetail);
     }
 
     /// Maps a throwable caught by the bake guard — plus the pipeline stage it escaped — to a
