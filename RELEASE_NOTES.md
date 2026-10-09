@@ -103,9 +103,26 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
   below it.
 
 - **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
-  now says so: the baked SVG carries no renderer or revision attribute, and the jar's exact source
-  revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`. A hash of the
-  diagram source would identify the source, never the renderer.
+  now says so: the baked SVG carries no renderer, revision or source attribute, and the jar's exact
+  source revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`.
+  `--source-hash` (below) identifies the source, on stderr; it never identifies the renderer.
+
+- **`render --source-hash` prints the SHA-256 of the source to stderr.** One line,
+  `sirentide: source sha256:<64 lowercase hex>`, or under `--batch` one
+  `sirentide: record N: source sha256:<hex>` line per record (N 1-based, blank records included),
+  printed before that source's other diagnostics. **Nothing is added to the SVG** (ruling
+  `PROJECT/sirentide` 1129): with or without the flag, stdout, the `-o` file and the exit code are
+  byte-identical, and `--strict` means what it meant. The hash is of the **raw bytes as received**,
+  never a decoded copy: every byte of stdin for `render -` (`sha256sum < diagram.dsl` recomputes
+  it), each record's bytes between NULs for `--batch`, and for `render f.md` the fence body as the
+  file holds it (body lines with any trailing CR, joined by LF, without the LF that ends the last
+  line). So CRLF, a BOM and invalid UTF-8 are part of the identity, and a CRLF copy of a diagram
+  hashes differently from its LF copy; a hash of the decoded text would have changed silently
+  wherever the input is not valid UTF-8. The line prints for a source that does not render too,
+  because it identifies the input, and is absent only when there is no source (usage error, no
+  fence, unreadable file). An over-cap stdin, of which only a prefix is read, says `unavailable`
+  rather than hashing the prefix; an over-cap `--batch` record is read to its NUL anyway, so it
+  is hashed in full.
 
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be

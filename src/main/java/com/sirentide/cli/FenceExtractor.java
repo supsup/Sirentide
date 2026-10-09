@@ -1,6 +1,5 @@
 package com.sirentide.cli;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /// Pulls the first top-level ```` ```sirentide ```` fenced code block's body out of a markdown
@@ -51,6 +50,20 @@ final class FenceExtractor {
     /// in `markdown`, or `null` if the bake would capture none (no fence, nested-only fences, or
     /// an unclosed fence — see class doc).
     static String extractFirstSirentideFence(String markdown) {
+        int[] range = firstSirentideFenceLines(markdown);
+        if (range == null) {
+            return null;
+        }
+        String[] lines = markdown.split("\n", -1);
+        return String.join("\n", List.of(lines).subList(range[0], range[1]));
+    }
+
+    /// Where {@link #extractFirstSirentideFence} finds its body: `{first, endExclusive}` indices into
+    /// `markdown.split("\n", -1)`, or `null` exactly when that method returns `null`. The body is
+    /// lines `first .. endExclusive-1` joined with `\n`. Exposed so `--source-hash` can slice the SAME
+    /// lines out of the file's raw bytes (split on the 0x0A byte), rather than hashing a re-encoding
+    /// of the decoded body, which differs from the file wherever the file is not valid UTF-8.
+    static int[] firstSirentideFenceLines(String markdown) {
         if (markdown == null || markdown.isEmpty()) {
             return null;
         }
@@ -60,19 +73,19 @@ final class FenceExtractor {
         boolean inFence = false;
         String fenceMarker = null;
 
-        // The top-level ```sirentide fence being captured.
+        // The top-level ```sirentide fence being captured: its first body line's index, or -1.
         boolean capturing = false;
-        List<String> captureBody = new ArrayList<>();
+        int bodyStart = -1;
 
-        for (String line : lines) {
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
             String fence = fenceTokenIfFenceLine(line);
 
             if (capturing) {
                 // The sirentide fence opened with backticks, so any backtick fence line closes it.
                 if ("```".equals(fence)) {
-                    return String.join("\n", captureBody);
+                    return new int[] {bodyStart, i};
                 }
-                captureBody.add(line);
                 continue;
             }
 
@@ -89,6 +102,7 @@ final class FenceExtractor {
                 // every other fence opens a verbatim pass-over region.
                 if ("```".equals(fence) && SIRENTIDE_INFO.equals(backtickFenceInfo(line))) {
                     capturing = true;
+                    bodyStart = i + 1;
                 } else {
                     inFence = true;
                     fenceMarker = fence;
