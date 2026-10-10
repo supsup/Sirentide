@@ -22,13 +22,13 @@ The six flagship types, in detail:
 | Type | One-liner | Sample |
 |---|---|---|
 | **`pie`** | proportional wedges; optional `legend` (alias `key`), per-item `#hex` colours (3- or 6-digit), thin-slice outside labels clamped | `pie legend`<br>`"Reviews" : 40`<br>`"Docs" : 30 #22c55e` |
-| **`xychart`** | signed bars on a fractional-clean axis | `xychart`<br>`"Mon" : 5`<br>`"Tue" : -3` |
+| **`xychart`** | signed bars on a fractional-clean axis, or `line` / `scatter`; several series with a `legend`; a categorical x axis, or `numeric` for a real one; a dropped or shortened label is named as a caveat | `xychart`<br>`"Mon" : 5`<br>`"Tue" : -3` |
 | **`timeline`** | events placed *proportionally* in time; bare years and ISO dates both shown as dates, labels ellipsized/clamped | `timeline`<br>`"Founded" : 2000`<br>`"Launch" : 2020` |
 | **`gantt`** | tasks on a shared, min-normalized time axis; degenerate domains still draw markers | `gantt`<br>`"Design" : 0-3`<br>`"Build" : 3-8` |
 | **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
 | **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
 
-Plus seventeen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`heatmap`** (continuous 0..1 cells on a sequential ramp, with a legend), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), **`rootsystem`** (deterministic finite-root-system Coxeter-plane projections), and **`knot`** (classical knots — trefoil/unknot/figure-eight). `graph` is accepted as a synonym for `flowchart`, and `xychart-beta` for `xychart`. The flowchart carries **eight** of mermaid's node shapes — rect, rounded, stadium, subroutine, cylinder, circle, diamond, hexagon — plus edge styles and nested subgraphs. Among the forms **not** supported are the parallelogram, trapezoid, asymmetric and double-circle — named rather than counted, because an exclusion list that reads as exhaustive is the same overclaim one level down. The sequence diagram carries `alt`/`loop`/`par` frames; the activation-bar sigils (`->>+` / `-->>-`) are **consumed but not drawn**, so a diagram using them renders without the bars rather than with a wrong actor name.
+Plus seventeen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`heatmap`** (continuous 0..1 cells on a sequential ramp, with a legend; or categorical cells with `palette:`, plus a custom `ramp:` and `bins:`, `hide:` for headers and `!` to outline a cell), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), **`rootsystem`** (deterministic finite-root-system Coxeter-plane projections), and **`knot`** (classical knots — trefoil/unknot/figure-eight). `graph` is accepted as a synonym for `flowchart`, and `xychart-beta` for `xychart`. The flowchart carries **eight** of mermaid's node shapes — rect, rounded, stadium, subroutine, cylinder, circle, diamond, hexagon — plus edge styles and nested subgraphs. Among the forms **not** supported are the parallelogram, trapezoid, asymmetric and double-circle — named rather than counted, because an exclusion list that reads as exhaustive is the same overclaim one level down. The sequence diagram carries `alt`/`loop`/`par` frames and activation bars. Activation is implicit: a call `->>` activates its callee and a reply `-->>` ends it, with nested activations stacked side by side. The mermaid sigils (`->>+` / `-->>-`) are accepted and change nothing, so a diagram written with them renders the same bars rather than minting an actor named `+ B`.
 
 Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside any label typesets as real math via the LatteX bridge.
 
@@ -161,9 +161,19 @@ collision uses a bounded job-and-attempt filename and never overwrites the
 existing file.
 
 Set `SIRENTIDE_WATCH_POLL_MS` to an integer from `10` through `60000` to change
-the scan interval (default `500`). The watched input mount must be writable so
+the scan interval (default `500`). `SIRENTIDE_INPUT_DIR` and `SIRENTIDE_OUTPUT_DIR`
+move the watched folders away from `/sirentide/input` and `/sirentide/output`
+(a blank value keeps the default). The watched input mount must be writable so
 the worker can move jobs between state folders; the one-shot CLI input mount can
 remain read-only.
+
+## Command line
+
+Outside Docker, `./gradlew jar` builds `build/libs/sirentide-<version>.jar`, a runnable jar:
+`java -jar build/libs/sirentide-<version>.jar render page.md -o out.svg`. It renders raw DSL from
+stdin, the first fence of a Markdown page, or many sources in one JVM with `--batch`, and can
+typeset math (`--math`), screenshot to PNG (`--png`) and fail on any caveat (`--strict`). Every
+form, flag and exit code is in [QUICKSTART.md section 3](QUICKSTART.md#3-from-the-command-line).
 
 ## Docs
 
@@ -178,7 +188,8 @@ remain read-only.
 An immutable release carries three jars — executable, sources, and Javadoc — plus a `.sha256`
 sidecar for each. The executable jar's manifest binds `Implementation-Version` to the release
 number and `Sirentide-Source-Revision` to the exact lowercase 40-hex git commit used to build it.
-After downloading a release, verify the sidecars from the directory containing the artifacts:
+After downloading a release, verify the sidecars from the directory containing the artifacts
+(the example names 0.5.0; use the version you downloaded):
 
 ```sh
 shasum -a 256 -c sirentide-0.5.0.jar.sha256

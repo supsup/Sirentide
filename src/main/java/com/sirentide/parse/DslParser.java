@@ -2650,9 +2650,10 @@ public final class DslParser {
             String from = cap(head.substring(0, arrow.pos()).strip());
             String toRaw = head.substring(arrow.pos() + arrow.len()).strip();
             // Activation-bar sigil (mermaid `->>+ B` / `-->>- B`): a `+`/`-` immediately after the
-            // arrow is activation SYNTAX, not part of the actor name. Bars themselves are
-            // unsupported (dropped decoration, like an `opt` frame) — but the sigil must be
-            // consumed, or it silently mints a WRONG actor literally named `+ B` (the playground
+            // arrow is activation SYNTAX, not part of the actor name. Bars are drawn, but from
+            // IMPLICIT activation in SequenceLayout (a call activates its callee, a reply ends
+            // it), so the sigil changes nothing and is only consumed — otherwise it silently
+            // mints a WRONG actor literally named `+ B` (the playground
             // silent-mint finding). Actor names may not begin with `+`/`-` as a result — reserved.
             // A well-formed activation carries EXACTLY ONE sigil: after consuming it the target
             // must be a real actor name, so a STILL-sigil-prefixed or empty remainder (`->>++C`,
