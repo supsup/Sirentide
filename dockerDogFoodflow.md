@@ -33,6 +33,18 @@ renderer I think I'm using?**
 
 ## Act I — Build, and why the build argument is not optional
 
+First make sure the checkout IS the commit you mean to stamp. The build copies the working
+tree, while the stamp names `HEAD`, so a checkout that lags `origin/main` or carries
+uncommitted edits produces an image whose stamp and contents disagree:
+
+```sh
+git fetch origin && git merge --ff-only origin/main
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ -z "$(git status --porcelain)" ] \
+  && echo "ok: clean and at origin/main" || echo "STOP: HEAD is not a clean origin/main"
+```
+
+Build only after it prints `ok`.
+
 ```sh
 SHA=$(git rev-parse --short HEAD)          # every example below reuses this
 docker build --build-arg SIRENTIDE_SOURCE_REVISION="$(git rev-parse HEAD)" \
@@ -63,7 +75,7 @@ caller is the only one who knows. So the caller must say.
 |---|---|---|
 | `ARG SIRENTIDE_SOURCE_REVISION` | accepts the commit | the one thing you must pass |
 | `ENV SIRENTIDE_SOURCE_REVISION=…` | promotes it for Gradle | the build reads it from the environment |
-| `COPY . .` | copies the *filtered* context | `.dockerignore` already removed `.git`, `build`, `src/test`, `docs`, `examples`, `*.md` |
+| `COPY . .` | copies the *filtered* context | `.dockerignore` already removed `.git`, `build`, `src/test`, `docs`, `examples`, `libs`, `*.md`, `*.html`, `*.png`, `*.gif`, `*.zip` |
 | `./gradlew --no-daemon clean jar` | builds from source | **`clean` is load-bearing** — see below |
 | `find build/libs … -print -quit` | picks the jar by pattern | excludes `-sources` and `-javadoc` |
 
@@ -154,6 +166,8 @@ Three names, three meanings:
 Build the immutable tag, verify it, *then* move the alias:
 
 ```sh
+# keep a way back first: name what dogfood points at today (skip on the very first promotion)
+docker tag sirentide:dogfood "sirentide:dogfood-rollback-$(date +%Y%m%d)"
 docker tag "sirentide:main-$SHA" sirentide:dogfood
 ```
 
@@ -258,6 +272,20 @@ of a tag name, the tag has moved on without the container:
 sirentide-dogfood   8df13f4bb6cb        <- STALE: tag moved, container did not
 sirentide-dogfood   sirentide:dogfood   <- current
 ```
+
+**Rolling back.** If the new build misbehaves, point the alias back at the rollback tag from
+Act III and recreate the container the same way:
+
+```sh
+docker tag "sirentide:dogfood-rollback-YYYYMMDD" sirentide:dogfood
+# then the same docker rm -f / docker run as above
+```
+
+For a faster way back, keep the old container instead of removing it: `docker stop
+sirentide-dogfood && docker rename sirentide-dogfood sirentide-dogfood-old` before starting the
+new one (stop first, so two watchers never share the folders). To undo, remove the new container,
+rename the old one back and `docker start` it. Remove the old one once the new one has rendered a
+file.
 
 And the authoritative check asks the *running container*, not the image:
 
