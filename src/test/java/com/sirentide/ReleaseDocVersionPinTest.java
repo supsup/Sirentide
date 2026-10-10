@@ -1,5 +1,6 @@
 package com.sirentide;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -92,6 +93,21 @@ class ReleaseDocVersionPinTest {
         assertTrue(found >= MIN_RECIPE_REFS,
             "expected >= " + MIN_RECIPE_REFS + " immutable jar recipes in "
             + IMMUTABLE_RELEASE_DOC + "; found " + found);
+    }
+
+    /// The image's version label comes from the Dockerfile's ARG SIRENTIDE_VERSION default, which
+    /// appears once per stage that reads it. A bump of build.gradle.kts alone would make the docker
+    /// build refuse (its manifest check), so this catches the drift without needing Docker.
+    @Test
+    void dockerfileVersionLabelDefaultMatchesTheBuildVersion() throws IOException {
+        String buildVersion = buildGradleVersion();
+        Matcher m = Pattern.compile("(?m)^ARG SIRENTIDE_VERSION=(\\S+)\\s*$")
+            .matcher(Files.readString(Path.of("Dockerfile")));
+        List<String> defaults = new ArrayList<>();
+        while (m.find()) { defaults.add(m.group(1)); }
+        assertEquals(List.of(buildVersion, buildVersion), defaults,
+            "the Dockerfile must declare ARG SIRENTIDE_VERSION=" + buildVersion
+                + " in both the build and the runtime stage");
     }
 
     private static String buildGradleVersion() throws IOException {

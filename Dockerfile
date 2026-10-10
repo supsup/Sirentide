@@ -14,6 +14,9 @@ FROM eclipse-temurin:25-jdk AS build
 # posture for an artifact whose whole contract is naming the tree it was cut from.
 ARG SIRENTIDE_SOURCE_REVISION
 ENV SIRENTIDE_SOURCE_REVISION=${SIRENTIDE_SOURCE_REVISION}
+# The image's version label. The default is the build version (ReleaseDocVersionPinTest keeps
+# it equal to build.gradle.kts), and the build below refuses a value the jar does not carry.
+ARG SIRENTIDE_VERSION=0.6.0
 
 WORKDIR /src
 COPY . .
@@ -23,7 +26,13 @@ RUN ./gradlew --no-daemon clean jar \
     && jar_path="$(find build/libs -maxdepth 1 -type f -name 'sirentide-*.jar' \
         ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print -quit)" \
     && test -n "$jar_path" \
-    && cp "$jar_path" /out/sirentide.jar
+    && cp "$jar_path" /out/sirentide.jar \
+    && cd /tmp && jar --extract --file /out/sirentide.jar META-INF/MANIFEST.MF \
+    && jar_version="$(sed -n 's/^Implementation-Version: *//p' META-INF/MANIFEST.MF | tr -d '\r')" \
+    && if [ "$jar_version" != "$SIRENTIDE_VERSION" ]; then \
+         echo "SIRENTIDE_VERSION '$SIRENTIDE_VERSION' does not match the jar's Implementation-Version '$jar_version'" >&2; \
+         exit 1; \
+       fi
 
 RUN mkdir -p /worker-classes \
     && javac -cp /out/sirentide.jar -d /worker-classes \
@@ -33,6 +42,13 @@ RUN mkdir -p /worker-classes \
         -C /worker-classes .
 
 FROM eclipse-temurin:25-jre-alpine
+
+# Provenance readable with docker inspect, without unzipping the jar. Both values were already
+# checked in the build stage: the revision by the jar's stamp, the version against its manifest.
+ARG SIRENTIDE_SOURCE_REVISION
+ARG SIRENTIDE_VERSION=0.6.0
+LABEL org.opencontainers.image.revision="${SIRENTIDE_SOURCE_REVISION}" \
+      org.opencontainers.image.version="${SIRENTIDE_VERSION}"
 
 RUN addgroup -S -g 10001 sirentide \
     && adduser -S -D -H -u 10001 -G sirentide sirentide \

@@ -56,6 +56,15 @@ docker run --rm --entrypoint sh sirentide -c \
   | grep -E 'Implementation-Version|Sirentide-Source-Revision'
 ```
 
+The same two facts are also image labels, so `docker inspect` answers without running the
+image. The build checks both before labelling: the revision is the one the jar stamps, and
+`SIRENTIDE_VERSION` (default: the build version) must equal the jar's `Implementation-Version`
+or the build refuses.
+
+```sh
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }} {{ index .Config.Labels "org.opencontainers.image.version" }}' sirentide
+```
+
 The image keeps its application artifacts under the immutable
 `/opt/sirentide` tree and runs as the non-root `10001:10001` user by default.
 The existing one-shot CLI remains the default entry point, so the original

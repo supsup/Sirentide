@@ -13,6 +13,12 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+- **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
+  `docker inspect` shows which commit and release an image was built from without unzipping the
+  jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from
+  `SIRENTIDE_VERSION`, defaulting to the build version, and the build now refuses a value that
+  differs from the jar manifest's `Implementation-Version`.
+
 - **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
   `graph` is mermaid's original flowchart keyword and still the most-copied one in the wild;
   `xychart-beta` is mermaid's actual spelling for the chart Sirentide already drew as
