@@ -467,6 +467,19 @@ scale: "diverged" --> "reproduced"
 
 ![Heatmap (continuous 0..1 cells on a sequential ramp + legend)](heatmap.png)
 
+## Heatmap (categorical palette, one outlined cell)
+
+```
+heatmap
+cols: round 1, round 2, round 3
+palette: approved #59a14f, needs-fix #e15759, pending #bab0ac
+"docs currency" : needs-fix, approved!, approved
+"image labels" : approved, pending, -
+"profile reaper" : pending, pending, -
+```
+
+![Heatmap (categorical palette, one outlined cell)](heatmap-categorical.png)
+
 ## Sankey (weighted flows in depth columns)
 
 ```
