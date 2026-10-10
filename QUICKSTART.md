@@ -133,13 +133,23 @@ echo 'pie
   "B" : 40' | sirentide
 ```
 
-Reads a DSL from stdin, writes the SVG to stdout. *(Planned: `--batch` for many diagrams per
-invocation, one JVM.)*
+Reads a DSL from stdin, writes the SVG to stdout.
 
-> **Note on math in labels from the CLI.** Math-in-labels needs a `MathFragmentRenderer` injected
-> at the API (`Sirentide.render(dsl, mathRenderer)`). The CLI path injects none, so a `$…$` label
-> bakes as its **raw LaTeX source text** rather than typeset glyphs — the documented per-fragment
-> fail-soft, not an error. To bake real math, call the two-arg API with a renderer.
+**Many diagrams in one JVM.** `sirentide render --batch` reads NUL-separated sources from stdin and
+writes one NUL-terminated SVG record per source, in order, so record N always answers source N:
+```bash
+printf 'pie\n  "A" : 60\n  "B" : 40\0xychart\n"x" : 1\n"y" : 2\0' | sirentide render --batch
+```
+
+> **Note on math in labels from the CLI.** By default the CLI bakes a `$…$` label as its **raw
+> LaTeX source text**. That is the documented per-fragment fail-soft, not an error. To typeset it,
+> pass `--math` with the LatteX jar (located at run time, never bundled):
+> ```bash
+> sirentide render notes/some-page.md --math --lattex libs/lattex-0.6.0.jar
+> ```
+> (or set `SIRENTIDE_LATTEX_JAR`). `--math` without a usable jar is a usage error (exit 2), and
+> a `$…$` run LatteX cannot typeset is reported as a caveat, so `--strict` fails on it. From the
+> API, pass a `MathFragmentRenderer` to the two-arg `Sirentide.render(dsl, mathRenderer)`.
 
 **Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
 extracts the first ```` ```sirentide ```` fence **the Stafficy `/docs` bake would capture** from a
