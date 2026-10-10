@@ -163,10 +163,36 @@ The exit code tells you what `/docs` would do with the page:
 - **`0`** — the fence renders; the SVG you got is what the page will embed.
 - **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
   on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
-  is on stderr.
+  is on stderr. **Or** `--strict` was passed and the render carried a caveat (a dropped
+  statement, a dropped or shortened label, untypeset math, or a lint finding). In that case the
+  SVG **is** written: it is exactly what `/docs` would serve, and worth inspecting.
 - **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
-  the bake leaves those literal), unreadable input, or an unwritable `-o` destination. Nothing
-  is written.
+  the bake leaves those literal), unreadable input, an input over the 8 MB cap, or an
+  unwritable `-o` destination. Nothing is written.
+
+Without `--strict`, a caveat goes to stderr and the exit stays `0`, because the bake really
+happens and really serves that SVG.
+
+**Every form and flag.** `sirentide --help` prints the full text to stderr (it is treated as a
+usage error, so it exits `2`); in short:
+
+| Form | What it does |
+|---|---|
+| `sirentide` | raw DSL on stdin, SVG on stdout (the original shape) |
+| `sirentide render <file.md>` | render the first fence the `/docs` bake would capture |
+| `sirentide render -` | raw DSL on stdin, the verb spelling of the first form |
+| `sirentide render --batch` | many NUL-separated sources on stdin, one NUL-terminated record each |
+
+| Flag | What it does |
+|---|---|
+| `-o PATH` | write the SVG to `PATH` (atomic replace) instead of stdout; not with `--batch` |
+| `--png PATH` | also screenshot the SVG to a PNG, through BrewShot; not with `--batch` |
+| `--brewshot PATH` | the BrewShot jar `--png` uses (or `SIRENTIDE_BREWSHOT_JAR`); not bundled, so `--png` without it is a usage error |
+| `--strict` | any caveat fails the run with exit `1` (the SVG is still written) |
+| `--math` | typeset `$…$` label runs with LatteX (see the note above) |
+| `--lattex PATH` | the LatteX jar `--math` loads (or `SIRENTIDE_LATTEX_JAR`) |
+| `--lint-overlap` | also report text that overlaps text in another element, as a caveat |
+| `--source-hash` | also print the SHA-256 of the raw source bytes to stderr; output and exit unchanged |
 
 `-o` writes are **atomic — unconditionally**: the SVG is fully written to a temp sibling and then
 *atomically* moved onto the destination, so a failed run never truncates or corrupts an existing

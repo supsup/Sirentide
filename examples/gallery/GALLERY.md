@@ -455,6 +455,9 @@ cols: snapshot, bare
 
 ## Heatmap (continuous 0..1 cells on a sequential ramp + legend)
 
+The capture below is the continuous mode. The opt-in extensions (a categorical `palette:`, a custom
+`ramp:` with `bins:`, `hide:` for headers and a `!` cell outline) are not captured here yet.
+
 ```
 heatmap
 cols: bare, snapshot, card
