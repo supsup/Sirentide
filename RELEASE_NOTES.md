@@ -8,6 +8,12 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 
 ## **0.6.0** — IN PROGRESS
 
+- **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
+  `docker inspect` shows which commit and release an image was built from without unzipping the
+  jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from
+  `SIRENTIDE_VERSION`, defaulting to the build version, and the build now refuses a value that
+  differs from the jar manifest's `Implementation-Version`.
+
 - **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
   `graph` is mermaid's original flowchart keyword and still the most-copied one in the wild;
   `xychart-beta` is mermaid's actual spelling for the chart Sirentide already drew as
