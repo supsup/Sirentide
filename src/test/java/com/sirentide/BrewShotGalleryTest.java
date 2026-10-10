@@ -237,6 +237,13 @@ class BrewShotGalleryTest {
             "heatmap\ncols: bare, snapshot, card\nscale: \"diverged\" --> \"reproduced\"\n"
                 + "\"values-boundary\" : 0.60, 0.72, 0.95\n\"card-discriminators\" : 1.00, 1.00, 1.00\n"
                 + "\"decision-replay v2\" : 0.86, 0.90, 0.93\n\"technique naming\" : -, 40%, 100%"),
+        // The categorical mode (plan f4d69e44): cells name a palette category, `-` is NA, and a
+        // trailing `!` outlines a cell. Rendered --strict clean before it was added here.
+        new Case("heatmap-categorical", "Heatmap (categorical palette, one outlined cell)",
+            "heatmap\ncols: round 1, round 2, round 3\n"
+                + "palette: approved #59a14f, \"needs fix\" #e15759, pending #bab0ac\n"
+                + "\"docs currency\" : \"needs fix\", approved!, approved\n"
+                + "\"image labels\" : approved, pending, -\n\"profile reaper\" : pending, pending, -"),
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
                 + "Electricity,Industry,20\nSolar,Homes,10\nSolar,Industry,5"),
