@@ -241,8 +241,8 @@ class BrewShotGalleryTest {
         // trailing `!` outlines a cell. Rendered --strict clean before it was added here.
         new Case("heatmap-categorical", "Heatmap (categorical palette, one outlined cell)",
             "heatmap\ncols: round 1, round 2, round 3\n"
-                + "palette: approved #59a14f, \"needs fix\" #e15759, pending #bab0ac\n"
-                + "\"docs currency\" : \"needs fix\", approved!, approved\n"
+                + "palette: approved #59a14f, needs-fix #e15759, pending #bab0ac\n"
+                + "\"docs currency\" : needs-fix, approved!, approved\n"
                 + "\"image labels\" : approved, pending, -\n\"profile reaper\" : pending, pending, -"),
         new Case("sankey", "Sankey (weighted flows in depth columns)",
             "sankey\nCoal,Electricity,25\nGas,Electricity,15\nElectricity,Homes,20\n"
