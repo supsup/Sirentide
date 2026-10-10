@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.Sirentide;
 import com.sirentide.ir.Diagram;
 import com.sirentide.ir.Flowchart;
 import com.sirentide.parse.DslParser;
@@ -16,8 +17,14 @@ import org.junit.jupiter.api.Test;
  * THE README'S CAPABILITY CLAIMS, PINNED (crew RFC stafficy/16752 item 5, unanimous).
  *
  * <p>README.md advertised "the full mermaid node-shape set" while the flowchart carries only the
- * eight named below, and "plus activation bars" while the parser's own comment says "Bars
- * themselves are unsupported (dropped decoration)". Two false claims in one sentence, shipping.
+ * eight named below. That claim was false. The same RFC also ruled "plus activation bars" false,
+ * on the strength of the parser's comment "Bars themselves are unsupported (dropped decoration)" —
+ * and THAT ruling was the false one: SequenceLayout has drawn implicit activation bars since
+ * 04fa52b (2026-07-07), SequenceTest and the golden SVG pin them, and the comment described only
+ * the sigils. The README said "consumed but not drawn" from 0da0944 until the docs-currency pass
+ * of sirentide/1156, and this test asserted that sentence, so it pinned the error it was written
+ * to catch: it read the prose and never rendered a sequence. The activation test below now
+ * renders one.
  *
  * <p>This javadoc used to say "8 of mermaid's 14". That is the same defect one layer down —
  * followup F1 (sirentide/1009) removed exactly that denominator from DslParser's alias comment,
@@ -75,13 +82,26 @@ class ReadmeCapabilityClaimTest {
             "and it must state the real number rather than removing the claim silently");
     }
 
+    /// The activation-bar fill (SequenceLayout's ACT_FILL); only activation bars use it.
+    private static final String ACT_FILL = "fill=\"#c7d2fe\"";
+
     @Test
-    void readmeNoLongerClaimsActivationBars() throws IOException {
+    void activationBarsAreDrawnAndTheSigilsChangeNothingAsTheReadmeSays() throws IOException {
+        // Behaviour first, as this file's javadoc promises: a call opens a bar on the callee's
+        // lifeline, and the mermaid +/- sigils are consumed without changing a byte.
+        String plain = Sirentide.render("sequence\nA ->> B : call\nB -->> A : reply\n");
+        String sigil = Sirentide.render("sequence\nA ->>+ B : call\nB -->>- A : reply\n");
+        assertTrue(plain.contains(ACT_FILL),
+            "a call no longer draws an activation bar; the README says it does");
+        assertEquals(plain, sigil,
+            "the +/- sigils now change the output; the README says they change nothing");
+
         String readme = readme();
-        assertFalse(readme.contains("plus activation bars"),
-            "the parser's own comment says bars are unsupported dropped decoration");
-        assertTrue(readme.contains("consumed but not drawn"),
-            "and the honest replacement must say what actually happens to the sigils");
+        assertFalse(readme.contains("consumed but not drawn"),
+            "the README again says bars are not drawn, which the render above disproves");
+        assertTrue(readme.contains("Activation is implicit")
+                && readme.contains("are accepted and change nothing"),
+            "the README must say bars are drawn implicitly and the sigils change nothing");
     }
 
     @Test
