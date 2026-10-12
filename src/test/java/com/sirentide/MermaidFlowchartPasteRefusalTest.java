@@ -296,6 +296,43 @@ class MermaidFlowchartPasteRefusalTest {
     }
 
     @Test
+    void aLongerDottedArrowIsDroppedLikeEveryOtherOverLongArrow() {
+        // ONE FAMILY, ONE TREATMENT. `A ---> B` is a line-scoped drop with a caveat
+        // (OperatorResidueNoPhantomTest). `C -..-> D` begins with no operator the scanner matches,
+        // so the residue guard never saw it and the line minted one node named `C -..-> D`.
+        for (String arrow : new String[] {"-..->", "-...->", "-..-"}) {
+            String dsl = "flowchart TD\nA --> B\nC " + arrow + " D\n";
+            Flowchart fc = flowchart(dsl);
+            assertEquals(List.of("A", "B"), nodeIds(fc),
+                "the line is dropped whole. OLD BEHAVIOUR, NOT RESTORED: before this branch it "
+                    + "drew a node literally named `C " + arrow + " D` at outcome OK: " + dsl);
+            assertEquals(List.of("A->B"), edges(fc));
+
+            DslParser.FlowchartBodyCensus census = DslParser.flowchartBodyCensus(dsl);
+            assertEquals(1, census.droppedTotal(), "one dropped statement: " + dsl);
+            assertEquals(3, census.dropped().get(0).line());
+            assertTrue(census.dropped().get(0).reason().contains("edge operator longer than"),
+                "under the over-long operator reason: " + census.dropped().get(0).reason());
+
+            RenderResult r = Sirentide.renderWithDiagnostics(dsl);
+            assertEquals(Outcome.OK, r.diagnostics().outcome(),
+                "line-scoped, so the rest renders: " + r.diagnostics().message());
+            assertTrue(r.diagnostics().message().contains("1 statement was dropped"),
+                "and the drop is named: " + r.diagnostics().message());
+        }
+    }
+
+    @Test
+    void aSingleDottedOperatorIsStillAnEdge() {
+        // The over-triggering axis for the long-dotted shape: one dot is the supported operator.
+        String dsl = "flowchart TD\nA -.-> B\nB -.- C\nP -. Q\n";
+        Flowchart fc = flowchart(dsl);
+        assertEquals(List.of("A", "B", "C", "P -. Q"), nodeIds(fc));
+        assertEquals(List.of("A->B", "B->C"), edges(fc));
+        assertEquals(0, DslParser.flowchartBodyCensus(dsl).droppedTotal(), "nothing dropped: " + dsl);
+    }
+
+    @Test
     void theExistingUnsupportedTokensStillWinOnTheirOwnLines() {
         // The new arms must not disturb the detector's established tokens.
         DslParser.UnsupportedConstruct u =

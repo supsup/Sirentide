@@ -2414,6 +2414,13 @@ public final class DslParser {
                     arrows.add(op);
                     i += op.len();   // skip the WHOLE operator (never re-scan a `-.->` tail as `-->`)
                 } else {
+                    // An over-long DOTTED run is residue too, and the one spelling the check above
+                    // cannot see: every other over-long run begins with a form matchEdgeOp
+                    // matches (`--->` begins with `---`), but `-..->` begins with nothing it
+                    // matches, so no operator is recorded and nothing is left over to notice.
+                    if (residueOut != null && residueOut[0] < 0 && isLongDottedRun(line, i)) {
+                        residueOut[0] = i;
+                    }
                     if (inlineLabelOut != null && inlineLabelOut[0] == null) {
                         char next = i + 1 < n ? line.charAt(i + 1) : 0;
                         if (c == '(') {
@@ -2467,6 +2474,15 @@ public final class DslParser {
     /// whose operators are all fully consumed is untouched, so legal syntax cannot be caught by
     /// widening. A lone {@code -} inside an id ({@code A-B}) is not an operator at all and never
     /// reaches here.
+    ///
+    /// <p>ONE SPELLING IS NOT RESIDUE BY THIS TEST AND IS REPORTED BESIDE IT. The longer dotted
+    /// arrow ({@code -..->}, {@code -...->}, {@code -..-}) begins with no form
+    /// {@link #matchEdgeOp} matches, so there is no match to have a remainder and
+    /// {@code A -..-> B} minted one node wearing the whole line. {@link #scanTopLevel} reports
+    /// that run through the same out-parameter ({@link #isLongDottedRun}), so the over-long
+    /// family has one treatment. That half IS a shape match, which is what the paragraph above
+    /// argues against: it is kept to the one shape (a dash, two or more dots, a dash) that the
+    /// residue test is structurally unable to reach.
     private static boolean hasOperatorResidue(String line, int i, int len) {
         int after = i + len;
         if (after >= line.length()) {
