@@ -108,15 +108,26 @@ class CompositeStateGuardTest {
     }
 
     @Test
-    void aBareStateKeywordDeclarationIsStillSupported() {
-        // `state Foo` WITHOUT a brace is legal Mermaid for declaring a state. Only the
-        // composite BLOCK is unsupported, so keying on the `state` keyword alone would
-        // wrongly kill this. This is the discriminator between "the keyword" and "the block".
+    void aBareStateKeywordDeclarationIsNotReportedAsAComposite() {
+        // `state Foo` WITHOUT a brace is a declaration, not a composite BLOCK, so the composite
+        // check must not claim it. This is still the discriminator between "the keyword" and
+        // "the block".
+        //
+        // WHAT CHANGED (audit 2026-10-12 finding 3). This test was named
+        // `aBareStateKeywordDeclarationIsStillSupported` and asserted a StateDiagram plus a null
+        // detector result. Both held, and the form was not supported: the parse took the whole
+        // line as a state id, so the diagram carried a box literally named `state Foo` beside the
+        // real `Foo`. Asserting the diagram TYPE could not see that. The keyword form is now
+        // refused in its own right (StateDiagramPasteRefusalTest pins that), so what is left to
+        // pin HERE is which refusal fires: the keyword one, never the composite one.
         String src = "stateDiagram-v2\n  state Foo\n  [*] --> Foo\n";
-        Diagram d = DslParser.parse(src);
-        assertInstanceOf(StateDiagram.class, d,
-            "`state Foo` with no brace is a declaration, not a composite block: " + describe(d));
-        assertNull(DslParser.detectUnsupportedConstruct(src));
+        DslParser.UnsupportedConstruct u = DslParser.detectUnsupportedConstruct(src);
+        assertNotNull(u, "`state Foo` is refused, as a keyword declaration");
+        assertEquals("state", u.token(),
+            "a brace-less declaration must be named as the KEYWORD, not as a composite opener: "
+                + u.token());
+        assertTrue(!u.message().contains("composite"),
+            "and must not carry the composite-block sentence: " + u.message());
     }
 
     @Test
@@ -132,14 +143,22 @@ class CompositeStateGuardTest {
         // without discriminating on it. Only a statement that would otherwise satisfy BOTH
         // conditions — keyword `state`, brace present in the raw text but ONLY inside the label —
         // can tell the two implementations apart.
+        //
+        // AFTER audit 2026-10-12 finding 3 the `state` keyword line is refused either way, so the
+        // peel can no longer be read off "refused or not". It is read off WHICH refusal fires: the
+        // raw-line mutant sees the label's brace and reports a composite opener, the real scanner
+        // peels it and reports the keyword.
         String src = "stateDiagram-v2\n  state Foo : phase {2}\n  [*] --> Foo\n";
         assertTrue(src.contains("state Foo : phase {2}"),
             "the fixture must combine the `state` keyword with a brace confined to the label, or "
                 + "it cannot discriminate the peel");
-        Diagram d = DslParser.parse(src);
-        assertInstanceOf(StateDiagram.class, d,
-            "a brace inside a LABEL must not read as a composite opener: " + describe(d));
-        assertNull(DslParser.detectUnsupportedConstruct(src));
+        DslParser.UnsupportedConstruct u = DslParser.detectUnsupportedConstruct(src);
+        assertNotNull(u, "the `state` keyword line is refused");
+        assertEquals("state", u.token(),
+            "a brace inside a LABEL must not read as a composite opener: " + u.token());
+        assertTrue(!u.message().contains("composite"),
+            "the composite-block sentence must not fire on a brace that is label text: "
+                + u.message());
     }
 
     @Test

@@ -1476,6 +1476,12 @@ public final class DslParser {
     /// are top-level, and the char BEFORE a top-level op is by construction outside any span,
     /// where `]`/`}`/`|` — not `<` — would appear for a delimited endpoint).
     private static boolean anyArrowPrecededByLt(String line, List<EdgeOp> arrows) {
+        return firstArrowPrecededByLt(line, arrows) != null;
+    }
+
+    /// The first operator {@link #anyArrowPrecededByLt} would trip on, or null. Split out so the
+    /// state-diagram scanner can NAME the operator it refuses ({@link #firstUnsupportedStateToken}).
+    private static EdgeOp firstArrowPrecededByLt(String line, List<EdgeOp> arrows) {
         for (EdgeOp op : arrows) {
             int j = op.pos() - 1;
             // Skip ANY parser-recognized whitespace (space, tab, …) — not just ASCII space, or a
@@ -1484,10 +1490,10 @@ public final class DslParser {
                 j--;
             }
             if (j >= 0 && line.charAt(j) == '<') {
-                return true;
+                return op;
             }
         }
-        return false;
+        return null;
     }
 
     /// A recognized-but-UNSUPPORTED Mermaid construct found at a STATEMENT-LEVEL syntax position in a
@@ -3217,7 +3223,24 @@ public final class DslParser {
     /// detection keys on the STATEMENT, after {@link #peelLabel} removes any `: label` tail, so a
     /// brace the author typed inside a transition label (`Idle --> Running : retry {3}`) is text and
     /// never trips this. It also requires the `state` KEYWORD to open the statement AND a brace to be
-    /// present, so a bare `state Foo` declaration — legal Mermaid, and supported here — is untouched.
+    /// present, so a bare `state Foo` declaration is not reported AS A COMPOSITE.
+    ///
+    /// FOUR MORE PASTED-MERMAID FORMS, REFUSED HERE TOO (audit 2026-10-12 finding 3; lead ruling
+    /// "refuse first, fail closed"). The state parse takes any arrowless text as a state id and
+    /// knows one operator, so each of these drew a phantom state at outcome OK:
+    ///   - `state Foo` (and `state "Long name" as Foo`): a box literally named `state Foo`, beside
+    ///     the real `Foo` its transitions mint. This comment and CompositeStateGuardTest used to
+    ///     call that form "supported"; the test asserted only the diagram TYPE, which a phantom
+    ///     state does not change. It is refused rather than consumed because consuming it is a
+    ///     feature (the `as` alias form rides the same keyword) and the ruling is refuse first.
+    ///   - `direction LR` (any of Mermaid's five direction tokens): a state named `direction LR`.
+    ///   - `A <--> B`: states `A <` and `B`.
+    ///   - `A ---> B` and every other over-long arrow: one state named `A ---> B`. Detected by the
+    ///     same operator residue the flowchart uses ({@link #hasOperatorResidue}), so the spellings
+    ///     are covered without being enumerated.
+    /// All four scan the peeled STATEMENT, like the composite check, so the same text inside a
+    /// `: label` is content. The two keyword forms also require the statement to be ARROWLESS by
+    /// the parse's own definition ({@link #topLevelArrows}).
     private static UnsupportedConstruct firstUnsupportedStateToken(String[] lines) {
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
@@ -3236,8 +3259,63 @@ public final class DslParser {
                         + "start transition into the nested state that you did not write. Flatten the "
                         + "nested states, or split them into a second diagram.");
             }
+            int residue = firstOperatorResidue(statement);
+            if (residue >= 0) {
+                String run = operatorRun(statement, residue);
+                return new UnsupportedConstruct(run, i,
+                    "the arrow `" + run + "` is longer than the state transition arrow `-->`: `"
+                        + cap(statement) + "`. Consuming only the part this parser knows would turn "
+                        + "the rest of the line into a state name, so the diagram degraded to the "
+                        + "inert shell instead. Write the transition with `-->`.");
+            }
+            EdgeOp both = firstArrowPrecededByLt(statement, topLevelEdges(statement));
+            if (both != null) {
+                String op = "<" + statement.substring(both.pos(), both.pos() + both.len());
+                return new UnsupportedConstruct(op, i,
+                    "bidirectional transitions are not supported: `" + cap(statement) + "` uses `"
+                        + op + "`. Sirentide's state transitions are one-way, and rendering this "
+                        + "line would draw a state whose name ends in `<`, so the diagram degraded "
+                        + "to the inert shell instead. Write the two directions as two `-->` "
+                        + "transitions.");
+            }
+            if (topLevelArrows(statement).isEmpty()) {
+                String[] kw = splitKeyword(statement);
+                if (kw[0].equals(KW_STATE) && !kw[1].isEmpty()) {
+                    return new UnsupportedConstruct(KW_STATE, i,
+                        "the `state` keyword is not supported: `" + cap(statement) + "`. Sirentide "
+                            + "declares a state by its bare name (`Foo`, or `Foo : display name`), "
+                            + "and rendering this line would draw a box literally named `"
+                            + cap(statement) + "`, so the diagram degraded to the inert shell "
+                            + "instead. Remove the `state` keyword.");
+                }
+                if (kw[0].equals(KW_DIRECTION) && STATE_DIRECTIONS.contains(kw[1])) {
+                    return new UnsupportedConstruct(KW_DIRECTION, i,
+                        "the `direction` statement is not supported in a state diagram: `"
+                            + cap(statement) + "`. Sirentide lays state diagrams out top-down only, "
+                            + "and rendering this line would draw a state literally named `"
+                            + cap(statement) + "`, so the diagram degraded to the inert shell "
+                            + "instead. Remove the line.");
+                }
+            }
         }
         return null;
+    }
+
+    /// Mermaid's `direction` statement keyword and the five tokens it takes. A state diagram here
+    /// is top-down only, so the statement is refused ({@link #firstUnsupportedStateToken}). Only
+    /// these exact tokens trip it: `direction` followed by anything else is not Mermaid's
+    /// statement and stays what it was, a multi-word state name.
+    private static final String KW_DIRECTION = "direction";
+    private static final Set<String> STATE_DIRECTIONS = Set.of("TB", "TD", "BT", "LR", "RL");
+
+    /// The whole operator run starting at `from`: every consecutive `-`, `=`, `.` or `>`. Used to
+    /// NAME an over-long arrow (`--->`) from the offset {@link #firstOperatorResidue} reports.
+    private static String operatorRun(String s, int from) {
+        int end = from;
+        while (end < s.length() && "-=.>".indexOf(s.charAt(end)) >= 0) {
+            end++;
+        }
+        return s.substring(from, end);
     }
 
     /// EMPTY label so layout draws a disc/bullseye with no text. Arrow splitting reuses
