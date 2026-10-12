@@ -163,8 +163,9 @@ The exit code tells you what `/docs` would do with the page:
 - **`0`** — the fence renders; the SVG you got is what the page will embed.
 - **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
   on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
-  is on stderr. **Or** `--strict` was passed and the render carried a caveat (a dropped
-  statement, a dropped or shortened label, untypeset math, or a lint finding). In that case the
+  is on stderr. **Or** `--strict` was passed and the render carried a caveat (for example a
+  dropped statement, a dropped or shortened label, a label code point outside the font's
+  coverage, untypeset math, or a lint finding). In that case the
   SVG **is** written: it is exactly what `/docs` would serve, and worth inspecting.
 - **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
   the bake leaves those literal), unreadable input, an input over the 8 MB cap, or an
