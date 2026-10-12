@@ -13,6 +13,17 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+- **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
+  43fd0785). The fragment guard checked that a renderer's markup used only the allowed elements and
+  attributes, but not that it was valid XML: it accepted a duplicate attribute, an undefined
+  `&entity;`, a control character, attributes with no space between them, and `<G>...</g>` (it
+  ignored case). The emitter copies the fragment verbatim, so one such fragment made the whole SVG
+  unparseable. The guard now also parses the fragment, inside the same wrapper the emitter puts
+  around it, with the JDK's built-in XML parser (no DOCTYPE, no external entities or DTDs, nothing
+  fetched), and matches element and attribute names case-sensitively. A refused fragment takes the
+  existing fallback: the label shows its raw `$...$` source. Fragments that were well-formed render
+  byte-identically, and Sirentide still has no third-party runtime dependency.
+
 - **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
   `docker inspect` shows which commit and release an image was built from without unzipping the
   jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from

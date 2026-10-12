@@ -1,9 +1,19 @@
 package com.sirentide.contract;
 
+import java.io.IOException;
+import java.io.StringReader;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.parsers.SAXParser;
+import javax.xml.parsers.SAXParserFactory;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
+import org.xml.sax.helpers.DefaultHandler;
 
 /// The defensive containment scan at the math-fragment seam (RFC sirentide/39). A
 /// {@link com.sirentide.api.MathFragment} is FOREIGN markup (produced by a math renderer, not the
@@ -15,7 +25,16 @@ import java.util.regex.Pattern;
 ///
 /// Allowlist by construction, not a denylist: a token is clean only if it MATCHES the permitted
 /// shape, so an unanticipated hostile construct fails closed. The scanner is a small hand-rolled
-/// tag tokenizer (zero-dep: no XML library).
+/// tag tokenizer.
+///
+/// The tokenizer proves the fragment stays inside the ALLOWLIST; it does not prove the fragment is
+/// well-formed XML (plan 43fd0785: it accepted a duplicate attribute, an undefined entity
+/// reference and a control character, and it folded case so `<G>...</g>` balanced). The emitter
+/// embeds the fragment verbatim, so one such fragment made the whole SVG document unparseable. A
+/// fragment that clears the tokenizer is therefore ALSO parsed, wrapped exactly as the emitter
+/// wraps it, by the JDK's own XML parser with DOCTYPE, external entities and external DTDs turned
+/// off (see {@link #wellFormedWhenEmbedded}). Still zero third-party dependencies: `java.xml` is
+/// part of the JDK. Both layers must pass; neither replaces the other.
 public final class FragmentGuard {
 
     private FragmentGuard() {}
@@ -66,6 +85,91 @@ public final class FragmentGuard {
     /// by the font size keeps the bound proportional so it never rejects a large-font-size fragment.
     public static final double MAX_METRIC_EM = 10_000;
 
+    /// The context {@link com.sirentide.emit.SvgEmitter} embeds a fragment in: the namespaced root
+    /// and the MathBox wrapper group. The well-formedness parse wraps the fragment in the same
+    /// shape so "the guard accepted it" means "it is well-formed where it is actually embedded".
+    private static final String EMBED_OPEN =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><g fill=\"#000000\" transform=\"translate(0 0)\">";
+    private static final String EMBED_CLOSE = "</g></svg>";
+
+    /// The hardened JDK parser factory, or `null` if it could not be configured (then every
+    /// fragment is refused: an unprovable fragment is not a clean one).
+    private static final SAXParserFactory XML_FACTORY = hardenedFactory();
+
+    private static SAXParserFactory hardenedFactory() {
+        try {
+            // newDefaultInstance: always the JDK's built-in parser, never one a consumer's
+            // classpath happens to register, so the verdict does not vary by deployment.
+            SAXParserFactory f = SAXParserFactory.newDefaultInstance();
+            f.setNamespaceAware(true);
+            f.setValidating(false);
+            f.setXIncludeAware(false);
+            f.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            // No DOCTYPE at all: with it goes every internal/external entity and DTD.
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            // Belt and braces behind the DOCTYPE ban: nothing external is ever fetched.
+            f.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            f.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            return f;
+        } catch (ParserConfigurationException | SAXException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /// Refuses everything a clean fragment never needs: any error, any entity resolution, any
+    /// processing instruction. Errors are thrown rather than printed, so a refused fragment never
+    /// writes to stderr.
+    private static final class Refusing extends DefaultHandler {
+        @Override
+        public InputSource resolveEntity(String publicId, String systemId) throws SAXException {
+            throw new SAXException("external entity refused");
+        }
+
+        @Override
+        public void processingInstruction(String target, String data) throws SAXException {
+            throw new SAXException("processing instruction refused");
+        }
+
+        @Override
+        public void error(SAXParseException e) throws SAXException {
+            throw e;
+        }
+
+        @Override
+        public void fatalError(SAXParseException e) throws SAXException {
+            throw e;
+        }
+    }
+
+    /// True iff `document` is a well-formed XML document under the hardened parser: no DOCTYPE, no
+    /// external entity or DTD, no processing instruction. Never throws; any failure is `false`.
+    /// Package-private so the hardening itself is testable without going through the tokenizer
+    /// (which would refuse a DOCTYPE first and hide a regression here).
+    static boolean parsesHardened(String document) {
+        SAXParserFactory factory = XML_FACTORY;
+        if (factory == null || document == null) {
+            return false;
+        }
+        try {
+            SAXParser parser;
+            synchronized (factory) {   // a JAXP factory is not specified to be thread-safe
+                parser = factory.newSAXParser();
+            }
+            parser.parse(new InputSource(new StringReader(document)), new Refusing());
+            return true;
+        } catch (ParserConfigurationException | SAXException | IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /// True iff `innerSvg`, embedded the way the emitter embeds it, is well-formed XML. This is
+    /// what refuses a duplicate attribute, an undefined entity reference, a control or otherwise
+    /// illegal character, attributes with no whitespace between them, and mismatched tag names.
+    static boolean wellFormedWhenEmbedded(String innerSvg) {
+        return innerSvg != null && parsesHardened(EMBED_OPEN + innerSvg + EMBED_CLOSE);
+    }
+
     /// True iff a fragment's box metrics are trustworthy (SIR-08): every value FINITE (not NaN/±Inf),
     /// width/height/depth NON-NEGATIVE, and each extent within a font-size-derived ceiling
     /// ({@link #MAX_METRIC_EM} × the font size). A violating metric is treated exactly like a
@@ -83,7 +187,9 @@ public final class FragmentGuard {
         return widthPx <= limit && heightPx <= limit && depthPx <= limit;
     }
 
-    /// True iff `innerSvg` is a contract-clean fragment (only g/path, allowed attrs, legal values).
+    /// True iff `innerSvg` is a contract-clean fragment (only g/path/rect, allowed attrs, legal
+    /// values) AND is well-formed XML where the emitter embeds it. Element and attribute names are
+    /// matched case-sensitively, as XML and SVG do: `<G>` is not `<g>`.
     /// A `null` or blank fragment is NOT clean (there is nothing to trust).
     public static boolean isClean(String innerSvg) {
         if (innerSvg == null || innerSvg.isBlank()) {
@@ -110,7 +216,10 @@ public final class FragmentGuard {
             cursor = m.end();
 
             boolean closing = !m.group(1).isEmpty();
-            String name = m.group(2).toLowerCase(java.util.Locale.ROOT);
+            // Case-sensitive on purpose (plan 43fd0785): folding case made `<G>...</g>` balance on
+            // the stack although an XML parser sees a mismatched pair, and let a non-SVG `<G>`
+            // through the element allowlist.
+            String name = m.group(2);
             String body = m.group(3);
             boolean selfClose = !m.group(4).isEmpty();
             if (!ELEMENTS.contains(name)) {
@@ -145,7 +254,11 @@ public final class FragmentGuard {
             return false;
         }
         // Every opened element must have been closed, and a trusted fragment carries ≥1 element.
-        return sawElement && stack.isEmpty();
+        if (!sawElement || !stack.isEmpty()) {
+            return false;
+        }
+        // The allowlist held; now prove the markup is well-formed XML in its embedding context.
+        return wellFormedWhenEmbedded(innerSvg);
     }
 
     private static boolean attrsClean(String element, String body) {
@@ -158,7 +271,7 @@ public final class FragmentGuard {
                 return false;
             }
             cursor = a.end();
-            String name = a.group(1).toLowerCase(java.util.Locale.ROOT);
+            String name = a.group(1);   // case-sensitive: `D` is not the `d` attribute
             String value = a.group(2);
             if (!allowed.contains(name)) {
                 return false;
