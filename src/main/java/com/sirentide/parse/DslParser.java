@@ -2818,7 +2818,13 @@ public final class DslParser {
             // A leading block / note / lifecycle keyword on an ARROWLESS line is a directive, not a
             // message (the no-arrow guard keeps a real message whose sender is spelled like a keyword
             // parsing as a message). Try the block keywords first, then note/create/destroy.
-            if (scanSeqArrow(line) == null) {
+            //
+            // ONE WIDENING, for `note` only (audit 2026-10-12 finding 4): a note's text follows a
+            // colon and is free text, so an arrow token INSIDE it is content, as it already is in
+            // a message label. Scanning the whole line read `note over A : retry -> escalate` as
+            // arrow-bearing, skipped this branch, found no arrow in the head `note over A`, and
+            // dropped the note in silence.
+            if (scanSeqArrow(line) == null || isNoteWithArrowOnlyInItsText(line)) {
                 if (handleBlockKeyword(line, messages, blocks, stack)) {
                     continue;
                 }
@@ -2942,7 +2948,19 @@ public final class DslParser {
 
     /// The reserved leading NOTE / LIFECYCLE keywords (M2 enrichment). A line whose first token is one
     /// of these AND which has no arrow token is a note/lifecycle directive (never an actor name).
+    /// For `note` the arrow that matters is one in the pre-colon HEAD: see
+    /// {@link #isNoteWithArrowOnlyInItsText}.
     private static final String KW_NOTE = "note";
+
+    /// True for a `note` line whose pre-colon HEAD carries no arrow token, so any arrow on the line
+    /// is inside the note's TEXT. The head is where the message parse looks for its arrow too
+    /// ({@link #peelLabel}), so `note ->> B : real`, whose arrow IS in the head, stays the message
+    /// SequenceNoteTest pins it as. Deliberately `note` only: `create X : a -> b` is not a form
+    /// with text after a colon, and widening the guard for it would register an actor named
+    /// `X : a -> b`.
+    private static boolean isNoteWithArrowOnlyInItsText(String line) {
+        return splitKeyword(line)[0].equals(KW_NOTE) && scanSeqArrow(peelLabel(line)[0]) == null;
+    }
     private static final String KW_CREATE = "create";
     private static final String KW_DESTROY = "destroy";
     /// An optional `participant` filler after `create`/`destroy` (mermaid `create participant X`).
