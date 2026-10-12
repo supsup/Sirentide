@@ -43,9 +43,14 @@ import org.junit.jupiter.api.Test;
  * mechanically, the exact class of visual bug (negative-x clipped labels, y=226
  * stacking) that the deep review (sirentide/14) could only find by eye.
  *
- * <p>THE SCREENSHOTS: a reference PNG per diagram type written under
- * {@code examples/gallery/}, linked from {@code examples/gallery/GALLERY.md}. References,
- * not byte-goldens — regenerate freely. Skips clean (never fails) when no local Chrome.
+ * <p>THE SCREENSHOTS: a PNG per gallery case. A DEFAULT run writes them, and the GALLERY.md
+ * it generates, under {@code build/generated-examples/gallery/} and never touches the tracked
+ * tree: the PNG bytes depend on the host's Chromium and the committed references are the Linux
+ * render (docs/gallery-linux-check.md). Only {@code -Dsirentide.regenerate=true} writes the
+ * tracked gallery, and it prints a banner naming the host and browser when it does. Where the
+ * bytes go is decided by {@link GeneratedExamples}, never here. The generated GALLERY.md is
+ * host-independent, so it IS byte-compared with the committed one on every default run.
+ * Skips clean (never fails) when no local Chrome.
  */
 class BrewShotGalleryTest {
 
@@ -340,8 +345,39 @@ class BrewShotGalleryTest {
         new Case("math-in-labels", "Math baked inside flowchart labels",
             "flowchart TD\nA[Energy $E=mc^2$] --> B[$\\frac{v^2}{r}$]", REAL));
 
-    private static Path galleryDir() {
-        return Path.of("examples", "gallery").toAbsolutePath();
+    /// The COMMITTED gallery, for reading references. Never a write target.
+    private static Path trackedGalleryDir() {
+        return GeneratedExamples.tracked("gallery");
+    }
+
+    /// GALLERY.md, generated from the registered cases alone. It needs no browser, so the page a
+    /// regeneration would write can be compared with the committed one on every host.
+    static String galleryMarkdown() {
+        StringBuilder md = new StringBuilder("# Sirentide gallery — real-browser renders\n\n"
+            + "Captured by [BrewShot](https://github.com/supsup/BrewShot) in the test suite. "
+            + "Each diagram is audited so no drawn element "
+            + "escapes its canvas (the visual class the byte-pinned SVG goldens can't see).\n\n");
+        for (Case c : GALLERY) {
+            md.append("## ").append(c.title()).append("\n\n```\n").append(c.dsl())
+                .append("\n```\n\n![").append(c.title()).append("](").append(c.name()).append(".png)\n\n");
+        }
+        return md.toString();
+    }
+
+    /// The page a root-system receipt is rendered from.
+    ///
+    /// DEFAULT: the TRACKED page, which is the point of these three cases (they prove the
+    /// committed examples really embed the A2/G2/E8 bakes) and which always exists, so a default
+    /// run depends on no earlier regeneration and on no test ordering.
+    ///
+    /// REGENERATING: the page ShowcaseGenTest generates, taken from its generator rather than
+    /// read back from disk. Under the one switch that class rewrites the tracked page in the same
+    /// run, and reading the file would capture the old page or the new one depending on which
+    /// class happened to run first.
+    private static String rootSystemPage(String file) throws Exception {
+        return GeneratedExamples.regenerating()
+            ? ShowcaseGenTest.generatedTypePage(file)
+            : Files.readString(GeneratedExamples.tracked(file));
     }
 
     /// The SHIPPED DSL of a registered case — never a second copy of it, so a pin below can never
@@ -472,8 +508,16 @@ class BrewShotGalleryTest {
             assertTrue(casesByName.put(c.name(), c) == null, "duplicate gallery case name: " + c.name());
         }
 
-        Path dir = galleryDir();
+        Path dir = trackedGalleryDir();
         String galleryPage = Files.readString(dir.resolve("GALLERY.md"));
+        if (!GeneratedExamples.regenerating()) {
+            // Host-independent, so it is compared on every default run, browser or not. Under the
+            // regeneration switch the committed page is being REWRITTEN by this same run, and a
+            // comparison would pass or fail on class ordering alone, so it is not made.
+            assertEquals(galleryMarkdown(), galleryPage,
+                "tracked examples/gallery/GALLERY.md drifted from the registered gallery cases; "
+                    + "regenerate on the reference host (docs/gallery-linux-check.md)");
+        }
         for (Map.Entry<Class<? extends Diagram>, String> coverage : TYPE_COVERAGE.entrySet()) {
             String caseName = coverage.getValue();
             Case representative = casesByName.get(caseName);
@@ -493,29 +537,29 @@ class BrewShotGalleryTest {
     @Test
     void everyDiagramStaysInsideItsCanvasAndWritesAReferenceScreenshot() throws Exception {
         assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
-        Path dir = galleryDir();
+        // Under build/ by default; the tracked gallery only under the regeneration switch.
+        Path dir = GeneratedExamples.galleryOutputDir();
         Files.createDirectories(dir);
-        StringBuilder md = new StringBuilder("# Sirentide gallery — real-browser renders\n\n"
-            + "Captured by [BrewShot](https://github.com/supsup/BrewShot) in the test suite. "
-            + "Each diagram is audited so no drawn element "
-            + "escapes its canvas (the visual class the byte-pinned SVG goldens can't see).\n\n");
 
         BrewShot shot = BrewShot.launch(520, 320);
         try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
+            if (GeneratedExamples.regenerating()) {
+                GeneratedExamples.announce("BrewShotGalleryTest",
+                    GALLERY.size() + " gallery PNG(s) and GALLERY.md",
+                    String.valueOf(shot.eval("(function () { return navigator.userAgent; })()")));
+            }
             for (Case c : GALLERY) {
                 String svg = c.renderer() == null
                     ? Sirentide.render(c.dsl())
                     : Sirentide.render(c.dsl(), c.renderer());
                 // Root-system receipts load TRACKED generated pages, not test-only wrappers, proving
                 // the committed examples really embed the A2/G2/E8 bakes. Every other long-standing
-                // gallery case keeps the minimal wrapper it has always used.
+                // gallery case keeps the minimal wrapper it has always used. See rootSystemPage for
+                // what is read under the regeneration switch.
                 String browserHtml = switch (c.name()) {
-                    case "rootsystem-a2" -> Files.readString(
-                        Path.of("examples", "rootsystem-a2.html").toAbsolutePath());
-                    case "rootsystem-g2" -> Files.readString(
-                        Path.of("examples", "rootsystem-g2.html").toAbsolutePath());
-                    case "rootsystem-e8" -> Files.readString(
-                        Path.of("examples", "rootsystem.html").toAbsolutePath());
+                    case "rootsystem-a2" -> rootSystemPage("rootsystem-a2.html");
+                    case "rootsystem-g2" -> rootSystemPage("rootsystem-g2.html");
+                    case "rootsystem-e8" -> rootSystemPage("rootsystem.html");
                     default -> "<!doctype html><html><body style=\"margin:20px;background:#fff\">"
                         + svg + "</body></html>";
                 };
@@ -533,11 +577,9 @@ class BrewShotGalleryTest {
                 // hand-rolled; brewshot #21/#22). clip.scale re-renders vectors, not upscales.
                 Path png = dir.resolve(c.name() + ".png");
                 Files.write(png, shot.screenshotElement("svg", 3.0, 16));
-                md.append("## ").append(c.title()).append("\n\n```\n").append(c.dsl())
-                    .append("\n```\n\n![").append(c.title()).append("](").append(c.name()).append(".png)\n\n");
             }
         }
-        Files.writeString(dir.resolve("GALLERY.md"), md.toString());
+        Files.writeString(dir.resolve("GALLERY.md"), galleryMarkdown());
     }
 
     @Test

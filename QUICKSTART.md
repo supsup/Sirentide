@@ -114,6 +114,12 @@ page. A malformed row is skipped and an unknown diagram type degrades to an empt
 bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for the diagram
 types, `timeline` and `gantt` included, with real-browser renders.)
 
+Working from a source checkout: `./gradlew test` never rewrites that gallery or the pages under
+`examples/`. What the tests generate goes to `build/generated-examples/`, so `git status` stays
+clean on any machine. The committed gallery images are the Linux render, and regenerating them is
+a deliberate step (`-Dsirentide.regenerate=true`) done on the reference host; see
+[docs/gallery-linux-check.md](docs/gallery-linux-check.md).
+
 ## 3. From the command line
 
 **Getting the CLI from a source checkout** — build the executable jar once, then (optionally)

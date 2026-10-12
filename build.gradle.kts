@@ -79,6 +79,12 @@ tasks.test {
     // Same for the showcase-page regen switch, so
     // `./gradlew test -Dsirentide.updateShowcase=true` reaches ShowcaseGenTest.
     systemProperty("sirentide.updateShowcase", System.getProperty("sirentide.updateShowcase", "false"))
+    // THE examples regeneration switch (sirentide room 1197). Without it the gallery and showcase
+    // tests write under build/generated-examples/ and leave the tracked examples tree alone; with
+    // `./gradlew test -Dsirentide.regenerate=true` they write the tracked tree. Read in exactly
+    // one place on the test side, GeneratedExamples, and GeneratedExamplesTest pins this line.
+    val regenerateExamples = System.getProperty("sirentide.regenerate", "false")
+    systemProperty("sirentide.regenerate", regenerateExamples)
     testLogging { events("skipped", "failed") }
 
     // CI-honesty guard: the BrewShot browser-eyes pins assume-skip when Chrome is
@@ -199,7 +205,92 @@ tasks.test {
         }
     }
 
+    // THE EXAMPLES WRITE AUDIT (sirentide room 1197). The property is "a default run leaves the
+    // tracked examples tree untouched", and it is asked here of the WRITES rather than of the
+    // writers, for the reason the golden audit above gives: any scan of test sources is a spelling
+    // predicate. This hashes every file under examples/ before the test JVM starts and again after
+    // it, and fails the task if anything changed without a regeneration switch. It does not care
+    // which class wrote, how it spelled the path, or whether it went through GeneratedExamples.
+    //
+    // WHAT IT DOES NOT CLAIM: it runs in doLast, which Gradle skips when a test fails, so a run
+    // that both fails a test and dirties the tree reports only the test failure. It also sees a
+    // change only as a difference between the two snapshots, so a write of identical bytes is
+    // invisible and harmless.
+    val examplesAuditDir = layout.projectDirectory.dir("examples").asFile
+    val examplesRegenAll = regenerateExamples.toBoolean()
+    val examplesRegenShowcase =
+        examplesRegenAll || System.getProperty("sirentide.updateShowcase", "false").toBoolean()
+    var examplesAuditBefore: Map<String, String> = emptyMap()
+
+    doFirst {
+        examplesAuditBefore = exampleTreeHashes(examplesAuditDir)
+        // DELIVERY TO THE OPERATOR. The per-class banners go to System.err, which lands only in
+        // the XML report because testLogging does not show standard streams. This line is the
+        // one the console shows. The browser version is known only inside the test JVM (each
+        // gallery class reports its user agent in its own banner), so this names what the build
+        // can know without launching anything: the host and the configured browser path.
+        if (examplesRegenShowcase) {
+            val examplesRegenScope = if (examplesRegenAll) {
+                "gallery PNGs, GALLERY.md and HTML pages"
+            } else {
+                "HTML pages only, under the older showcase flag"
+            }
+            logger.lifecycle(
+                "SIRENTIDE EXAMPLES REGEN: this run WRITES the tracked examples tree (" +
+                examplesRegenScope + "). host=" + System.getProperty("os.name") + " " +
+                System.getProperty("os.version") + " " + System.getProperty("os.arch") +
+                "; BREWSHOT_CHROME=" + (System.getenv("BREWSHOT_CHROME") ?: "(unset)") +
+                ". The committed gallery PNGs are the LINUX render (docs/gallery-linux-check.md)."
+            )
+        }
+    }
+
+    doLast {
+        val after = exampleTreeHashes(examplesAuditDir)
+        val changed = (examplesAuditBefore.keys + after.keys)
+            .filter { examplesAuditBefore[it] != after[it] }
+            .sorted()
+        val unauthorised = exampleAuditFindings(changed, examplesRegenAll, examplesRegenShowcase)
+        if (examplesRegenShowcase) {
+            logger.lifecycle(
+                "SIRENTIDE EXAMPLES REGEN: " + changed.size + " tracked example file(s) changed " +
+                "content in this run: " + changed + ". Review the diff before committing."
+            )
+        }
+        if (unauthorised.isNotEmpty()) {
+            throw GradleException(
+                "TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH: " + unauthorised.size +
+                " file(s) under examples/ changed during the test run: " + unauthorised +
+                ". A default run must leave the tracked tree untouched; generated artifacts " +
+                "belong under build/generated-examples/ (see GeneratedExamples). Restore them " +
+                "with: git restore examples. Regenerate deliberately with " +
+                "-Dsirentide.regenerate=true on the reference host."
+            )
+        }
+    }
+
 }
+
+/// SHA-256 of every file under the tracked examples tree, keyed by its path relative to that
+/// tree with forward slashes. Recursive, unlike goldenFileHashes, because the gallery is a
+/// subdirectory.
+fun exampleTreeHashes(dir: java.io.File): Map<String, String> {
+    if (!dir.isDirectory) return emptyMap()
+    return dir.walkTopDown().filter { it.isFile }.associate { f ->
+        val digest = MessageDigest.getInstance("SHA-256").digest(f.readBytes())
+        f.relativeTo(dir).invariantSeparatorsPath to HexFormat.of().formatHex(digest)
+    }
+}
+
+/// THE EXAMPLES AUDIT DECISION, as a pure function. Every changed path is a finding unless a
+/// switch covers it: the one regeneration switch covers the whole tree, and the older showcase
+/// flag covers the HTML pages only, never the host-dependent gallery.
+fun exampleAuditFindings(
+    changed: List<String>,
+    regenAll: Boolean,
+    regenShowcase: Boolean
+): List<String> =
+    changed.filter { path -> !(regenAll || (regenShowcase && !path.startsWith("gallery/"))) }
 
 /// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit on the test task
 /// to establish what CHANGED across the run, which is the half a spelling scan can never see.
@@ -357,13 +448,31 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         // 8. a deleted golden is a content change too, and nothing gated a deletion.
         check("deleted-golden", mapOf("a.svg" to h1), emptyMap(), emptyMap(), listOf("a.svg"))
 
+        // THE EXAMPLES AUDIT DECISION (sirentide room 1197), same fixture discipline: the decision
+        // lives in Kotlin where no JUnit test can reach it.
+        fun checkExamples(case: String, regenAll: Boolean, regenShowcase: Boolean,
+                          expected: List<String>) {
+            val actual = exampleAuditFindings(
+                listOf("gallery/pie.png", "showcase.html"), regenAll, regenShowcase)
+            if (actual != expected) {
+                failures += "examples/" + case + ": expected " + expected + " but got " + actual
+            }
+        }
+        // E1. no switch: every changed tracked example is a finding. THE DEFAULT PATH.
+        checkExamples("default-run", false, false, listOf("gallery/pie.png", "showcase.html"))
+        // E2. the regeneration switch covers the whole tree.
+        checkExamples("regenerate", true, true, emptyList())
+        // E3. the older showcase flag covers the pages and NOT the host-dependent gallery.
+        checkExamples("showcase-flag-only", false, true, listOf("gallery/pie.png"))
+
         if (failures.isNotEmpty()) {
             throw GradleException(
                 "GOLDEN AUDIT SELF-TEST FAILED, so the write audit itself is not trustworthy:\n  " +
                 failures.joinToString("\n  ")
             )
         }
-        logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader")
+        logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader; " +
+            "examples audit: 3 cases pass")
     }
 }
 
