@@ -31,7 +31,7 @@ The contract is **DERIVED FROM SHARED CONSTANTS**, not free-form strings duplica
 
 Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTML labels + CSS-class theming; both are avoidable. Sirentide deliberately does NOT use them:
 
-- **Text = paths.** Labels are rendered as filled `<path>` glyphs (measured at bake time via the owned font-metrics oracle). Determinism (byte-identical cached bakes), no view-time font dependency, no `<text>`-injection surface. `<title>`/`<desc>`/`aria-label` carry the accessible text.
+- **Text = paths.** Labels are rendered as filled `<path>` glyphs (measured at bake time via the owned font-metrics oracle). Determinism (byte-identical cached bakes), no view-time font dependency, no `<text>`-injection surface. `<title>`/`<desc>` (with `role="img"` on the root) carry the accessible text; `aria-label` is contract headroom, not emitted.
 - **No `<style>`.** All presentation is inline attributes; theming rides `currentColor` where possible (dark-mode-native, exactly like LatteX). The Stafficy sanitizer strips `<style>` anyway.
 - **No `<foreignObject>`, no `<script>`, no `on*`, no `<a>`/`href`, no external `url()`.**
 
