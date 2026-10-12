@@ -584,6 +584,49 @@ public final class DslParser {
     /// axis; grammar and row-problem list in {@link XyChart}'s class note). Without it nothing here
     /// changed.
     private static Diagram parseXyChart(String[] lines, String[] header, String textColor) {
+        return parseXyChart(lines, header, textColor, null);
+    }
+
+    /// Mermaid's own xychart statement keywords. Its body is `title "…"`, `x-axis […]`,
+    /// `y-axis "…" 0 --> 10`, `bar […]`, `line […]`; none of it is the `"label" : value` row grammar
+    /// this parser reads.
+    private static final Set<String> MERMAID_XY_KEYWORDS = Set.of("title", "x-axis", "y-axis", "bar", "line");
+
+    /// The leading Mermaid xychart keyword of a body line, or null. Asked ONLY about a line the row
+    /// grammar has already failed to read (see {@link #parseXyChart}'s two skip sites), so a row
+    /// that parses is never reclassified: `bar : 5` and `line speed : 3` are rows labelled `bar`
+    /// and `line speed`, exactly as before. A keyword standing alone is not a statement either.
+    private static String mermaidXyKeyword(String line) {
+        String[] kw = splitKeyword(line);
+        return MERMAID_XY_KEYWORDS.contains(kw[0]) && !kw[1].isEmpty() ? kw[0] : null;
+    }
+
+    /// The xychart refusal's {@link UnsupportedConstruct} for body line `i` (0-based, like every
+    /// scanner's) led by Mermaid keyword `keyword`.
+    private static UnsupportedConstruct mermaidXyStatement(String keyword, int i, String line) {
+        return new UnsupportedConstruct(keyword, i,
+            "This xychart uses Mermaid's `" + keyword + "` statement (`" + cap(line) + "`), which "
+                + "the Sirentide DSL does not support: a row here is `\"label\" : value`, one per "
+                + "line. Reading it as rows finds none, so rather than draw empty axes it degraded "
+                + "to the inert shell. Rewrite the data as rows (see the xychart reference).");
+    }
+
+    /// The xychart parse, with an OPTIONAL holder that receives the refusal (audit 2026-10-12
+    /// finding 6). `refusedOut` is null on a rendering parse; {@link #detectUnsupportedConstruct}
+    /// passes a one-slot array to learn WHICH statement was refused. The holder rides the REAL row
+    /// walk for the reason {@link BodySink} does: the refusal fires only at the two places a row
+    /// is skipped, and a second scanner re-deriving "which lines are skipped" would drift from
+    /// this loop the day a row rule moves.
+    ///
+    /// THE DEFECT. `xychart-beta` is Mermaid's spelling and the alias table admits it, so a
+    /// pasted Mermaid chart reached this loop. No Mermaid statement is a row, every line was
+    /// skipped in silence, and the result was an XyChart with no bars: bare axes at outcome OK.
+    /// Before the alias the same paste was a loud unknown-type error. A skipped line LED BY A
+    /// MERMAID KEYWORD now degrades the whole chart to Empty and is named. Any other skipped line
+    /// keeps its silent skip, and the `numeric` path is untouched (its census already names every
+    /// row it could not draw).
+    private static Diagram parseXyChart(String[] lines, String[] header, String textColor,
+                                        UnsupportedConstruct[] refusedOut) {
         String mode = parseXyMode(header);
         boolean legend = hasLegendModifier(header);
         if (hasNumericModifier(header)) {
@@ -603,6 +646,14 @@ public final class DslParser {
             }
             int colon = line.lastIndexOf(':');
             if (colon < 0) {
+                // SKIP SITE 1 of 2: no `:` at all. Mermaid's `x-axis [jan, feb]` lands here.
+                String mermaid = mermaidXyKeyword(line);
+                if (mermaid != null) {
+                    if (refusedOut != null) {
+                        refusedOut[0] = mermaidXyStatement(mermaid, i, line);
+                    }
+                    return new Empty();
+                }
                 continue;
             }
             String key = line.substring(0, colon).strip();
@@ -649,6 +700,15 @@ public final class DslParser {
                 vals.add(v);
             }
             if (vals.isEmpty()) {
+                // SKIP SITE 2 of 2: a `:` but no numeric value after the LAST one. Mermaid's
+                // `title "Sales: Q1"` lands here (its colon is inside the quoted title).
+                String mermaid = mermaidXyKeyword(line);
+                if (mermaid != null) {
+                    if (refusedOut != null) {
+                        refusedOut[0] = mermaidXyStatement(mermaid, i, line);
+                    }
+                    return new Empty();
+                }
                 continue;   // no numeric value → malformed row, skip (never fail the bake)
             }
             double[] arr = new double[vals.size()];
@@ -1541,6 +1601,12 @@ public final class DslParser {
             u = firstUnsupportedFlowToken(lines);
         } else if (type.equals("state") || type.equals("statediagram")) {
             u = firstUnsupportedStateToken(lines);
+        } else if (type.equals("xychart")) {
+            // Re-run the real row walk with a holder, as the censuses do, so the name comes from
+            // the parse that refused and cannot disagree with it.
+            UnsupportedConstruct[] refused = new UnsupportedConstruct[1];
+            parseXyChart(lines, lines[0].strip().split("\\s+"), null, refused);
+            u = refused[0];
         } else {
             return null;   // no other parse path has a construct detector yet
         }
