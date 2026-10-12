@@ -2332,6 +2332,16 @@ public final class DslParser {
         return line.startsWith(".->", i);
     }
 
+    /// True when the `--` at `i` is the tail of an HTML comment opener (`<!--`), which is not the
+    /// opening half of an inline edge label. `<!-- note -->` on a body line paired that `--` with
+    /// the comment's own closing `-->` and blanked the diagram under the name "inline edge
+    /// label". It is one unreadable line: the edge parse finds an operator with nothing after it
+    /// and drops the line whole, and the dropped-statement caveat names it
+    /// ({@link #REASON_ENDPOINT}), which is the treatment it had before the inline-label rule.
+    private static boolean isHtmlCommentOpen(String line, int i) {
+        return i >= 2 && line.charAt(i - 1) == '!' && line.charAt(i - 2) == '<';
+    }
+
     /// ONE span walk, three views: collect the operators, (when {@code residueOut} is non-null)
     /// report the first partially-consumed operator run into {@code residueOut[0]}, and (when
     /// {@code inlineLabelOut} is non-null) report the first Mermaid inline edge label into
@@ -2396,7 +2406,7 @@ public final class DslParser {
                         } else if (parenDepth == 0) {
                             if (dottedOpener && isDottedLabelCloser(line, i)) {
                                 inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` closer
-                            } else if (c == '-' && next == '-') {
+                            } else if (c == '-' && next == '-' && !isHtmlCommentOpen(line, i)) {
                                 solidOpener = true;     // `--` that is not `-->` / `---`
                             } else if (c == '-' && next == '.') {
                                 dottedOpener = true;    // `-.` that is not `-.-` / `-.->`

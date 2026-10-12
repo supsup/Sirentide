@@ -239,6 +239,41 @@ class MermaidFlowchartPasteRefusalTest {
     }
 
     @Test
+    void anInlineLabelBesideAnHtmlCommentIsStillRefused() {
+        // The still-refused half of the comment pair: the comment line is exempt, a real inline
+        // label on another line of the same diagram is not, and it is the one that is named.
+        assertRefusedNaming("flowchart TD\n<!-- note -->\nA -- yes --> B\n", "-- text -->",
+            "`-- text -->`", 3);
+    }
+
+    @Test
+    void anHtmlCommentLineIsADroppedLineNotABlankDiagram() {
+        // `<!--` ends in the two dashes the inline-label rule reads as an opener, and `-->` is a
+        // solid operator, so the first version of the rule named a comment as an inline edge label
+        // and blanked the diagram.
+        String dsl = "flowchart TD\nA --> B\n<!-- note -->\n";
+        Flowchart fc = flowchart(dsl);
+        assertEquals(List.of("A", "B"), nodeIds(fc),
+            "OLD BEHAVIOUR RESTORED: before this branch a `<!-- note -->` line was DROPPED whole "
+                + "(an operator with an empty endpoint) and the rest of the diagram rendered");
+        assertEquals(List.of("A->B"), edges(fc));
+        assertNull(DslParser.detectUnsupportedConstruct(dsl),
+            "one unreadable line is not an unsupported construct: " + dsl);
+
+        DslParser.FlowchartBodyCensus census = DslParser.flowchartBodyCensus(dsl);
+        assertEquals(1, census.droppedTotal(), "the comment line is the one dropped statement");
+        assertEquals(3, census.dropped().get(0).line(), "named on its own physical line");
+        assertTrue(census.dropped().get(0).reason().contains("endpoint"),
+            "dropped for its empty endpoint: " + census.dropped().get(0).reason());
+
+        RenderResult r = Sirentide.renderWithDiagnostics(dsl);
+        assertEquals(Outcome.OK, r.diagnostics().outcome(),
+            "the diagram renders; the drop is a caveat: " + r.diagnostics().message());
+        assertTrue(r.diagnostics().message().contains("1 statement was dropped"),
+            "and the caveat says a statement was dropped: " + r.diagnostics().message());
+    }
+
+    @Test
     void theExistingUnsupportedTokensStillWinOnTheirOwnLines() {
         // The new arms must not disturb the detector's established tokens.
         DslParser.UnsupportedConstruct u =
