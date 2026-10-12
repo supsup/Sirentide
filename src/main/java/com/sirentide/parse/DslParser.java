@@ -2356,14 +2356,15 @@ public final class DslParser {
         return out[0];
     }
 
-    /// True when `.->` starts at `i`: the closing half of Mermaid's dotted inline label
-    /// (`A -. yes .-> B`). The solid and thick forms close on an operator {@link #matchEdgeOp}
-    /// really matches; the dotted closer is matched by nothing, so it is spelled out here, and it
-    /// must be the ARROW. A bare `.-` is not enough: `P -. Q .- R` tripped the first version of
-    /// this rule on two punctuation pairs with no arrowhead anywhere on the line, and that line
-    /// goes back to what it was before, one node wearing its own text.
+    /// True when `.-` starts at `i`: the closing half of Mermaid's dotted inline label, with or
+    /// without an arrowhead (`A -. yes .-> B`, and the open link `A -. yes .- B`). Mermaid's flow
+    /// lexer closes dotted edge text on a dot run, a dash and an OPTIONAL head, so `P -. Q .- R`
+    /// is a labelled dotted link there and is refused here like its arrowed form; requiring the
+    /// arrow let it mint one node wearing the whole line at OK. The solid and thick forms close on
+    /// an operator {@link #matchEdgeOp} really matches; the dotted closer is matched by nothing,
+    /// so it is spelled out here.
     private static boolean isDottedLabelCloser(String line, int i) {
-        return line.startsWith(".->", i);
+        return line.startsWith(".-", i);
     }
 
     /// True when a LONGER DOTTED OPERATOR starts at `i`: a dash, two or more dots, a dash
@@ -2463,7 +2464,7 @@ public final class DslParser {
                             parenDepth = Math.max(0, parenDepth - 1);
                         } else if (parenDepth == 0) {
                             if (dottedOpener && isDottedLabelCloser(line, i)) {
-                                inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` closer
+                                inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.-` closer
                             } else if (c == '-' && next == '-' && !isHtmlCommentOpen(line, i)) {
                                 solidOpener = true;     // `--` that is not `-->` / `---`
                             } else if (c == '-' && next == '.' && !isLongDottedRun(line, i)) {

@@ -226,16 +226,11 @@ class MermaidFlowchartPasteRefusalTest {
     }
 
     @Test
-    void aDottedHalfAndALaterDotDashWithNoArrowIsNotAnInlineLabel() {
-        // The closer must be the operator `.->`, not the punctuation pair `.-`. The first version
-        // of the rule refused this whole diagram on a line with no arrowhead anywhere on it.
-        String dsl = "flowchart TD\nP -. Q .- R\nC --> D\n";
-        Flowchart fc = flowchart(dsl);
-        assertEquals(List.of("P -. Q .- R", "C", "D"), nodeIds(fc),
-            "OLD BEHAVIOUR RESTORED: before this branch `P -. Q .- R` was one lone node wearing "
-                + "its own text (no operator on the line), and it is that again, not a refusal");
-        assertEquals(List.of("C->D"), edges(fc));
-        assertNotRefused(dsl);
+    void aDottedLabelThatClosesWithoutAnArrowheadIsRefusedToo() {
+        // Mermaid's flow lexer closes dotted edge text on a dot run, a dash and an OPTIONAL head,
+        // so `P -. Q .- R` is an open dotted link labelled Q there. A round of this branch let it
+        // through as one lone node wearing the whole line at OK; it is refused like `.->`.
+        assertRefusedNaming("flowchart TD\nP -. Q .- R\nC --> D\n", "-. text .->", "`-. text .->`", 2);
     }
 
     @Test
