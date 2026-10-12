@@ -361,6 +361,11 @@ than "something was dropped".
   stack), and the mermaid sigils `->>+` / `-->>-` are accepted and change nothing. The README
   and a parser comment now say so; the entry above is left as written, as the record of what
   was claimed.
+- **Second correction to the `graph` / `xychart-beta` entry above:** the README does not say
+  "8 of 14". It names the eight flowchart node shapes Sirentide draws (rect, rounded, stadium,
+  subroutine, cylinder, circle, diamond, hexagon) and names four forms it does not, and it
+  claims no total: fourteen was a count of mermaid's shape set that this project cannot verify
+  and that moves when mermaid moves. The entry above is left as written.
 
 ## 2026-07-30 — Release **0.5.0**
 
