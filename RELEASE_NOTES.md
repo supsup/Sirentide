@@ -17,12 +17,14 @@ cannot be mistaken for the published 0.5.0 artifacts.
   the gallery tests used to overwrite the PNGs under `examples/gallery/` on every run, and
   those bytes depend on the host's Chromium, so a run on a Mac left tracked files modified.
   Generated gallery images, `GALLERY.md` and the HTML pages now go to
-  `build/generated-examples/` by default, and the test task fails if anything under `examples/`
+  `build/generated-examples/` by default, and the build fails if anything under `examples/`
   changed during a run that did not ask for it. The tracked tree is written only under
   `-Dsirentide.regenerate=true`, which prints a banner naming the host and browser because the
   committed gallery is the Linux render (`docs/gallery-linux-check.md`). `GALLERY.md` is now
-  compared with the committed page on every run instead of being silently rewritten. Test and
-  build tooling only: no rendered output changes.
+  compared with the committed page on every run instead of being silently rewritten. The check
+  on `examples/` is its own task, `examplesWriteAudit`, which runs after the test task whether
+  or not a test failed, so a run that both fails a test and writes under `examples/` reports
+  both. Test and build tooling only: no rendered output changes.
 - **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
   43fd0785). The fragment guard checked that a renderer's markup used only the allowed elements and
   attributes, but not that it was valid XML: it accepted a duplicate attribute, an undefined
