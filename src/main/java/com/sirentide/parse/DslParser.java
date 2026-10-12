@@ -1106,7 +1106,8 @@ public final class DslParser {
     private static Diagram parseFlowchart(String[] lines, String[] header, String textColor,
             String configDirection, BodySink sink) {
         // An unsupported Mermaid construct anywhere in the body (a top-level `&` fan-out, a `~~~`
-        // invisible link, a `<br/>` in a label, or a `style`/`click` directive) makes the whole bake
+        // invisible link, a `<br/>` in a label, a `style`/`click` directive, a `;` terminator, or
+        // an inline `-- text -->` edge label) makes the whole bake
         // untrustworthy: `A & B --> C` used to mint ONE literal node named `A & B`, a `<br/>` baked as
         // literal glyphs, a `style`/`click` directive silently vanished. Degrade the WHOLE diagram to
         // the inert shell rather than render a misleading partial — the theme: silent-WRONG becomes a
@@ -1706,12 +1707,35 @@ public final class DslParser {
     /// dropped a11y metadata degraded the whole healthy diagram to the inert shell. The
     /// `style`/`click` naming stays AHEAD of the skip: those two are named unsupported constructs in
     /// their own right, never silently-ignorable rows.
+    ///
+    /// TWO PASTED-MERMAID FORMS JOIN THE SAME CHANNEL (audit 2026-10-12 finding 1; lead ruling
+    /// "refuse first, fail closed"). Both parsed to a plausible graph with WRONG NODE NAMES at
+    /// outcome OK, which is the `A & B` defect again:
+    ///   - a `;` statement terminator or separator, on the header ({@code graph TD;}) or at top
+    ///     level of a node/edge statement ({@code A --> B;});
+    ///   - an inline edge label ({@code A -- yes --> B} and its thick and dotted spellings), see
+    ///     {@link #firstInlineEdgeLabel}.
+    /// They degrade the WHOLE diagram rather than drop the line: with `;` every statement is
+    /// affected at once, and a dropped `A -- yes --> B` would delete a labelled edge and still
+    /// report OK.
     private static UnsupportedConstruct firstUnsupportedFlowToken(String[] lines) {
+        // The HEADER first: `graph TD;` / `graph LR;` is how most pasted Mermaid opens. The header
+        // splits on whitespace, so the direction token arrives as `TD;` / `LR;`, matches neither
+        // direction, and the diagram silently rendered top-down whatever the author asked for. No
+        // Sirentide header modifier contains a `;`, so its presence on line 0 is the terminator.
+        if (lines[0].indexOf(';') >= 0) {
+            return new UnsupportedConstruct(TOKEN_SEMICOLON, 0, unsupportedMessage(TOKEN_SEMICOLON));
+        }
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();
             if (line.isEmpty()) {
                 continue;
             }
+            // Whether this line is a NODE/EDGE STATEMENT, the only place a `;` can mint a name. An
+            // arrowless line led by one of the parser's own directive keywords keeps the treatment
+            // it already has (a `;` inside a `classDef` property is a malformed value, dropped at
+            // the colour gate, and NodeEdgeStylingTest pins that the bake survives it).
+            boolean statement = true;
             if (topLevelEdges(line).isEmpty()) {
                 String[] kw = splitKeyword(line);
                 if ((kw[0].equals("style") || kw[0].equals("click")) && !kw[1].isEmpty()) {
@@ -1720,13 +1744,35 @@ public final class DslParser {
                 if (isReservedDirectiveLine(kw)) {
                     continue;
                 }
+                statement = !isFlowDirectiveKeyword(kw[0]);
             }
-            String sigil = firstUnsupportedSigil(line);
+            String sigil = firstUnsupportedSigil(line, statement);
             if (sigil != null) {
                 return new UnsupportedConstruct(sigil, i, unsupportedMessage(sigil));
             }
+            String inlineLabel = firstInlineEdgeLabel(line);
+            if (inlineLabel != null) {
+                return new UnsupportedConstruct(inlineLabel, i, unsupportedMessage(inlineLabel));
+            }
         }
         return null;
+    }
+
+    /// Mermaid's statement terminator / separator, as an {@link UnsupportedConstruct#token()}.
+    static final String TOKEN_SEMICOLON = ";";
+
+    /// Mermaid's inline edge-label forms, as {@link UnsupportedConstruct#token()} values: the text
+    /// sits BETWEEN two halves of the operator instead of in `|pipes|` after it.
+    static final String TOKEN_INLINE_LABEL_SOLID = "-- text -->";
+    static final String TOKEN_INLINE_LABEL_THICK = "== text ==>";
+    static final String TOKEN_INLINE_LABEL_DOTTED = "-. text .->";
+
+    /// True for the leading keyword of an arrowless flowchart line that {@link #parseFlowchart}
+    /// consumes as a DIRECTIVE (cluster open/close, colour class, edge style) and never as a node.
+    /// The same five keywords, in the same exact-match spelling, as that loop's own dispatch.
+    private static boolean isFlowDirectiveKeyword(String keyword) {
+        return keyword.equals(KW_SUBGRAPH) || keyword.equals(KW_END) || keyword.equals(KW_CLASSDEF)
+            || keyword.equals(KW_CLASS) || keyword.equals(KW_LINKSTYLE);
     }
 
     /// Walk a flowchart body line tracking `[]`/`{}`/`()` bracket spans and `||` pipe spans (the same
@@ -1738,8 +1784,9 @@ public final class DslParser {
     /// stay statement-level only: those sigils inside a span are legal label content and never trip.
     /// Non-nesting by design (a label holds an operator, not a nested span), mirroring
     /// {@link #topLevelEdges}. The caller has already skipped reserved (dropped, never-rendered)
-    /// directive rows — see {@link #firstUnsupportedFlowToken}.
-    private static String firstUnsupportedSigil(String line) {
+    /// directive rows — see {@link #firstUnsupportedFlowToken}. `statement` is true when the line
+    /// is a node/edge statement, which is the only kind of line whose top-level `;` is reported.
+    private static String firstUnsupportedSigil(String line, boolean statement) {
         char bracketClose = 0;   // 0 = outside a []/{}/() span, else the awaited ']' '}' or ')'
         boolean inPipe = false;
         int n = line.length();
@@ -1764,6 +1811,12 @@ public final class DslParser {
                 inPipe = true;
             } else if (c == '&') {
                 return "&";                        // a top-level `&` — edge fan-out
+            } else if (statement && c == ';') {
+                // A top-level `;` on a node/edge statement is Mermaid's terminator (`A --> B;`) or
+                // separator (`A --> B; B --> C`). parseEndpoint takes any bare text as an id, so it
+                // minted a node literally named `B;` beside the real `B` and broke the chain in
+                // two, at outcome OK. Inside a span it is label content and never reaches here.
+                return TOKEN_SEMICOLON;
             } else if (c == '~' && i + 2 < n && line.charAt(i + 1) == '~' && line.charAt(i + 2) == '~') {
                 return "~~~";                       // a top-level `~~~` — invisible link
             }
@@ -1816,6 +1869,16 @@ public final class DslParser {
             case "<br/>" -> "a `<br/>` line break inside a label";
             case "style" -> "a `style` directive";
             case "click" -> "a `click` directive";
+            case TOKEN_SEMICOLON -> "a `;` statement terminator or separator (as in `graph TD;` or "
+                + "`A --> B;`; write one statement per line with no `;`)";
+            case TOKEN_INLINE_LABEL_SOLID -> "a `-- text -->` inline edge label (as in "
+                + "`A -- yes --> B`; write `A -->|yes| B`, or bracket a node name that contains "
+                + "`--`)";
+            case TOKEN_INLINE_LABEL_THICK -> "a `== text ==>` inline edge label (as in "
+                + "`A == yes ==> B`; write `A ==>|yes| B`, or bracket a node name that contains "
+                + "`==`)";
+            case TOKEN_INLINE_LABEL_DOTTED -> "a `-. text .->` inline edge label (as in "
+                + "`A -. yes .-> B`; write `A -.->|yes| B`)";
             default -> "the `" + token + "` construct";
         };
         return "This flowchart uses " + what + ", which the Sirentide DSL does not support. Rather "
@@ -2148,7 +2211,7 @@ public final class DslParser {
     /// end-of-line simply yields no further ops (the endpoint validator then drops the malformed line).
     /// Non-nesting by design — a label may contain an operator but not a nested delimiter.
     private static List<EdgeOp> topLevelEdges(String line) {
-        return scanTopLevel(line, null);
+        return scanTopLevel(line, null, null);
     }
 
     /// The 0-based offset of the first edge-operator run this parser could only PARTIALLY consume,
@@ -2158,16 +2221,48 @@ public final class DslParser {
     /// slice and the substitution transform already follow.
     static int firstOperatorResidue(String line) {
         int[] out = {-1};
-        scanTopLevel(line, out);
+        scanTopLevel(line, out, null);
         return out[0];
     }
 
-    /// ONE span walk, two views: collect the operators, and (when {@code residueOut} is non-null)
-    /// report the first partially-consumed operator run into {@code residueOut[0]}.
-    private static List<EdgeOp> scanTopLevel(String line, int[] residueOut) {
+    /// The token naming the first Mermaid INLINE EDGE LABEL on a flowchart line, or null: one of
+    /// {@link #TOKEN_INLINE_LABEL_SOLID} (`A -- yes --> B`, `A -- yes --- B`),
+    /// {@link #TOKEN_INLINE_LABEL_THICK} (`A == yes ==> B`) or {@link #TOKEN_INLINE_LABEL_DOTTED}
+    /// (`A -. yes .-> B`).
+    ///
+    /// THE DEFECT. Sirentide labels an edge with `|pipes|` after the operator. Mermaid's other
+    /// spelling opens with a two-char half operator, which {@link #matchEdgeOp} deliberately does
+    /// not match (a bare `--` inside `A--B` is id text), so `A -- yes --> B` split only at the
+    /// closing `-->` and minted a node named `A -- yes` with an unlabelled edge to `B`, at outcome
+    /// OK. The dotted form has no operator this parser matches at all, so the whole line became
+    /// one node named `A -. yes .-> B`.
+    ///
+    /// THE DETECTOR IS THE PAIR, never the half. An unmatched top-level `--` alone stays id text
+    /// (`A--B` is a legal node, as it always was); what trips is that half FOLLOWED on the same
+    /// line by the operator that closes its form: a solid operator after `--`, a thick one after
+    /// `==`, a `.-` after `-.`. Halves inside a `[]`/`{}`/`||` span, or inside the parentheses of
+    /// a round shape, are label content and are not counted.
+    static String firstInlineEdgeLabel(String line) {
+        String[] out = {null};
+        scanTopLevel(line, null, out);
+        return out[0];
+    }
+
+    /// ONE span walk, three views: collect the operators, (when {@code residueOut} is non-null)
+    /// report the first partially-consumed operator run into {@code residueOut[0]}, and (when
+    /// {@code inlineLabelOut} is non-null) report the first Mermaid inline edge label into
+    /// {@code inlineLabelOut[0]}. See {@link #firstInlineEdgeLabel}.
+    private static List<EdgeOp> scanTopLevel(String line, int[] residueOut, String[] inlineLabelOut) {
         List<EdgeOp> arrows = new ArrayList<>();
         char bracketClose = 0;   // 0 = not in a bracket/brace span, else the awaited ']' or '}'
         boolean inPipe = false;
+        // Inline-label view only. An OPENER is a top-level half operator matchEdgeOp refused; the
+        // paren depth keeps a half inside a round shape's label (`A(x -- y) --> B`) out of it,
+        // because this walk does not otherwise treat `(` as a span.
+        boolean solidOpener = false;
+        boolean thickOpener = false;
+        boolean dottedOpener = false;
+        int parenDepth = 0;
         int n = line.length();
         int i = 0;
         while (i < n) {
@@ -2198,9 +2293,34 @@ public final class DslParser {
                             && hasOperatorResidue(line, i, op.len())) {
                         residueOut[0] = i;
                     }
+                    if (inlineLabelOut != null && inlineLabelOut[0] == null) {
+                        if (solidOpener && op.style() == EdgeStyle.SOLID) {
+                            inlineLabelOut[0] = TOKEN_INLINE_LABEL_SOLID;
+                        } else if (thickOpener && op.style() == EdgeStyle.THICK) {
+                            inlineLabelOut[0] = TOKEN_INLINE_LABEL_THICK;
+                        }
+                    }
                     arrows.add(op);
                     i += op.len();   // skip the WHOLE operator (never re-scan a `-.->` tail as `-->`)
                 } else {
+                    if (inlineLabelOut != null && inlineLabelOut[0] == null) {
+                        char next = i + 1 < n ? line.charAt(i + 1) : 0;
+                        if (c == '(') {
+                            parenDepth++;
+                        } else if (c == ')') {
+                            parenDepth = Math.max(0, parenDepth - 1);
+                        } else if (parenDepth == 0) {
+                            if (c == '.' && next == '-' && dottedOpener) {
+                                inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` / `.-` closer
+                            } else if (c == '-' && next == '-') {
+                                solidOpener = true;     // `--` that is not `-->` / `---`
+                            } else if (c == '-' && next == '.') {
+                                dottedOpener = true;    // `-.` that is not `-.-` / `-.->`
+                            } else if (c == '=' && next == '=') {
+                                thickOpener = true;     // `==` that is not `==>` / `===`
+                            }
+                        }
+                    }
                     i++;
                 }
             }
