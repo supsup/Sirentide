@@ -325,9 +325,11 @@ class MermaidFlowchartPasteRefusalTest {
     @Test
     void aSingleDottedOperatorIsStillAnEdge() {
         // The over-triggering axis for the long-dotted shape: one dot is the supported operator.
-        String dsl = "flowchart TD\nA -.-> B\nB -.- C\nP -. Q\n";
+        // And two dots with NO closing dash are not an operator run at all: `X -.. Y` is id text,
+        // as it was before this branch. A shape test that forgets the closing dash drops it.
+        String dsl = "flowchart TD\nA -.-> B\nB -.- C\nP -. Q\nX -.. Y\n";
         Flowchart fc = flowchart(dsl);
-        assertEquals(List.of("A", "B", "C", "P -. Q"), nodeIds(fc));
+        assertEquals(List.of("A", "B", "C", "P -. Q", "X -.. Y"), nodeIds(fc));
         assertEquals(List.of("A->B", "B->C"), edges(fc));
         assertEquals(0, DslParser.flowchartBodyCensus(dsl).droppedTotal(), "nothing dropped: " + dsl);
     }

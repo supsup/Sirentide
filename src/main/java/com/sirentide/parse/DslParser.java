@@ -2912,14 +2912,12 @@ public final class DslParser {
             // its `end` would close that enclosing block and frame the wrong messages. With no
             // block open the opener is one unreadable line and falls through to the drop below,
             // as it always did. See unsupportedSeqOpener.
-            if (!stack.isEmpty()) {
-                String opener = unsupportedSeqOpener(line);
-                if (opener != null) {
-                    if (refusedOut != null) {
-                        refusedOut[0] = nestedSeqOpenerRefusal(opener, i, line);
-                    }
-                    return new Empty();
+            String opener = stack.isEmpty() ? null : unsupportedSeqOpener(line);
+            if (opener != null) {
+                if (refusedOut != null) {
+                    refusedOut[0] = nestedSeqOpenerRefusal(opener, i, line);
                 }
+                return new Empty();
             }
             // A leading block / note / lifecycle keyword on an ARROWLESS line is a directive, not a
             // message (the no-arrow guard keeps a real message whose sender is spelled like a keyword
