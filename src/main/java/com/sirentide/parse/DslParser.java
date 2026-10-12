@@ -2314,12 +2314,22 @@ public final class DslParser {
     /// THE DETECTOR IS THE PAIR, never the half. An unmatched top-level `--` alone stays id text
     /// (`A--B` is a legal node, as it always was); what trips is that half FOLLOWED on the same
     /// line by the operator that closes its form: a solid operator after `--`, a thick one after
-    /// `==`, a `.-` after `-.`. Halves inside a `[]`/`{}`/`||` span, or inside the parentheses of
+    /// `==`, a `.->` after `-.`. Halves inside a `[]`/`{}`/`||` span, or inside the parentheses of
     /// a round shape, are label content and are not counted.
     static String firstInlineEdgeLabel(String line) {
         String[] out = {null};
         scanTopLevel(line, null, out);
         return out[0];
+    }
+
+    /// True when `.->` starts at `i`: the closing half of Mermaid's dotted inline label
+    /// (`A -. yes .-> B`). The solid and thick forms close on an operator {@link #matchEdgeOp}
+    /// really matches; the dotted closer is matched by nothing, so it is spelled out here, and it
+    /// must be the ARROW. A bare `.-` is not enough: `P -. Q .- R` tripped the first version of
+    /// this rule on two punctuation pairs with no arrowhead anywhere on the line, and that line
+    /// goes back to what it was before, one node wearing its own text.
+    private static boolean isDottedLabelCloser(String line, int i) {
+        return line.startsWith(".->", i);
     }
 
     /// ONE span walk, three views: collect the operators, (when {@code residueOut} is non-null)
@@ -2384,8 +2394,8 @@ public final class DslParser {
                         } else if (c == ')') {
                             parenDepth = Math.max(0, parenDepth - 1);
                         } else if (parenDepth == 0) {
-                            if (c == '.' && next == '-' && dottedOpener) {
-                                inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` / `.-` closer
+                            if (dottedOpener && isDottedLabelCloser(line, i)) {
+                                inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` closer
                             } else if (c == '-' && next == '-') {
                                 solidOpener = true;     // `--` that is not `-->` / `---`
                             } else if (c == '-' && next == '.') {

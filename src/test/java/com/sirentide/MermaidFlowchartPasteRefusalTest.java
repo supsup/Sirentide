@@ -212,6 +212,32 @@ class MermaidFlowchartPasteRefusalTest {
         assertNotRefused(dsl);
     }
 
+    // -- the narrowed rules (repair round after the adversarial review) ---------------------------
+    //
+    // Each pair below is one refusal that fired wider than its own stated reason. The first test
+    // of a pair pins the form that is STILL refused, the second the form that now goes back to
+    // what the parser did before this branch, and the second names that older behaviour in its
+    // message so a later reader can tell a deliberate return from an accident.
+
+    @Test
+    void theDottedInlineLabelIsStillRefusedWhenItClosesOnAnArrow() {
+        // The still-refused half of the dotted-closer pair: `.->` is the closing operator.
+        assertRefusedNaming("flowchart TD\nC --> D\nA -. yes .-> B\n", "-. text .->", "`-. text .->`", 3);
+    }
+
+    @Test
+    void aDottedHalfAndALaterDotDashWithNoArrowIsNotAnInlineLabel() {
+        // The closer must be the operator `.->`, not the punctuation pair `.-`. The first version
+        // of the rule refused this whole diagram on a line with no arrowhead anywhere on it.
+        String dsl = "flowchart TD\nP -. Q .- R\nC --> D\n";
+        Flowchart fc = flowchart(dsl);
+        assertEquals(List.of("P -. Q .- R", "C", "D"), nodeIds(fc),
+            "OLD BEHAVIOUR RESTORED: before this branch `P -. Q .- R` was one lone node wearing "
+                + "its own text (no operator on the line), and it is that again, not a refusal");
+        assertEquals(List.of("C->D"), edges(fc));
+        assertNotRefused(dsl);
+    }
+
     @Test
     void theExistingUnsupportedTokensStillWinOnTheirOwnLines() {
         // The new arms must not disturb the detector's established tokens.
