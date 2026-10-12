@@ -50,6 +50,24 @@ dependencies {
     testImplementation(files("libs/lattex-0.6.0.jar"))
 }
 
+// THE EXAMPLES WRITE AUDIT's shared values (sirentide room 1197, follow-on 1199). They sit at
+// script level because two tasks read them: the test task takes the before-snapshot, and the
+// examplesWriteAudit finalizer below compares. Everything here is a plain String, Boolean or File.
+val regenerateExamples = System.getProperty("sirentide.regenerate", "false")
+val examplesAuditDir = layout.projectDirectory.dir("examples").asFile
+val examplesRegenAll = regenerateExamples.toBoolean()
+val examplesRegenShowcase =
+    examplesRegenAll || System.getProperty("sirentide.updateShowcase", "false").toBoolean()
+// The before-snapshot travels from the test task to the finalizer as a FILE, not as a variable
+// both tasks close over. A shared variable works only while both actions see the same object; a
+// build that serialises task state per task (the configuration cache) would hand the finalizer its
+// own empty copy, which reads as "every tracked file is new". A file reads the same either way.
+val examplesAuditSnapshot = layout.buildDirectory.file("examples-audit/before.txt").get().asFile
+// Names this build invocation, so a snapshot left behind by an EARLIER build (its finalizer was
+// excluded with -x, or the build was killed) is recognised as stale and discarded instead of
+// being compared against a tree that has legitimately moved since.
+val examplesAuditRun = java.util.UUID.randomUUID().toString()
+
 tasks.test {
     useJUnitPlatform()
     // StagedReleaseNoteCountsTest reads RELEASE-NOTE-ENTRY.md, which is NOT a source file, so
@@ -83,7 +101,7 @@ tasks.test {
     // tests write under build/generated-examples/ and leave the tracked examples tree alone; with
     // `./gradlew test -Dsirentide.regenerate=true` they write the tracked tree. Read in exactly
     // one place on the test side, GeneratedExamples, and GeneratedExamplesTest pins this line.
-    val regenerateExamples = System.getProperty("sirentide.regenerate", "false")
+    // The value is read once, above the task, because the examples write audit needs it too.
     systemProperty("sirentide.regenerate", regenerateExamples)
     testLogging { events("skipped", "failed") }
 
@@ -209,21 +227,20 @@ tasks.test {
     // tracked examples tree untouched", and it is asked here of the WRITES rather than of the
     // writers, for the reason the golden audit above gives: any scan of test sources is a spelling
     // predicate. This hashes every file under examples/ before the test JVM starts and again after
-    // it, and fails the task if anything changed without a regeneration switch. It does not care
+    // it, and fails the build if anything changed without a regeneration switch. It does not care
     // which class wrote, how it spelled the path, or whether it went through GeneratedExamples.
     //
-    // WHAT IT DOES NOT CLAIM: it runs in doLast, which Gradle skips when a test fails, so a run
-    // that both fails a test and dirties the tree reports only the test failure. It also sees a
-    // change only as a difference between the two snapshots, so a write of identical bytes is
-    // invisible and harmless.
-    val examplesAuditDir = layout.projectDirectory.dir("examples").asFile
-    val examplesRegenAll = regenerateExamples.toBoolean()
-    val examplesRegenShowcase =
-        examplesRegenAll || System.getProperty("sirentide.updateShowcase", "false").toBoolean()
-    var examplesAuditBefore: Map<String, String> = emptyMap()
-
+    // TWO HALVES (follow-on, sirentide room 1199). The BEFORE half is here, in doFirst, because it
+    // has to be taken before the test JVM starts. The AFTER half and the comparison are the
+    // examplesWriteAudit task below, attached with finalizedBy. They used to be a doLast on this
+    // task, and Gradle skips doLast when a test fails, so a run that both failed a test and
+    // dirtied the tree reported only the test. A finalizer runs after a failed test task too.
+    //
+    // WHAT IT DOES NOT CLAIM: it sees a change only as a difference between the two snapshots, so
+    // a write of identical bytes is invisible, and harmless, since the tree is what it was.
     doFirst {
-        examplesAuditBefore = exampleTreeHashes(examplesAuditDir)
+        writeExampleSnapshot(examplesAuditSnapshot, examplesAuditRun,
+            exampleTreeHashes(examplesAuditDir))
         // DELIVERY TO THE OPERATOR. The per-class banners go to System.err, which lands only in
         // the XML report because testLogging does not show standard streams. This line is the
         // one the console shows. The browser version is known only inside the test JVM (each
@@ -244,32 +261,60 @@ tasks.test {
             )
         }
     }
+}
 
+/// THE AFTER HALF OF THE EXAMPLES WRITE AUDIT, as a finalizer of the test task so that it runs
+/// whether or not a test failed (sirentide room 1199).
+///
+/// It compares only against a snapshot THIS build's test task wrote. No such snapshot means the
+/// test task's actions did not run in this build (up to date, or this task was invoked on its
+/// own), so there is nothing to compare and it says nothing at the default log level. It never
+/// reports "no change" from a snapshot it did not find. The snapshot is deleted once read, so it
+/// cannot be compared twice.
+val examplesWriteAudit = tasks.register("examplesWriteAudit") {
+    group = "verification"
+    description = "Fails if the test run changed the tracked examples tree without a switch."
     doLast {
-        val after = exampleTreeHashes(examplesAuditDir)
-        val changed = (examplesAuditBefore.keys + after.keys)
-            .filter { examplesAuditBefore[it] != after[it] }
-            .sorted()
-        val unauthorised = exampleAuditFindings(changed, examplesRegenAll, examplesRegenShowcase)
-        if (examplesRegenShowcase) {
-            logger.lifecycle(
-                "SIRENTIDE EXAMPLES REGEN: " + changed.size + " tracked example file(s) changed " +
-                "content in this run: " + changed + ". Review the diff before committing."
+        val before = readExampleSnapshot(examplesAuditSnapshot, examplesAuditRun)
+        examplesAuditSnapshot.delete()
+        if (before == null) {
+            logger.info(
+                "examples write audit: no before-snapshot from this build's test task, so the " +
+                "tracked examples tree was NOT compared."
             )
-        }
-        if (unauthorised.isNotEmpty()) {
-            throw GradleException(
-                "TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH: " + unauthorised.size +
-                " file(s) under examples/ changed during the test run: " + unauthorised +
-                ". A default run must leave the tracked tree untouched; generated artifacts " +
-                "belong under build/generated-examples/ (see GeneratedExamples). Restore them " +
-                "with: git restore examples. Regenerate deliberately with " +
-                "-Dsirentide.regenerate=true on the reference host."
-            )
+        } else {
+            val after = exampleTreeHashes(examplesAuditDir)
+            val changed = (before.keys + after.keys)
+                .filter { before[it] != after[it] }
+                .sorted()
+            val unauthorised =
+                exampleAuditFindings(changed, examplesRegenAll, examplesRegenShowcase)
+            if (examplesRegenShowcase) {
+                logger.lifecycle(
+                    "SIRENTIDE EXAMPLES REGEN: " + changed.size + " tracked example file(s) " +
+                    "changed content in this run: " + changed + ". Review the diff before " +
+                    "committing."
+                )
+            }
+            if (unauthorised.isNotEmpty()) {
+                val finding =
+                    "TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH: " + unauthorised.size +
+                    " file(s) under examples/ changed during the test run: " + unauthorised +
+                    ". A default run must leave the tracked tree untouched; generated artifacts " +
+                    "belong under build/generated-examples/ (see GeneratedExamples). Restore " +
+                    "them with: git restore examples. Regenerate deliberately with " +
+                    "-Dsirentide.regenerate=true on the reference host."
+                // Logged as well as thrown. When a test has also failed the build ends with two
+                // failures, and this line puts the finding in the output at the point it was
+                // found, whatever the failure summary then does with the second exception.
+                logger.error(finding)
+                throw GradleException(finding)
+            }
         }
     }
-
 }
+
+tasks.test { finalizedBy(examplesWriteAudit) }
 
 /// SHA-256 of every file under the tracked examples tree, keyed by its path relative to that
 /// tree with forward slashes. Recursive, unlike goldenFileHashes, because the gallery is a
@@ -291,6 +336,26 @@ fun exampleAuditFindings(
     regenShowcase: Boolean
 ): List<String> =
     changed.filter { path -> !(regenAll || (regenShowcase && !path.startsWith("gallery/"))) }
+
+/// Writes the before-snapshot: a `run<TAB>id` line naming the build invocation, then one
+/// `sha256<TAB>path` line per file. The hash comes first so a path may contain a tab.
+fun writeExampleSnapshot(file: java.io.File, run: String, hashes: Map<String, String>) {
+    file.parentFile.mkdirs()
+    val body = hashes.entries.joinToString("") { it.value + "\t" + it.key + "\n" }
+    file.writeText("run\t" + run + "\n" + body)
+}
+
+/// Reads the before-snapshot back, or NULL when there is none to trust: the file is absent, or
+/// its first line does not name this build invocation. Null is deliberately not an empty map. An
+/// empty map means "the tree had no files", and comparing against it would report every tracked
+/// file as changed; the caller must be able to tell "nothing was there" from "nothing was taken".
+fun readExampleSnapshot(file: java.io.File, run: String): Map<String, String>? {
+    if (!file.isFile) return null
+    val lines = file.readLines()
+    if (lines.isEmpty() || lines[0] != "run\t" + run) return null
+    return lines.drop(1).filter { it.contains('\t') }
+        .associate { it.substringAfter('\t') to it.substringBefore('\t') }
+}
 
 /// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit on the test task
 /// to establish what CHANGED across the run, which is the half a spelling scan can never see.
@@ -465,6 +530,35 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         // E3. the older showcase flag covers the pages and NOT the host-dependent gallery.
         checkExamples("showcase-flag-only", false, true, listOf("gallery/pie.png"))
 
+        // THE SNAPSHOT FILE (sirentide room 1199), through the real writer and reader.
+        val snapshot = layout.buildDirectory.file("golden-audit-selftest/examples-before.txt")
+            .get().asFile
+        val tree = mapOf("gallery/pie.png" to h1, "showcase.html" to h2)
+        // E4. a snapshot this build wrote reads back exactly. Positive control on the reader.
+        writeExampleSnapshot(snapshot, "this-run", tree)
+        val roundTrip = readExampleSnapshot(snapshot, "this-run")
+        if (roundTrip != tree) {
+            failures += "examples/snapshot-round-trip: expected " + tree + " but got " + roundTrip
+        }
+        // E5. a snapshot another build wrote is STALE: null, never a map to compare against.
+        val stale = readExampleSnapshot(snapshot, "another-run")
+        if (stale != null) {
+            failures += "examples/stale-snapshot: expected null but got " + stale
+        }
+        // E6. no snapshot is null, and NOT an empty map, which would read as an empty tree.
+        snapshot.delete()
+        val missing = readExampleSnapshot(snapshot, "this-run")
+        if (missing != null) {
+            failures += "examples/missing-snapshot: expected null but got " + missing
+        }
+        // E7. an EMPTY tree is a real snapshot: an empty map, distinct from E6's null.
+        writeExampleSnapshot(snapshot, "this-run", emptyMap())
+        val emptyTree = readExampleSnapshot(snapshot, "this-run")
+        if (emptyTree == null || emptyTree.isNotEmpty()) {
+            failures += "examples/empty-tree-snapshot: expected {} but got " + emptyTree
+        }
+        snapshot.delete()
+
         if (failures.isNotEmpty()) {
             throw GradleException(
                 "GOLDEN AUDIT SELF-TEST FAILED, so the write audit itself is not trustworthy:\n  " +
@@ -472,7 +566,7 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
             )
         }
         logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader; " +
-            "examples audit: 3 cases pass")
+            "examples audit: 7 cases pass, 4 through the real snapshot reader")
     }
 }
 
