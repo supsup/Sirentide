@@ -32,9 +32,15 @@ import org.junit.jupiter.api.Test;
 /// outcome OK. Before the alias, the same paste was a loud unknown-type error, so the alias made
 /// this input quieter, not better.
 ///
-/// THE REFUSAL FIRES ONLY WHERE THE ROW GRAMMAR ALREADY SKIPPED THE LINE. That is why the
-/// controls can assert that a row which parsed before still parses to the same label and value,
-/// including rows whose label happens to be a Mermaid keyword.
+/// THE REFUSAL IS OF THE BODY: it fires only when NO row was read and a skipped line is led by a
+/// Mermaid keyword. A line the row grammar reads is never reclassified, so the controls can
+/// assert that a row which parsed before still parses to the same label and value, including
+/// rows whose label happens to be a Mermaid keyword.
+///
+/// NARROWED IN THE REPAIR ROUND. The first version refused on any skipped keyword-led line, rows
+/// or no rows. That blanked `"a" : 4` / `line 3 : TBD` / `"b" : 8` for one unreadable row and
+/// told the author the chart "uses Mermaid's `line` statement". Beside readable rows such a line
+/// is now skipped as it was before this branch; the tests in the last section pin that.
 class XyChartMermaidBodyRefusalTest {
 
     private static final String MERMAID_DOCS_SHAPE =
@@ -85,18 +91,27 @@ class XyChartMermaidBodyRefusalTest {
 
     @Test
     void aMermaidStatementWhoseQuotedTextHoldsAColonIsRefused() {
-        // The SECOND skip site. This line has a `:`, so it gets past the no-colon skip, and is
-        // dropped one step later for having no number after its last colon. A refusal wired only
-        // to the no-colon site lets it through, and the chart renders the one real row at OK with
-        // its title silently gone.
-        assertRefusedNaming("xychart-beta\ntitle \"Sales: Q1\"\n\"a\" : 4\n", "title", 2);
+        // The SECOND skip site. The title line has a `:`, so it gets past the no-colon skip, and
+        // is dropped one step later for having no number after its last colon. It is the FIRST
+        // keyword-led line of a body with no row, so it is the one named. A refusal wired only to
+        // the no-colon site names `bar` on line 3 instead.
+        // (Until the repair round this test had a real row beside the title and still expected a
+        // refusal; that input now renders, see aTitleLineBesideRealRowsCostsOnlyTheTitle.)
+        assertRefusedNaming("xychart-beta\ntitle \"Sales: Q1\"\nbar [5, 6]\n", "title", 2);
     }
 
     @Test
-    void aMermaidStatementBesideRealRowsIsRefusedToo() {
-        // Not only the all-skipped case: a half-converted paste would otherwise render its real
-        // rows and drop the Mermaid series without a word.
-        assertRefusedNaming("xychart\n\"a\" : 4\nbar [5, 6]\n", "bar", 3);
+    void aBodyOfOnlyUnreadableKeywordLedLinesIsRefusedAndNotCalledAStatement() {
+        // The still-refused half of the narrowing. No row is read, so the chart would be bare
+        // axes at OK. `line 3 : TBD` is not a Mermaid statement, and the message must not say it
+        // is: it says the chart has no readable row and that the line BEGINS WITH the keyword.
+        String dsl = "xychart\nline 3 : TBD\nbar chart : n/a\n";
+        assertRefusedNaming(dsl, "line", 2);
+        String message = Sirentide.renderWithDiagnostics(dsl).diagnostics().message();
+        assertTrue(message.contains("no readable row"),
+            "the message states what was checked: " + message);
+        assertTrue(!message.contains("uses Mermaid's"),
+            "and no longer claims the line IS a Mermaid statement: " + message);
     }
 
     // -- the controls -----------------------------------------------------------------------------
@@ -120,6 +135,70 @@ class XyChartMermaidBodyRefusalTest {
         assertEquals(List.of("bar=5.0", "line speed=3.0", "title=2.0"), bars(dsl));
         assertNull(DslParser.detectUnsupportedConstruct(dsl));
         assertEquals(Outcome.OK, Sirentide.renderWithDiagnostics(dsl).diagnostics().outcome());
+    }
+
+    // -- the narrowed case: a keyword-led line beside readable rows ---------------------------------
+
+    @Test
+    void anUnreadableKeywordLedRowBesideGoodRowsIsSkippedNotRefused() {
+        // The adversarial review's input. One row has an unreadable value and its label happens
+        // to begin with `line`.
+        String dsl = "xychart\n\"a\" : 4\nline 3 : TBD\n\"b\" : 8\n";
+        assertEquals(List.of("a=4.0", "b=8.0"), bars(dsl),
+            "OLD BEHAVIOUR RESTORED: before this branch the unreadable row was skipped and bars "
+                + "a and b rendered; the first version of the refusal blanked the chart");
+        assertNull(DslParser.detectUnsupportedConstruct(dsl),
+            "one unreadable row is not an unsupported construct: " + dsl);
+        assertEquals(Outcome.OK, Sirentide.renderWithDiagnostics(dsl).diagnostics().outcome());
+    }
+
+    @Test
+    void eachKeywordLedLineBesideAGoodRowIsSkippedOnItsOwn() {
+        // One line per assertion, at both skip sites (with and without a colon), before and
+        // after the readable row: the order must not matter, only that a row was read.
+        for (String skipped : new String[] {"bar chart : n/a", "title : none", "line 3 : TBD",
+                                            "x-axis [jan, feb]", "y-axis \"Rev\" 0 --> 10"}) {
+            for (String dsl : new String[] {"xychart\n" + skipped + "\n\"a\" : 4\n",
+                                            "xychart\n\"a\" : 4\n" + skipped + "\n"}) {
+                assertEquals(List.of("a=4.0"), bars(dsl),
+                    "OLD BEHAVIOUR RESTORED: `" + skipped + "` is skipped and the row renders: " + dsl);
+                assertNull(DslParser.detectUnsupportedConstruct(dsl), "not refused: " + dsl);
+            }
+        }
+    }
+
+    @Test
+    void aHalfConvertedPasteRendersItsRowsAndDropsTheMermaidSeries() {
+        // RENAMED AND REVERSED in the repair round: this was aMermaidStatementBesideRealRowsIsRefusedToo
+        // and expected a refusal naming `bar` on line 3. The ruling it ran against is that a
+        // diagram does not go blank for one unreadable line, so the wide rule is withdrawn.
+        // THE COST IS REAL AND IS PINNED HERE ON PURPOSE: the Mermaid series is lost without a
+        // word, at outcome OK, exactly as it was before this branch.
+        String dsl = "xychart\n\"a\" : 4\nbar [5, 6]\n";
+        assertEquals(List.of("a=4.0"), bars(dsl),
+            "OLD BEHAVIOUR RESTORED: the readable row renders and `bar [5, 6]` is skipped");
+        assertNull(DslParser.detectUnsupportedConstruct(dsl));
+    }
+
+    @Test
+    void aTitleLineBesideRealRowsCostsOnlyTheTitle() {
+        // The input aMermaidStatementWhoseQuotedTextHoldsAColonIsRefused used to refuse. A lost
+        // title is a missing decoration, not a wrong picture.
+        String dsl = "xychart-beta\ntitle \"Sales: Q1\"\n\"a\" : 4\n";
+        assertEquals(List.of("a=4.0"), bars(dsl),
+            "OLD BEHAVIOUR RESTORED: the row renders and the title line is skipped");
+        assertNull(DslParser.detectUnsupportedConstruct(dsl));
+    }
+
+    @Test
+    void aRowlessBodyWithNoKeywordLedStatementIsNotRefused() {
+        // The other conjunct of the body rule. "No row was read" is not enough on its own: a
+        // keyword standing alone and a line of prose are not Mermaid statements, so this body is
+        // what it was before this branch, an XyChart with no bars, and is not named.
+        String dsl = "xychart\nbar\nthis is not a row\n";
+        assertEquals(List.of(), bars(dsl),
+            "OLD BEHAVIOUR, UNCHANGED: a rowless body with no Mermaid statement is an empty chart");
+        assertNull(DslParser.detectUnsupportedConstruct(dsl));
     }
 
     @Test

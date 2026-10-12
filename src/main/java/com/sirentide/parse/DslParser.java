@@ -596,19 +596,28 @@ public final class DslParser {
     /// grammar has already failed to read (see {@link #parseXyChart}'s two skip sites), so a row
     /// that parses is never reclassified: `bar : 5` and `line speed : 3` are rows labelled `bar`
     /// and `line speed`, exactly as before. A keyword standing alone is not a statement either.
+    ///
+    /// This is a test of the line's FIRST WORD and nothing more. `line 3 : TBD` passes it and is
+    /// no Mermaid statement, which is why a hit here is only a CANDIDATE: it refuses nothing
+    /// unless the whole body turns out to have no readable row (see {@link #parseXyChart}), and
+    /// the message it produces claims only what was tested.
     private static String mermaidXyKeyword(String line) {
         String[] kw = splitKeyword(line);
         return MERMAID_XY_KEYWORDS.contains(kw[0]) && !kw[1].isEmpty() ? kw[0] : null;
     }
 
     /// The xychart refusal's {@link UnsupportedConstruct} for body line `i` (0-based, like every
-    /// scanner's) led by Mermaid keyword `keyword`.
+    /// scanner's) led by Mermaid keyword `keyword`. Built for the FIRST such line of a body, and
+    /// used only if that body ends with no readable row. The wording states the two facts that
+    /// were checked (no row; this line's first word) and does not say the line IS a Mermaid
+    /// statement, which was never checked.
     private static UnsupportedConstruct mermaidXyStatement(String keyword, int i, String line) {
         return new UnsupportedConstruct(keyword, i,
-            "This xychart uses Mermaid's `" + keyword + "` statement (`" + cap(line) + "`), which "
-                + "the Sirentide DSL does not support: a row here is `\"label\" : value`, one per "
-                + "line. Reading it as rows finds none, so rather than draw empty axes it degraded "
-                + "to the inert shell. Rewrite the data as rows (see the xychart reference).");
+            "This xychart has no readable row, and its line (" + cap(line) + ") begins with `"
+                + keyword + "`, a statement keyword of Mermaid's xychart-beta grammar, which the "
+                + "Sirentide DSL does not support: a row here is \"label\" : value, one per line. "
+                + "Rather than draw empty axes it degraded to the inert shell. Rewrite the data "
+                + "as rows (see the xychart reference).");
     }
 
     /// The xychart parse, with an OPTIONAL holder that receives the refusal (audit 2026-10-12
@@ -622,9 +631,24 @@ public final class DslParser {
     /// pasted Mermaid chart reached this loop. No Mermaid statement is a row, every line was
     /// skipped in silence, and the result was an XyChart with no bars: bare axes at outcome OK.
     /// Before the alias the same paste was a loud unknown-type error. A skipped line LED BY A
-    /// MERMAID KEYWORD now degrades the whole chart to Empty and is named. Any other skipped line
-    /// keeps its silent skip, and the `numeric` path is untouched (its census already names every
-    /// row it could not draw).
+    /// MERMAID KEYWORD is now remembered (the first one), and a body that ends with NO READABLE
+    /// ROW and such a line degrades to Empty and names it. The `numeric` path is untouched (its
+    /// census already names every row it could not draw).
+    ///
+    /// THE REFUSAL IS OF THE BODY, NOT OF THE LINE. What this parser reads WRONG is the body
+    /// taken whole: statements in Mermaid's grammar, read as rows, come to nothing, and nothing is
+    /// drawn as a finished chart. A keyword-led line BESIDE readable rows is a different thing,
+    /// one line the row grammar could not read, and it keeps the silent skip it always had: the
+    /// first version of this guard refused there too, so `"a" : 4` / `line 3 : TBD` / `"b" : 8`
+    /// went blank under a message saying it "uses Mermaid's `line` statement", which it does not.
+    /// The set refused is therefore exactly: zero rows read, and at least one skipped line whose
+    /// first word is `title`, `x-axis`, `y-axis`, `bar` or `line` with text after it.
+    ///
+    /// THE COST, stated rather than hidden. A half-converted paste (`"a" : 4` beside
+    /// `bar [5, 6]`) renders its one row and drops the Mermaid series without a word, as it did
+    /// before this guard. And a Mermaid body one of whose lines happens to read as a row
+    /// (`title Revenue: 2024` is a bar named `title Revenue`) renders that phantom bar, because
+    /// the body then has a row.
     private static Diagram parseXyChart(String[] lines, String[] header, String textColor,
                                         UnsupportedConstruct[] refusedOut) {
         String mode = parseXyMode(header);
@@ -638,6 +662,9 @@ public final class DslParser {
         List<double[]> rows = new ArrayList<>();
         List<String> singleColors = new ArrayList<>();   // per-row single-series colour (else null)
         int maxSeries = 0;
+        // The FIRST skipped line led by a Mermaid keyword, kept until the walk knows whether any
+        // row was read. Null while there is none.
+        UnsupportedConstruct mermaidCandidate = null;
 
         for (int i = 1; i < lines.length && rows.size() < MAX_DATA_ROWS; i++) {
             String line = lines[i].strip();
@@ -647,12 +674,9 @@ public final class DslParser {
             int colon = line.lastIndexOf(':');
             if (colon < 0) {
                 // SKIP SITE 1 of 2: no `:` at all. Mermaid's `x-axis [jan, feb]` lands here.
-                String mermaid = mermaidXyKeyword(line);
-                if (mermaid != null) {
-                    if (refusedOut != null) {
-                        refusedOut[0] = mermaidXyStatement(mermaid, i, line);
-                    }
-                    return new Empty();
+                String noColonKeyword = mermaidXyKeyword(line);
+                if (mermaidCandidate == null && noColonKeyword != null) {
+                    mermaidCandidate = mermaidXyStatement(noColonKeyword, i, line);
                 }
                 continue;
             }
@@ -702,12 +726,9 @@ public final class DslParser {
             if (vals.isEmpty()) {
                 // SKIP SITE 2 of 2: a `:` but no numeric value after the LAST one. Mermaid's
                 // `title "Sales: Q1"` lands here (its colon is inside the quoted title).
-                String mermaid = mermaidXyKeyword(line);
-                if (mermaid != null) {
-                    if (refusedOut != null) {
-                        refusedOut[0] = mermaidXyStatement(mermaid, i, line);
-                    }
-                    return new Empty();
+                String noValueKeyword = mermaidXyKeyword(line);
+                if (mermaidCandidate == null && noValueKeyword != null) {
+                    mermaidCandidate = mermaidXyStatement(noValueKeyword, i, line);
                 }
                 continue;   // no numeric value → malformed row, skip (never fail the bake)
             }
@@ -719,6 +740,15 @@ public final class DslParser {
             rows.add(arr);
             singleColors.add(vals.size() == 1 ? color : null);
             maxSeries = Math.max(maxSeries, arr.length);
+        }
+
+        // THE BODY-LEVEL REFUSAL: not one row was read, and a skipped line was led by a Mermaid
+        // keyword. With any row read the candidate is dropped here unused and the chart renders.
+        if (rows.isEmpty() && mermaidCandidate != null) {
+            if (refusedOut != null) {
+                refusedOut[0] = mermaidCandidate;
+            }
+            return new Empty();
         }
 
         // Single-series BARS → the legacy Slice-list shape (byte-identical output). A single-series
