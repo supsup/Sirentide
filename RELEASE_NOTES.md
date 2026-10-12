@@ -13,6 +13,40 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+- **Running the test suite no longer rewrites the tracked examples.** With a browser present,
+  the gallery tests used to overwrite the PNGs under `examples/gallery/` on every run, and
+  those bytes depend on the host's Chromium, so a run on a Mac left tracked files modified.
+  Generated gallery images, `GALLERY.md` and the HTML pages now go to
+  `build/generated-examples/` by default, and the test task fails if anything under `examples/`
+  changed during a run that did not ask for it. The tracked tree is written only under
+  `-Dsirentide.regenerate=true`, which prints a banner naming the host and browser because the
+  committed gallery is the Linux render (`docs/gallery-linux-check.md`). `GALLERY.md` is now
+  compared with the committed page on every run instead of being silently rewritten. Test and
+  build tooling only: no rendered output changes.
+- **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
+  43fd0785). The fragment guard checked that a renderer's markup used only the allowed elements and
+  attributes, but not that it was valid XML: it accepted a duplicate attribute, an undefined
+  `&entity;`, a control character, attributes with no space between them, and `<G>...</g>` (it
+  ignored case). The emitter copies the fragment verbatim, so one such fragment made the whole SVG
+  unparseable. The guard now also parses the fragment, inside the same wrapper the emitter puts
+  around it, with the JDK's built-in XML parser (no DOCTYPE, no external entities or DTDs, nothing
+  fetched), and matches element and attribute names case-sensitively. A refused fragment takes the
+  existing fallback: the label shows its raw `$...$` source, and `renderWithDiagnostics` (so
+  `render --strict`) now says so: the OK caveat counts the refused fragments by reason
+  (`allowlist`, `structure`, `depth`, `well-formedness`, `metrics`) and the detail lists each
+  one's reason and length, never its text, at most ten entries then `and N more`. A fragment is
+  counted once per label however many times a layout measures it. **`--strict` now fails on
+  refusal classes that were silent before**: a fragment outside the allowlist, unbalanced
+  (structure, which also covers an empty or over-64 KiB fragment), nested deeper than
+  `FragmentGuard.MAX_DEPTH` (32 open elements, Sirentide's own explicit cap, below the JDK
+  parser's), ill-formed, or carrying NaN/negative/huge box metrics. Fragments that were
+  well-formed render byte-identically. API additions on `FragmentGuard`: `refusal(String)` and the
+  `Refusal` enum (`isClean` is now defined as `refusal(x) == null`), the `Refused` record,
+  `Refusals` (the per-thread tap `Sirentide` arms for a diagnostics render) and `MAX_DEPTH`. This
+  is the first main-source use of the JDK's `java.xml` module (`FragmentGuard` previously needed
+  only `java.base`); it is part of every full JRE, including the image, and Sirentide still has no
+  third-party runtime dependency.
+
 - **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
   `docker inspect` shows which commit and release an image was built from without unzipping the
   jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from

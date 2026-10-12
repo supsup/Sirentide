@@ -1,12 +1,23 @@
 # Rendering the gallery on Linux
 
-The gallery PNGs under `examples/gallery/` are references, not byte-goldens: `BrewShotGalleryTest`
-rewrites them on every run, and the bytes depend on the host's Chromium. A macOS run and a Linux run
-disagree on some images. The committed references are the Linux render below, so that anyone can
-reproduce them exactly.
+The gallery PNGs under `examples/gallery/` are references, not byte-goldens: the bytes depend on
+the host's Chromium, and a macOS run and a Linux run disagree on some images. The committed
+references are the Linux render below, so that anyone can reproduce them exactly.
 
-**Do not commit gallery PNGs from a macOS test run.** After running the suite on a Mac, restore them:
-`git restore examples/gallery`.
+**A default test run does not touch them.** `BrewShotGalleryTest` and `MathGalleryBrewShotTest`
+render into `build/generated-examples/gallery/`, which mirrors `examples/gallery/` and is ignored by
+git, so `./gradlew test` leaves `git status` clean on any host, with or without a browser. There is
+nothing to restore after a Mac run. The test task also checks this itself: it fails if any file
+under `examples/` changed during a run that did not ask for it.
+
+The tracked gallery is written only under the regeneration switch, `-Dsirentide.regenerate=true`.
+A run with the switch prints a `SIRENTIDE EXAMPLES REGEN` line naming the host and the configured
+browser, and each gallery test class records the browser's user agent in its own banner (in the
+test report's standard error). **Do not commit gallery PNGs regenerated on macOS**; regenerate on
+the harness below.
+
+`GALLERY.md` and the HTML pages do not depend on the host, so a default run still compares what it
+generates with the committed files and fails on a difference.
 
 ## The harness
 
@@ -34,17 +45,42 @@ git archive "$rev" | tar -x -C "$work/src"
 chmod -R a+rwX "$work"
 docker run --rm -e HOME=/work/home -e GRADLE_USER_HOME=/work/home/.gradle \
   -v "$work:/work" -w /work/src sirentide-gallery-linux \
-  ./gradlew -q test --tests com.sirentide.BrewShotGalleryTest
-# every committed gallery file against the Linux render
+  ./gradlew -q test --tests com.sirentide.BrewShotGalleryTest \
+    --tests com.sirentide.MathGalleryBrewShotTest
+# every committed gallery file against the Linux render, which a default run leaves under build/
 for f in $(git ls-tree --name-only "$rev" examples/gallery/); do
-  git show "$rev:$f" | cmp -s - "$work/src/$f" || echo "DIFFERS $f"
+  git show "$rev:$f" | cmp -s - "$work/src/build/generated-examples/${f#examples/}" \
+    || echo "DIFFERS $f"
 done
 ```
 
-No `DIFFERS` line means the committed gallery is the Linux render. Check that the test report shows
-the gallery tests ran rather than skipped (`skipped="0"` in
-`$work/src/build/test-results/test/TEST-com.sirentide.BrewShotGalleryTest.xml`); a skip means
-Chromium was not found and nothing was rendered.
+No `DIFFERS` line means the committed gallery is the Linux render. Both test classes are named
+because the `math-*.png` references come from `MathGalleryBrewShotTest`; a file a run did not
+render is absent under `build/` and reports as `DIFFERS`. Check that the test reports show the
+gallery tests ran rather than skipped (`skipped="0"` in
+`$work/src/build/test-results/test/TEST-com.sirentide.BrewShotGalleryTest.xml` and
+`TEST-com.sirentide.MathGalleryBrewShotTest.xml`); a skip means Chromium was not found and nothing
+was rendered.
 
-When a gallery Case is added or a renderer change moves an image, regenerate with the same commands
-and copy `examples/gallery/` back from `$work/src` before committing.
+## Regenerate
+
+When a gallery Case is added or a renderer change moves an image, regenerate in the same harness
+with the switch, without `-q` so the regeneration banner is visible:
+
+```sh
+docker run --rm -e HOME=/work/home -e GRADLE_USER_HOME=/work/home/.gradle \
+  -v "$work:/work" -w /work/src sirentide-gallery-linux \
+  ./gradlew test -Dsirentide.regenerate=true \
+    --tests com.sirentide.BrewShotGalleryTest \
+    --tests com.sirentide.MathGalleryBrewShotTest \
+    --tests com.sirentide.ShowcaseGenTest
+```
+
+Then copy `examples/` back from `$work/src` and review the diff before committing. The switch
+regenerates the HTML pages too, which is why `ShowcaseGenTest` is in the command: the root-system
+gallery images are rendered from those pages. Under the switch the comparisons against the
+committed `GALLERY.md` and showcase page are not a verification, because the run has just written
+those files; the diff is the review.
+
+The older `-Dsirentide.updateShowcase=true` still regenerates the HTML pages alone and never the
+gallery.

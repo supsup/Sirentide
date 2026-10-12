@@ -48,6 +48,7 @@ public final class MathLabel {
         double width = 0;
         double ascent = fm.ascent(fontSizePx);
         double descent = fm.descent(fontSizePx);
+        int mathIndex = 0;   // the run's position among this label's math runs (refusal key)
         for (LabelRuns.Run run : LabelRuns.split(label)) {
             switch (run) {
                 case LabelRuns.Text t -> {
@@ -56,7 +57,10 @@ public final class MathLabel {
                     width += w;
                 }
                 case LabelRuns.MathRun mr -> {
-                    MathFragment frag = renderGuarded(mr.latex(), fontSizePx, math);
+                    // The refusal key names THIS label and run, so a layout that measures the
+                    // same label twice reports a refused fragment once (plan 43fd0785 review).
+                    MathFragment frag = renderGuarded(mr.latex(), fontSizePx, math,
+                        label + "\u0000" + mathIndex++);
                     if (frag != null) {
                         resolved.add(new Resolved(null, frag, frag.widthPx()));
                         width += frag.widthPx();
@@ -139,14 +143,15 @@ public final class MathLabel {
     /// {@code mathblock} type uses to bake its whole body as ONE fragment WITHOUT the `$…$` splitting
     /// — the caller places the returned fragment via a {@link MathBox} and degrades to text on null.
     public static MathFragment renderFragment(String latex, double fontSizePx, MathFragmentRenderer math) {
-        return renderGuarded(latex, fontSizePx, math);
+        return renderGuarded(latex, fontSizePx, math, latex);
     }
 
     /// Render one math run and re-validate it through the contract guard. Returns null on ANY
     /// failure path — null renderer, renderer threw, empty optional, or a fragment that escapes the
     /// contract — so the caller degrades it to text. A throwing renderer is caught here (kinder than
     /// dropping the whole bake to the inert shell).
-    private static MathFragment renderGuarded(String latex, double fontSizePx, MathFragmentRenderer math) {
+    private static MathFragment renderGuarded(String latex, double fontSizePx, MathFragmentRenderer math,
+            String refusalKey) {
         if (math == null) {
             return null;
         }
@@ -165,10 +170,16 @@ public final class MathLabel {
         // box extents; an unvalidated NaN/1e308 extent would blow the label viewBox up to a
         // rasterizer-DoS size). A failure of EITHER returns null, so the caller degrades this run to
         // its raw `$…$` source text — the same fallback a render failure already takes.
-        if (!FragmentGuard.isClean(frag.innerSvg())) {
-            return null;
+        FragmentGuard.Refusal why = FragmentGuard.refusal(frag.innerSvg());
+        if (why == null
+                && !FragmentGuard.metricsClean(frag.widthPx(), frag.heightPx(), frag.depthPx(), fontSizePx)) {
+            why = FragmentGuard.Refusal.METRICS;
         }
-        if (!FragmentGuard.metricsClean(frag.widthPx(), frag.heightPx(), frag.depthPx(), fontSizePx)) {
+        if (why != null) {
+            // Name the refusal for the diagnostics twin (plan 43fd0785): reason class + length only,
+            // never the fragment text. A no-op outside an armed diagnostics render.
+            FragmentGuard.Refusals.record(why, frag.innerSvg() == null ? 0 : frag.innerSvg().length(),
+                refusalKey);
             return null;
         }
         return frag;

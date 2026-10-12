@@ -29,12 +29,20 @@ import org.junit.jupiter.api.Test;
 ///
 /// Regen mechanism (mirrors {@link GoldenSvgTest}'s golden regen):
 ///   ./gradlew test --tests com.sirentide.ShowcaseGenTest -Dsirentide.updateShowcase=true
-/// Without the flag the test renders every card, checks its semantics, and BYTE-ASSERTS the generated
+/// or, together with the gallery, under the one examples switch `-Dsirentide.regenerate=true`.
+/// Without a flag the test renders every card, checks its semantics, and BYTE-ASSERTS the generated
 /// page against the tracked artifact. A deliberate layout/content change therefore uses the explicit
 /// update switch and commits the resulting page; stale showcase HTML cannot silently remain green.
+///
+/// WHERE THE PAGES ARE WRITTEN is decided by {@link GeneratedExamples}, never here: a default run
+/// writes the showcase and every per-type page under `build/generated-examples/` (so a drifted
+/// page can be diffed against the tracked one) and the tracked tree is written only under a
+/// switch, with a banner. Under a switch the byte-assert below reads back the file this run has
+/// just written, so it proves the write landed and NOT that the page matches a prior expectation;
+/// the banner says so, because a passing comparison that compared a value with itself must not be
+/// mistaken for a verification (plan cd09f4f9).
 class ShowcaseGenTest {
 
-    private static final boolean UPDATE = Boolean.getBoolean("sirentide.updateShowcase");
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
     private static final String PLAY_ACCENT = "#e8590c";
     private static final int EXPECTED_PLAY_FRAMES = 5;
@@ -578,31 +586,58 @@ class ShowcaseGenTest {
         body.append("  </div>\n")
             .append("</section>\n");
 
-        // The three per-type demo pages.
+        // Under build/ by default; the tracked tree only under a regeneration switch.
+        Path outputDir = GeneratedExamples.showcaseOutputDir();
+        Files.createDirectories(outputDir);
+        if (GeneratedExamples.regeneratingShowcase()) {
+            GeneratedExamples.announce("ShowcaseGenTest",
+                "showcase.html and " + TYPE_PAGES.size() + " per-type page(s)",
+                "none (HTML pages, no browser involved). The byte comparison with the tracked "
+                    + "showcase is a READ-BACK of this run's own write, not a verification "
+                    + "against a prior expectation; review the diff");
+        }
+
+        // The per-type demo pages.
         for (TypePage tp : TYPE_PAGES) {
-            String svg = tp.math() ? Sirentide.render(tp.dsl(), REAL) : Sirentide.render(tp.dsl());
+            String svg = renderTypePage(tp);
             assertTrue(svg.contains("<svg") && !svg.contains("width=\"0\" height=\"0\""),
                 tp.file() + ": expected a real render, got an inert/empty SVG");
             if (tp.math()) {
                 assertTrue(svg.matches("(?s).*<g fill=\"[^\"]+\" transform=\"translate\\(.*"),
                     tp.file() + ": math did not bake through the real renderer");
             }
-            if (UPDATE) {
-                Files.writeString(Path.of("examples", tp.file()).toAbsolutePath(), typePage(tp, svg));
-            }
+            Files.writeString(outputDir.resolve(tp.file()), typePage(tp, svg));
         }
 
         String generatedShowcase = page(body.toString());
         assertEquals(DISPLAYED_PLAY_FRAMES, count(generatedShowcase, "<div class=\"frame\">"),
             "generated showcase must contain exactly the checked first three message frames");
         assertStrictHtmlComments(generatedShowcase);
-        Path trackedShowcase = Path.of("examples", "showcase.html").toAbsolutePath();
-        if (UPDATE) {
-            Files.writeString(trackedShowcase, generatedShowcase);
-        }
+        // Written BEFORE the comparison, so a drifted default run leaves a copy to diff. By default
+        // this is the build-directory copy and the comparison below is against the TRACKED page,
+        // which this run did not write.
+        Files.writeString(outputDir.resolve("showcase.html"), generatedShowcase);
+        Path trackedShowcase = GeneratedExamples.tracked("showcase.html");
         assertEquals(generatedShowcase, Files.readString(trackedShowcase),
-            "tracked showcase drifted from ShowcaseGenTest; regenerate with "
+            "tracked showcase drifted from ShowcaseGenTest (generated copy: "
+                + outputDir.resolve("showcase.html") + "); regenerate with "
                 + "-Dsirentide.updateShowcase=true and commit the deliberate artifact change");
+    }
+
+    private static String renderTypePage(TypePage tp) {
+        return tp.math() ? Sirentide.render(tp.dsl(), REAL) : Sirentide.render(tp.dsl());
+    }
+
+    /// The generated per-type page for one tracked file name, for a caller that must render the
+    /// SAME page this class writes without depending on whether this class has run yet
+    /// (BrewShotGalleryTest's root-system receipts under the regeneration switch).
+    static String generatedTypePage(String file) {
+        for (TypePage tp : TYPE_PAGES) {
+            if (tp.file().equals(file)) {
+                return typePage(tp, renderTypePage(tp));
+            }
+        }
+        throw new IllegalArgumentException("no generated per-type page is named " + file);
     }
 
     /// Showcase-specific XyChart contract. The broad sealed-type census sees all three modes as the
