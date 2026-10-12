@@ -79,6 +79,12 @@ tasks.test {
     // Same for the showcase-page regen switch, so
     // `./gradlew test -Dsirentide.updateShowcase=true` reaches ShowcaseGenTest.
     systemProperty("sirentide.updateShowcase", System.getProperty("sirentide.updateShowcase", "false"))
+    // THE examples regeneration switch (sirentide room 1197). Without it the gallery and showcase
+    // tests write under build/generated-examples/ and leave the tracked examples tree alone; with
+    // `./gradlew test -Dsirentide.regenerate=true` they write the tracked tree. Read in exactly
+    // one place on the test side, GeneratedExamples, and GeneratedExamplesTest pins this line.
+    val regenerateExamples = System.getProperty("sirentide.regenerate", "false")
+    systemProperty("sirentide.regenerate", regenerateExamples)
     testLogging { events("skipped", "failed") }
 
     // CI-honesty guard: the BrewShot browser-eyes pins assume-skip when Chrome is

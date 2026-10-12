@@ -18,8 +18,10 @@ import org.junit.jupiter.api.Test;
 /// SEQUENCE diagram with a `$\frac{a}{b}$` / `$O(n^2)$` MESSAGE label AND a STATE diagram with a math
 /// TRANSITION label, through the REAL {@link LatteXMathFragmentRenderer}, in a live browser. Proves
 /// (a) the baked math STAYS INSIDE the canvas (same containment audit as {@link BrewShotGalleryTest}),
-/// and (b) a MathBox actually baked (the emitter wrapper is present). Writes reference PNGs under
-/// examples/gallery/ for the human eyeball. Skips clean when no local Chrome.
+/// and (b) a MathBox actually baked (the emitter wrapper is present). Writes PNGs for the human
+/// eyeball under build/generated-examples/gallery/ by default, and into the tracked gallery only
+/// under -Dsirentide.regenerate=true (see {@link GeneratedExamples}; the committed references are
+/// the Linux render). Skips clean when no local Chrome.
 class MathGalleryBrewShotTest {
 
     private static final MathFragmentRenderer REAL = new LatteXMathFragmentRenderer();
@@ -62,17 +64,19 @@ class MathGalleryBrewShotTest {
         new Case("math-block",
             "mathblock\n  \\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n"));
 
-    private static Path galleryDir() {
-        return Path.of("examples", "gallery").toAbsolutePath();
-    }
-
     @Test
     void mathLabelsBakeAndStayInsideTheCanvas() throws Exception {
         assumeTrue(BrewShot.available(), "no local Chrome; skipping the browser eyes");
-        Path dir = galleryDir();
+        // Under build/ by default; the tracked gallery only under the regeneration switch.
+        Path dir = GeneratedExamples.galleryOutputDir();
         Files.createDirectories(dir);
         BrewShot shot = BrewShot.launch(560, 340);
         try (AutoCloseable closeGuard = BrewShotTestResource.asResource(shot)) {
+            if (GeneratedExamples.regenerating()) {
+                GeneratedExamples.announce("MathGalleryBrewShotTest",
+                    GALLERY.size() + " math gallery PNG(s)",
+                    String.valueOf(shot.eval("(function () { return navigator.userAgent; })()")));
+            }
             for (Case c : GALLERY) {
                 String svg = Sirentide.render(c.dsl(), REAL);
                 // The math actually baked (a MathBox wrapper is present, not degraded to raw text).
