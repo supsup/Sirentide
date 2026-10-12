@@ -23,8 +23,18 @@ cannot be mistaken for the published 0.5.0 artifacts.
   fetched), and matches element and attribute names case-sensitively. A refused fragment takes the
   existing fallback: the label shows its raw `$...$` source, and `renderWithDiagnostics` (so
   `render --strict`) now says so: the OK caveat counts the refused fragments by reason
-  (`allowlist`, `structure`, `well-formedness`, `metrics`) and gives each one's length, never its
-  text. Fragments that were well-formed render byte-identically, and Sirentide still has no
+  (`allowlist`, `structure`, `depth`, `well-formedness`, `metrics`) and the detail lists each
+  one's reason and length, never its text, at most ten entries then `and N more`. A fragment is
+  counted once per label however many times a layout measures it. **`--strict` now fails on
+  refusal classes that were silent before**: a fragment outside the allowlist, unbalanced
+  (structure, which also covers an empty or over-64 KiB fragment), nested deeper than
+  `FragmentGuard.MAX_DEPTH` (32 open elements, Sirentide's own explicit cap, below the JDK
+  parser's), ill-formed, or carrying NaN/negative/huge box metrics. Fragments that were
+  well-formed render byte-identically. API additions on `FragmentGuard`: `refusal(String)` and the
+  `Refusal` enum (`isClean` is now defined as `refusal(x) == null`), the `Refused` record,
+  `Refusals` (the per-thread tap `Sirentide` arms for a diagnostics render) and `MAX_DEPTH`. This
+  is the first main-source use of the JDK's `java.xml` module (`FragmentGuard` previously needed
+  only `java.base`); it is part of every full JRE, including the image, and Sirentide still has no
   third-party runtime dependency.
 
 - **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so

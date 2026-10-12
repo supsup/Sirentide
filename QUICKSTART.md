@@ -148,7 +148,9 @@ printf 'pie\n  "A" : 60\n  "B" : 40\0xychart\n"x" : 1\n"y" : 2\0' | sirentide re
 > sirentide render notes/some-page.md --math --lattex libs/lattex-0.6.0.jar
 > ```
 > (or set `SIRENTIDE_LATTEX_JAR`). `--math` without a usable jar is a usage error (exit 2), and
-> a `$…$` run LatteX cannot typeset is reported as a caveat, so `--strict` fails on it. From the
+> a `$…$` run LatteX cannot typeset is reported as a caveat, so `--strict` fails on it, and so is
+> a typeset fragment Sirentide's fragment guard refused (`fragment guard refused: ...`, named by
+> reason, never by content; the run shows its raw `$…$` source). From the
 > API, pass a `MathFragmentRenderer` to the two-arg `Sirentide.render(dsl, mathRenderer)`.
 
 **Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
@@ -164,7 +166,8 @@ The exit code tells you what `/docs` would do with the page:
 - **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
   on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
   is on stderr. **Or** `--strict` was passed and the render carried a caveat (a dropped
-  statement, a dropped or shortened label, untypeset math, or a lint finding). In that case the
+  statement, a dropped or shortened label, untypeset math, a math fragment the fragment guard
+  refused, or a lint finding). In that case the
   SVG **is** written: it is exactly what `/docs` would serve, and worth inspecting.
 - **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
   the bake leaves those literal), unreadable input, an input over the 8 MB cap, or an

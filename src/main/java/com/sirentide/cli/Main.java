@@ -80,7 +80,10 @@ public final class Main {
                            never a silent skip.
           --strict         treat ANY caveat as a failure (exit 1): a dropped statement, a dropped
                            or shortened label (xychart axis labels, pie outside labels),
-                           untypeset math under --math, or a lint finding under --lint-overlap.
+                           untypeset math under --math, a typeset fragment the fragment guard
+                           refused (shown as raw $...$; named by reason: allowlist, structure,
+                           depth, well-formedness, metrics), or a lint finding under
+                           --lint-overlap.
                            A render can succeed and still carry a caveat; it goes to stderr,
                            naming it, and the exit stays 0 by default, because the
                            bake really happens and really serves that SVG. CI is
@@ -92,7 +95,8 @@ public final class Main {
                            SIRENTIDE_LATTEX_JAR), never bundled; --math without it, or with a jar
                            that cannot render, is a loud usage error (exit 2). A $...$ run LatteX
                            cannot typeset falls back to its raw source and is reported as a caveat,
-                           so --strict fails on it.
+                           so --strict fails on it; so does a typeset fragment the fragment guard
+                           refused (`fragment guard refused: ...`).
           --lattex PATH    the LatteX jar --math loads; or set SIRENTIDE_LATTEX_JAR.
           --lint-overlap   ALSO check every text run against text in OTHER diagram elements and
                            report each overlapping pair as a caveat (`text overlap: ...`), so

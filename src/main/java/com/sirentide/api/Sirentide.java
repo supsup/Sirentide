@@ -719,10 +719,11 @@ public final class Sirentide {
 
     /// Append the fragment-guard caveat (plan 43fd0785 acceptance 1) to an OK diagnostics when a
     /// math fragment was refused at the seam during THIS armed render: the run baked as its raw
-    /// `$...$` source, and this names how many, by reason class, with each refused fragment's
-    /// length. NEVER the fragment text: a {@link MathFragmentRenderer} is foreign code, so its
-    /// output is treated as attacker-controlled and is not echoed into a message. No refusal
-    /// returns `ok` unchanged, byte for byte.
+    /// `$...$` source, and this names how many (one per label, however many times the layout
+    /// measured it), by reason class, with each refused fragment's length. NEVER the fragment
+    /// text: a {@link MathFragmentRenderer} is foreign code, so its output is treated as
+    /// attacker-controlled and is not echoed into a message. No refusal returns `ok` unchanged,
+    /// byte for byte.
     private static Diagnostics withFragmentGuardCaveat(Diagnostics ok) {
         java.util.List<com.sirentide.contract.FragmentGuard.Refused> refused =
             com.sirentide.contract.FragmentGuard.Refusals.collected();

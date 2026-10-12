@@ -142,14 +142,72 @@ class FragmentGuardDiagnosticsTest {
 
     @Test
     void plainRenderInsideTheRendererCallbackDoesNotContaminateTheOuterDiagnostics() {
-        // Mutant: drop Refusals.enterPlainRender/exitPlainRender from render() -> the nested plain
-        // render's refusal is recorded into the OUTER armed frame and the outer gains a caveat.
+        // The OUTER renderer is ALSO refused, after the nested plain render, so the frame must hold
+        // exactly the outer entry. Two mutants this kills (both survived while the outer fragment
+        // was clean): (a) Refusals.enterPlainRender not pushing the SUSPENDED frame, and
+        // (b) Refusals.record not checking for the SUSPENDED frame. Under either the nested
+        // render's refusal ($y$, a different label key, a different length) lands in the outer
+        // frame too and the detail lists two entries. A third: dropping the enterPlainRender/
+        // exitPlainRender pair from render() itself.
+        String innerDsl = "flowchart TD\n  B[$y$]\n";
         MathFragmentRenderer nesting = (latex, size) -> {
-            Sirentide.render(DSL, fixed(ALLOWLIST_FRAGMENT));   // refused, but in a PLAIN render
-            return Optional.of(new MathFragment(CLEAN, 40, 12, 4));
+            Sirentide.render(innerDsl, fixed(ALLOWLIST_FRAGMENT));   // refused, in a PLAIN render
+            return Optional.of(new MathFragment(PARSE_FRAGMENT, 40, 12, 4));   // refused, OUTER
         };
         Diagnostics d = diagnose(nesting);
-        assertEquals("Rendered successfully.", d.message(), d.detail());
-        assertEquals("", d.detail());
+        assertTrue(d.message().contains("1 math fragment failed"), d.message());
+        assertEquals("fragment guard refused: well-formedness (" + PARSE_FRAGMENT.length() + " chars)",
+            d.detail());
+    }
+
+    // ---- one refused fragment is ONE entry, however many times the layout measures it ------
+
+    /// Asserts the caveat names exactly one refused fragment for `dsl`, whose single math run the
+    /// fixed renderer refuses on every measurement.
+    private static void assertSingleEntry(String dsl, String where) {
+        RenderResult r = Sirentide.renderWithDiagnostics(dsl, fixed(ALLOWLIST_FRAGMENT));
+        assertEquals(Outcome.OK, r.diagnostics().outcome(), where);
+        Diagnostics d = r.diagnostics();
+        assertTrue(d.message().contains("1 math fragment failed the fragment guard"),
+            where + ": one fragment, one count: " + d.message());
+        assertEquals("fragment guard refused: allowlist (" + ALLOWLIST_FRAGMENT.length() + " chars)",
+            d.detail(), where + ": exactly one entry");
+    }
+
+    @Test
+    void classMember_measuredTwice_isOneEntry() {
+        // Mutant: drop the label-key de-duplication in Refusals.record -> "2 math fragments" and
+        // the detail lists the member's fragment twice (measured for width, then for emit).
+        assertSingleEntry("classDiagram\n  class M {\n    +g $x$\n    +run() void\n  }\n", "class member");
+    }
+
+    @Test
+    void erAttribute_measuredTwice_isOneEntry() {
+        // Mutant: same de-duplication dropped -> two entries for the one ER attribute.
+        assertSingleEntry("erDiagram\n  T {\n    cost $x$\n    int id PK\n  }\n", "ER attribute");
+    }
+
+    @Test
+    void sequenceSelfMessage_measuredTwice_isOneEntry() {
+        // Mutant: same de-duplication dropped -> two entries for the one self-message label.
+        assertSingleEntry("sequence\n  Alice ->> Alice : $x$\n", "sequence self-message");
+    }
+
+    @Test
+    void singleMeasureTypes_areOneEntry_controls() {
+        // Controls (one measurement each, GREEN before the de-duplication too): the key must not
+        // collapse or drop a genuinely single refusal.
+        assertSingleEntry(DSL, "flowchart node");
+        assertSingleEntry("sequence\n  Alice ->> Bob : $x$\n", "sequence A-to-B");
+        assertSingleEntry("xychart\n  \"$x$\" : 5\n  \"Tue\" : 8\n", "xychart category");
+    }
+
+    @Test
+    void twoNodesWithDifferentLabels_areTwoEntries() {
+        // Mutant: key the de-duplication on the LaTeX alone -> the two $x$ runs in two labels
+        // collapse to one. The key is label text + run index, so these stay two.
+        Diagnostics d = Sirentide.renderWithDiagnostics("flowchart TD\n  A[one $x$] --> B[two $x$]\n",
+            fixed(ALLOWLIST_FRAGMENT)).diagnostics();
+        assertTrue(d.message().contains("2 math fragments failed"), d.message());
     }
 }

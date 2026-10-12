@@ -22,10 +22,11 @@ import org.xml.sax.helpers.DefaultHandler;
 /// The defensive containment scan at the math-fragment seam (RFC sirentide/39). A
 /// {@link com.sirentide.api.MathFragment} is FOREIGN markup (produced by a math renderer, not the
 /// font oracle), so before Sirentide embeds it in its own output it must prove the fragment stays
-/// inside the emitter contract: ONLY `g`/`path` elements, ONLY the `d`/`fill`/`transform`
-/// attributes, `fill` a legal colour, `transform` a strict numeric grammar. Anything else — any
-/// other element or attribute, `url(...)`, `<script`, `href`, `on*` — fails the scan and the
-/// fragment is treated exactly like a render failure (raw-`$…$`-text fallback).
+/// inside the emitter contract: ONLY `g`/`path`/`rect` elements, ONLY the `d`/`fill`/`transform`
+/// attributes (plus a rect's `x`/`y`/`width`/`height`), `fill` a legal colour, `transform` a strict
+/// numeric grammar, the rect geometry plain decimals. Anything else — any other element or
+/// attribute, `url(...)`, `<script`, `href`, `on*` — fails the scan and the fragment is treated
+/// exactly like a render failure (raw-`$…$`-text fallback).
 ///
 /// Allowlist by construction, not a denylist: a token is clean only if it MATCHES the permitted
 /// shape, so an unanticipated hostile construct fails closed. The scanner is a small hand-rolled
@@ -89,6 +90,14 @@ public final class FragmentGuard {
     /// by the font size keeps the bound proportional so it never rejects a large-font-size fragment.
     public static final double MAX_METRIC_EM = 10_000;
 
+    /// The deepest element nesting a fragment may carry (open elements on the stack at once). A
+    /// real inline fragment nests a handful of groups (a fraction inside a radical inside a matrix
+    /// is well under ten); this cap is Sirentide's OWN, explicit bound, refused as
+    /// {@link Refusal#DEPTH}, and it sits BELOW whatever depth bound the JDK parser enforces under
+    /// secure processing, so a fragment the tokenizer admits is never refused by the parser for
+    /// depth alone (that would be reported as well-formedness, which it is not).
+    public static final int MAX_DEPTH = 32;
+
     /// The context {@link com.sirentide.emit.SvgEmitter} embeds a fragment in: the namespaced root
     /// and the MathBox wrapper group. The well-formedness parse wraps the fragment in the same
     /// shape so "the guard accepted it" means "it is well-formed where it is actually embedded".
@@ -100,10 +109,16 @@ public final class FragmentGuard {
     /// fragment is refused: an unprovable fragment is not a clean one).
     private static final SAXParserFactory XML_FACTORY = hardenedFactory();
 
-    private static SAXParserFactory hardenedFactory() {
+    /// A freshly configured hardened factory. Package-private so a test can pin each setting on
+    /// its own: the DOCTYPE ban subsumes the entity and DTD switches, so no parse can tell whether
+    /// one of them was dropped, and they must stay as defence in depth should the ban ever relax.
+    static SAXParserFactory hardenedFactory() {
         try {
             // newDefaultInstance: always the JDK's built-in parser, never one a consumer's
-            // classpath happens to register, so the verdict does not vary by deployment.
+            // classpath happens to register, so the PARSER is the same in every deployment. The
+            // verdict still rides that parser's own secure-processing limits (element depth,
+            // attribute count, name length); the 64 KiB cap and MAX_DEPTH keep a fragment the
+            // tokenizer admits well inside them.
             SAXParserFactory f = SAXParserFactory.newDefaultInstance();
             f.setNamespaceAware(true);
             f.setValidating(false);
@@ -200,6 +215,8 @@ public final class FragmentGuard {
         ALLOWLIST("allowlist"),
         /// Blank, oversize, bracket text between tags, unbalanced or wrongly closed tags.
         STRUCTURE("structure"),
+        /// Elements nested deeper than {@link FragmentGuard#MAX_DEPTH}.
+        DEPTH("depth"),
         /// The allowlist and structure held, but the hardened XML parse refused it.
         WELL_FORMEDNESS("well-formedness"),
         /// The markup was clean but the box metrics were not ({@link FragmentGuard#metricsClean}).
@@ -280,8 +297,12 @@ public final class FragmentGuard {
             if (attrs != null) {
                 return attrs;
             }
-            // A self-closed element (`<path …/>`) is balanced by itself; a plain open tag pushes.
+            // A self-closed element (`<path …/>`) is balanced by itself; a plain open tag pushes,
+            // unless it would nest deeper than the explicit cap.
             if (!selfClose) {
+                if (stack.size() >= MAX_DEPTH) {
+                    return Refusal.DEPTH;
+                }
                 stack.push(name);
             }
         }
@@ -325,6 +346,14 @@ public final class FragmentGuard {
     /// Deliberately NOT the fragment text, which a hostile renderer controls.
     public record Refused(Refusal reason, int length) {}
 
+    /// One armed frame: the refusals in order, plus the label keys already recorded so a label
+    /// that a layout MEASURES more than once (class members, ER attributes, sequence
+    /// self-messages measure twice) is counted once.
+    private static final class Frame {
+        final List<Refused> refused = new ArrayList<>();
+        final java.util.Set<String> keys = new java.util.HashSet<>();
+    }
+
     /// The per-thread tap for guard refusals, mirroring {@link com.sirentide.font.EmittedText}
     /// frame for frame: a DIAGNOSTICS render arms a sink, a plain render beneath an armed frame
     /// pushes a suspension so its refusals reach no corpus, and {@link #record} is a no-op (zero
@@ -332,48 +361,54 @@ public final class FragmentGuard {
     /// in the same try/finally as the glyph tap, so a leaked sink can never outlive its render.
     public static final class Refusals {
 
-        private static final ThreadLocal<Deque<List<Refused>>> SINKS = new ThreadLocal<>();
+        private static final ThreadLocal<Deque<Frame>> SINKS = new ThreadLocal<>();
 
-        /// Identity sentinel for a suspended (plain-render) frame; a private, unmodifiable instance
-        /// (NOT the shared `List.of()` singleton) so the identity test below cannot collide.
-        private static final List<Refused> SUSPENDED =
-            java.util.Collections.unmodifiableList(new ArrayList<>(0));
+        /// Identity sentinel for a suspended (plain-render) frame; never recorded into.
+        private static final Frame SUSPENDED = new Frame();
 
         private Refusals() {}
 
         /// Record one refusal into the innermost ARMED frame; no-op when unarmed or suspended.
-        public static void record(Refusal reason, int length) {
-            Deque<List<Refused>> sinks = SINKS.get();
+        /// `key` identifies the LABEL the fragment came from (label text + run index, or the
+        /// mathblock source): the same key recorded twice in one frame counts once, so a layout
+        /// that measures a label twice does not report one refused fragment as two. Two distinct
+        /// labels with identical text therefore also count once; that is the price of a seam
+        /// that sees label text, not element identity.
+        public static void record(Refusal reason, int length, String key) {
+            Deque<Frame> sinks = SINKS.get();
             if (sinks == null) {
                 return;
             }
-            List<Refused> sink = sinks.peek();
-            if (sink != null && sink != SUSPENDED && reason != null) {
-                sink.add(new Refused(reason, Math.max(0, length)));
+            Frame sink = sinks.peek();
+            if (sink == null || sink == SUSPENDED || reason == null) {
+                return;
+            }
+            if (sink.keys.add(key == null ? "" : key)) {
+                sink.refused.add(new Refused(reason, Math.max(0, length)));
             }
         }
 
         /// Push a fresh frame for a diagnostics render. Pair with {@link #disarm} in a finally.
         public static void arm() {
-            Deque<List<Refused>> sinks = SINKS.get();
+            Deque<Frame> sinks = SINKS.get();
             if (sinks == null) {
                 sinks = new ArrayDeque<>();
                 SINKS.set(sinks);
             }
-            sinks.push(new ArrayList<>());
+            sinks.push(new Frame());
         }
 
-        /// The refusals recorded by the innermost armed frame, in order; empty when unarmed or
-        /// suspended. A copy, so a caller can never mutate the sink.
+        /// The refusals recorded by the innermost armed frame, in order, one per label; empty
+        /// when unarmed or suspended. A copy, so a caller can never mutate the sink.
         public static List<Refused> collected() {
-            Deque<List<Refused>> sinks = SINKS.get();
-            List<Refused> sink = sinks == null ? null : sinks.peek();
-            return sink == null || sink == SUSPENDED ? List.of() : List.copyOf(sink);
+            Deque<Frame> sinks = SINKS.get();
+            Frame sink = sinks == null ? null : sinks.peek();
+            return sink == null || sink == SUSPENDED ? List.of() : List.copyOf(sink.refused);
         }
 
         /// Pop the innermost frame; removes the thread state once the stack is empty.
         public static void disarm() {
-            Deque<List<Refused>> sinks = SINKS.get();
+            Deque<Frame> sinks = SINKS.get();
             if (sinks == null) {
                 return;
             }
@@ -386,7 +421,7 @@ public final class FragmentGuard {
         /// Enter a plain (non-diagnostics) render: beneath an armed frame push a suspension so
         /// this render's refusals are dropped; at top level allocate nothing and return false.
         public static boolean enterPlainRender() {
-            Deque<List<Refused>> sinks = SINKS.get();
+            Deque<Frame> sinks = SINKS.get();
             if (sinks == null || sinks.isEmpty()) {
                 return false;
             }

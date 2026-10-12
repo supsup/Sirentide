@@ -24,6 +24,7 @@ import java.util.Optional;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.SAXParserFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -249,6 +250,57 @@ class FragmentGuardWellFormedTest {
             assertFalse(FragmentGuard.parsesHardened(doc), "a document with a DOCTYPE is refused");
             assertThrows(SocketTimeoutException.class, server::accept, "the DTD URL was never contacted");
         }
+    }
+
+    @Test
+    void hardenedFactory_pinsEachBeltAndBracesSetting() throws Exception {
+        // The DOCTYPE ban makes the three settings below unobservable through a parse (no document
+        // can reach an entity or a DTD once DOCTYPE is refused), so each is pinned on the factory
+        // itself; a parse-level test would survive dropping any one of them. Mutants, one per line:
+        // drop external-general-entities=false; drop load-external-dtd=false; drop
+        // FEATURE_SECURE_PROCESSING=true; drop external-parameter-entities=false; drop the ban.
+        SAXParserFactory f = FragmentGuard.hardenedFactory();
+        assertNotNull(f, "the hardened factory must configure on this JDK");
+        assertFalse(f.getFeature("http://xml.org/sax/features/external-general-entities"),
+            "external general entities must be off");
+        assertFalse(f.getFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd"),
+            "external DTD loading must be off");
+        assertTrue(f.getFeature(XMLConstants.FEATURE_SECURE_PROCESSING),
+            "secure processing must be on");
+        assertFalse(f.getFeature("http://xml.org/sax/features/external-parameter-entities"),
+            "external parameter entities must be off");
+        assertTrue(f.getFeature("http://apache.org/xml/features/disallow-doctype-decl"),
+            "DOCTYPE must be disallowed");
+        assertFalse(f.isXIncludeAware(), "XInclude must be off");
+        assertFalse(f.isValidating(), "no DTD validation");
+    }
+
+    // ---- depth: Sirentide's own explicit cap, below the parser's -----------------
+
+    private static String nested(int depth) {
+        return "<g>".repeat(depth) + "<path d=\"M0 0\"/>" + "</g>".repeat(depth);
+    }
+
+    @Test
+    void nestingAtTheCap_isAccepted() {
+        // Control for the cap AND for the parser beneath it: if the JDK parser's own depth bound
+        // were lower than MAX_DEPTH (+2 for the embedding wrapper) this would be refused as
+        // well-formedness, and the cap would be telling a lie. Mutant: lower MAX_DEPTH.
+        assertTrue(FragmentGuard.isClean(nested(FragmentGuard.MAX_DEPTH)),
+            "a fragment nested exactly MAX_DEPTH deep is clean");
+    }
+
+    @Test
+    void nestingPastTheCap_isRefusedAsDepth_notWellFormedness() {
+        // Mutant: drop the stack.size() >= MAX_DEPTH check -> depth 33 is accepted (it is
+        // well-formed) and depth 150 is refused by the PARSER and misreported as well-formedness,
+        // which is the review finding this test pins.
+        assertEquals(FragmentGuard.Refusal.DEPTH, FragmentGuard.refusal(nested(FragmentGuard.MAX_DEPTH + 1)),
+            "one level past the cap is refused for depth");
+        assertEquals(FragmentGuard.Refusal.DEPTH, FragmentGuard.refusal(nested(150)),
+            "the reviewer's 150-deep fragment is refused for depth, not well-formedness");
+        assertTrue(FragmentGuard.wellFormedWhenEmbedded(nested(FragmentGuard.MAX_DEPTH + 1)),
+            "control: one past the cap is still well-formed, so only the cap refuses it");
     }
 
     @Test
