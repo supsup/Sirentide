@@ -1602,7 +1602,11 @@ public final class DslParser {
         } else if (type.equals("state") || type.equals("statediagram")) {
             u = firstUnsupportedStateToken(lines);
         } else if (type.equals("sequence")) {
-            u = firstUnsupportedSequenceToken(lines);
+            // Re-run the real walk with a holder: whether an opener is refused depends on the
+            // block stack at its line, which only the parse itself knows.
+            UnsupportedConstruct[] refused = new UnsupportedConstruct[1];
+            parseSequence(lines, lines[0].strip().split("\\s+"), null, refused);
+            u = refused[0];
         } else if (type.equals("xychart")) {
             // Re-run the real row walk with a holder, as the censuses do, so the name comes from
             // the parse that refused and cannot disagree with it.
@@ -2845,13 +2849,18 @@ public final class DslParser {
     /// Any block still open at end-of-input is closed at the last message (never throws). `else`/`and`
     /// on a block that ends up EMPTY, or a divider past the last message, is skipped in layout.
     private static Diagram parseSequence(String[] lines, String[] header, String textColor) {
-        // A Mermaid block opener this parser has no frame for (`opt`, `critical`, `break`, `rect`)
-        // degrades the WHOLE diagram to the inert shell, the call parseFlowchart and
-        // parseStateDiagram make for their own unsupported constructs. Dropping only the opener is
-        // what made the frames wrong: see firstUnsupportedSequenceToken.
-        if (firstUnsupportedSequenceToken(lines) != null) {
-            return new Empty();
-        }
+        return parseSequence(lines, header, textColor, null);
+    }
+
+    /// The sequence parse, with an OPTIONAL holder that receives the refusal (audit 2026-10-12
+    /// finding 5). `refusedOut` is null on a rendering parse; {@link #detectUnsupportedConstruct}
+    /// passes a one-slot array to learn WHICH opener was refused. The holder rides the REAL walk,
+    /// as {@link #parseXyChart}'s does, because the refusal depends on whether a block is OPEN at
+    /// the opener's line, and the only honest answer to that is this loop's own block stack: a
+    /// second scanner keeping its own count of `alt`/`loop`/`par`/`end` would be a second parser
+    /// of the block grammar (nesting cap, arrow exemption and all) and would drift from it.
+    private static Diagram parseSequence(String[] lines, String[] header, String textColor,
+                                         UnsupportedConstruct[] refusedOut) {
         // Header `nodecolor=#hex` colours ALL actor heads (per-actor colours are a follow-up — no
         // actor-decl syntax yet). null → the layout's built-in head fill.
         String nodeColor = parseNodeColor(header);
@@ -2868,6 +2877,20 @@ public final class DslParser {
                 continue;
             }
             bodyHadContent = true;   // a non-blank body line existed (even if it turns out malformed)
+            // A Mermaid block opener this parser has no frame for (`opt`, `critical`, `break`,
+            // `rect`), met WHILE A BLOCK IS OPEN, degrades the whole diagram to the inert shell:
+            // its `end` would close that enclosing block and frame the wrong messages. With no
+            // block open the opener is one unreadable line and falls through to the drop below,
+            // as it always did. See unsupportedSeqOpener.
+            if (!stack.isEmpty()) {
+                String opener = unsupportedSeqOpener(line);
+                if (opener != null) {
+                    if (refusedOut != null) {
+                        refusedOut[0] = nestedSeqOpenerRefusal(opener, i, line);
+                    }
+                    return new Empty();
+                }
+            }
             // A leading block / note / lifecycle keyword on an ARROWLESS line is a directive, not a
             // message (the no-arrow guard keeps a real message whose sender is spelled like a keyword
             // parsing as a message). Try the block keywords first, then note/create/destroy.
@@ -2949,11 +2972,10 @@ public final class DslParser {
     /// the three it does ({@link #handleBlockKeyword}).
     private static final Set<String> UNSUPPORTED_SEQ_BLOCKS = Set.of("opt", "critical", "break", "rect");
 
-    /// Scan a SEQUENCE body for the first block opener this parser cannot draw (audit 2026-10-12
-    /// finding 5; lead ruling "refuse first, fail closed"), returning its {@link
-    /// UnsupportedConstruct} with a 0-BASED `line` index into `lines`, or `null`. Shared by
-    /// {@link #detectUnsupportedConstruct} (which names it) and {@link #parseSequence} (which
-    /// degrades on it), the same two-part shape {@link #firstUnsupportedFlowToken} has.
+    /// The unsupported block keyword leading a sequence body line, or null (audit 2026-10-12
+    /// finding 5; lead ruling "refuse first, fail closed"). {@link #parseSequence} asks this of a
+    /// line ONLY WHILE A BLOCK IS OPEN, and degrades the whole diagram when the answer is not
+    /// null.
     ///
     /// THE DEFECT, and why it is silent-WRONG rather than silent-MISSING. An `opt` line carries no
     /// arrow and is not a keyword {@link #handleBlockKeyword} knows, so it was dropped as a
@@ -2967,6 +2989,15 @@ public final class DslParser {
     /// indistinguishable from one the author wrote, which is the whole-diagram argument
     /// {@link #firstUnsupportedStateToken} makes for composite states.
     ///
+    /// ONLY THE NESTED CASE IS REFUSED, because only the nested case is read wrong. That argument
+    /// needs an enclosing block for the `end` to close. With NO block open the opener line is
+    /// dropped, its `end` meets an empty stack and is inert ({@link #handleBlockKeyword}), and
+    /// every message is drawn where the author put it: what is lost is the frame, which is one
+    /// unreadable line and not a wrong picture. The first version of this guard refused that case
+    /// too and blanked a diagram whose only fault was a missing `rect` background. The loss is
+    /// SILENT (outcome OK with no caveat: the sequence path has no dropped-statement channel),
+    /// which is what it was before this guard existed.
+    ///
     /// POSITION CLASS. Only a line with NO arrow in its pre-colon head is an opener; a line with
     /// one is a message whose sender happens to be spelled `opt` (the same no-arrow rule, and the
     /// same exemption, the supported block keywords have). The head is what is scanned, so an
@@ -2976,27 +3007,24 @@ public final class DslParser {
     /// colon (`opt cache -> miss`) still reads as a message from an actor named `opt cache`. It is
     /// the same shape as a legal message from a multi-word actor (`loop controller ->> motor`),
     /// and telling the two apart is a design decision this guard does not take.
-    private static UnsupportedConstruct firstUnsupportedSequenceToken(String[] lines) {
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i].strip();
-            if (line.isEmpty()) {
-                continue;
-            }
-            if (scanSeqArrow(peelLabel(line)[0]) != null) {
-                continue;   // an arrow in the head: a message, whatever its sender is called
-            }
-            String keyword = splitKeyword(line)[0];
-            if (UNSUPPORTED_SEQ_BLOCKS.contains(keyword)) {
-                return new UnsupportedConstruct(keyword, i,
-                    "This sequence diagram uses Mermaid's `" + keyword + "` block (`" + cap(line)
-                        + "`), which the Sirentide DSL does not support: its frames are `alt`, "
-                        + "`loop` and `par`. The opener would be dropped and its `end` would then "
-                        + "close the enclosing block, drawing a frame around the wrong messages, so "
-                        + "the diagram degraded to the inert shell instead. Remove the `" + keyword
-                        + "` line and its `end`, or rewrite it as a supported frame.");
-            }
+    private static String unsupportedSeqOpener(String line) {
+        if (scanSeqArrow(peelLabel(line)[0]) != null) {
+            return null;   // an arrow in the head: a message, whatever its sender is called
         }
-        return null;
+        String keyword = splitKeyword(line)[0];
+        return UNSUPPORTED_SEQ_BLOCKS.contains(keyword) ? keyword : null;
+    }
+
+    /// The refusal's {@link UnsupportedConstruct} for body line `i` (0-based, like every
+    /// scanner's), an unsupported opener `keyword` met inside an open block.
+    private static UnsupportedConstruct nestedSeqOpenerRefusal(String keyword, int i, String line) {
+        return new UnsupportedConstruct(keyword, i,
+            "This sequence diagram uses Mermaid's `" + keyword + "` block (`" + cap(line)
+                + "`) inside another block. The Sirentide DSL does not support it: its frames "
+                + "are `alt`, `loop` and `par`. The opener would be dropped and its `end` would "
+                + "then close the enclosing block, drawing a frame around the wrong messages, so "
+                + "the diagram degraded to the inert shell instead. Remove the `" + keyword
+                + "` line and its `end`, or rewrite it as a supported frame.");
     }
 
     /// The reserved leading NOTE / LIFECYCLE keywords (M2 enrichment). A line whose first token is one
