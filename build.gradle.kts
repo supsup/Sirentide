@@ -1,5 +1,6 @@
 import java.security.MessageDigest
 import java.util.HexFormat
+import java.util.UUID
 import java.util.jar.JarFile
 
 plugins {
@@ -66,7 +67,7 @@ val examplesAuditSnapshot = layout.buildDirectory.file("examples-audit/before.tx
 // Names this build invocation, so a snapshot left behind by an EARLIER build (its finalizer was
 // excluded with -x, or the build was killed) is recognised as stale and discarded instead of
 // being compared against a tree that has legitimately moved since.
-val examplesAuditRun = java.util.UUID.randomUUID().toString()
+val examplesAuditRun = UUID.randomUUID().toString()
 
 tasks.test {
     useJUnitPlatform()
