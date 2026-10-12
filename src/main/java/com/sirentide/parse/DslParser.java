@@ -2332,6 +2332,23 @@ public final class DslParser {
         return line.startsWith(".->", i);
     }
 
+    /// True when a LONGER DOTTED OPERATOR starts at `i`: a dash, two or more dots, a dash
+    /// (`-..-`, `-..->`, `-...->`, Mermaid's longer dotted links). It is one operator with no text
+    /// inside it, so it is not an inline edge label: `A -..-> B` was refused under that name
+    /// because its first two characters look like the dotted opener and its last three like the
+    /// dotted closer. {@link #matchEdgeOp} matches none of it (`-.-` needs exactly one dot).
+    private static boolean isLongDottedRun(String line, int i) {
+        int n = line.length();
+        if (line.charAt(i) != '-') {
+            return false;
+        }
+        int j = i + 1;
+        while (j < n && line.charAt(j) == '.') {
+            j++;
+        }
+        return j - (i + 1) >= 2 && j < n && line.charAt(j) == '-';
+    }
+
     /// True when the `--` at `i` is the tail of an HTML comment opener (`<!--`), which is not the
     /// opening half of an inline edge label. `<!-- note -->` on a body line paired that `--` with
     /// the comment's own closing `-->` and blanked the diagram under the name "inline edge
@@ -2408,7 +2425,7 @@ public final class DslParser {
                                 inlineLabelOut[0] = TOKEN_INLINE_LABEL_DOTTED;   // the `.->` closer
                             } else if (c == '-' && next == '-' && !isHtmlCommentOpen(line, i)) {
                                 solidOpener = true;     // `--` that is not `-->` / `---`
-                            } else if (c == '-' && next == '.') {
+                            } else if (c == '-' && next == '.' && !isLongDottedRun(line, i)) {
                                 dottedOpener = true;    // `-.` that is not `-.-` / `-.->`
                             } else if (c == '=' && next == '=') {
                                 thickOpener = true;     // `==` that is not `==>` / `===`

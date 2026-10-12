@@ -274,6 +274,28 @@ class MermaidFlowchartPasteRefusalTest {
     }
 
     @Test
+    void aDottedInlineLabelWithNoSpacesIsStillRefused() {
+        // The still-refused half of the long-dotted pair: text between the two halves makes it a
+        // label, with or without spaces. Only an unbroken run of dots is one long operator.
+        assertRefusedNaming("flowchart TD\nA -.yes.-> B\n", "-. text .->", "`-. text .->`", 2);
+    }
+
+    @Test
+    void aLongerDottedArrowIsNotNamedAsAnInlineEdgeLabel() {
+        // `-..->` opens like the dotted half and ends like the dotted closer, so the first version
+        // of the rule refused the whole diagram and called an arrow with no text in it an inline
+        // edge label. It is an over-long operator, the family `A ---> B` belongs to.
+        for (String arrow : new String[] {"-..->", "-...->", "-..-"}) {
+            String dsl = "flowchart TD\nA --> B\nC " + arrow + " D\n";
+            assertNull(DslParser.detectUnsupportedConstruct(dsl),
+                "OLD BEHAVIOUR RESTORED: before this branch `C " + arrow + " D` was never a "
+                    + "whole-diagram refusal, and it is not one again: " + dsl);
+            assertEquals(List.of("A->B"), edges(flowchart(dsl)),
+                "the readable line beside it still draws its edge: " + dsl);
+        }
+    }
+
+    @Test
     void theExistingUnsupportedTokensStillWinOnTheirOwnLines() {
         // The new arms must not disturb the detector's established tokens.
         DslParser.UnsupportedConstruct u =
