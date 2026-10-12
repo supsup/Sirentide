@@ -1047,9 +1047,12 @@ public final class Sirentide {
         return new Diagnostics(Outcome.OK, STAGE_EMIT, msg.toString(), -1, detail.toString());
     }
 
-    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. EVERY
-    /// label-bearing type consumes `math`, routing any `$…$` run in its labels through the shared
-    /// {@link com.sirentide.layout.MathLabel} seam (plan sirentide-math-in-all-label-types). A `null`
+    /// Dispatch to each diagram type's pure layout. Exhaustive over the sealed IR. Most layouts
+    /// are handed `math`, but only those that call {@link com.sirentide.layout.MathLabel} route a
+    /// `$…$` run in their labels through that seam (plan sirentide-math-in-all-label-types): pie,
+    /// xychart, timeline, gantt, flowchart, sequence, state (via the flowchart layout), quadrant,
+    /// classDiagram and erDiagram (mathblock hands its whole body to the renderer). The others
+    /// accept and ignore it, or are not handed it, and bake a `$…$` run as plain glyphs. A `null`
     /// `math` is the plain-text degrade path for every type — byte-identical to the pre-feature bake.
     ///
     /// GLOBAL LAYOUT-WORK BUDGET (plan fe8c5bbc slice 2). This one seam — the switch every public
