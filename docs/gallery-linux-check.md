@@ -21,8 +21,10 @@ browser, and each gallery test class records the browser's user agent in its own
 test report's standard error). **Do not commit gallery PNGs regenerated on macOS**; regenerate on
 the harness below.
 
-`GALLERY.md` and the HTML pages do not depend on the host, so a default run still compares what it
-generates with the committed files and fails on a difference.
+`GALLERY.md` and the HTML pages do not depend on the host, so a default run still compares the
+`GALLERY.md` and `showcase.html` it generates with the committed files and fails on a difference.
+The per-type pages (`journey.html` and the others `ShowcaseGenTest` writes) are generated but not
+compared, so a committed one can fall behind the renderer until the next regeneration.
 
 ## The harness
 
