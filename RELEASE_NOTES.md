@@ -13,6 +13,17 @@ new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts.
 
+- **Running the test suite no longer rewrites the tracked examples.** With a browser present,
+  the gallery tests used to overwrite the PNGs under `examples/gallery/` on every run, and
+  those bytes depend on the host's Chromium, so a run on a Mac left tracked files modified.
+  Generated gallery images, `GALLERY.md` and the HTML pages now go to
+  `build/generated-examples/` by default, and the test task fails if anything under `examples/`
+  changed during a run that did not ask for it. The tracked tree is written only under
+  `-Dsirentide.regenerate=true`, which prints a banner naming the host and browser because the
+  committed gallery is the Linux render (`docs/gallery-linux-check.md`). `GALLERY.md` is now
+  compared with the committed page on every run instead of being silently rewritten. Test and
+  build tooling only: no rendered output changes.
+
 - **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
   `docker inspect` shows which commit and release an image was built from without unzipping the
   jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from
