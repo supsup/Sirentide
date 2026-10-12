@@ -2,6 +2,10 @@ package com.sirentide.contract;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -33,7 +37,7 @@ import org.xml.sax.helpers.DefaultHandler;
 /// embeds the fragment verbatim, so one such fragment made the whole SVG document unparseable. A
 /// fragment that clears the tokenizer is therefore ALSO parsed, wrapped exactly as the emitter
 /// wraps it, by the JDK's own XML parser with DOCTYPE, external entities and external DTDs turned
-/// off (see {@link #wellFormedWhenEmbedded}). Still zero third-party dependencies: `java.xml` is
+/// off (see `wellFormedWhenEmbedded`). Still zero third-party dependencies: `java.xml` is
 /// part of the JDK. Both layers must pass; neither replaces the other.
 public final class FragmentGuard {
 
@@ -187,16 +191,48 @@ public final class FragmentGuard {
         return widthPx <= limit && heightPx <= limit && depthPx <= limit;
     }
 
+    /// Why a fragment was refused: the CLASS of the failure, never its content. This is what the
+    /// seam reports in a diagnostic (plan 43fd0785 acceptance 1), so an author learns that a math
+    /// run degraded and which layer refused it, while the attacker-controllable fragment text is
+    /// never echoed.
+    public enum Refusal {
+        /// An element, attribute name or attribute value outside the allowlist.
+        ALLOWLIST("allowlist"),
+        /// Blank, oversize, bracket text between tags, unbalanced or wrongly closed tags.
+        STRUCTURE("structure"),
+        /// The allowlist and structure held, but the hardened XML parse refused it.
+        WELL_FORMEDNESS("well-formedness"),
+        /// The markup was clean but the box metrics were not ({@link FragmentGuard#metricsClean}).
+        METRICS("metrics");
+
+        private final String wire;
+
+        Refusal(String wire) {
+            this.wire = wire;
+        }
+
+        /// The short lower-case name used in diagnostics.
+        public String wire() {
+            return wire;
+        }
+    }
+
     /// True iff `innerSvg` is a contract-clean fragment (only g/path/rect, allowed attrs, legal
     /// values) AND is well-formed XML where the emitter embeds it. Element and attribute names are
     /// matched case-sensitively, as XML and SVG do: `<G>` is not `<g>`.
     /// A `null` or blank fragment is NOT clean (there is nothing to trust).
     public static boolean isClean(String innerSvg) {
+        return refusal(innerSvg) == null;
+    }
+
+    /// The reason `innerSvg` is NOT clean, or `null` when it is. Same verdict as {@link #isClean},
+    /// which is defined in terms of this method; the first failing layer names the refusal.
+    public static Refusal refusal(String innerSvg) {
         if (innerSvg == null || innerSvg.isBlank()) {
-            return false;
+            return Refusal.STRUCTURE;
         }
         if (innerSvg.length() > MAX_FRAGMENT_LEN) {
-            return false;   // #6: don't trust an oversize fragment whole — degrade to raw $…$
+            return Refusal.STRUCTURE;   // #6: don't trust an oversize fragment whole — degrade to raw $…$
         }
         Matcher m = TAG.matcher(innerSvg);
         int cursor = 0;
@@ -211,7 +247,7 @@ public final class FragmentGuard {
             // Any character BETWEEN tags that is a bracket means malformed/hostile markup.
             String between = innerSvg.substring(cursor, m.start());
             if (between.indexOf('<') >= 0 || between.indexOf('>') >= 0) {
-                return false;
+                return Refusal.STRUCTURE;
             }
             cursor = m.end();
 
@@ -223,25 +259,26 @@ public final class FragmentGuard {
             String body = m.group(3);
             boolean selfClose = !m.group(4).isEmpty();
             if (!ELEMENTS.contains(name)) {
-                return false;
+                return Refusal.ALLOWLIST;
             }
             sawElement = true;
             if (closing) {
                 // A closing tag carries no attributes and can NOT also be self-closed (`</g/>`).
                 if (selfClose || !body.isBlank()) {
-                    return false;
+                    return Refusal.STRUCTURE;
                 }
                 // Must close the innermost still-open element: non-empty stack whose top matches.
                 // An empty stack here means the fragment is closing a tag it never opened — the
                 // emitter-wrapper escape. A mismatch means crossed/interleaved nesting.
                 if (stack.isEmpty() || !stack.peek().equals(name)) {
-                    return false;
+                    return Refusal.STRUCTURE;
                 }
                 stack.pop();
                 continue;
             }
-            if (!attrsClean(name, body)) {
-                return false;
+            Refusal attrs = attrsRefusal(name, body);
+            if (attrs != null) {
+                return attrs;
             }
             // A self-closed element (`<path …/>`) is balanced by itself; a plain open tag pushes.
             if (!selfClose) {
@@ -251,37 +288,118 @@ public final class FragmentGuard {
         // Trailing text after the last tag must also be bracket-free.
         String tail = innerSvg.substring(cursor);
         if (tail.indexOf('<') >= 0 || tail.indexOf('>') >= 0) {
-            return false;
+            return Refusal.STRUCTURE;
         }
         // Every opened element must have been closed, and a trusted fragment carries ≥1 element.
         if (!sawElement || !stack.isEmpty()) {
-            return false;
+            return Refusal.STRUCTURE;
         }
         // The allowlist held; now prove the markup is well-formed XML in its embedding context.
-        return wellFormedWhenEmbedded(innerSvg);
+        return wellFormedWhenEmbedded(innerSvg) ? null : Refusal.WELL_FORMEDNESS;
     }
 
-    private static boolean attrsClean(String element, String body) {
+    private static Refusal attrsRefusal(String element, String body) {
         Set<String> allowed = ATTRS.get(element);
         Matcher a = ATTR.matcher(body);
         int cursor = 0;
         while (a.find()) {
             // Reject stray non-whitespace between attributes (valueless/malformed attrs).
             if (!body.substring(cursor, a.start()).isBlank()) {
-                return false;
+                return Refusal.STRUCTURE;
             }
             cursor = a.end();
             String name = a.group(1);   // case-sensitive: `D` is not the `d` attribute
             String value = a.group(2);
             if (!allowed.contains(name)) {
-                return false;
+                return Refusal.ALLOWLIST;
             }
             if (!valueClean(name, value)) {
-                return false;
+                return Refusal.ALLOWLIST;
             }
         }
         // Whatever remains after the last attribute must be whitespace only.
-        return body.substring(cursor).isBlank();
+        return body.substring(cursor).isBlank() ? null : Refusal.STRUCTURE;
+    }
+
+    /// One refusal at the seam: the reason class and the refused fragment's length in chars.
+    /// Deliberately NOT the fragment text, which a hostile renderer controls.
+    public record Refused(Refusal reason, int length) {}
+
+    /// The per-thread tap for guard refusals, mirroring {@link com.sirentide.font.EmittedText}
+    /// frame for frame: a DIAGNOSTICS render arms a sink, a plain render beneath an armed frame
+    /// pushes a suspension so its refusals reach no corpus, and {@link #record} is a no-op (zero
+    /// allocation) when nothing is armed. {@link com.sirentide.api.Sirentide} arms and disarms it
+    /// in the same try/finally as the glyph tap, so a leaked sink can never outlive its render.
+    public static final class Refusals {
+
+        private static final ThreadLocal<Deque<List<Refused>>> SINKS = new ThreadLocal<>();
+
+        /// Identity sentinel for a suspended (plain-render) frame; a private, unmodifiable instance
+        /// (NOT the shared `List.of()` singleton) so the identity test below cannot collide.
+        private static final List<Refused> SUSPENDED =
+            java.util.Collections.unmodifiableList(new ArrayList<>(0));
+
+        private Refusals() {}
+
+        /// Record one refusal into the innermost ARMED frame; no-op when unarmed or suspended.
+        public static void record(Refusal reason, int length) {
+            Deque<List<Refused>> sinks = SINKS.get();
+            if (sinks == null) {
+                return;
+            }
+            List<Refused> sink = sinks.peek();
+            if (sink != null && sink != SUSPENDED && reason != null) {
+                sink.add(new Refused(reason, Math.max(0, length)));
+            }
+        }
+
+        /// Push a fresh frame for a diagnostics render. Pair with {@link #disarm} in a finally.
+        public static void arm() {
+            Deque<List<Refused>> sinks = SINKS.get();
+            if (sinks == null) {
+                sinks = new ArrayDeque<>();
+                SINKS.set(sinks);
+            }
+            sinks.push(new ArrayList<>());
+        }
+
+        /// The refusals recorded by the innermost armed frame, in order; empty when unarmed or
+        /// suspended. A copy, so a caller can never mutate the sink.
+        public static List<Refused> collected() {
+            Deque<List<Refused>> sinks = SINKS.get();
+            List<Refused> sink = sinks == null ? null : sinks.peek();
+            return sink == null || sink == SUSPENDED ? List.of() : List.copyOf(sink);
+        }
+
+        /// Pop the innermost frame; removes the thread state once the stack is empty.
+        public static void disarm() {
+            Deque<List<Refused>> sinks = SINKS.get();
+            if (sinks == null) {
+                return;
+            }
+            sinks.poll();
+            if (sinks.isEmpty()) {
+                SINKS.remove();
+            }
+        }
+
+        /// Enter a plain (non-diagnostics) render: beneath an armed frame push a suspension so
+        /// this render's refusals are dropped; at top level allocate nothing and return false.
+        public static boolean enterPlainRender() {
+            Deque<List<Refused>> sinks = SINKS.get();
+            if (sinks == null || sinks.isEmpty()) {
+                return false;
+            }
+            sinks.push(SUSPENDED);
+            return true;
+        }
+
+        /// Leave a plain render entered with {@link #enterPlainRender}.
+        public static void exitPlainRender(boolean suspended) {
+            if (suspended) {
+                disarm();
+            }
+        }
     }
 
     private static boolean valueClean(String name, String value) {

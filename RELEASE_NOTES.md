@@ -21,8 +21,11 @@ cannot be mistaken for the published 0.5.0 artifacts.
   unparseable. The guard now also parses the fragment, inside the same wrapper the emitter puts
   around it, with the JDK's built-in XML parser (no DOCTYPE, no external entities or DTDs, nothing
   fetched), and matches element and attribute names case-sensitively. A refused fragment takes the
-  existing fallback: the label shows its raw `$...$` source. Fragments that were well-formed render
-  byte-identically, and Sirentide still has no third-party runtime dependency.
+  existing fallback: the label shows its raw `$...$` source, and `renderWithDiagnostics` (so
+  `render --strict`) now says so: the OK caveat counts the refused fragments by reason
+  (`allowlist`, `structure`, `well-formedness`, `metrics`) and gives each one's length, never its
+  text. Fragments that were well-formed render byte-identically, and Sirentide still has no
+  third-party runtime dependency.
 
 - **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
   `docker inspect` shows which commit and release an image was built from without unzipping the

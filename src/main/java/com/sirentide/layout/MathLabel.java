@@ -165,10 +165,15 @@ public final class MathLabel {
         // box extents; an unvalidated NaN/1e308 extent would blow the label viewBox up to a
         // rasterizer-DoS size). A failure of EITHER returns null, so the caller degrades this run to
         // its raw `$…$` source text — the same fallback a render failure already takes.
-        if (!FragmentGuard.isClean(frag.innerSvg())) {
-            return null;
+        FragmentGuard.Refusal why = FragmentGuard.refusal(frag.innerSvg());
+        if (why == null
+                && !FragmentGuard.metricsClean(frag.widthPx(), frag.heightPx(), frag.depthPx(), fontSizePx)) {
+            why = FragmentGuard.Refusal.METRICS;
         }
-        if (!FragmentGuard.metricsClean(frag.widthPx(), frag.heightPx(), frag.depthPx(), fontSizePx)) {
+        if (why != null) {
+            // Name the refusal for the diagnostics twin (plan 43fd0785): reason class + length only,
+            // never the fragment text. A no-op outside an armed diagnostics render.
+            FragmentGuard.Refusals.record(why, frag.innerSvg() == null ? 0 : frag.innerSvg().length());
             return null;
         }
         return frag;

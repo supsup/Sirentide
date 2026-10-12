@@ -85,6 +85,7 @@ public final class Sirentide {
         // actually executing contributes to a corpus, and a plain render contributes to none.
         // A top-level plain render takes the no-allocation fast path (suspended == false).
         boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
+        boolean refusalsSuspended = com.sirentide.contract.FragmentGuard.Refusals.enterPlainRender();
         try {
             // The leading config block (%% title/theme/direction) — read independently of the body
             // parse; DiagramConfig.DEFAULT (no config) threads a byte-identical bake (no title
@@ -121,6 +122,7 @@ public final class Sirentide {
             // ellipsization in every layout keep normal operation from ever reaching that point (H2).
             return INERT_SHELL;
         } finally {
+            com.sirentide.contract.FragmentGuard.Refusals.exitPlainRender(refusalsSuspended);
             com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
@@ -151,6 +153,7 @@ public final class Sirentide {
         // corpus; top-level takes the no-allocation fast path. The degrade path's nested
         // render(dsl, math) call manages its own boundary (nested suspensions stack safely).
         boolean suspended = com.sirentide.font.EmittedText.enterPlainRender();
+        boolean refusalsSuspended = com.sirentide.contract.FragmentGuard.Refusals.enterPlainRender();
         try {
             com.sirentide.ir.DiagramConfig config = com.sirentide.parse.DslParser.parseConfig(dsl);
             Diagram ir = com.sirentide.parse.DslParser.parse(dsl);
@@ -224,6 +227,7 @@ public final class Sirentide {
             // malformed/no-seq source thus always yields exactly [render(dsl, math)].
             return java.util.List.of(render(dsl, math));
         } finally {
+            com.sirentide.contract.FragmentGuard.Refusals.exitPlainRender(refusalsSuspended);
             com.sirentide.font.EmittedText.exitPlainRender(suspended);
         }
     }
@@ -247,9 +251,11 @@ public final class Sirentide {
         // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
         // disarm — a leaked sink must never survive into an unrelated render on this thread.
         com.sirentide.font.EmittedText.arm();
+        com.sirentide.contract.FragmentGuard.Refusals.arm();
         try {
             return renderFramesWithDiagnosticsArmed(dsl, math);
         } finally {
+            com.sirentide.contract.FragmentGuard.Refusals.disarm();
             com.sirentide.font.EmittedText.disarm();
         }
     }
@@ -269,6 +275,7 @@ public final class Sirentide {
             FrameBudget consumerBudget) {
         java.util.Objects.requireNonNull(consumerBudget, "consumerBudget");
         com.sirentide.font.EmittedText.arm();
+        com.sirentide.contract.FragmentGuard.Refusals.arm();
         try {
             // The armed pipeline checks the normal single/multi-frame paths at their earliest safe
             // retention points. This outer fence is deliberately ALSO present: the method has
@@ -277,6 +284,7 @@ public final class Sirentide {
             return enforceConsumerFrameBudget(
                 renderFramesWithDiagnosticsArmed(dsl, math, consumerBudget), consumerBudget);
         } finally {
+            com.sirentide.contract.FragmentGuard.Refusals.disarm();
             com.sirentide.font.EmittedText.disarm();
         }
     }
@@ -541,9 +549,11 @@ public final class Sirentide {
         // Arm the glyph-emission tap (sirentide/712 HIGH 1) for the diagnostics run and ALWAYS
         // disarm — a leaked sink must never survive into an unrelated render on this thread.
         com.sirentide.font.EmittedText.arm();
+        com.sirentide.contract.FragmentGuard.Refusals.arm();
         try {
             return renderWithDiagnosticsArmed(dsl, math, options == null ? RenderOptions.DEFAULT : options);
         } finally {
+            com.sirentide.contract.FragmentGuard.Refusals.disarm();
             com.sirentide.font.EmittedText.disarm();
         }
     }
@@ -678,6 +688,9 @@ public final class Sirentide {
     /// (the pie dropped-label caveat) keeps the font note instead of shadowing it. Message text and
     /// detail are appended; a second detail joins with "; ".
     private static Diagnostics withFontCoverageCaveat(Diagnostics ok) {
+        // The fragment-guard caveat rides the same carrier, FIRST: a refused fragment bakes as raw
+        // text, and any tofu in that text is what the coverage note then names.
+        ok = withFragmentGuardCaveat(ok);
         String rendered = com.sirentide.font.EmittedText.collected();
         java.util.List<Integer> uncovered = rendered.isEmpty() ? java.util.List.of()
             : com.sirentide.font.FontMetrics.bundled()
@@ -699,6 +712,47 @@ public final class Sirentide {
         String coverageDetail = "out-of-coverage code points: " + points;
         return new Diagnostics(Outcome.OK, ok.stage(), ok.message() + caveat, ok.line(),
             ok.detail().isEmpty() ? coverageDetail : ok.detail() + "; " + coverageDetail);
+    }
+
+    /// How many refused fragments a fragment-guard caveat lists in `detail` before summarising.
+    private static final int MAX_REFUSALS_REPORTED = 10;
+
+    /// Append the fragment-guard caveat (plan 43fd0785 acceptance 1) to an OK diagnostics when a
+    /// math fragment was refused at the seam during THIS armed render: the run baked as its raw
+    /// `$...$` source, and this names how many, by reason class, with each refused fragment's
+    /// length. NEVER the fragment text: a {@link MathFragmentRenderer} is foreign code, so its
+    /// output is treated as attacker-controlled and is not echoed into a message. No refusal
+    /// returns `ok` unchanged, byte for byte.
+    private static Diagnostics withFragmentGuardCaveat(Diagnostics ok) {
+        java.util.List<com.sirentide.contract.FragmentGuard.Refused> refused =
+            com.sirentide.contract.FragmentGuard.Refusals.collected();
+        if (refused.isEmpty()) {
+            return ok;
+        }
+        StringBuilder byReason = new StringBuilder();
+        for (com.sirentide.contract.FragmentGuard.Refusal r
+                : com.sirentide.contract.FragmentGuard.Refusal.values()) {
+            long n = refused.stream().filter(x -> x.reason() == r).count();
+            if (n > 0) {
+                byReason.append(byReason.length() > 0 ? ", " : "").append(r.wire()).append(" x").append(n);
+            }
+        }
+        String note = " Note: " + refused.size() + " math fragment"
+            + (refused.size() == 1 ? "" : "s")
+            + " failed the fragment guard and bake as raw $...$ source text (" + byReason + ").";
+        StringBuilder listed = new StringBuilder("fragment guard refused: ");
+        int shown = Math.min(refused.size(), MAX_REFUSALS_REPORTED);
+        for (int i = 0; i < shown; i++) {
+            com.sirentide.contract.FragmentGuard.Refused x = refused.get(i);
+            listed.append(i > 0 ? "; " : "").append(x.reason().wire())
+                .append(" (").append(x.length()).append(" chars)");
+        }
+        int more = refused.size() - shown;
+        if (more > 0) {
+            listed.append("; and ").append(more).append(" more");
+        }
+        return new Diagnostics(ok.outcome(), ok.stage(), ok.message() + note, ok.line(),
+            ok.detail().isEmpty() ? listed.toString() : ok.detail() + "; " + listed);
     }
 
     /// How many overlapping pairs an overlap-lint caveat names before summarising the rest.
