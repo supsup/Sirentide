@@ -1112,7 +1112,7 @@ public final class Sirentide {
     ///
     /// GLOBAL LAYOUT-WORK BUDGET (plan fe8c5bbc slice 2). This one seam — the switch every public
     /// entry point ({@link #render}, {@link #renderFrames}, and both `*WithDiagnostics` twins) routes
-    /// through — is where {@link com.sirentide.layout.LayoutWorkBudget} is armed, so all 25 dispatch
+    /// through — is where {@link com.sirentide.layout.LayoutWorkBudget} is armed, so all 24 dispatch
     /// cases are covered without editing any layout class. It closes the gap {@link #MAX_OUTPUT_BYTES}
     /// structurally cannot: the emit cap can only fire once emit STARTS, i.e. after layout has already
     /// built and retained the whole shape list, so a blow-up DURING layout (a legal 14 KB flowchart

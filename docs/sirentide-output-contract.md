@@ -31,7 +31,7 @@ The enforced contract is **shared constants**, `SirentideContract` (`ALLOWED_ELE
 
 Mermaid *needs* `<foreignObject>` + injected `<style>` only because it chose HTML labels + CSS-class theming; both are avoidable. Sirentide deliberately does NOT use them:
 
-- **Text = paths.** Labels are rendered as filled `<path>` glyphs (measured at bake time via the owned font-metrics oracle). Determinism (byte-identical cached bakes), no view-time font dependency, no `<text>`-injection surface. `<title>`/`<desc>` (with `role="img"` on the root) carry the accessible text; `aria-label` is contract headroom, not emitted.
+- **Text = paths.** Labels are rendered as filled `<path>` glyphs (measured at bake time via the owned font-metrics oracle). Determinism (byte-identical cached bakes), no view-time font dependency, no `<text>`-injection surface. `<title>`/`<desc>` (with `role="img"` on the root) carry the accessible text; `aria-label` is neither emitted nor admitted: `SirentideContract.ALLOWED_ATTRS` for the root `<svg>` is `xmlns`, `viewBox`, `width`, `height` and `role`, so an emitted `aria-label` would fail containment.
 - **No `<style>`.** All presentation is inline attributes; theming rides `currentColor` where possible (dark-mode-native, exactly like LatteX). The Stafficy sanitizer strips `<style>` anyway.
 - **No `<foreignObject>`, no `<script>`, no `on*`, no `<a>`/`href`, no external `url()`.**
 
@@ -93,7 +93,7 @@ The alphabet starts minimal and grows only as a milestone needs it. **The curren
 | geometry | `d`, `x`, `y`, `x1`,`y1`,`x2`,`y2`, `cx`,`cy`, `r`,`rx`,`ry`, `points`, `width`, `height`, `viewBox`, `transform`, `preserveAspectRatio` | numeric / path-data / transform-list only — no `url()`, no expressions |
 | presentation | `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `stroke-linecap`, `stroke-linejoin`, `opacity`, `fill-opacity`, `stroke-opacity` | `currentColor` \| `#hex` \| `none` \| numeric; `stroke-dasharray` = numeric list only |
 | identity | `class` | a fixed `sirentide-*` set ONLY (no free-form) — see the container contract |
-| a11y | `role`, `aria-label`, `aria-hidden` (on the root `<svg>`); `<title>`, `<desc>` children | text only |
+| a11y | `role` (on the root `<svg>`, the fixed value `img`); `<title>`, `<desc>` children | text only. `aria-label` and `aria-hidden` are not in `ALLOWED_ATTRS` and are not admitted |
 | namespace | `xmlns` (root `<svg>` only) | exactly `http://www.w3.org/2000/svg` — required for a standalone SVG document; same as LatteX's emitter-output-contract (was an omission from this table; the `ContainmentTest` keys on `SirentideContract.ALLOWED_ATTRS`, not on this table — Fixpoint sirentide seq 7) |
 
 ### Banned everywhere (build-failing)

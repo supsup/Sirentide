@@ -31,7 +31,7 @@ than shell out to a browser.
    node label, axis tick, or bar can *be* a real LaTeX formula — rendered at bake, zero runtime.
    A flowchart node that is an equation. Mermaid's math is runtime KaTeX; impossible in a static
    bake. ***(shipped)*** — real baked LaTeX renders in the labels of `pie`, `xychart`, `timeline`,
-   `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram` and `erDiagram` (incl.
+   `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram` and `erDiagram` (in a `pie` only a comfortable slice's inside label, not thin-slice leader labels or legend rows; in an `xychart` only the category labels on the x axis) (incl.
    braced `\frac{a}{b}`/`\sqrt{x}`) and standalone `mathblock`, via the injected LatteX renderer;
    labels in the other types bake a `$…$` run as plain text.
 2. **Directable, playable flows.** Step through a sequence; reveals in reading order; the active

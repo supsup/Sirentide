@@ -67,7 +67,7 @@ string isbn UK
 }
 ```
 
-Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside a label of a `pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram` or `erDiagram` typesets as real math via the LatteX bridge; labels in the other types bake it as plain text.
+Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside a label of a `pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram` or `erDiagram` (in a `pie` only a comfortable slice's inside label, not thin-slice leader labels or legend rows; in an `xychart` only the category labels on the x axis) typesets as real math via the LatteX bridge; labels in the other types bake it as plain text.
 
 Still ahead (the remaining *thesis* work): the native **effect layer** — `data-sirentide-fx`, the security-gated Part 2 the anchors were built to carry — see [SLOWSTART.md](SLOWSTART.md).
 
