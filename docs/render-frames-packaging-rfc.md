@@ -1,15 +1,28 @@
 # `renderFrames` packaging for documentation fences
 
-Status: reviewed design from plan `71926eda-3d26-4f71-851a-c1b0174577a0`
-after Lattice review `PROJECT/sirentide/624`. The Sirentide producer is owned by
-plan `3743edd3-e467-4f9a-bb96-59e225e2f4d3`; the Stafficy consumer remains gated
-by plan `27ef2ca1-6120-42ac-b74d-42b7974e60e7` until the producer is reviewed and
-lands on Sirentide main. This document does not widen the emitted SVG or Stafficy
-sanitizer contracts.
+Status: **IMPLEMENTED.** This file is kept as the design record; the live API
+reference is the Javadoc on `Sirentide` and `FrameBudget`.
+
+- **Design:** plan `71926eda-3d26-4f71-851a-c1b0174577a0`, reviewed at Lattice
+  review `PROJECT/sirentide/624`.
+- **Producer** (plan `3743edd3-e467-4f9a-bb96-59e225e2f4d3`): shipped in Sirentide
+  0.5.0. `FrameBudget`, the three-argument `renderFramesWithDiagnostics`,
+  `FrameDeckAssets` and the two bundled assets are in this repository; see the
+  0.5.0 entry "Trusted frame-deck budgets and artifact-paired optional assets" in
+  [RELEASE_NOTES.md](../RELEASE_NOTES.md).
+- **Consumer** (plan `27ef2ca1-6120-42ac-b74d-42b7974e60e7`): per the Stafficy
+  repository as read on 2026-10-12, landed there on 2026-08-01 (the
+  `sirentide-frames` fence in `SirentideDiagramConverter`, and same-origin routes
+  for the two assets). That half cannot be verified from this repository.
+- This document does not widen the emitted SVG or Stafficy sanitizer contracts.
+
+The sections below keep their design-time reasoning. Headings and sentences that
+read as future work for something now shipped have been put in the present tense.
 
 ## Producer and consumer source of truth
 
-The following producer contract and current Stafficy behavior bound this proposal:
+The following producer contract and Stafficy behavior bounded this design. The
+Stafficy bullets describe that side as it stood before the consumer landed:
 
 - Existing `Sirentide.renderFramesWithDiagnostics` overloads lay out once and return
   deterministic, independently inert SVG frames. They fail atomically to one inert
@@ -24,7 +37,8 @@ The following producer contract and current Stafficy behavior bound this proposa
   `div.sirentide.sirentide-<type>`.
 - Stafficy's sanitizer admits that exact wrapper and only the closed
   `data-sirentide-role`, `data-sirentide-id`, and `data-sirentide-seq`
-  vocabulary on descendant `g` elements. There is no Sirentide page runtime.
+  vocabulary on descendant `g` elements. At design time there was no Sirentide
+  page runtime; the frame-deck control described here is the first.
 - The `/docs` chrome already supports optional same-origin external JavaScript and
   CSS under its CSP, as demonstrated by the LatteX runtime. Inline author script,
   inline author style, event attributes, links inside SVG, and new free-form data
@@ -32,8 +46,9 @@ The following producer contract and current Stafficy behavior bound this proposa
 
 The in-repository and older published container-contract pages previously
 described a future Sirentide runtime and `data-sirentide-fx` as if they were live.
-The corrected contract is explicit: neither is admitted today. This proposal
-does not depend on either one; its optional control reads only deck structure.
+The corrected contract is explicit that the effect attribute and an effects
+runtime are not admitted. This design does not depend on either one; its optional
+control reads only deck structure.
 
 ## Goal and non-goals
 
@@ -45,7 +60,7 @@ This slice does not add autoplay, author-provided runtime options, inner-SVG
 attributes, animation primitives, sanitizer vocabulary, or a general effects
 layer. It does not change `render`, `renderFrames`, or any emitted frame bytes.
 
-## Proposed contract
+## Contract
 
 ### Author surface
 
@@ -63,8 +78,8 @@ Unknown and nested fences continue to pass through verbatim.
 
 ### Bake surface
 
-The Stafficy renderer adapter must call a new trusted-consumer overload rather
-than render at Sirentide's general-purpose limits and inspect the result afterward:
+A consumer's renderer adapter calls the trusted-consumer overload rather than
+render at Sirentide's general-purpose limits and inspect the result afterward:
 
 ```java
 public record FrameBudget(int maxFrames, long maxUtf8Bytes) {}
@@ -141,8 +156,9 @@ JavaScript is blocked, absent, or fails, every inert frame remains visible in
 source order as an honest static storyboard. The first slice has no autoplay or
 transition, so reduced-motion users receive the same discrete step control.
 
-The runtime and stylesheet should be bundled in the Sirentide jar and exposed by
-public resource accessors, matching the proven LatteX asset-lineage pattern. A
+The runtime and stylesheet are bundled in the Sirentide jar and exposed by public
+accessors (`FrameDeckAssets.javascript()` and `stylesheet()`), matching the proven
+LatteX asset-lineage pattern. A
 consumer serves the assets from the same jar it renders with; the runtime cannot
 drift from the deck contract. The Stafficy child slice owns same-origin routes,
 docs-chrome injection, and live CSP verification.
@@ -161,7 +177,9 @@ docs-chrome injection, and live CSP verification.
 
 ## Repository split and verification
 
-The proposed delivery split is:
+The delivery split (item 1 shipped in Sirentide 0.5.0; item 2 landed per the
+Stafficy repository as read on 2026-10-12; item 3 is not verifiable from this
+repository):
 
 1. **Sirentide:** bundle the optional runtime and stylesheet, expose resource
    accessors, add the trusted `FrameBudget` API and its pre-emission/incremental
