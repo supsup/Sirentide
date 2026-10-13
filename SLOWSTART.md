@@ -1,7 +1,7 @@
 # Sirentide Slowstart 🌊
 
 The unhurried tour: *why* Sirentide exists, what makes it different, and where it's going. For
-the five-minute version, see [QUICKSTART.md](QUICKSTART.md); for the full design, `docs/DESIGN.md`.
+the five-minute version, see [QUICKSTART.md](QUICKSTART.md); for the full design, [docs/DESIGN.md](docs/DESIGN.md).
 
 ---
 
@@ -35,7 +35,10 @@ than shell out to a browser.
    braced `\frac{a}{b}`/`\sqrt{x}`) and standalone `mathblock`, via the injected LatteX renderer;
    labels in the other types bake a `$…$` run as plain text.
 2. **Directable, playable flows.** Step through a sequence; reveals in reading order; the active
-   step pulses. A process as a narrated slideshow, not a snapshot. *(planned)*
+   step pulses. A process as a narrated slideshow, not a snapshot. *(partly shipped)* —
+   `Sirentide.renderFrames` bakes one static SVG frame per step today, and the jar carries an
+   optional Previous/Next deck control (`FrameDeckAssets`); the effect layer that would make the
+   active step pulse is *planned*.
 3. **Effects bound to meaning.** "Glow the critical path", "flash the error edge" — keyed off the
    diagram's own semantics, which Sirentide emits as stable anchors. *(planned)*
 
@@ -65,7 +68,8 @@ and splices it into the page. No JavaScript ships; the sanitizer waves it throug
 reader sees a crisp diagram with the page.
 
 Already today a node label reads `latency = $\frac{n}{r}$` and the formula renders *in* the box.
-*Where it's going:* soon the reader can **play** her `sequence` step by step, and she tags the
+Her build can also bake that `sequence` as one static frame per step with
+`Sirentide.renderFrames`, for a page control to flip through. *Where it's going:* she tags the
 critical path `fx=glow` and it pulses. Same DSL, same hermetic bake, same no-runtime-JS guarantee
 — with presence.
 
@@ -77,8 +81,9 @@ Sirentide scopes by **layout tractability**, not feature parity — it will neve
 Mermaid. The ladder moved faster than first drawn: the graph and time-axis types landed on the
 current path/line alphabet, so `flowchart`, `gantt`, and `timeline` are built now rather than
 deferred. Math-in-labels and the full `sequence` (alt/loop/par frames + activation bars) also
-shipped. What remains ahead is the *thesis* layer (play-through, effects) and the
-`marker`/`defs`-backed denser `sequence` heads.
+shipped, and so did the baked-frame play-through (`renderFrames`). What remains ahead is the
+*thesis* layer (the effects that would animate a play-through) and the `marker`/`defs`-backed
+denser `sequence` heads.
 
 | | Diagrams | Status |
 |---|---|---|
@@ -86,7 +91,7 @@ shipped. What remains ahead is the *thesis* layer (play-through, effects) and th
 | **M1** | `pie`, `xychart`, a minimal linear `sequence` (`->>` calls / `-->>` replies / self-messages) | **built** — the linear-sequence demonstrator ships; the play-through *effect* that rides it is *planned* |
 | **M2** | full `sequence` (alt/loop/par frames, activation bars) | **built** — alt/loop/par frames and activation bars both ship; `marker`/`defs` stay deferred, so arrowheads today are inline `<path>` triangles |
 | **M3** | `gantt`, `timeline` | **built** (proportional time axis; a `timeline` shows an ISO date as written, a `gantt` draws no date labels) |
-| **M-gate** | `flowchart` (`TD`/`LR`, rect/diamond nodes, edge labels, cycle-tolerant) | **built** — a layered, deterministic layout with visible back-edge lanes. Full graph auto-layout (crossing-minimization, dagre/ELK-class) is *not* attempted and stays a conscious re-decision. |
+| **M-gate** | `flowchart` (`TD`/`LR`, eight node shapes, edge labels and styles, subgraphs, cycle-tolerant) | **built** — a layered, deterministic layout: a long edge routes through virtual waypoints, four barycenter sweeps reduce crossings, and back-edges get visible lanes. A general dagre/ELK-class layout engine is *not* attempted and stays a conscious re-decision. |
 
 ## Family
 
