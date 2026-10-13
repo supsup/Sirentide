@@ -25,7 +25,7 @@ This one is the **producer→consumer allow-list for the rendered SVG itself**: 
 - **Consumer** (the Stafficy sanitizer) preserves exactly this set and **strips everything else**.
 - A **left-containment test** on the renderer side scans every emitted SVG and **fails the build** if anything outside this alphabet appears — same mechanism as LatteX's S8 containment test. A mirror e2e test on the Stafficy side asserts a Sirentide SVG survives sanitize byte-for-byte.
 
-The contract is **DERIVED FROM SHARED CONSTANTS**, not free-form strings duplicated per side. Widening it is an explicit, reviewed, per-milestone change to this doc + both tests together.
+The enforced contract is **shared constants**, `SirentideContract` (`ALLOWED_ELEMENTS` / `ALLOWED_ATTRS`), not free-form strings duplicated per side. This document mirrors those constants by hand: no test reads this file, and nothing compares its tables with the constants, so the constants win wherever the two disagree. Widening the contract is an explicit, reviewed, per-milestone change to the constants, this doc and both tests together.
 
 ## Design stance (why this is tighter than mermaid — learned from the mermaid recon)
 
@@ -49,6 +49,18 @@ All **twenty-three shipped diagram types** (`pie`, `xychart`, `timeline`, `gantt
 | `title`, `desc` | text-only children of the root `<svg>` (no attributes) — the baked `role="img"` + `<title>` + `<desc>` a11y triple |
 
 The emitter now emits `<g>` (math fragments + the closed `data-sirentide-role`/`-id`/`-seq` anchor set) and `<title>`/`<desc>` alongside the original `svg`/`path`/`rect`/`line` surface. **Still not emitted:** `<circle>`/`<ellipse>`/`<polyline>`/`<polygon>`, `<marker>`/`<defs>`, `stroke-dasharray`, `class`, and the still-gated `data-sirentide-fx` effect anchor. The wider allow-list below is deliberate **contract headroom** (producer ⊆ contract ⊆ sanitizer): the sanitizer preserves it, and the emitter narrows into it — new elements/attributes become *emitted* only when a milestone wires them (per the growth ledger) and `SirentideContract` widens to match.
+
+### Emitted behaviours the table does not show
+
+- **The inert shell.** Through `Sirentide.render`, an unrecognised source, a failed parse, layout or emit, or an over-cap output degrades to exactly `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" viewBox="0 0 0 0"></svg>`. It carries no `role`, no `<title>` and no `<desc>`, so the a11y triple is on a rendered diagram and not on this shell.
+- **The two kinds of `<g>` never share attributes.** A math-fragment wrapper carries `fill` and `transform` and nothing else. A semantic-anchor group carries the three `data-sirentide-*` attributes and nothing else: no `transform`, no `fill`.
+- **A non-default theme changes the output.** Under `%% theme: dark` or `neutral` the emitter writes a full-viewBox background `<rect>` first, and resolves `currentColor` to that theme's explicit hex at every fill and stroke. Only the default theme leaves `currentColor` for the host page to resolve.
+- **A play-through frame is the same geometry.** A frame from `renderFrames` differs from the static render only in `fill`, `stroke` and `stroke-width` values; no shape is added, removed or moved.
+- **`transform` is numeric only.** The admitted value is one or more `translate(...)`, `scale(...)` or `matrix(...)` with decimal arguments; `rotate` and anything with a reference are outside the grammar.
+- **Colours.** A 3-digit `#rgb` written in a diagram source is expanded to `#rrggbb` where the parser reads it (`SirentideContract.normalizeColor`). The emit sink itself accepts either width, and a math fragment's inner markup is embedded as the fragment guard accepted it.
+- **`<title>` and `<desc>` text is XML-escaped**, and any character that is not legal XML 1.0 is dropped, so a label cannot make the document ill-formed.
+- **No `id` attribute is emitted.** `ALLOWED_ATTRS` admits none on any element.
+- **Output is capped** at 5,000,000 characters (`Sirentide.MAX_OUTPUT_BYTES`, checked while the document is built); past it the bake degrades to the inert shell.
 
 ### Root-system bounded semantics
 
@@ -82,7 +94,7 @@ The alphabet starts minimal and grows only as a milestone needs it. **The curren
 | presentation | `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `stroke-linecap`, `stroke-linejoin`, `opacity`, `fill-opacity`, `stroke-opacity` | `currentColor` \| `#hex` \| `none` \| numeric; `stroke-dasharray` = numeric list only |
 | identity | `class` | a fixed `sirentide-*` set ONLY (no free-form) — see the container contract |
 | a11y | `role`, `aria-label`, `aria-hidden` (on the root `<svg>`); `<title>`, `<desc>` children | text only |
-| namespace | `xmlns` (root `<svg>` only) | exactly `http://www.w3.org/2000/svg` — required for a standalone SVG document; same as LatteX's emitter-output-contract (was an attr-table omission, caught by the foundation's ContainmentTest keying on this table — Fixpoint sirentide seq 7) |
+| namespace | `xmlns` (root `<svg>` only) | exactly `http://www.w3.org/2000/svg` — required for a standalone SVG document; same as LatteX's emitter-output-contract (was an omission from this table; the `ContainmentTest` keys on `SirentideContract.ALLOWED_ATTRS`, not on this table — Fixpoint sirentide seq 7) |
 
 ### Banned everywhere (build-failing)
 `<script>`, `<style>`, `<foreignObject>`, `<use>`, `<image>`, `<a>`; any `on*` handler; any `href`/`xlink:href`; any `style` attribute; any `url(...)` that is not a same-document `#localId`; any element or attribute not listed above.
