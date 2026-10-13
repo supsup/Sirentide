@@ -240,7 +240,8 @@ It writes `first.svg` and prints the verdict; a clean render reads `OK: Rendered
 `render` is built not to throw on a bad source: it returns an SVG string either way (the inert
 empty shell when the source did not render), and `renderWithDiagnostics` is how you find out
 which case you are in. For a play-through,
-`Sirentide.renderFrames(dsl)` returns a list of static SVG frames, one per step.
+`Sirentide.renderFrames(dsl)` returns a list of static SVG frames, one per step (past 512 steps,
+or 50 MB of frames in total, it returns one empty shell instead).
 
 `legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
 colour. A **very thin slice's** outside label may not fit and gets dropped (its wedge still draws;
