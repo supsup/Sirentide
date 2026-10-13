@@ -109,9 +109,25 @@ reports line 3 whether or not line 2 is a comment.
 direction, caption). That block is consumed as configuration; a `%%` line anywhere in the body is
 a comment.
 
+One trap follows from that. Every `%%` line *above* the diagram-type line belongs to the
+configuration block, so a remark written there is read as a `key: value` setting and not as a
+comment. A key the block does not know is ignored, but `note:` is an alias of `caption:`, so this
+source draws "draft, do not publish" as a caption band under the pie:
+
+```
+%% note: draft, do not publish
+pie
+"A" : 60
+"B" : 40
+```
+
+Put a remark below the type line and it is a comment again.
+
 Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
 page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
-bake never fails on one bad line. (See the [gallery](examples/gallery/GALLERY.md) for the diagram
+bake never fails on one bad line. That is the Java API, `Sirentide.render`. The command line
+refuses the same unknown type instead: exit `1`, nothing written, the reason on stderr (section 3).
+(See the [gallery](examples/gallery/GALLERY.md) for the diagram
 types, `timeline` and `gantt` included, with real-browser renders.)
 
 Working from a source checkout: `./gradlew test` never rewrites that gallery or the pages under
@@ -171,14 +187,19 @@ The exit code tells you what `/docs` would do with the page:
 - **`0`** — the fence renders; the SVG you got is what the page will embed.
 - **`1`** — a fence was found but it does **not** render: `/docs` would keep the fence verbatim
   on the page with a visible *"diagram did not render"* caption. Nothing is written; the reason
-  is on stderr. **Or** `--strict` was passed and the render carried a caveat (for example a
-  dropped statement, a dropped or shortened label, a label code point outside the font's
+  is on stderr. A raw DSL source or a fence body over the 1 MB source cap lands here too: it is
+  not recognized, so it does not render. **Or** `--strict` was passed and the render carried a
+  caveat (for example a dropped flowchart statement, a dropped or shortened label, a label code point outside the font's
   coverage, untypeset math, a math fragment the fragment guard refused, or a lint finding).
   In that case the
   SVG **is** written: it is exactly what `/docs` would serve, and worth inspecting.
+  The dropped-statement caveat exists for flowcharts only. A `sequence`, `pie`, `timeline` or
+  `gantt` line the parser cannot read is skipped with no caveat, so `--strict` cannot see it.
 - **`2`** — loud error: no capturable fence (including a fence nested inside another fence —
-  the bake leaves those literal), unreadable input, an input over the 8 MB cap, or an
-  unwritable `-o` destination. Nothing is written.
+  the bake leaves those literal), unreadable input, a Markdown file over the 8 MB cap, or an
+  unwritable `-o` destination. Nothing is written. Also `2`: an unknown command or bad flags,
+  `--math` or `--png` without a usable jar, `--batch` with no source on stdin, a failed write
+  to stdout, and a BrewShot failure under `--png` (that one after the SVG has been written).
 
 Without `--strict`, a caveat goes to stderr and the exit stays `0`, because the bake really
 happens and really serves that SVG.
@@ -190,7 +211,7 @@ usage error, so it exits `2`); in short:
 |---|---|
 | `sirentide` | raw DSL on stdin, SVG on stdout (the original shape) |
 | `sirentide render <file.md>` | render the first fence the `/docs` bake would capture |
-| `sirentide render -` | raw DSL on stdin, the verb spelling of the first form |
+| `sirentide render -` | raw DSL on stdin, like the first form, plus flags and caveat reporting (the bare form takes no flags and prints no caveats) |
 | `sirentide render --batch` | many NUL-separated sources on stdin, one NUL-terminated record each |
 
 | Flag | What it does |
