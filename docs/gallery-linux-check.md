@@ -7,8 +7,13 @@ references are the Linux render below, so that anyone can reproduce them exactly
 **A default test run does not touch them.** `BrewShotGalleryTest` and `MathGalleryBrewShotTest`
 render into `build/generated-examples/gallery/`, which mirrors `examples/gallery/` and is ignored by
 git, so `./gradlew test` leaves `git status` clean on any host, with or without a browser. There is
-nothing to restore after a Mac run. The test task also checks this itself: it fails if any file
-under `examples/` changed during a run that did not ask for it.
+nothing to restore after a Mac run. The build also checks this itself: it hashes every file under
+`examples/` before the tests start and again after them, and fails with
+`TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH` if any file changed during a run that did not ask
+for it. The second half is its own task, `examplesWriteAudit`, which runs after the test task
+whether or not a test failed, so a run that both fails a test and dirties the tree reports both.
+The check compares content, so a write of identical bytes is not detected; that is acceptable
+because such a write leaves the tracked tree, and `git status`, exactly as they were.
 
 The tracked gallery is written only under the regeneration switch, `-Dsirentide.regenerate=true`.
 A run with the switch prints a `SIRENTIDE EXAMPLES REGEN` line naming the host and the configured
@@ -16,8 +21,10 @@ browser, and each gallery test class records the browser's user agent in its own
 test report's standard error). **Do not commit gallery PNGs regenerated on macOS**; regenerate on
 the harness below.
 
-`GALLERY.md` and the HTML pages do not depend on the host, so a default run still compares what it
-generates with the committed files and fails on a difference.
+`GALLERY.md` and the HTML pages do not depend on the host, so a default run still compares the
+`GALLERY.md` and `showcase.html` it generates with the committed files and fails on a difference.
+The per-type pages (`journey.html` and the others `ShowcaseGenTest` writes) are generated but not
+compared, so a committed one can fall behind the renderer until the next regeneration.
 
 ## The harness
 
