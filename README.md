@@ -8,27 +8,64 @@ It is not a Mermaid clone. Mermaid is a design reference; Sirentide takes the id
 
 ## Why it exists
 
-- **Static-site / docs safe.** Output is inert `svg/path/rect/line` geometry (labels baked to `<path>` glyphs) — no `<script>`, no runtime JS, no external fonts. It survives a strict HTML sanitizer untouched.
+- **Static-site / docs safe.** Output is inert `svg`/`g`/`path`/`rect`/`line` geometry, plus `title`/`desc` for accessibility (labels baked to `<path>` glyphs) — no `<script>`, no runtime JS, no external fonts. It survives a strict HTML sanitizer untouched.
 - **Hermetic build.** Pure JVM, zero runtime deps (no headless browser at bake). The one build-time asset is a bundled OFL/Apache font, rendered to paths.
 - **Native effects (by design).** Sirentide already emits the SVG with its own stable semantic anchors, so the coming effect layer ("glow the critical path", "pulse the active step", "play the flow in order") will attach natively — not bolted onto a drifting class-soup.
 - **Math composition.** A node label, axis tick, or bar can *be* a real LaTeX formula — its LatteX sibling renders it at bake, and the two minimal-alphabet emitters compose for free.
 
 ## Status
 
-Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-three diagram types** are built today — each baked to inert `svg/path/rect/line` geometry — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Every shipped sealed-IR type also has a browser-audited BrewShot reference in the [gallery](examples/gallery/GALLERY.md), enforced by a headless type-to-capture coverage test.
+Live and shipping. The render pipeline (DSL → IR → layout → SVG), the clean-room font-metrics oracle, and **twenty-three diagram types** are built today — each baked to that same inert alphabet — plus **LaTeX math in labels** (the LatteX bridge), **semantic anchors** (`data-sirentide-role/id/seq`), the **baked-frame play-through API** (`renderFrames`, with a `renderFramesWithDiagnostics` twin that adds a why-did-it-degrade channel without touching the never-throw bake), and a live **`/docs` integration**: a ```` ```sirentide ```` fenced block in a docs page bakes to a sanitized inline diagram. **See [examples/showcase.html](examples/showcase.html)** — every type + the one-bake-any-theme demo, all live renderer output. Every shipped sealed-IR type also has a browser-audited BrewShot reference in the [gallery](examples/gallery/GALLERY.md), enforced by a headless type-to-capture coverage test.
 
 The six flagship types, in detail:
 
 | Type | One-liner | Sample |
 |---|---|---|
-| **`pie`** | proportional wedges; optional `legend` (alias `key`), per-item `#hex` colours (3- or 6-digit), thin-slice outside labels clamped | `pie legend`<br>`"Reviews" : 40`<br>`"Docs" : 30 #22c55e` |
+| **`pie`** | proportional wedges; optional `legend` (alias `key`), per-item `#hex` colours (3- or 6-digit); a thin slice's outside label is shortened with an ellipsis to fit, or dropped when not even the ellipsis fits (the drop is named as a caveat) | `pie legend`<br>`"Reviews" : 40`<br>`"Docs" : 30 #22c55e` |
 | **`xychart`** | signed bars on a fractional-clean axis, or `line` / `scatter`; several series with a `legend`; a categorical x axis, or `numeric` for a real one; a dropped or shortened label is named as a caveat | `xychart`<br>`"Mon" : 5`<br>`"Tue" : -3` |
 | **`timeline`** | events placed *proportionally* in time; a value is a bare number (such as a year, shown as a number) or an ISO date (`YYYY-MM-DD` / `YYYY-MM`, shown as written) — use one form per diagram, because the two are not placed on a common scale; labels ellipsized/clamped | `timeline`<br>`"Founded" : 2000`<br>`"Launch" : 2020` |
 | **`gantt`** | tasks on a shared, min-normalized time axis; degenerate domains still draw markers | `gantt`<br>`"Design" : 0-3`<br>`"Build" : 3-8` |
 | **`flowchart`** | `TD`/`LR` directed graph, `A[rect]`/`A{diamond}` nodes, `-->|label|` per-hop edge labels, chained `A-->B-->C`, cycle-tolerant with visible back-edge lanes | `flowchart TD`<br>`A[Open PR] --> B{Approve?}`<br>`B -->\|yes\| C[Merge]` |
 | **`sequence`** | actors + time-ordered messages: `->>` calls, `-->>` replies, self-messages | `sequence`<br>`Client ->> Auth : login`<br>`Auth -->> Client : ok` |
 
+The flowchart sample is written `-->\|yes\|` in this file's source, because a Markdown table needs
+the pipe escaped. Copy it from the rendered page or from the block below. Pasted with the
+backslashes it still renders and reports no caveat, but the `yes` edge label is lost.
+
+```
+flowchart TD
+A[Open PR] --> B{Approve?}
+B -->|yes| C[Merge]
+```
+
 Plus seventeen more: **`state`** (rides the flowchart engine), **`quadrant`**, **`classDiagram`** (all five UML relationship markers), **`erDiagram`** (crow-foot cardinalities), **`gitGraph`**, **`journey`**, **`mindmap`**, **`sankey`**, **`mathblock`** (standalone display LaTeX), **`matrix`** (comparison / verdict grid), **`heatmap`** (continuous 0..1 cells on a sequential ramp, with a legend; or categorical cells with `palette:`, plus a custom `ramp:` and `bins:`, `hide:` for headers and `!` to outline a cell), **`snake`** (continued-fraction snake graph), **`tensornetwork`** (Penrose MPS/MPO), **`young`** (integer-partition boxes), **`dynkin`** (semisimple Lie-algebra classification), **`rootsystem`** (deterministic finite-root-system Coxeter-plane projections), and **`knot`** (classical knots — trefoil/unknot/figure-eight). `graph` is accepted as a synonym for `flowchart`, and `xychart-beta` for `xychart`. The flowchart carries **eight** of mermaid's node shapes — rect, rounded, stadium, subroutine, cylinder, circle, diamond, hexagon — plus edge styles and nested subgraphs. Among the forms **not** supported are the parallelogram, trapezoid, asymmetric and double-circle — named rather than counted, because an exclusion list that reads as exhaustive is the same overclaim one level down. The sequence diagram carries `alt`/`loop`/`par` frames and activation bars. Activation is implicit: a call `->>` activates its callee and a reply `-->>` ends it, with nested activations stacked side by side. The mermaid sigils (`->>+` / `-->>-`) are accepted and change nothing, so a diagram written with them renders the same bars rather than minting an actor named `+ B`.
+
+A small sample for more of the seventeen (the [gallery](examples/gallery/GALLERY.md) has a rendered case for every type, including the ones not listed here):
+
+| Type | Sample |
+|---|---|
+| **`state`** | `stateDiagram-v2`<br>`[*] --> Draft`<br>`Draft : Draft (editable)`<br>`Draft --> Review : submit`<br>`Review --> Draft : changes requested`<br>`Review --> Published #22c55e : approve`<br>`Published --> [*]` |
+| **`classDiagram`** | `classDiagram`<br>`class Customer {`<br>`+String email`<br>`}`<br>`class Order {`<br>`+total() Money`<br>`}`<br>`Customer "1" --> "0..*" Order : places`<br>`Order "1" *-- "1..*" LineItem : contains` |
+| **`matrix`** | `matrix`<br>`cols: Chrome, Firefox, Safari`<br>`"SVG filters" : yes, yes, partial`<br>`"Container queries" : yes, yes, 16.0+:yes`<br>`"View transitions" : yes, behind flag:partial, no`<br>`"WebGPU" : yes, -, no` |
+| **`heatmap`** | `heatmap`<br>`cols: unit, integration, e2e`<br>`scale: "untested" --> "covered"`<br>`"parser" : 0.95, 0.80, 0.40`<br>`"layout" : 0.70, 0.55!, -`<br>`"cli" : 90%, 85%, 60%` |
+| **`tensornetwork`** | `tensornetwork`<br>`mps A B C D` |
+| **`young`** | `young`<br>`rows: 5, 3, 1` |
+| **`dynkin`** | `dynkin`<br>`type: E8` |
+| **`rootsystem`** | `rootsystem`<br>`type: A2`<br>`edges: minimal` |
+| **`knot`** | `knot`<br>`type: trefoil` |
+
+An `erDiagram` relation is written with pipe characters, so its sample is a block rather than a table cell:
+
+```
+erDiagram
+AUTHOR ||--o{ BOOK : writes
+BOOK }o..o{ TAG : tagged
+BOOK {
+int id PK
+int author_id FK
+string isbn UK
+}
+```
 
 Cross-cutting: a `color=` header modifier for off-slice text, `currentColor` theme-adaptive labels, per-diagram themes, and hard input caps so a malformed or oversized source degrades to an inert shell — the bake never throws. A `$…$` fragment inside a label of a `pie`, `xychart`, `timeline`, `gantt`, `flowchart`, `sequence`, `state`, `quadrant`, `classDiagram` or `erDiagram` typesets as real math via the LatteX bridge; labels in the other types bake it as plain text.
 
@@ -81,6 +118,9 @@ the output mount stays writable:
 
 ```sh
 mkdir -p Input Output
+# the page to render: any Markdown file holding a sirentide fence
+printf '%s\n' '# Demo' '' '```sirentide' 'pie legend' '"Reviews" : 40' '"Docs" : 30 #22c55e' '```' \
+  > Input/diagram.md
 docker run --rm \
   --user "$(id -u):$(id -g)" \
   --mount type=bind,src="$PWD/Input",dst=/sirentide/input,readonly \
