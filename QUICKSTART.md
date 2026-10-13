@@ -39,115 +39,74 @@ LaTeX formula, rendered at bake.
 > surfaces the boundary as an `OK` result whose message/detail **names the out-of-coverage
 > `U+XXXX` code points**, so an unexplained box is a nameable signal rather than a silent surprise.
 
-## 2. Render a diagram
+## 2. Your first diagram: from nothing to a saved SVG
 
-The whole pipeline is one call. Give it a Sirentide DSL source, get back a self-contained SVG
-string. The first token names the diagram type. A **pie**:
+One path, top to bottom. Every command is meant to be copied as written.
 
-```java
-import com.sirentide.api.Sirentide;
+### What you need
 
-String svg = Sirentide.render("""
-    pie legend
-      "Reviews" : 40
-      "Builds"  : 30
-      "Docs"    : 30 #22c55e
-    """);
-// -> <svg xmlns="http://www.w3.org/2000/svg" width="..." height="..." viewBox="0 0 ..."> <path .../> ... </svg>
-```
+- **JDK 25.** The build compiles for Java 25, and the jar it produces needs a Java 25 runtime
+  to run. Gradle can download the compile toolchain for itself, but `java -jar` uses the `java`
+  on your `PATH`, so installing JDK 25 is the simple route.
+- **A git clone, not a zip download.** The jar stamps the commit it was built from into its
+  manifest, and the build refuses to produce a jar without one exact 40-hex commit. In a clone
+  Gradle reads that from git. A source zip has no git history, so `./gradlew jar` fails there
+  (unless you supply the commit yourself in `SIRENTIDE_SOURCE_REVISION`).
 
-`legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
-colour. A **very thin slice's** outside label may not fit and gets dropped (its wedge still draws;
-`renderWithDiagnostics` names the dropped label) — use `pie legend` to show every label in the side
-key. Swap the source and you get a different diagram from the same call. A **flowchart**:
-
-```java
-String flow = Sirentide.render("""
-    flowchart TD
-      A[Open PR] --> B{Approve?}
-      B -->|yes| C[Merge]
-      B -->|no|  D[Revise]
-      D -->|re-review| B
-    """);
-```
-
-`TD` (top-down, default) or `LR` (left-right); `A[label]` is a rectangle, `A{label}` a diamond;
-`-->|text|` labels a single hop; chains like `A --> B --> C` expand; cycles are drawn with a
-visible back-edge lane. A **sequence**:
-
-```java
-String seq = Sirentide.render("""
-    sequence
-      Client ->> Gateway : GET /token
-      Gateway ->> Auth   : validate
-      Auth   -->> Gateway : ok
-      Gateway ->> Gateway : sign JWT
-      Gateway -->> Client : 200 token
-    """);
-```
-
-`->>` is a call (solid, filled head), `-->>` a reply (lighter, open head); `A ->> A` is a
-self-message; the `: label` after the arrow is optional. Actors register in first-seen order.
-
-### Comments
-
-A line beginning `%%` is a comment. It draws nothing, and a diagram containing one renders
-**byte-identically** to the same diagram without it:
-
-```
-flowchart TD
-    A[Start] --> B[End]
-    %% the happy path; the retry arm is added in the next section
-```
-
-Comments are *blanked* rather than removed, which is the part worth knowing: an error further
-down still reports its **real source line number**, so a comment above a mistake does not shift
-the diagnostic away from the line you are looking at. Measured — a parse error on source line 3
-reports line 3 whether or not line 2 is a comment.
-
-`%%` also introduces the optional configuration block at the very top of a diagram (title, theme,
-direction, caption). That block is consumed as configuration; a `%%` line anywhere in the body is
-a comment.
-
-One trap follows from that. Every `%%` line *above* the diagram-type line belongs to the
-configuration block, so a remark written there is read as a `key: value` setting and not as a
-comment. A key the block does not know is ignored, but `note:` is an alias of `caption:`, so this
-source draws "draft, do not publish" as a caption band under the pie:
-
-```
-%% note: draft, do not publish
-pie
-"A" : 60
-"B" : 40
-```
-
-Put a remark below the type line and it is a comment again.
-
-Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
-page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
-bake never fails on one bad line. That is the Java API, `Sirentide.render`. The command line
-refuses the same unknown type instead: exit `1`, nothing written, the reason on stderr (section 3).
-(See the [gallery](examples/gallery/GALLERY.md) for the diagram
-types, `timeline` and `gantt` included, with real-browser renders.)
-
-Working from a source checkout: `./gradlew test` never rewrites that gallery or the pages under
-`examples/`. What the tests generate goes to `build/generated-examples/`, so `git status` stays
-clean on any machine. The committed gallery images are the Linux render, and regenerating them is
-a deliberate step (`-Dsirentide.regenerate=true`) done on the reference host; see
-[docs/gallery-linux-check.md](docs/gallery-linux-check.md).
-
-## 3. From the command line
+### Build
 
 **Getting the CLI from a source checkout** — build the executable jar once, then (optionally)
 alias it:
 
 ```bash
+git clone https://github.com/supsup/Sirentide.git
+cd Sirentide
 ./gradlew jar                # produces build/libs/sirentide-0.6.0.jar (Main-Class is set)
 # The double quotes are load-bearing: $PWD expands NOW, while you are still in the checkout,
 # baking the absolute jar path into the alias — so it keeps working after you cd anywhere else.
 # (Single-quoting the alias would defer $PWD to each invocation and break outside the checkout.)
 alias sirentide="java -jar '$PWD/build/libs/sirentide-0.6.0.jar'"
 ```
+
+The alias is for an interactive shell. In a script, call
+`java -jar build/libs/sirentide-0.6.0.jar` directly.
+
+### A page with a diagram in it
+
+Save this as `first.md`. It is an ordinary Markdown file; the diagram is the fenced block whose
+info string is exactly `sirentide`:
+
+````markdown
+# First diagram
+
+Any prose. Only the first sirentide fence is rendered.
+
+```sirentide
+flowchart TD
+  A[Open PR] --> B{Approve?}
+  B -->|yes| C[Merge]
+  B -->|no|  D[Revise]
+  D -->|re-review| B
+```
+````
+
+### Render it, then open it
+
+```bash
+sirentide render first.md -o out.svg
+echo "exit=$?"        # 0 when the diagram rendered
+```
+
+`out.svg` is a complete, standalone SVG document. Open it in any browser (`open out.svg` on macOS,
+`xdg-open out.svg` on Linux), or paste its contents inline into an HTML page.
+
+That is the whole loop: edit the fence, run `render` again, reload. If the exit code is not `0`,
+section 5 shows what the common failures look like.
+
+## 3. From the command line
+
+Section 2 built the jar and the `sirentide` alias; everything here uses them. The shortest form
+takes no file at all:
 
 ```bash
 echo 'pie
@@ -167,7 +126,7 @@ printf 'pie\n  "A" : 60\n  "B" : 40\0xychart\n"x" : 1\n"y" : 2\0' | sirentide re
 > LaTeX source text**. That is the documented per-fragment fail-soft, not an error. To typeset it,
 > pass `--math` with the LatteX jar (located at run time, never bundled):
 > ```bash
-> sirentide render notes/some-page.md --math --lattex libs/lattex-0.6.0.jar
+> sirentide render first.md --math --lattex libs/lattex-0.6.0.jar
 > ```
 > (or set `SIRENTIDE_LATTEX_JAR`). `--math` without a usable jar is a usage error (exit 2), and
 > a `$…$` run LatteX cannot typeset is reported as a caveat, so `--strict` fails on it, and so is
@@ -175,12 +134,15 @@ printf 'pie\n  "A" : 60\n  "B" : 40\0xychart\n"x" : 1\n"y" : 2\0' | sirentide re
 > reason, never by content; the run shows its raw `$…$` source). From the
 > API, pass a `MathFragmentRenderer` to the two-arg `Sirentide.render(dsl, mathRenderer)`.
 
+`libs/lattex-0.6.0.jar` is tracked in the repository, so that path works from the checkout root.
+On `first.md` the flag changes nothing, because its labels carry no `$…$` run.
+
 **Checking a docs fence locally, before it ever reaches `/docs`.** `sirentide render <file.md>`
 extracts the first ```` ```sirentide ```` fence **the Stafficy `/docs` bake would capture** from a
 markdown file and bakes it —
 ```bash
-sirentide render notes/some-page.md          # SVG to stdout
-sirentide render notes/some-page.md -o out.svg   # SVG to a file (atomic write)
+sirentide render first.md          # SVG to stdout
+sirentide render first.md -o out.svg   # SVG to a file (atomic write)
 ```
 The exit code tells you what `/docs` would do with the page:
 
@@ -235,13 +197,199 @@ replace.) Fence **extraction is scanner-parity** with
 the `/docs` bake's `SirentideDiagramConverter` (the Stafficy-repo pre-flexmark pass) — see the
 contract note on `FenceExtractor` and its cross-repository fixture test.
 
-## 4. Why it's safe to inline
+## 4. From Java, and the diagram language
+
+The whole pipeline is one call. Give it a Sirentide DSL source, get back a self-contained SVG
+string. The first token names the diagram type. A **pie**, as one complete file — save it as
+`FirstDiagram.java` in the checkout root:
+
+```java
+import com.sirentide.api.RenderResult;
+import com.sirentide.api.Sirentide;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public class FirstDiagram {
+    public static void main(String[] args) throws Exception {
+        String dsl = """
+            pie legend
+              "Reviews" : 40
+              "Builds"  : 30
+              "Docs"    : 30 #22c55e
+            """;
+
+        String svg = Sirentide.render(dsl);
+        // -> <svg xmlns="http://www.w3.org/2000/svg" width="..." height="..." viewBox="0 0 ..." role="img"><title>...</title><desc>...</desc> ... </svg>
+        Files.writeString(Path.of("first.svg"), svg);
+
+        // The same bake, plus a verdict that says why when something is off.
+        RenderResult result = Sirentide.renderWithDiagnostics(dsl);
+        System.err.println(result.diagnostics().outcome() + ": " + result.diagnostics().message());
+    }
+}
+```
+
+Run it with the jar from section 2 on the classpath. Sirentide has no runtime dependencies, so
+that one jar is the whole classpath, and `java` compiles a single source file on the fly:
+
+```bash
+java -cp build/libs/sirentide-0.6.0.jar FirstDiagram.java
+```
+
+It writes `first.svg` and prints the verdict; a clean render reads `OK: Rendered successfully.`
+`render` is built not to throw on a bad source: it returns an SVG string either way (the inert
+empty shell when the source did not render), and `renderWithDiagnostics` is how you find out
+which case you are in. For a play-through,
+`Sirentide.renderFrames(dsl)` returns a list of static SVG frames, one per step.
+
+`legend` (alias `key`) adds a colour key; a trailing `#hex` (3- or 6-digit) sets one wedge's
+colour. A **very thin slice's** outside label may not fit and gets dropped (its wedge still draws;
+`renderWithDiagnostics` names the dropped label) — use `pie legend` to show every label in the side
+key. Swap the source and you get a different diagram from the same call. A **flowchart**:
+
+```
+flowchart TD
+  A[Open PR] --> B{Approve?}
+  B -->|yes| C[Merge]
+  B -->|no|  D[Revise]
+  D -->|re-review| B
+```
+
+`TD` (top-down, default) or `LR` (left-right); `A[label]` is a rectangle, `A{label}` a diamond;
+`-->|text|` labels a single hop; chains like `A --> B --> C` expand; cycles are drawn with a
+visible back-edge lane. A **sequence**:
+
+```
+sequence
+  Client ->> Gateway : GET /token
+  Gateway ->> Auth   : validate
+  Auth   -->> Gateway : ok
+  Gateway ->> Gateway : sign JWT
+  Gateway -->> Client : 200 token
+```
+
+`->>` is a call (solid, filled head), `-->>` a reply (lighter, open head); `A ->> A` is a
+self-message; the `: label` after the arrow is optional. Actors register in first-seen order.
+
+### Comments
+
+A line beginning `%%` is a comment. It draws nothing, and a diagram containing one renders
+**byte-identically** to the same diagram without it:
+
+```
+flowchart TD
+    A[Start] --> B[End]
+    %% the happy path; the retry arm is added in the next section
+```
+
+Comments are *blanked* rather than removed, which is the part worth knowing: an error further
+down still reports its **real source line number**, so a comment above a mistake does not shift
+the diagnostic away from the line you are looking at. Measured — a parse error on source line 3
+reports line 3 whether or not line 2 is a comment.
+
+`%%` also introduces the optional configuration block at the very top of a diagram (title, theme,
+direction, caption). That block is consumed as configuration; a `%%` line anywhere in the body is
+a comment.
+
+One trap follows from that. Every `%%` line *above* the diagram-type line belongs to the
+configuration block, so a remark written there is read as a `key: value` setting and not as a
+comment. A key the block does not know is ignored, but `note:` is an alias of `caption:`, so this
+source draws "draft, do not publish" as a caption band under the pie:
+
+```
+%% note: draft, do not publish
+pie
+"A" : 60
+"B" : 40
+```
+
+Put a remark below the type line and it is a comment again.
+
+Every result is complete and standalone — write it to a `.svg` file, or paste it inline into a
+page. A malformed row is skipped and an unknown diagram type degrades to an empty shell — the
+bake never fails on one bad line. That is the Java API, `Sirentide.render`. The command line
+refuses the same unknown type instead: exit `1`, nothing written, the reason on stderr (sections 3 and 5).
+(See the [gallery](examples/gallery/GALLERY.md) for the diagram
+types, `timeline` and `gantt` included, with real-browser renders.)
+
+Working from a source checkout: `./gradlew test` never rewrites that gallery or the pages under
+`examples/`. What the tests generate goes to `build/generated-examples/`, so `git status` stays
+clean on any machine. The committed gallery images are the Linux render, and regenerating them is
+a deliberate step (`-Dsirentide.regenerate=true`) done on the reference host; see
+[docs/gallery-linux-check.md](docs/gallery-linux-check.md).
+
+## 5. When it does not render
+
+Four failures worth recognising. The stderr lines quoted below are what the renderer printed for
+that exact source.
+
+**A line was dropped, and `--strict` says so.** A flowchart line the parser cannot read is
+dropped and the rest still renders. Without `--strict` that is exit `0` with the caveat on
+stderr. With it:
+
+```bash
+printf 'flowchart TD\nA[One] --> B[Two]\nB <--> C[Three]\n' | sirentide render - --strict > lost-line.svg
+echo "exit=$?"        # 1
+```
+
+```text
+sirentide: rendered, with caveats — dropped statement(s): 1; line 3: B <--> C[Three]
+```
+
+The SVG is still written, so you can look at what the gate rejected. The bidirectional arrow
+`<-->` is not supported, which is why line 3 went.
+
+**An unknown diagram type.** `piechart` is not a type. Through `Sirentide.render` that degrades to
+an empty shell; the command line refuses it instead, with exit `1`, nothing written, and a stderr
+line saying the diagram-type keyword on line 1 is unknown:
+
+```bash
+printf 'piechart\n"A" : 60\n"B" : 40\n' | sirentide
+echo "exit=$?"        # 1
+```
+
+**HTML in a label.** The most common paste from Mermaid. Sirentide renders label text literally
+and does not interpret HTML, so a tag-shaped `<br/>` refuses the whole diagram rather than draw
+the tag as text:
+
+```
+flowchart TD
+  A[Build<br/>and test] --> B[Ship]
+```
+
+```text
+sirentide: diagram did not render — The label node:A contains unsupported markup <br/>, so the diagram degraded to the empty shell. …
+```
+
+Exit `1`, nothing written.
+
+**Sequence lines that vanish without a word.** This is the one to remember, because nothing
+reports it. The sequence parser reads messages, notes, `alt`/`loop`/`par` frames and
+`create`/`destroy`; a line it does not read is skipped:
+
+```
+sequence
+participant Client
+Client ->> Auth : login
+opt remember me
+Auth ->> Auth : mint refresh token
+end
+note over Cache : never mentioned in a message
+Auth -->> Client : ok
+```
+
+This exits `0`, even under `--strict`, and draws only the three messages. The `participant`
+line, the `opt` frame and the note over `Cache` (an actor no message names) are absent. The
+dropped-statement caveat exists for flowcharts only, so **`--strict` cannot see this**; the only
+check is to look at the picture or read the SVG's `<desc>`, which lists what was drawn.
+
+## 6. Why it's safe to inline
 
 Sirentide emits only inert geometry — filled `<path>`s, no script, no style, no runtime. So the
 baked SVG needs **no downstream sanitization** and ships **no JavaScript**. For a static docs
 site baking untrusted-author content, that's the whole point.
 
-## 5. Status legend
+## 7. Status legend
 
 | Mark | Meaning |
 |---|---|
