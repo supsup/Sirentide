@@ -110,8 +110,11 @@ class CompositeStateGuardTest {
     @Test
     void aBareStateKeywordDeclarationIsStillSupported() {
         // `state Foo` WITHOUT a brace is legal Mermaid for declaring a state. Only the
-        // composite BLOCK is unsupported, so keying on the `state` keyword alone would
+        // composite BLOCK is refused, so keying on the `state` keyword alone would
         // wrongly kill this. This is the discriminator between "the keyword" and "the block".
+        // What this test does NOT establish is that the line is read as a declaration of `Foo`:
+        // the parser keeps the keyword, so the source below yields a state whose id is
+        // `state Foo` beside the `Foo` the transition names. Nothing here asserts node ids.
         String src = "stateDiagram-v2\n  state Foo\n  [*] --> Foo\n";
         Diagram d = DslParser.parse(src);
         assertInstanceOf(StateDiagram.class, d,

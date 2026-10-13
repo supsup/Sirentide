@@ -3097,7 +3097,10 @@ public final class DslParser {
     /// detection keys on the STATEMENT, after {@link #peelLabel} removes any `: label` tail, so a
     /// brace the author typed inside a transition label (`Idle --> Running : retry {3}`) is text and
     /// never trips this. It also requires the `state` KEYWORD to open the statement AND a brace to be
-    /// present, so a bare `state Foo` declaration — legal Mermaid, and supported here — is untouched.
+    /// present, so a bare `state Foo` line — legal Mermaid for declaring `Foo` — is not refused by
+    /// this guard. It is NOT read as a declaration of `Foo` either: {@link #parseStateDiagram} does
+    /// not consume the keyword, so the whole line becomes one state whose id and label are
+    /// `state Foo`, separate from any `Foo` a transition names.
     private static UnsupportedConstruct firstUnsupportedStateToken(String[] lines) {
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i].strip();

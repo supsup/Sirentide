@@ -112,9 +112,12 @@ If this layer is later admitted:
 
 ## Drift guard (the shared-constants rule)
 
-The jar-exported `SirentideRole`, `SirentideContract` patterns, and the emitted
-`sirentide-*` class set are the live source of truth. This document mirrors that
-surface, and `ContractDocDriftTest` fails the build when its role/id/seq claims
-drift. No effect-name enum or Sirentide page runtime exists today. If Part 2 is
+The jar-exported `SirentideRole` and `SirentideContract` patterns are the live
+source of truth for the anchors. The wrapper and its `sirentide-<type>` class set
+are not: this jar's SVG emitter writes no wrapper and no `class` attribute, so that set is
+defined and enforced on the Stafficy side. (The optional frame-deck script the jar ships,
+`sirentide-frames.js`, does read it: it skips a wrapper whose classes are not `sirentide` or
+`sirentide sirentide-<type>`, and adds its own `sirentide-frames-*` classes.) This document mirrors the anchor surface, and
+`ContractDocDriftTest` fails the build when its role/id/seq claims drift. No effect-name enum exists today; the only page runtime the jar ships is the optional frame-deck control (`FrameDeckAssets`). If Part 2 is
 admitted, its enum, sanitizer rules, emitter behavior, and runtime tests must be
 added together before this document may describe them as live.

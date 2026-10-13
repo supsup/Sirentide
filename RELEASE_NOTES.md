@@ -123,6 +123,10 @@ cannot be mistaken for the published 0.5.0 artifacts.
   clean render, and unlike the exit-`1` unrenderable arm the SVG **is** still written —
   there the artifact would be a lie about what `/docs` serves, here it is exactly what
   `/docs` serves and a caller whose gate just rejected something wants to see it.
+  The caveat is not limited to the directive-shape rule: every statement the flowchart body
+  census records as dropped is named, for example a bidirectional arrow on one line of a body
+  whose other lines render. It is a flowchart caveat only; no other diagram type reports a
+  dropped statement.
 
 - **An xychart now names the x-axis labels it could not fit, and `render - --strict` now
   fails on caveats.** Each category label is fitted to its column; a label too wide is
@@ -323,15 +327,25 @@ mode you hit every time the DSL grows a keyword your vendored jar predates.
 Such a line is now **dropped and named**, and the rest of the diagram still renders:
 
 ```
-$ printf 'flowchart TD\n    A[One] --> B[Two]\n    quuxStyle zork fill:#f00\n' | sirentide
-(SVG written — A and B render normally)
+$ printf 'flowchart TD\nA[One] --> B[Two]\nquuxStyle zork fill:#f00\n' | sirentide render -
+(SVG written to stdout — A and B render normally; exit 0; the first line on stderr is:)
+sirentide: rendered, with caveats — dropped statement(s): 1; line 3: quuxStyle zork fill:#f00
+```
 
+Through the API, `renderWithDiagnostics(...).diagnostics().message()` carries the same fact as
+a sentence:
+
+```
 Rendered successfully. Note: 1 statement was dropped from this body and did not
 render; line 3 uses a directive-shaped line whose keyword this parser does not
 know (a bare first word carrying no `[`/`{`/`(`/`"` delimiter, followed by a
 `key:value` payload) — it would otherwise mint a node wearing its own directive
 text as a name.
 ```
+
+*(Corrected 2026-10-13. This transcript first piped into bare `sirentide` and showed the API
+sentence as if the CLI printed it. The bare form writes the same SVG and prints no caveat;
+`sirentide render -` prints the stderr line shown above.)*
 
 Note the verdict still opens with **"Rendered successfully."** — the caveat is appended to
 it, never substituted for it. That is the whole shape of an OK caveat: a script checking
@@ -389,13 +403,17 @@ $ echo $?
 
 Two limits stated rather than implied: this covers **flowcharts only** — other diagram types
 can still render an empty scene from a written body and report OK — and a **partial** drop
-(one line lost while others render) still reports OK, because the trigger is emptiness rather
-than "something was dropped".
+(one line lost while others render) is not a failure, because the trigger is emptiness rather
+than "something was dropped". It does not pass silently either: it keeps `outcome=OK` and carries
+the dropped-statement caveat described earlier in this block ("`render` now says when a diagram
+rendered but lost a line"), which `--strict` turns into exit `1`. *(Corrected 2026-10-13: this
+paragraph said only that a partial drop "still reports OK", which read as silent.)*
 
 ### Fixed
 
-- `render-png` now refuses an unrenderable diagram instead of writing a PNG beside
-  a failed SVG. The no-args and `render -` paths previously diverged: one refused,
+- `render` with the `--png PATH` flag now refuses an unrenderable diagram instead of writing a
+  PNG beside a failed SVG. *(Corrected 2026-10-13: this entry named a `render-png` command.
+  There is no such verb; the screenshot is the `--png PATH` flag of `render`.)* The no-args and `render -` paths previously diverged: one refused,
   the other continued to the write tail, so the same bad input could leave an
   artifact on disk or not depending on how it was invoked. Both now pass through a
   single refusal seam and reach one shared write tail, making the two forms
@@ -406,6 +424,16 @@ than "something was dropped".
   stack), and the mermaid sigils `->>+` / `-->>-` are accepted and change nothing. The README
   and a parser comment now say so; the entry above is left as written, as the record of what
   was claimed.
+- **Second correction to the `graph` / `xychart-beta` entry above:** the README does not say
+  "8 of 14". It names the eight flowchart node shapes Sirentide draws (rect, rounded, stadium,
+  subroutine, cylinder, circle, diamond, hexagon) and names four forms it does not, and it
+  claims no total: fourteen was a count of mermaid's shape set that this project cannot verify
+  and that moves when mermaid moves. The entry above is left as written.
+- **Correction to the 2026-07-11 "Semantic colour classes" entry below:** it said `classDef` and
+  `class` colour node fills on `flowchart` and `state`. Only the flowchart parser reads them, and
+  the entry now says `flowchart`. In a `state` diagram the two lines are not styling: each is
+  read as a state (measured: the description lists states named `#bbf7d0` and
+  `class Running ok`), and the render exits `0` even under `--strict`.
 
 ## 2026-07-30 — Release **0.5.0**
 
@@ -585,7 +613,8 @@ with later jobs.
 
 ### BrewShot gallery coverage ratchet
 The real-browser example gallery now photographs the shipped `young` diagram with BrewShot, closing
-the one missing reference among Sirentide's 22 production diagram types. A headless drift guard derives
+the one missing reference among Sirentide's 22 production diagram types (the count when this
+coverage landed; `rootsystem`, added later in this same release, made it 23). A headless drift guard derives
 the authoritative type set from the sealed `Diagram` IR hierarchy and requires each type to map to a
 declared gallery specimen, parse back to that exact IR class, have a committed non-empty PNG, and appear
 in the generated gallery page. Aliases may share their canonical IR representative; a newly shipped type
@@ -961,8 +990,8 @@ diagram type** — one post-layout seam, wired into all four render paths. The c
 and needs no sanitizer change. A diagram with no caption is byte-identical to the pre-feature bake.
 
 ### Semantic colour classes
-`classDef <name> fill:#rrggbb` + `class <id> <name>` colour node box fills on `flowchart` and
-`state` — the green=allow / red=deny / amber=decision palette the security diagrams need. Class
+`classDef <name> fill:#rrggbb` + `class <id> <name>` colour node box fills on `flowchart`
+(this entry first said `flowchart` and `state`; see the correction recorded under 0.6.0) — the green=allow / red=deny / amber=decision palette the security diagrams need. Class
 fills go through the same `#rrggbb`-only hex gate as a per-node colour, so no new value shape
 reaches the emitter; resolution order is per-node `#hex` > class fill > header `nodecolor=` >
 default. A per-node colour still wins over its class.
