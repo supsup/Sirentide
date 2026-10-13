@@ -65,8 +65,9 @@ val examplesRegenShowcase =
 // own empty copy, which reads as "every tracked file is new". A file reads the same either way.
 val examplesAuditSnapshot = layout.buildDirectory.file("examples-audit/before.txt").get().asFile
 // Names this build invocation, so a snapshot left behind by an EARLIER build (its finalizer was
-// excluded with -x, or the build was killed) is recognised as stale and discarded instead of
-// being compared against a tree that has legitimately moved since.
+// excluded with -x, the build was killed, or that build's audit reported a finding) is recognised
+// as stale and never compared against a tree that has legitimately moved since. A stale snapshot
+// is not deleted by a reader that refuses it: see writeAuditSnapshots below for what it still does.
 val writeAuditRun = UUID.randomUUID().toString()
 
 // THE GOLDEN WRITE AUDIT's shared values, at script level for the same reason: the test task takes
@@ -76,6 +77,24 @@ val writeAuditRun = UUID.randomUUID().toString()
 val goldenAuditDir = layout.projectDirectory.dir("src/test/resources/golden").asFile
 val goldenAuditLedger = layout.buildDirectory.file("golden-regen-ledger.txt").get().asFile
 val goldenAuditSnapshot = layout.buildDirectory.file("golden-audit/before.txt").get().asFile
+
+// THE AUDIT DEBT (sirentide room 1212, follow-on 1). A before-snapshot on disk means "the test
+// task's actions ran and no audit has since compared the tree and found it clean". The test task
+// writes one per audit in doFirst, and a finalizer deletes its own only at the end of a comparison
+// that found nothing. While either exists the test task is not up to date.
+//
+// Why this is needed: the finalizers fail the BUILD, not the test task. A run whose tests pass but
+// which wrote the tracked tree leaves the test task SUCCESSFUL with its inputs recorded, and after
+// `git restore examples` those inputs are unchanged, so the next run found :test UP-TO-DATE, took
+// no snapshot, and went green with the writer still in the code. Now the snapshot that finding
+// left behind keeps the test task out of date until a run is audited clean.
+//
+// Why the snapshot itself and not a separate marker written on a finding: it is already there, it
+// needs no code on the path where a finalizer throws (the debt is opened BEFORE the tests and
+// only a clean comparison closes it, so an exception anywhere in between leaves it open), and it
+// covers a finalizer that never ran (-x, a killed build) with no extra case. An ordinary clean
+// run opens and closes the debt within one build, so it is up to date the next time as before.
+val writeAuditSnapshots = listOf(examplesAuditSnapshot, goldenAuditSnapshot)
 
 tasks.test {
     useJUnitPlatform()
@@ -113,6 +132,16 @@ tasks.test {
     // The value is read once, above the task, because the examples write audit needs it too.
     systemProperty("sirentide.regenerate", regenerateExamples)
     testLogging { events("skipped", "failed") }
+
+    // The audit debt, defined above writeAuditSnapshots: not up to date while a run is unaudited.
+    outputs.upToDateWhen { !auditDebtOutstanding(writeAuditSnapshots) }
+    // NEVER FROM THE BUILD CACHE. This build does not turn the cache on, but --build-cache or a
+    // user-level gradle.properties can, and the Test task type is cacheable. The test task stores
+    // its result when IT succeeds, which is before the finalizers run, so a run that passed its
+    // tests and dirtied the tracked tree would leave a cache entry that a later build (after
+    // `clean`, or on another checkout) restores FROM-CACHE: no doFirst, no snapshot, no audit, and
+    // green with the writer still in the code. The audits are claims about a test JVM that ran.
+    outputs.doNotCacheIf("the write audits compare the tracked trees around a real test run") { true }
 
     // CI-honesty guard: the BrewShot browser-eyes pins assume-skip when Chrome is
     // absent (the only skips in this suite). CI installs Chrome and sets
@@ -221,13 +250,13 @@ tasks.test {
 ///
 /// Like examplesWriteAudit it compares only against a snapshot THIS build's test task wrote, and
 /// says nothing at the default log level when there is none. The ledger is not read in that case
-/// either: with no before-snapshot there is no run for it to vouch for.
+/// either: with no before-snapshot there is no run for it to vouch for. The snapshot is deleted
+/// only by a comparison that found nothing (the audit debt, above writeAuditSnapshots).
 val goldenWriteAudit = tasks.register("goldenWriteAudit") {
     group = "verification"
     description = "Fails if the test run changed a tracked golden the regen gate did not write."
     doLast {
         val before = readExampleSnapshot(goldenAuditSnapshot, writeAuditRun)
-        goldenAuditSnapshot.delete()
         if (before == null) {
             logger.info(
                 "golden write audit: no before-snapshot from this build's test task, so the " +
@@ -288,6 +317,9 @@ val goldenWriteAudit = tasks.register("goldenWriteAudit") {
                 )
             }
 
+            // Closes the audit debt only when nothing was found. A ledger contradiction threw
+            // above and never reaches this line, so it leaves the debt open as well.
+            settleAuditSnapshot(goldenAuditSnapshot, unrecorded)
             if (unrecorded.isNotEmpty()) {
                 val finding =
                     "GOLDEN WRITE BYPASS: " + unrecorded.size + " tracked golden(s) do not carry " +
@@ -311,14 +343,14 @@ val goldenWriteAudit = tasks.register("goldenWriteAudit") {
 /// It compares only against a snapshot THIS build's test task wrote. No such snapshot means the
 /// test task's actions did not run in this build (up to date, or this task was invoked on its
 /// own), so there is nothing to compare and it says nothing at the default log level. It never
-/// reports "no change" from a snapshot it did not find. The snapshot is deleted once read, so it
-/// cannot be compared twice.
+/// reports "no change" from a snapshot it did not find. The snapshot is deleted only by a
+/// comparison that found nothing (the audit debt, above writeAuditSnapshots); one left behind by
+/// a finding cannot be compared again, because the next build has a different run id.
 val examplesWriteAudit = tasks.register("examplesWriteAudit") {
     group = "verification"
     description = "Fails if the test run changed the tracked examples tree without a switch."
     doLast {
         val before = readExampleSnapshot(examplesAuditSnapshot, writeAuditRun)
-        examplesAuditSnapshot.delete()
         if (before == null) {
             logger.info(
                 "examples write audit: no before-snapshot from this build's test task, so the " +
@@ -338,6 +370,8 @@ val examplesWriteAudit = tasks.register("examplesWriteAudit") {
                     "committing."
                 )
             }
+            // Closes the audit debt only when nothing was found.
+            settleAuditSnapshot(examplesAuditSnapshot, unauthorised)
             if (unauthorised.isNotEmpty()) {
                 val finding =
                     "TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH: " + unauthorised.size +
@@ -400,6 +434,17 @@ fun readExampleSnapshot(file: java.io.File, run: String): Map<String, String>? {
     if (lines.isEmpty() || lines[0] != "run\t" + run) return null
     return lines.drop(1).filter { it.contains('\t') }
         .associate { it.substringAfter('\t') to it.substringBefore('\t') }
+}
+
+/// THE AUDIT DEBT, read side: true while any before-snapshot is still on disk, whoever wrote it.
+/// Deliberately not run-id aware. A snapshot from an earlier build is exactly the case that must
+/// keep the test task out of date; only readExampleSnapshot cares which build wrote it.
+fun auditDebtOutstanding(snapshots: List<java.io.File>): Boolean = snapshots.any { it.exists() }
+
+/// THE AUDIT DEBT, closing side: a comparison that found nothing deletes its snapshot, and one
+/// that found something leaves it where it is.
+fun settleAuditSnapshot(snapshot: java.io.File, findings: List<String>) {
+    if (findings.isEmpty()) snapshot.delete()
 }
 
 /// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit (the test task's
@@ -605,6 +650,40 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         }
         snapshot.delete()
 
+        // THE AUDIT DEBT (sirentide room 1212), through the real functions and real files. The
+        // failing-test-plus-dirty-tree build itself has no committed test (it would need a nested
+        // Gradle build of this project); these pin the decisions it rests on, and the manual
+        // recipe is in docs/gallery-linux-check.md.
+        val debtA = layout.buildDirectory.file("golden-audit-selftest/debt-a.txt").get().asFile
+        val debtB = layout.buildDirectory.file("golden-audit-selftest/debt-b.txt").get().asFile
+        debtA.delete()
+        debtB.delete()
+        // D1. no snapshot on disk: nothing is owed. THE ORDINARY PATH, or every run would re-test.
+        if (auditDebtOutstanding(listOf(debtA, debtB))) {
+            failures += "debt/none-outstanding: expected no debt with no snapshot on disk"
+        }
+        // D2. a snapshot on disk is a debt, whichever build wrote it.
+        writeExampleSnapshot(debtA, "an-earlier-run", tree)
+        if (!auditDebtOutstanding(listOf(debtA, debtB))) {
+            failures += "debt/snapshot-is-debt: expected a debt while a snapshot is on disk"
+        }
+        // D3. a comparison that FOUND something leaves the debt open.
+        settleAuditSnapshot(debtA, listOf("gallery/pie.png"))
+        if (!debtA.exists() || !auditDebtOutstanding(listOf(debtA, debtB))) {
+            failures += "debt/finding-keeps-debt: a finding must leave the snapshot on disk"
+        }
+        // D4. a comparison that found nothing closes it.
+        settleAuditSnapshot(debtA, emptyList())
+        if (debtA.exists() || auditDebtOutstanding(listOf(debtA, debtB))) {
+            failures += "debt/clean-closes-debt: a clean comparison must delete the snapshot"
+        }
+        // D5. EITHER audit's snapshot is enough: only the second of the two is present here.
+        writeExampleSnapshot(debtB, "an-earlier-run", tree)
+        if (!auditDebtOutstanding(listOf(debtA, debtB))) {
+            failures += "debt/either-audit: one outstanding snapshot of two must be a debt"
+        }
+        debtB.delete()
+
         if (failures.isNotEmpty()) {
             throw GradleException(
                 "GOLDEN AUDIT SELF-TEST FAILED, so the write audit itself is not trustworthy:\n  " +
@@ -612,7 +691,8 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
             )
         }
         logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader; " +
-            "examples audit: 7 cases pass, 4 through the real snapshot reader")
+            "examples audit: 7 cases pass, 4 through the real snapshot reader; " +
+            "audit debt: 5 cases pass")
     }
 }
 
