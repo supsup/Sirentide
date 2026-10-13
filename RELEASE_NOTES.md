@@ -24,7 +24,16 @@ cannot be mistaken for the published 0.5.0 artifacts.
   compared with the committed page on every run instead of being silently rewritten. The check
   on `examples/` is its own task, `examplesWriteAudit`, which runs after the test task whether
   or not a test failed, so a run that both fails a test and writes under `examples/` reports
-  both. Test and build tooling only: no rendered output changes.
+  both. The older check on the byte-goldens under `src/test/resources/golden/` now works the same
+  way, as the task `goldenWriteAudit`; before, a failing test hid a golden written outside the
+  regeneration gate. A test run that has not been checked clean is no longer treated as up to
+  date: after a finding (or a check excluded with `-x`, or a killed build) the next
+  `./gradlew test` runs the suite again even if no source changed, so restoring the tree cannot
+  turn the build green while the code that wrote it is still there. The test task is no longer
+  restored from the Gradle build cache, for the same reason. Excluding a check
+  (`./gradlew test -x examplesWriteAudit`) now prints a `SIRENTIDE WRITE AUDIT NOT RUNNING`
+  warning instead of nothing; `docs/gallery-linux-check.md` has the steps for checking all of
+  this by hand. Test and build tooling only: no rendered output changes.
 - **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
   43fd0785). The fragment guard checked that a renderer's markup used only the allowed elements and
   attributes, but not that it was valid XML: it accepted a duplicate attribute, an undefined
