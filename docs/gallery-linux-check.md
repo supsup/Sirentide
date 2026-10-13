@@ -15,6 +15,23 @@ whether or not a test failed, so a run that both fails a test and dirties the tr
 The check compares content, so a write of identical bytes is not detected; that is acceptable
 because such a write leaves the tracked tree, and `git status`, exactly as they were.
 
+The byte-goldens under `src/test/resources/golden/` have the same kind of check, as the task
+`goldenWriteAudit`: a golden whose content changed during the run must carry the bytes the
+regeneration gate recorded writing under `-Dsirentide.updateGolden=true`, or the build fails with
+`GOLDEN WRITE BYPASS`. It too runs after the test task whether or not a test failed.
+
+Both checks are separate tasks, so they can be excluded: `./gradlew test -x examplesWriteAudit`
+(or `-x goldenWriteAudit`) runs the suite without that check. The run then prints one warning,
+`SIRENTIDE WRITE AUDIT NOT RUNNING: [:examplesWriteAudit] not scheduled in this build ...`, at
+Gradle's warning level, which `-q` hides. Nothing else marks such a run as unchecked.
+
+A run that has not been checked clean is not treated as up to date. If a check reported a finding,
+or was excluded, or the build was killed, the next `./gradlew test` runs the suite again even when
+no source changed, and it keeps doing so until a run finishes with both checks finding nothing.
+So after `git restore examples` the next run cannot go green on `UP-TO-DATE` while the code that
+wrote the tree is still there. The test task is also never restored from the Gradle build cache,
+for the same reason: the checks are about a test run that actually happened.
+
 The tracked gallery is written only under the regeneration switch, `-Dsirentide.regenerate=true`.
 A run with the switch prints a `SIRENTIDE EXAMPLES REGEN` line naming the host and the configured
 browser, and each gallery test class records the browser's user agent in its own banner (in the

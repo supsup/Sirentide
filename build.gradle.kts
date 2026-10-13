@@ -95,6 +95,8 @@ val goldenAuditSnapshot = layout.buildDirectory.file("golden-audit/before.txt").
 // covers a finalizer that never ran (-x, a killed build) with no extra case. An ordinary clean
 // run opens and closes the debt within one build, so it is up to date the next time as before.
 val writeAuditSnapshots = listOf(examplesAuditSnapshot, goldenAuditSnapshot)
+// The two finalizers, by task path, for the notice the test task prints when one will not run.
+val writeAuditTaskPaths = listOf(":goldenWriteAudit", ":examplesWriteAudit")
 
 tasks.test {
     useJUnitPlatform()
@@ -238,6 +240,24 @@ tasks.test {
                 System.getProperty("os.version") + " " + System.getProperty("os.arch") +
                 "; BREWSHOT_CHROME=" + (System.getenv("BREWSHOT_CHROME") ?: "(unset)") +
                 ". The committed gallery PNGs are the LINUX render (docs/gallery-linux-check.md)."
+            )
+        }
+    }
+
+    // THE NOTICE WHEN AN AUDIT WILL NOT RUN (sirentide room 1212, follow-on 3). A finalizer can
+    // be excluded (`./gradlew test -x examplesWriteAudit`), and the suite then runs with no audit
+    // and, before this, no message. This asks the task graph whether each finalizer is scheduled,
+    // rather than reading the -x names off the command line, because -x also accepts a task path
+    // and an abbreviated name and the graph is the same answer however it was spelled.
+    doFirst {
+        val unscheduled =
+            auditTasksNotScheduled(writeAuditTaskPaths) { path -> gradle.taskGraph.hasTask(path) }
+        if (unscheduled.isNotEmpty()) {
+            logger.warn(
+                "SIRENTIDE WRITE AUDIT NOT RUNNING: " + unscheduled + " not scheduled in this " +
+                "build (excluded with -x?), so this test run is NOT checked for writes to the " +
+                "tracked tree it covers. The test task stays out of date until a run has been " +
+                "audited."
             )
         }
     }
@@ -440,6 +460,11 @@ fun readExampleSnapshot(file: java.io.File, run: String): Map<String, String>? {
 /// Deliberately not run-id aware. A snapshot from an earlier build is exactly the case that must
 /// keep the test task out of date; only readExampleSnapshot cares which build wrote it.
 fun auditDebtOutstanding(snapshots: List<java.io.File>): Boolean = snapshots.any { it.exists() }
+
+/// Which of the audit finalizers will NOT run in this build, given a way to ask whether a task
+/// path is scheduled. A function so the self-test can ask it without a task graph.
+fun auditTasksNotScheduled(paths: List<String>, isScheduled: (String) -> Boolean): List<String> =
+    paths.filter { path -> !isScheduled(path) }
 
 /// THE AUDIT DEBT, closing side: a comparison that found nothing deletes its snapshot, and one
 /// that found something leaves it where it is.
@@ -684,6 +709,18 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         }
         debtB.delete()
 
+        // THE NOT-RUNNING NOTICE's decision (follow-on 3).
+        // N1. one of the two finalizers is missing from the graph: that one is named, alone.
+        val oneMissing = auditTasksNotScheduled(listOf(":a", ":b")) { path -> path == ":a" }
+        if (oneMissing != listOf(":b")) {
+            failures += "notice/one-excluded: expected [:b] but got " + oneMissing
+        }
+        // N2. both scheduled: nothing to say. THE ORDINARY PATH, which must stay quiet.
+        val noneMissing = auditTasksNotScheduled(listOf(":a", ":b")) { _ -> true }
+        if (noneMissing.isNotEmpty()) {
+            failures += "notice/all-scheduled: expected [] but got " + noneMissing
+        }
+
         if (failures.isNotEmpty()) {
             throw GradleException(
                 "GOLDEN AUDIT SELF-TEST FAILED, so the write audit itself is not trustworthy:\n  " +
@@ -692,7 +729,7 @@ val goldenAuditSelfTest = tasks.register("goldenAuditSelfTest") {
         }
         logger.lifecycle("golden audit self-test: 10 cases pass, 3 through the real reader; " +
             "examples audit: 7 cases pass, 4 through the real snapshot reader; " +
-            "audit debt: 5 cases pass")
+            "audit debt: 5 cases pass; not-running notice: 2 cases pass")
     }
 }
 
