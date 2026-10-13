@@ -67,7 +67,15 @@ val examplesAuditSnapshot = layout.buildDirectory.file("examples-audit/before.tx
 // Names this build invocation, so a snapshot left behind by an EARLIER build (its finalizer was
 // excluded with -x, or the build was killed) is recognised as stale and discarded instead of
 // being compared against a tree that has legitimately moved since.
-val examplesAuditRun = UUID.randomUUID().toString()
+val writeAuditRun = UUID.randomUUID().toString()
+
+// THE GOLDEN WRITE AUDIT's shared values, at script level for the same reason: the test task takes
+// the before-snapshot and the goldenWriteAudit finalizer below compares. The ledger is the file
+// GoldenRegen publishes from inside the test JVM; the snapshot is this build's own, and it is a
+// file rather than a variable for the reason given above for the examples snapshot.
+val goldenAuditDir = layout.projectDirectory.dir("src/test/resources/golden").asFile
+val goldenAuditLedger = layout.buildDirectory.file("golden-regen-ledger.txt").get().asFile
+val goldenAuditSnapshot = layout.buildDirectory.file("golden-audit/before.txt").get().asFile
 
 tasks.test {
     useJUnitPlatform()
@@ -153,75 +161,17 @@ tasks.test {
     // the directory before the test JVM starts and diffs it after. The BEFORE boundary is why this
     // lives in the build rather than in GoldenRegen: a bypass in another package need never load
     // GoldenRegen at all, so no static initializer of ours is reliably "before" it.
-    val goldenAuditDir = layout.projectDirectory.dir("src/test/resources/golden").asFile
-    val goldenAuditLedger = layout.buildDirectory.file("golden-regen-ledger.txt").get().asFile
-    var goldenAuditBefore: Map<String, String> = emptyMap()
-
+    //
+    // TWO HALVES (sirentide room 1212, follow-on 2), the same split as the examples audit below.
+    // The BEFORE half is this doFirst. The AFTER half, the ledger reconciliation, the operator
+    // banner and the failure are the goldenWriteAudit task, attached with finalizedBy. They used
+    // to be a doLast here, and Gradle skips doLast when a test fails, so a run that both failed a
+    // test and wrote a golden outside the gate reported only the test.
     doFirst {
         // A STALE ledger would credit this run with a previous run's gated writes, which is the one
         // way this audit could report a false clean. Deleted rather than appended to.
         goldenAuditLedger.delete()
-        goldenAuditBefore = goldenFileHashes(goldenAuditDir)
-    }
-
-    doLast {
-        val after = goldenFileHashes(goldenAuditDir)
-        val changed = (goldenAuditBefore.keys + after.keys)
-            .filter { goldenAuditBefore[it] != after[it] }
-            .sorted()
-        // NOTE ON THE EARLIER "TRADE" IN THIS FILE, which was exactly INVERTED (needs-fix 1086).
-        // I wrote that the audit only had teeth on a regen run and that a bypass would sit
-        // unnoticed until someone regenerated. Both halves are backwards, and the reviewer's run
-        // showed it: doFirst DELETES the ledger, so on an ordinary run `recorded` is empty and ANY
-        // changed golden fails the build immediately. The REGEN run is the permissive one, because
-        // that is the run where every tracked name is legitimately recorded. I described my own
-        // mechanism from the armchair instead of running it.
-        // A MISSING ledger reads as "nothing was gated", so every change is unrecorded. Fail closed:
-        // losing the ledger must never manufacture a pass.
-        val recorded = readGoldenLedger(goldenAuditLedger)
-        val unrecorded = goldenAuditFindings(goldenAuditBefore, after, recorded)
-
-        // DELIVERY TO THE OPERATOR (needs-fix 1084, second finding). announceRegen writes the
-        // banner to System.err, which lands only in the XML system-err: testLogging above does not
-        // set showStandardStreams, so an operator running the documented regen command saw BUILD
-        // SUCCESSFUL and nothing at all. GoldenRegen's own doc says a green build must never be
-        // indistinguishable from a regen; at the console it still was. Emission was asserted,
-        // DELIVERY was not. This is the delivery.
-        // KEYED ON THE REGEN HAVING HAPPENED, not on bytes having moved. A clean regen is
-        // byte-stable -- the gate rewrites 34 goldens with identical content -- so keying this on
-        // the changed set would print NOTHING on exactly the run the operator most needs told
-        // about, and "a green build must never be indistinguishable from a regen" would still be
-        // false at the console. The skipped byte-comparison is the fact worth delivering, and it
-        // is skipped whether or not the bytes moved.
-        // THE BANNER MUST NOT LAUNDER THE BYPASS (needs-fix 1086). The first version reported the
-        // ungated file INSIDE the count of gated ones and then said "Review the diff", which
-        // invites the operator to accept exactly the bytes nothing verified. The two sets are now
-        // named separately, and the suspect ones are never described as reviewable.
-        val gatedChanges = changed.filter { it !in unrecorded }
-        if (recorded.isNotEmpty() || changed.isNotEmpty()) {
-            logger.lifecycle(
-                "SIRENTIDE GOLDEN REGEN: " + recorded.size + " golden(s) rewritten through the " +
-                "gate. The byte-comparison assertion was SKIPPED for all " + recorded.size +
-                "; this run did NOT verify them against a prior expectation. Review the diff for " +
-                "the " + gatedChanges.size + " with changed content: " + gatedChanges +
-                (if (unrecorded.isEmpty()) {
-                    ""
-                } else {
-                    ". DO NOT review-and-accept the " + unrecorded.size + " listed as a bypass " +
-                    "below; the gate did not write those bytes: " + unrecorded
-                })
-            )
-        }
-
-        if (unrecorded.isNotEmpty()) {
-            throw GradleException(
-                "GOLDEN WRITE BYPASS: " + unrecorded.size + " tracked golden(s) do not carry the " +
-                "bytes GoldenRegen wrote, so nothing asserted they are real renders: " +
-                unrecorded + ". Either the gate never wrote them, or something overwrote them " +
-                "AFTER it did. The ledger records the hash of what the gate wrote, so a later " +
-                "write to a legitimately-gated name is caught too."
-            )
-        }
+        writeExampleSnapshot(goldenAuditSnapshot, writeAuditRun, goldenFileHashes(goldenAuditDir))
     }
 
     // THE EXAMPLES WRITE AUDIT (sirentide room 1197). The property is "a default run leaves the
@@ -240,7 +190,7 @@ tasks.test {
     // WHAT IT DOES NOT CLAIM: it sees a change only as a difference between the two snapshots, so
     // a write of identical bytes is invisible, and harmless, since the tree is what it was.
     doFirst {
-        writeExampleSnapshot(examplesAuditSnapshot, examplesAuditRun,
+        writeExampleSnapshot(examplesAuditSnapshot, writeAuditRun,
             exampleTreeHashes(examplesAuditDir))
         // DELIVERY TO THE OPERATOR. The per-class banners go to System.err, which lands only in
         // the XML report because testLogging does not show standard streams. This line is the
@@ -264,6 +214,97 @@ tasks.test {
     }
 }
 
+/// THE AFTER HALF OF THE GOLDEN WRITE AUDIT, as a finalizer of the test task so that it runs
+/// whether or not a test failed (sirentide room 1212, follow-on 2). Everything the old doLast did
+/// is here, in the same order: hash the directory again, read the ledger (a duplicate name is
+/// fatal inside the reader), decide, print the operator banner, fail on a bypass.
+///
+/// Like examplesWriteAudit it compares only against a snapshot THIS build's test task wrote, and
+/// says nothing at the default log level when there is none. The ledger is not read in that case
+/// either: with no before-snapshot there is no run for it to vouch for.
+val goldenWriteAudit = tasks.register("goldenWriteAudit") {
+    group = "verification"
+    description = "Fails if the test run changed a tracked golden the regen gate did not write."
+    doLast {
+        val before = readExampleSnapshot(goldenAuditSnapshot, writeAuditRun)
+        goldenAuditSnapshot.delete()
+        if (before == null) {
+            logger.info(
+                "golden write audit: no before-snapshot from this build's test task, so the " +
+                "tracked goldens were NOT compared."
+            )
+        } else {
+            val after = goldenFileHashes(goldenAuditDir)
+            val changed = (before.keys + after.keys)
+                .filter { before[it] != after[it] }
+                .sorted()
+            // NOTE ON THE EARLIER "TRADE" IN THIS FILE, which was exactly INVERTED (needs-fix 1086).
+            // I wrote that the audit only had teeth on a regen run and that a bypass would sit
+            // unnoticed until someone regenerated. Both halves are backwards, and the reviewer's run
+            // showed it: doFirst DELETES the ledger, so on an ordinary run `recorded` is empty and ANY
+            // changed golden fails the build immediately. The REGEN run is the permissive one, because
+            // that is the run where every tracked name is legitimately recorded. I described my own
+            // mechanism from the armchair instead of running it.
+            // A MISSING ledger reads as "nothing was gated", so every change is unrecorded. Fail closed:
+            // losing the ledger must never manufacture a pass.
+            val recorded = try {
+                readGoldenLedger(goldenAuditLedger)
+            } catch (contradiction: GradleException) {
+                // Logged as well as rethrown, for the reason given at the bypass below.
+                logger.error(contradiction.message)
+                throw contradiction
+            }
+            val unrecorded = goldenAuditFindings(before, after, recorded)
+
+            // DELIVERY TO THE OPERATOR (needs-fix 1084, second finding). announceRegen writes the
+            // banner to System.err, which lands only in the XML system-err: testLogging above does not
+            // set showStandardStreams, so an operator running the documented regen command saw BUILD
+            // SUCCESSFUL and nothing at all. GoldenRegen's own doc says a green build must never be
+            // indistinguishable from a regen; at the console it still was. Emission was asserted,
+            // DELIVERY was not. This is the delivery.
+            // KEYED ON THE REGEN HAVING HAPPENED, not on bytes having moved. A clean regen is
+            // byte-stable -- the gate rewrites 34 goldens with identical content -- so keying this on
+            // the changed set would print NOTHING on exactly the run the operator most needs told
+            // about, and "a green build must never be indistinguishable from a regen" would still be
+            // false at the console. The skipped byte-comparison is the fact worth delivering, and it
+            // is skipped whether or not the bytes moved.
+            // THE BANNER MUST NOT LAUNDER THE BYPASS (needs-fix 1086). The first version reported the
+            // ungated file INSIDE the count of gated ones and then said "Review the diff", which
+            // invites the operator to accept exactly the bytes nothing verified. The two sets are now
+            // named separately, and the suspect ones are never described as reviewable.
+            val gatedChanges = changed.filter { it !in unrecorded }
+            if (recorded.isNotEmpty() || changed.isNotEmpty()) {
+                logger.lifecycle(
+                    "SIRENTIDE GOLDEN REGEN: " + recorded.size + " golden(s) rewritten through the " +
+                    "gate. The byte-comparison assertion was SKIPPED for all " + recorded.size +
+                    "; this run did NOT verify them against a prior expectation. Review the diff for " +
+                    "the " + gatedChanges.size + " with changed content: " + gatedChanges +
+                    (if (unrecorded.isEmpty()) {
+                        ""
+                    } else {
+                        ". DO NOT review-and-accept the " + unrecorded.size + " listed as a bypass " +
+                        "below; the gate did not write those bytes: " + unrecorded
+                    })
+                )
+            }
+
+            if (unrecorded.isNotEmpty()) {
+                val finding =
+                    "GOLDEN WRITE BYPASS: " + unrecorded.size + " tracked golden(s) do not carry " +
+                    "the bytes GoldenRegen wrote, so nothing asserted they are real renders: " +
+                    unrecorded + ". Either the gate never wrote them, or something overwrote them " +
+                    "AFTER it did. The ledger records the hash of what the gate wrote, so a later " +
+                    "write to a legitimately-gated name is caught too."
+                // Logged as well as thrown. When a test has also failed the build ends with two
+                // failures, and this line puts the finding in the output at the point it was
+                // found, whatever the failure summary then does with the second exception.
+                logger.error(finding)
+                throw GradleException(finding)
+            }
+        }
+    }
+}
+
 /// THE AFTER HALF OF THE EXAMPLES WRITE AUDIT, as a finalizer of the test task so that it runs
 /// whether or not a test failed (sirentide room 1199).
 ///
@@ -276,7 +317,7 @@ val examplesWriteAudit = tasks.register("examplesWriteAudit") {
     group = "verification"
     description = "Fails if the test run changed the tracked examples tree without a switch."
     doLast {
-        val before = readExampleSnapshot(examplesAuditSnapshot, examplesAuditRun)
+        val before = readExampleSnapshot(examplesAuditSnapshot, writeAuditRun)
         examplesAuditSnapshot.delete()
         if (before == null) {
             logger.info(
@@ -315,7 +356,9 @@ val examplesWriteAudit = tasks.register("examplesWriteAudit") {
     }
 }
 
-tasks.test { finalizedBy(examplesWriteAudit) }
+tasks.test { finalizedBy(goldenWriteAudit, examplesWriteAudit) }
+// A fixed order, golden first, so the output of a run that trips both reads the same every time.
+examplesWriteAudit.configure { mustRunAfter(goldenWriteAudit) }
 
 /// SHA-256 of every file under the tracked examples tree, keyed by its path relative to that
 /// tree with forward slashes. Recursive, unlike goldenFileHashes, because the gallery is a
@@ -338,7 +381,8 @@ fun exampleAuditFindings(
 ): List<String> =
     changed.filter { path -> !(regenAll || (regenShowcase && !path.startsWith("gallery/"))) }
 
-/// Writes the before-snapshot: a `run<TAB>id` line naming the build invocation, then one
+/// Writes a before-snapshot (the examples audit's, and since room 1212 the golden audit's too,
+/// keyed by golden file name): a `run<TAB>id` line naming the build invocation, then one
 /// `sha256<TAB>path` line per file. The hash comes first so a path may contain a tab.
 fun writeExampleSnapshot(file: java.io.File, run: String, hashes: Map<String, String>) {
     file.parentFile.mkdirs()
@@ -358,8 +402,9 @@ fun readExampleSnapshot(file: java.io.File, run: String): Map<String, String>? {
         .associate { it.substringAfter('\t') to it.substringBefore('\t') }
 }
 
-/// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit on the test task
-/// to establish what CHANGED across the run, which is the half a spelling scan can never see.
+/// SHA-256 per tracked golden, keyed by file name. Used by the golden write audit (the test task's
+/// doFirst and the goldenWriteAudit finalizer) to establish what CHANGED across the run, which is
+/// the half a spelling scan can never see.
 fun goldenFileHashes(dir: java.io.File): Map<String, String> {
     val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
     return files.associate { f ->
