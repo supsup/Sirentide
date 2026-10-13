@@ -43,6 +43,33 @@ the harness below.
 The per-type pages (`journey.html` and the others `ShowcaseGenTest` writes) are generated but not
 compared, so a committed one can fall behind the renderer until the next regeneration.
 
+### Checking the checks by hand
+
+The build has no committed test for a whole build that fails a test and dirties a tracked tree at
+once: that would need a second Gradle build of this project started from inside its own test run.
+The decisions the checks rest on are exercised by `./gradlew goldenAuditSelfTest` (part of
+`check`). The end-to-end behaviour is checked by hand, with a temporary edit that is never
+committed. In `src/test/java/com/sirentide/GeneratedExamplesTest.java`, add as the first statement
+of `theBuildScriptForwardsTheSwitchTheHelperReads`:
+
+```java
+Files.writeString(Path.of("examples", "audit-probe.txt"), "probe");
+```
+
+1. `./gradlew test`: the tests pass and the build fails with
+   `TRACKED EXAMPLES WRITTEN WITHOUT THE SWITCH`, naming `audit-probe.txt`.
+2. `rm examples/audit-probe.txt`, then `./gradlew test` again with the edit still in place: the
+   test task must run again (not `UP-TO-DATE`) and the build must fail the same way.
+3. Add `org.junit.jupiter.api.Assertions.fail("probe");` as the next statement, remove the probe
+   file and run again: the build must report both the failed test and the finding.
+4. Remove the probe file and run `./gradlew test -x examplesWriteAudit`: the
+   `SIRENTIDE WRITE AUDIT NOT RUNNING` warning appears and no finding is reported.
+5. Undo the edit, remove the probe file, and run `./gradlew test` twice: the first run executes
+   and passes, the second is `UP-TO-DATE`.
+
+The same steps with `Path.of("src/test/resources/golden", "audit-probe.svg")` exercise
+`goldenWriteAudit` and `GOLDEN WRITE BYPASS`.
+
 ## The harness
 
 The same base image and Chromium pins as BrewShot's own Dockerfile, run as a non-root user:
