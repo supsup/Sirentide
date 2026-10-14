@@ -11,9 +11,19 @@ dependencies, safe to drop straight into a web page, no runtime JavaScript. New 
 Development after the immutable 0.5.0 release belongs to the 0.6.0 line. No
 new feature is claimed by this version boundary alone; reviewed entries will be
 added here as they land. Source-checkout jars now identify as 0.6.0 so they
-cannot be mistaken for the published 0.5.0 artifacts.
+cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
+committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
-- **Running the test suite no longer rewrites the tracked examples.** With a browser present,
+- *2026-10-13.* **Repository housekeeping from the Markdown audit, no behaviour change.** The July
+  code-audit report now opens with a dated status table (which findings are fixed, which are still
+  open) and stays at the repository root. The Docker walkthrough moved to
+  `docs/dockerDogFoodflow.md` and the README's Docker section links it. Eight hand-written
+  per-type example pages that no generator maintained (flowchart, gantt, pie, quadrant, sequence,
+  state, timeline, xychart) are removed; `examples/showcase.html` and `GALLERY.md` remain the
+  maintained galleries. The container contract now says what is true of the docs site: the
+  optional frame-deck play-through script is served there, and there is still no FX runtime (the
+  drift test pins the new sentence). The entries in this block now carry dates.
+- *2026-10-12.* **Running the test suite no longer rewrites the tracked examples.** With a browser present,
   the gallery tests used to overwrite the PNGs under `examples/gallery/` on every run, and
   those bytes depend on the host's Chromium, so a run on a Mac left tracked files modified.
   Generated gallery images, `GALLERY.md` and the HTML pages now go to
@@ -34,7 +44,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   (`./gradlew test -x examplesWriteAudit`) now prints a `SIRENTIDE WRITE AUDIT NOT RUNNING`
   warning instead of nothing; `docs/gallery-linux-check.md` has the steps for checking all of
   this by hand. Test and build tooling only: no rendered output changes.
-- **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
+- *2026-10-12.* **A math fragment the guard accepts is now well-formed XML where it is embedded** (plan
   43fd0785). The fragment guard checked that a renderer's markup used only the allowed elements and
   attributes, but not that it was valid XML: it accepted a duplicate attribute, an undefined
   `&entity;`, a control character, attributes with no space between them, and `<G>...</g>` (it
@@ -58,13 +68,13 @@ cannot be mistaken for the published 0.5.0 artifacts.
   only `java.base`); it is part of every full JRE, including the image, and Sirentide still has no
   third-party runtime dependency.
 
-- **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
+- *2026-10-09.* **The image now carries `org.opencontainers.image.revision` and `.version` labels**, so
   `docker inspect` shows which commit and release an image was built from without unzipping the
   jar. The revision is the already-required `SIRENTIDE_SOURCE_REVISION`; the version comes from
   `SIRENTIDE_VERSION`, defaulting to the build version, and the build now refuses a value that
   differs from the jar manifest's `Implementation-Version`.
 
-- **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
+- *2026-08-12.* **Two mermaid spellings that used to degrade now render: `graph` and `xychart-beta`.**
   `graph` is mermaid's original flowchart keyword and still the most-copied one in the wild;
   `xychart-beta` is mermaid's actual spelling for the chart Sirentide already drew as
   `xychart`. Both previously fell through the header match and degraded, so a diagram pasted
@@ -76,7 +86,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   shapes, NAMES the four that are unsupported, and states that activation bars are consumed
   but not drawn. A capability ships with its own honesty fence or it ships a lie.
 
-- **Heatmap: outlined cells, categorical palettes, custom ramps + bins, hideable headers**
+- *2026-10-08.* **Heatmap: outlined cells, categorical palettes, custom ramps + bins, hideable headers**
   (plan f4d69e44). All opt-in, so every existing heatmap renders byte-identically:
   a cell token ending in `!` is outlined (`4:0.125!`); `palette: C1 #4e79a7, C2 #f28e2b, S`
   makes cell values category NAMES rather than magnitudes, with a swatch legend (hex-only
@@ -96,7 +106,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   `bins` or `hide` is now a directive (quote the label to keep it a row), the same rule
   `cols:` and `scale:` already followed.
 
-- **`%%` comments are documented.** They have worked for some time and appeared in no
+- *2026-08-12.* **`%%` comments are documented.** They have worked for some time and appeared in no
   author-facing page: not QUICKSTART, not the README, not the docs site. A `%%` line draws
   nothing and a diagram containing one renders byte-identically to the same diagram without it.
   The note also states the property that motivated blanking comments rather than removing them —
@@ -104,7 +114,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   mistake does not shift the diagnostic away from the line you are looking at — and distinguishes
   the leading `%%` configuration block from a `%%` line in the body.
 
-- **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
+- *2026-08-12.* **`render` now says when a diagram rendered but lost a line.** The directive-shape rule drops
   an unknown directive-shaped statement and records a line-scoped caveat on an otherwise-`OK`
   render, specifically so a lost line is not lost silently — but the caveat lived only in the API.
   Through the `render` verb, which the authoring docs name as *the* local check, an author saw
@@ -128,7 +138,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   whose other lines render. It is a flowchart caveat only; no other diagram type reports a
   dropped statement.
 
-- **An xychart now names the x-axis labels it could not fit, and `render - --strict` now
+- *2026-10-08.* **An xychart now names the x-axis labels it could not fit, and `render - --strict` now
   fails on caveats.** Each category label is fitted to its column; a label too wide is
   shortened with an ellipsis, and when not even the ellipsis fits it is drawn as *nothing*. A
   crowded chart lost labels silently: a 25-bar autocorrelation chart (lags `-12..12`) drew
@@ -144,7 +154,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   label: they now read `the SVG is what /docs would embed; it does not show what the caveat
   names as written` and `--strict: treating the caveat as a failure`.
 
-- **`xychart … numeric` puts the x axis on a number line** (plan c880b12e). A new header
+- *2026-10-09.* **`xychart … numeric` puts the x axis on a number line** (plan c880b12e). A new header
   modifier, beside `line`/`scatter`/`legend`: `xychart line numeric` (or `scatter numeric`;
   bare `numeric` is a line) reads each row as `x : y1 y2 …` and draws it at its x on a
   continuous axis, instead of in an evenly spaced category column whose label may not fit. Both
@@ -170,7 +180,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   the default category y axis still prints its ticks the way it did, E-notation included (left
   for a separate ruling, because changing it moves the bytes of existing charts).
 
-- **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
+- *2026-10-08.* **`render --math` typesets `$...$` labels from the CLI.** Until now only a Java API caller who
   supplied a renderer got typeset math; through the CLI a label like `$\sqrt{2}$` baked as its raw
   source and was then ellipsized like any other text. `--math` loads LatteX at run time from
   `--lattex PATH` or `SIRENTIDE_LATTEX_JAR`, in an isolated class loader, and proves the load with a
@@ -180,7 +190,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   `--strict` fails on it. The output is byte-identical to the API with the LatteX renderer; without
   the flag every byte is unchanged.
 
-- **`render --batch` renders many raw DSL sources in one JVM.** Sources are NUL-separated on stdin
+- *2026-10-08.* **`render --batch` renders many raw DSL sources in one JVM.** Sources are NUL-separated on stdin
   (a diagram is multi-line, so a newline cannot delimit it) and each produces exactly one
   NUL-terminated record on stdout, in order: the SVG `render -` would print for that source alone,
   or a `sirentide: error: ...` record in its slot. Record N always answers source N, including a
@@ -189,7 +199,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   record failed or, under `--strict`, carried a caveat. `-o` and `--png` are refused with
   `--batch` rather than silently ignored.
 
-- **An xychart whose `$...$` category labels are lost is now named, not silent.** The label-loss
+- *2026-10-08.* **An xychart whose `$...$` category labels are lost is now named, not silent.** The label-loss
   caveat skipped math labels on the theory that math is never ellipsized, which holds only when a
   math renderer is active. Without one (the default bake, or `render` without `--math`), a math
   label is drawn through the same ellipsize as plain text, so 30 categories labelled `$x_{i}$`
@@ -198,7 +208,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   with `--math` they are typeset, and one that fails to typeset is the untypeset-math caveat. The
   SVG is unchanged; only the caveat is new.
 
-- **`render --lint-overlap` (and `RenderOptions.lintOverlap` on the API) checks for colliding
+- *2026-10-08.* **`render --lint-overlap` (and `RenderOptions.lintOverlap` on the API) checks for colliding
   text.** Opt-in and off by default, so no existing render gains a caveat. After a successful bake
   it compares every text run's outline box with every text run in a *different* diagram element
   (or outside any element) and reports each overlapping pair on the caveat channel as
@@ -208,12 +218,12 @@ cannot be mistaken for the published 0.5.0 artifacts.
   `sequence-blocks`, where the `loop` label "every retry" sits 1.8 px into the "ping" message
   below it.
 
-- **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
+- *2026-10-08.* **Which Sirentide baked an SVG is answered by the jar, not the output.** `render`'s usage text
   now says so: the baked SVG carries no renderer, revision or source attribute, and the jar's exact
   source revision is the `Sirentide-Source-Revision` line of its `META-INF/MANIFEST.MF`.
   `--source-hash` (below) identifies the source, on stderr; it never identifies the renderer.
 
-- **`render --source-hash` prints the SHA-256 of the source to stderr.** One line,
+- *2026-10-08.* **`render --source-hash` prints the SHA-256 of the source to stderr.** One line,
   `sirentide: source sha256:<64 lowercase hex>`, or under `--batch` one
   `sirentide: record N: source sha256:<hex>` line per record (N 1-based, blank records included),
   printed before that source's other diagnostics. **Nothing is added to the SVG** (ruling
@@ -230,7 +240,7 @@ cannot be mistaken for the published 0.5.0 artifacts.
   rather than hashing the prefix; an over-cap `--batch` record is read to its NUL anyway, so it
   is hashed in full.
 
-### A global work budget bounds layout itself, not just its output (plan fe8c5bbc slice 2)
+### A global work budget bounds layout itself, not just its output (plan fe8c5bbc slice 2) (2026-10-09)
 
 Sirentide's 5 MB output cap could only ever fire once **emit** started — that is, after layout had
 already built and was holding the entire scene. A diagram that blew up *during* layout therefore had
@@ -284,7 +294,7 @@ budget bounds building, not keeping. No layout today can produce that band (none
 constructs); the semantics are pinned by a dedicated discriminator test so a future discard-heavy
 layout inherits them knowingly instead of silently.
 
-### A `%%` comment in the diagram body no longer renders as a node
+### A `%%` comment in the diagram body no longer renders as a node (2026-08-11)
 
 **Behaviour change, and it is scriptable.** Mermaid's comment syntax is `%% text`. Sirentide
 honors `%%` in the *preamble* as its config channel, and used to hand a `%%` line in the
@@ -315,7 +325,7 @@ comment on line 2 leaves a bad statement on line 3 still reported as line 3.
 it was never a lost statement — it is intentional syntax. A body of *only* comments declares
 nothing and reports success, exactly as an empty body does.
 
-### An unknown directive no longer mints a node wearing its own text as a name
+### An unknown directive no longer mints a node wearing its own text as a name (2026-08-11)
 
 **Behaviour change, and it is scriptable.** A line shaped like a directive this parser has
 never met — a bare first word followed by a `key:value` payload — used to parse as a *node
@@ -372,7 +382,7 @@ Known keywords are unaffected: `classDef`, `class`, `style`, `click`, `direction
 `accTitle:`/`accDescr:` keep their own existing treatment, so "we do not know this keyword"
 is never said about a keyword we do know.
 
-### A flowchart that renders empty no longer reports success
+### A flowchart that renders empty no longer reports success (2026-08-11)
 
 **Behaviour change, and it is scriptable — read this if you pipe Sirentide.** A flowchart
 whose body has statements but produces no nodes and no edges used to return `outcome=OK`
@@ -418,18 +428,18 @@ paragraph said only that a partial drop "still reports OK", which read as silent
   artifact on disk or not depending on how it was invoked. Both now pass through a
   single refusal seam and reach one shared write tail, making the two forms
   equivalent by construction rather than by matching code.
-- **Correction to the `graph` / `xychart-beta` entry above:** sequence activation bars ARE
+- *2026-10-09.* **Correction to the `graph` / `xychart-beta` entry above:** sequence activation bars ARE
   drawn, and were when that entry said they were "consumed but not drawn". Activation is
   implicit (a call `->>` activates its callee, a reply `-->>` ends it, nested activations
   stack), and the mermaid sigils `->>+` / `-->>-` are accepted and change nothing. The README
   and a parser comment now say so; the entry above is left as written, as the record of what
   was claimed.
-- **Second correction to the `graph` / `xychart-beta` entry above:** the README does not say
+- *2026-10-12.* **Second correction to the `graph` / `xychart-beta` entry above:** the README does not say
   "8 of 14". It names the eight flowchart node shapes Sirentide draws (rect, rounded, stadium,
   subroutine, cylinder, circle, diamond, hexagon) and names four forms it does not, and it
   claims no total: fourteen was a count of mermaid's shape set that this project cannot verify
   and that moves when mermaid moves. The entry above is left as written.
-- **Correction to the 2026-07-11 "Semantic colour classes" entry below:** it said `classDef` and
+- *2026-10-13.* **Correction to the 2026-07-11 "Semantic colour classes" entry below:** it said `classDef` and
   `class` colour node fills on `flowchart` and `state`. Only the flowchart parser reads them, and
   the entry now says `flowchart`. In a `state` diagram the two lines are not styling: each is
   read as a state (measured: the description lists states named `#bbf7d0` and

@@ -789,7 +789,7 @@ class ShowcaseGenTest {
         }
     }
 
-    /// The hand-authored per-type page template (mirrors examples/state.html): a single demo card
+    /// The hand-authored per-type page template (first modelled on a hand-written state page, since removed): a single demo card
     /// plus two note lines.
     private static String typePage(TypePage tp, String svg) {
         return """

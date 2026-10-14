@@ -1,5 +1,28 @@
 # Sirentide Deep Code Audit
 
+> **Status as of 2026-10-13: a historical report, kept for its open items.** Everything below this
+> block is the report as reconciled on 2026-07-25 and has not been edited since. It is no longer a
+> live status page. Read it with these corrections (checked by Confluence against the code on
+> 2026-10-12 at `787cd32`, and spot-checked again on 2026-10-13 at `a68eb3e`):
+>
+> | Finding | State today |
+> |---|---|
+> | SIR-01, 02, 04, 05, 06, 07, 08, 09, 10, 11 | Fixed (SIR-07 bounded), as the tables below already say |
+> | SIR-03 | **Fixed for shape work** (`LayoutWorkBudget.MAX_LAYOUT_SHAPE_WORK`); the text below still calls it open. Work that is not shape work, such as rail search, is still not charged |
+> | SIR-14 | **Fixed** (`IrImmutabilityTest` exists); the index below still says "Not in current main" |
+> | SIR-15 | **Fixed in the documents**: `docs/DESIGN.md` no longer claims math in every label-bearing type |
+> | SIR-12 | Still open: class and ER math fragments are measured more than once per layout |
+> | SIR-13 | Partly fixed: the config cap and loud over-cap stdin landed; `Main.run` still declares `throws IOException` |
+> | SIR-16 | Still open: several capped parsers split everything before applying the cap |
+> | SIR-17 | Still open, by a search of the font package only: no outline cache or binary search |
+> | SIR-18 | Still open: `FlowchartLayout.MAX_DASH_PIECES` is still a mutable public static; the parser has grown from 3,595 to about 5,400 lines |
+> | SIR-19 | Partly open: `TimelineOomGuardTest` still builds a source far over the source cap and asserts only that the output starts with `<svg` |
+>
+> Every `file:line` citation below refers to the 2026-07-23 baseline `e978096` and is wrong for
+> today's tree. The counts in the body (22 diagram types, 792 tests, a 3,595-line parser) are also
+> from that baseline. The sentence "This branch changes this report" describes the branch the
+> report arrived on, which merged long ago.
+
 - **Auditor:** Marlow
 - **Date:** 2026-07-23
 - **Baseline:** `e9780963ee7071b5b8b7d60cdde03895ed5d2224` (`Merge fixpoint/render-check-cli`)
