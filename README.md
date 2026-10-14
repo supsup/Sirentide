@@ -131,6 +131,9 @@ docker run --rm \
 
 ### Watched input and output folders
 
+A longer walkthrough of the image, from build to a running worker, is in
+[docs/dockerDogFoodflow.md](docs/dockerDogFoodflow.md).
+
 Run a long-lived worker with writable input and output mounts:
 
 ```sh

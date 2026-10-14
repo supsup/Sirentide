@@ -11,7 +11,7 @@ Where the [emitter-output contract](sirentide-output-contract.md) governs the di
 *geometry*, **this** contract records the admitted wrapper and semantic-anchor layer, plus the
 security boundary a future effect/narrative layer must cross. It is the diagram sibling of
 LatteX's container-output contract. The wrapper and `role`/`id`/`seq` anchors are live; the FX
-vocabulary and page runtime are deferred. **There is no Sirentide page runtime in `/docs` today.**
+vocabulary and page runtime are deferred. **The only Sirentide page runtime in `/docs` today is the optional frame-deck play-through script; there is no FX runtime.**
 
 ## The fork from LatteX (read this first — it's the crux)
 

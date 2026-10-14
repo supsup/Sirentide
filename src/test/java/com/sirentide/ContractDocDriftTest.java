@@ -85,7 +85,7 @@ class ContractDocDriftTest {
     @Test
     void deferredFxAndRuntimeCannotBePresentedAsLive() throws IOException {
         String doc = Files.readString(DOC);
-        assertTrue(doc.contains("There is no Sirentide page runtime in `/docs` today."),
+        assertTrue(doc.contains("The only Sirentide page runtime in `/docs` today is the optional frame-deck play-through script; there is no FX runtime."),
             "the contract must state the live /docs runtime boundary explicitly");
         assertTrue(doc.contains("`data-sirentide-fx` is Part 2 — NOT admitted today."),
             "the effect anchor must remain explicitly deferred");
