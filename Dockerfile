@@ -3,6 +3,15 @@
 # non-root Java 25 runtime.
 
 FROM eclipse-temurin:25-jdk AS build
+# Remove the eMudhra-affected roots before Gradle fetches anything (trust/README.md).
+COPY trust/ /opt/trust/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && mkdir -p /usr/local/share/ca-certificates \
+    && sh /opt/trust/distrust-os-sources.sh /usr/share/ca-certificates /usr/local/share/ca-certificates \
+    && update-ca-certificates \
+    && sh /opt/trust/distrust-java-roots.sh "${JAVA_HOME}/lib/security/cacerts" \
+    && rm -rf /var/lib/apt/lists/*
 
 # The jar stamps Sirentide-Source-Revision and REQUIRES an exact 40-hex commit. This context
 # has no repository — .dockerignore excludes .git — so git cannot supply it here and adding
@@ -41,6 +50,8 @@ RUN mkdir -p /worker-classes \
         --main-class com.sirentide.cli.SirentideFolderWorker \
         -C /worker-classes .
 
+RUN sh /opt/trust/guard-no-forbidden.sh /etc/ssl/certs/ca-certificates.crt "${JAVA_HOME}/lib/security/cacerts"
+
 FROM eclipse-temurin:25-jre-alpine
 
 # Provenance readable with docker inspect, without unzipping the jar. Both values were already
@@ -49,6 +60,14 @@ ARG SIRENTIDE_SOURCE_REVISION
 ARG SIRENTIDE_VERSION=0.6.0
 LABEL org.opencontainers.image.revision="${SIRENTIDE_SOURCE_REVISION}" \
       org.opencontainers.image.version="${SIRENTIDE_VERSION}"
+
+# The shipped JRE and OS bundle: same removal as the build stage (trust/README.md).
+COPY trust/ /opt/trust/
+RUN apk add --no-cache --upgrade ca-certificates openssl \
+    && mkdir -p /usr/local/share/ca-certificates \
+    && sh /opt/trust/distrust-os-sources.sh /usr/share/ca-certificates /usr/local/share/ca-certificates \
+    && update-ca-certificates \
+    && sh /opt/trust/distrust-java-roots.sh "${JAVA_HOME}/lib/security/cacerts"
 
 RUN addgroup -S -g 10001 sirentide \
     && adduser -S -D -H -u 10001 -G sirentide sirentide \
@@ -65,6 +84,8 @@ COPY --from=build /out/sirentide-worker.jar /opt/sirentide/sirentide-worker.jar
 COPY docker/entrypoint.sh /opt/sirentide/entrypoint.sh
 RUN chmod 0555 /opt/sirentide/entrypoint.sh \
     && chmod 0444 /opt/sirentide/sirentide.jar /opt/sirentide/sirentide-worker.jar
+
+RUN sh /opt/trust/guard-no-forbidden.sh /etc/ssl/certs/ca-certificates.crt "${JAVA_HOME}/lib/security/cacerts"
 
 USER 10001:10001
 WORKDIR /sirentide
