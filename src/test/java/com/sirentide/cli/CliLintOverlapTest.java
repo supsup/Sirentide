@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sirentide.api.Sirentide;
 import com.sirentide.cli.CliRun.Captured;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -65,6 +66,28 @@ class CliLintOverlapTest {
         assertEquals(0, lint.exitCode(), lint.err());
         assertEquals("", lint.err());
         assertEquals(plain.out(), lint.out());
+    }
+
+    @Test
+    void actualLaneLiveFlowchartReportsItsTwoCancelledEdgesOnlyWhenLintIsRequested() throws Exception {
+        String dsl;
+        try (InputStream in = getClass().getResourceAsStream("/flowchart-diamond-lane-live.mmd")) {
+            assertTrue(in != null, "canonical actual source must be present");
+            dsl = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        assertTrue(dsl.contains("X -->|stop and removal confirmed| CA[cancelled]"));
+        assertTrue(dsl.contains("X -->|stop or removal unknown| CU["));
+        Captured strict = runWithStdin(dsl, "render", "-", "--lint-overlap", "--strict");
+        assertEquals(1, strict.exitCode(), strict.err());
+        assertTrue(strict.err().contains("edge:X-CA x edge:X-CU"), strict.err());
+        Captured caveat = runWithStdin(dsl, "render", "-", "--lint-overlap");
+        assertEquals(0, caveat.exitCode(), caveat.err());
+        assertTrue(caveat.err().contains("edge:X-CA x edge:X-CU"), caveat.err());
+        Captured plain = runWithStdin(dsl, "render", "-", "--strict");
+        assertEquals(0, plain.exitCode(), plain.err());
+        assertFalse(plain.err().contains("text overlap"), plain.err());
+        assertEquals(plain.out(), strict.out());
+        assertEquals(plain.out(), caveat.out());
     }
 
     @Test

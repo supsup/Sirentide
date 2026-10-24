@@ -55,6 +55,6 @@ public final class CaptionLayout {
             }
         }
         double newHeight = bandTop + lines.size() * lineH + PAD_BELOW;
-        return new LaidOut(laid.width(), newHeight, shapes);
+        return new LaidOut(laid.width(), newHeight, shapes, laid.frameLabels(), laid.activationBars());
     }
 }

@@ -1,0 +1,30 @@
+Frozen served SVG firing controls for plan 9d56f599.
+
+Fixpoint offered the two rendered SVGs in PROJECT/stafficy/45329/
+d6a3dca0-0969-40e6-ab1d-3ac6795ff441 on 2026-10-24. Lattice admitted
+bounded regular-file copies with exact sizes and manifest hashes, then
+independently measured their collision geometry. Fixpoint identifies these
+complete before-repair SVG bytes as served after Stafficy deployment f568d407;
+that publication provenance is the offering author's attribution.
+No PNG or executable peer artifact is part of these fixtures.
+
+sequence-served-f568.svg
+685737 bytes
+SHA256 7f380fae063c1f7ed7da74c9c6ffca62f212b6aa7d718bb91ee68cc164b48ff1
+flowchart-served-f568.svg
+411761 bytes
+SHA256 23cf4ad3801017199c83597bfe5f8a052d833bd9bc9b1595b4844d4cc2de2b16
+
+The corresponding current Stafficy docs DSL blocks were independently joined
+to the existing canonical Sirentide resources by Lattice. Their input hashes
+are separately asserted by FrozenLaneLiveOverlapLintTest. The frozen SVGs
+are the original geometry controls; they are not claimed to be freshly
+rendered by whatever source revision is running a later test.
+
+The frozen tests select exact XML element positions/anchor identities AND
+path hashes, never colors or heuristic path shapes. They reconstruct only
+the selected real collision slices, with the original geometry intact.
+The sequence slice contains four actual frame glyph paths and three actual
+activation rectangles producing six >1px pairs. The flowchart slice contains
+the two actual edge glyphs producing one >1px pair. Independent clean-source
+controls exercise non-vacuous real sequence and flowchart layouts.

@@ -90,13 +90,17 @@ public final class SequenceLayout {
     private static final double FRAME_STROKE_W = 1;
     private static final double FRAME_PAD_X = 12;     // horizontal padding beyond the outer lifelines
     private static final double FRAME_INSET = 6;      // each nesting depth tightens the frame this far
-    private static final double FRAME_TOP_PAD = 24;   // space above the first message (holds the tab
-                                                      // clear of the first message's own label band)
     private static final double FRAME_BOTTOM_PAD = 12; // space below the last message
     private static final double TAB_H = 15;           // label-tab height
+    // A header/divider owns TAB_H for its annotation plus the existing MSG_TOP_PAD of headroom for
+    // the next upwards-growing message label. Multiple nested headers each get their own band.
+    private static final double FRAME_LABEL_BAND = TAB_H + MSG_TOP_PAD;
+    private static final double FRAME_INK_CLEARANCE = 2;
+    private static final int MAX_FRAME_LABEL_BANDS = 20_000;
+    private static final int MAX_FRAME_EVENT_WORK = 1_000_000;
+    private static final int MAX_ACTIVATION_SEGMENTS = 100_000;
     private static final double TAB_PAD = 5;          // horizontal padding inside the tab
     private static final double TAB_SIZE = 10;        // kind/label glyph size
-    private static final double DIV_LIFT = 15;        // a divider sits this far above its branch's msg
     private static final double DASH = 5;             // dashed-divider dash length (Line has no dash)
     private static final double DASH_GAP = 4;         // dashed-divider gap length
 
@@ -264,17 +268,16 @@ public final class SequenceLayout {
         // frame can be pinned to the real geometry of the messages it wraps, not to a brittle constant.
         int msgCount = seq.messages().size();
         double[] yByMsg = new double[msgCount];
-        double[] frameYByMsg = new double[msgCount];
         double[] bottomByMsg = new double[msgCount];
         Arrays.fill(yByMsg, Double.NaN);
-        Arrays.fill(frameYByMsg, Double.NaN);
         Arrays.fill(bottomByMsg, Double.NaN);
         // One stable pass over the notes replaces the old boundary×notes rescan. Buckets preserve
         // declaration order because each note is appended while walking seq.notes() once.
         NoteBuckets notesByBoundary = bucketNotes(seq.notes(), msgCount);
+        FrameBands frameBands = frameBands(seq.blocks(), labels, msgCount);
         // Walk the message boundaries K = 0..msgCount, accumulating an ABSOLUTE y cursor. Before each
-        // message we INJECT any note bands + created-head bands anchored at that boundary (atMsg == K),
-        // growing the diagram so the annotation never overlaps its neighbours. With no notes/creates
+        // message we INJECT note bands, created-head bands and frame annotations at that boundary,
+        // growing the diagram so each annotation has its own time. With no notes/creates/frames
         // every injected band is zero → the cursor advances by exactly ROW_H (or SELF_ROWS·ROW_H) per
         // drawn message, byte-identical to the pre-enrichment `headBottom + MSG_TOP_PAD + rowCursor·ROW_H`.
         List<NoteBox> noteBoxes = new ArrayList<>();
@@ -305,6 +308,7 @@ public final class SequenceLayout {
                 }
                 cursorY += ACTOR_H + MSG_TOP_PAD;
             }
+            cursorY = frameBands.reserveAt(K, cursorY);
             if (K < msgCount) {
                 SeqMessage m = seq.messages().get(K);
                 Integer a = index.get(m.from());
@@ -315,8 +319,7 @@ public final class SequenceLayout {
                 boolean self = a.equals(b);
                 MessageLabel label = labels[K];
                 // Normal labels grow upwards from the arrow, so move that arrow down by the
-                // extra line height. Frame/divider anchors stay above the first displayed line.
-                frameYByMsg[K] = cursorY;
+                // extra line height. Reserved frame/divider bands stay above the first line.
                 if (!self) {
                     cursorY += label.extraHeight();
                 }
@@ -347,8 +350,8 @@ public final class SequenceLayout {
 
         // -- alt/loop/par frame geometry (M2). Resolve each block's message index range to a pixel
         // rectangle + tab + dividers. Blocks with no drawn message in range are degenerate → skipped.
-        List<Frame> frames = buildFrames(seq.blocks(), frameYByMsg, bottomByMsg, cx, index,
-            seq.messages(), labels);
+        List<Frame> frames = buildFrames(seq.blocks(), yByMsg, bottomByMsg, cx, index,
+            seq.messages(), labels, frameBands);
 
         // -- activation bars (M2, IMPLICIT activation — the low-friction default). Walk the drawn
         // messages in time order maintaining a per-actor STACK of open activations:
@@ -425,11 +428,13 @@ public final class SequenceLayout {
         // -- emit order (readability + the containment audit): frames UNDER everything, then lifelines,
         // then message lines + arrowheads + labels, then head boxes, then head labels on top.
         List<Shape> shapes = new ArrayList<>();
+        List<GlyphRun> frameLabels = new ArrayList<>();
+        List<Rect> activationBars = new ArrayList<>();
 
         // 0) alt/loop/par frames FIRST — the block border + label tab + dividers draw BEHIND the
         // lifelines, messages and activation bars so a frame never occludes the content it wraps.
         for (Frame f : frames) {
-            emitFrame(shapes, f, textColor, canvasW);
+            emitFrame(shapes, frameLabels, f, textColor, canvasW);
         }
 
         // 1) lifelines: a light vertical line from each actor's start y (head bottom — the top for a
@@ -455,17 +460,18 @@ public final class SequenceLayout {
             }
         }
 
-        // 1.5) activation bars: a thin ACT_FILL rect per activation, centred on its actor's lifeline
+        // 1.5) activation bars: thin ACT_FILL rects per activation, centred on its actor's lifeline
         // (nested bars stepped right by ACT_OFFSET·depth). Emitted AFTER the lifelines (the bar
         // overlays the line) and BEFORE the messages (arrows/heads draw on top). A degenerate span
         // (zero/negative/non-finite height) is skipped — never emit inverted geometry (DESIGN §6).
+        List<InkGap> frameInkGaps = mergedFrameInkGaps(frameBands.inkGaps(), frameLabels);
         for (Activation act : activations) {
             double h = act.endY - act.startY;
             if (!Double.isFinite(h) || h <= 0) {
                 continue;
             }
             double bx = cx[act.actor] - ACT_W / 2 + act.depth * ACT_OFFSET;
-            shapes.add(new Rect(bx, act.startY, ACT_W, h, ACT_FILL));
+            emitActivation(shapes, activationBars, bx, act.startY, act.endY, frameInkGaps);
         }
 
         // Per-diagram anchor factory (plan sirentide-semantic-anchor-g): each message → one
@@ -522,7 +528,7 @@ public final class SequenceLayout {
             emitNote(shapes, nb, canvasW, assigner);
         }
 
-        return new LaidOut(canvasW, canvasH, shapes);
+        return new LaidOut(canvasW, canvasH, shapes, frameLabels, activationBars);
     }
 
     /// Stable one-pass note buckets for message boundaries `0..msgCount`. Notes with an out-of-range
@@ -570,6 +576,182 @@ public final class SequenceLayout {
         int inspectedNotes() {
             return inspectedNotes;
         }
+    }
+
+    private record FrameBand(int block, int divider, int depth) {}
+
+    /// Resolve only drawable frame events, in O(messages + blocks + dividers) before the stable
+    /// per-boundary depth sort. A skipped first message does not lose its enclosing frame's header.
+    private static FrameBands frameBands(List<SeqBlock> blocks, MessageLabel[] labels, int msgCount) {
+        if (blocks.isEmpty()) {
+            return new FrameBands(List.of(), new double[0], List.of(), new ArrayList<>());
+        }
+        if (blocks.size() > MAX_FRAME_EVENT_WORK) {
+            throw frameEventWorkOverflow();
+        }
+        int[] nextDrawn = new int[msgCount + 1];
+        nextDrawn[msgCount] = msgCount;
+        for (int i = msgCount - 1; i >= 0; i--) {
+            nextDrawn[i] = labels[i] != null ? i : nextDrawn[i + 1];
+        }
+        List<List<FrameBand>> buckets = new ArrayList<>(msgCount + 1);
+        for (int i = 0; i <= msgCount; i++) {
+            buckets.add(null);
+        }
+        double[] headers = new double[blocks.size()];
+        Arrays.fill(headers, Double.NaN);
+        List<Map<Integer, Double>> dividers = new ArrayList<>(blocks.size());
+        for (int i = 0; i < blocks.size(); i++) {
+            dividers.add(null);
+        }
+        int eventCount = 0;
+        int inspected = 0;
+        for (int bi = 0; bi < blocks.size(); bi++) {
+            if (++inspected > MAX_FRAME_EVENT_WORK) {
+                throw frameEventWorkOverflow();
+            }
+            SeqBlock block = blocks.get(bi);
+            int from = block.fromMsg();
+            int to = Math.min(block.toMsg(), msgCount - 1);
+            if (from < 0 || from >= msgCount || to < from || nextDrawn[from] > to) {
+                continue;
+            }
+            addFrameBand(buckets, nextDrawn[from], new FrameBand(bi, -1, block.depth()));
+            if (++eventCount > MAX_FRAME_LABEL_BANDS) {
+                throw frameBandOverflow();
+            }
+            for (int di = 0; di < block.dividers().size(); di++) {
+                if (++inspected > MAX_FRAME_EVENT_WORK) {
+                    throw frameEventWorkOverflow();
+                }
+                int at = block.dividers().get(di).atMsg();
+                if (at < from || at > to || labels[at] == null) {
+                    continue;
+                }
+                addFrameBand(buckets, at, new FrameBand(bi, di, block.depth()));
+                if (++eventCount > MAX_FRAME_LABEL_BANDS) {
+                    throw frameBandOverflow();
+                }
+            }
+        }
+        for (List<FrameBand> bucket : buckets) {
+            if (bucket != null) {
+                // List.sort is stable: siblings and repeated dividers retain declaration order.
+                bucket.sort(Comparator.comparingInt(FrameBand::depth));
+            }
+        }
+        return new FrameBands(buckets, headers, dividers, new ArrayList<>());
+    }
+
+    private static IllegalStateException frameBandOverflow() {
+        return new IllegalStateException(
+            "MAX_LAYOUT_WORK exceeded: sequence frame label bands past " + MAX_FRAME_LABEL_BANDS);
+    }
+
+    private static IllegalStateException frameEventWorkOverflow() {
+        return new IllegalStateException(
+            "MAX_LAYOUT_WORK exceeded: sequence frame event work past " + MAX_FRAME_EVENT_WORK);
+    }
+
+    private static void addFrameBand(List<List<FrameBand>> buckets, int at, FrameBand band) {
+        List<FrameBand> bucket = buckets.get(at);
+        if (bucket == null) {
+            bucket = new ArrayList<>();
+            buckets.set(at, bucket);
+        }
+        bucket.add(band);
+    }
+
+    private record FrameBands(List<List<FrameBand>> buckets, double[] headers,
+                              List<Map<Integer, Double>> dividers,
+                              List<InkGap> inkGaps) {
+        double reserveAt(int boundary, double y) {
+            if (buckets.isEmpty() || buckets.get(boundary) == null) {
+                return y;
+            }
+            for (FrameBand band : buckets.get(boundary)) {
+                // This reserved annotation band is intentionally global: every actor's visible bar
+                // pauses through it, even when that actor is horizontally outside the label ink.
+                // The call/reply stack and its original start/end times remain untouched.
+                inkGaps.add(new InkGap(y - FRAME_INK_CLEARANCE, y + TAB_H + FRAME_INK_CLEARANCE));
+                if (band.divider() < 0) {
+                    headers[band.block()] = y;
+                } else {
+                    Map<Integer, Double> positions = dividers.get(band.block());
+                    if (positions == null) {
+                        positions = new HashMap<>();
+                        dividers.set(band.block(), positions);
+                    }
+                    positions.put(band.divider(), y + TAB_H);
+                }
+                y += FRAME_LABEL_BAND;
+            }
+            return y;
+        }
+    }
+
+    private record InkGap(double top, double bottom) {}
+
+    /// Frame annotations own TAB_H plus explicit clearance, across the sequence's time band.
+    /// Merging first makes activation splitting O(log bands + emitted segments) per activation.
+    private static List<InkGap> mergedFrameInkGaps(List<InkGap> reserved, List<GlyphRun> labels) {
+        List<InkGap> gaps = new ArrayList<>(reserved);
+        for (GlyphRun label : labels) {
+            // Extend a reserved band for any actual glyph overhang beyond the nominal tab metrics.
+            // Ordinary text merges into its existing full annotation band; it never makes tiny
+            // per-letter holes. These are the same exact emitted runs supplied to the opt-in lint.
+            double[] bounds = OverlapLint.bounds(label.pathD());
+            if (bounds != null) {
+                gaps.add(new InkGap(bounds[1] - FRAME_INK_CLEARANCE,
+                    bounds[3] + FRAME_INK_CLEARANCE));
+            }
+        }
+        gaps.sort(Comparator.comparingDouble(InkGap::top));
+        List<InkGap> merged = new ArrayList<>();
+        for (InkGap gap : gaps) {
+            if (!merged.isEmpty() && gap.top() <= merged.getLast().bottom()) {
+                InkGap prior = merged.removeLast();
+                merged.add(new InkGap(prior.top(), Math.max(prior.bottom(), gap.bottom())));
+            } else {
+                merged.add(gap);
+            }
+        }
+        return merged;
+    }
+
+    private static void emitActivation(List<Shape> shapes, List<Rect> bars, double x, double start,
+                                       double end, List<InkGap> gaps) {
+        int lo = 0;
+        int hi = gaps.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (gaps.get(mid).bottom() <= start) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        double cursor = start;
+        for (int i = lo; i < gaps.size() && gaps.get(i).top() < end; i++) {
+            InkGap gap = gaps.get(i);
+            addActivationSegment(shapes, bars, x, cursor, Math.min(end, gap.top()));
+            cursor = Math.max(cursor, gap.bottom());
+        }
+        addActivationSegment(shapes, bars, x, cursor, end);
+    }
+
+    private static void addActivationSegment(List<Shape> shapes, List<Rect> bars, double x,
+                                             double start, double end) {
+        if (end <= start) {
+            return;
+        }
+        if (bars.size() >= MAX_ACTIVATION_SEGMENTS) {
+            throw new IllegalStateException(
+                "MAX_LAYOUT_WORK exceeded: sequence activation segments past " + MAX_ACTIVATION_SEGMENTS);
+        }
+        Rect rect = new Rect(x, start, ACT_W, end - start, ACT_FILL);
+        shapes.add(rect);
+        bars.add(rect);
     }
 
     private record BoundedText(String text, boolean truncated) {}
@@ -862,30 +1044,32 @@ public final class SequenceLayout {
     }
 
     /// Resolves each {@link SeqBlock}'s FLAT message-index range to a pixel {@link Frame}. For every
-    /// block: scan the DRAWN messages in `[fromMsg, toMsg]` for the top y (first drawn), the bottom
+    /// block: scan the DRAWN messages in `[fromMsg, toMsg]` for the bottom
     /// extent (including a wrapped self-label), and the actor x-span (min/max lifeline x of every
     /// endpoint, extended by a self-message's hook AND prepared label). A block
     /// with NO drawn message in range — an empty block (`toMsg < fromMsg`), an out-of-range range, or
     /// one whose messages all skipped as unknown-actor — yields no frame (degenerate → inert, DESIGN
     /// §6). Nesting insets the padding by `depth·FRAME_INSET` (clamped ≥ 4) so a nested frame sits
-    /// visibly inside its parent. Each `else`/`and` {@link Divider} becomes a {@link FrameDivider} at
-    /// its branch message's y (skipped when that message is out of range / not drawn). Returns an
+    /// visibly inside its parent. Headers and `else`/`and` dividers use their explicitly reserved
+    /// bands (skipped when their branch message is out of range / not drawn). Returns an
     /// EMPTY list for a block-free sequence, so the emit path adds nothing (byte-identical legacy bake).
     private static List<Frame> buildFrames(List<SeqBlock> blocks, double[] yByMsg, double[] bottomByMsg,
                                            double[] cx, Map<String, Integer> index,
-                                           List<SeqMessage> messages, MessageLabel[] labels) {
+                                           List<SeqMessage> messages, MessageLabel[] labels,
+                                           FrameBands bands) {
         List<Frame> frames = new ArrayList<>();
         if (blocks.isEmpty()) {
             return frames;   // legacy actor+message path — no frames, byte-identical bake
         }
         int msgCount = messages.size();
-        for (SeqBlock blk : blocks) {
+        for (int bi = 0; bi < blocks.size(); bi++) {
+            SeqBlock blk = blocks.get(bi);
             int from = blk.fromMsg();
             int to = Math.min(blk.toMsg(), msgCount - 1);
             if (from < 0 || from >= msgCount || to < from) {
                 continue;   // empty/out-of-range block — no frame
             }
-            double topY = Double.NaN;
+            boolean anyDrawn = false;
             double botY = Double.NEGATIVE_INFINITY;
             double minX = Double.POSITIVE_INFINITY;
             double maxX = Double.NEGATIVE_INFINITY;
@@ -894,9 +1078,7 @@ public final class SequenceLayout {
                 if (Double.isNaN(y)) {
                     continue;   // a skipped (unknown-actor) message — not drawn, ignore
                 }
-                if (Double.isNaN(topY)) {
-                    topY = y;   // the first drawn message sets the top
-                }
+                anyDrawn = true;
                 botY = Math.max(botY, bottomByMsg[mi]);
                 SeqMessage m = messages.get(mi);
                 Integer a = index.get(m.from());
@@ -914,13 +1096,13 @@ public final class SequenceLayout {
                     maxX = Math.max(maxX, cx[a] + SELF_W + labelReach);
                 }
             }
-            if (Double.isNaN(topY) || !Double.isFinite(minX)) {
+            if (!anyDrawn || !Double.isFinite(minX)) {
                 continue;   // no drawn message in range → no frame
             }
             double effPad = framePadding(blk.depth());
             double left = minX - effPad;
             double right = maxX + effPad;
-            double top = topY - FRAME_TOP_PAD;
+            double top = bands.headers()[bi];
             double bottom = botY + FRAME_BOTTOM_PAD;
             String kind = frameText(blk.kind());
             if (kind == null) {
@@ -932,9 +1114,10 @@ public final class SequenceLayout {
             String label = frameText(blk.label());
             double labelW = label == null ? 0 : FONT.runWidth(label, TAB_SIZE);
             right = Math.max(right, left + tabW + (label == null ? 0 : 2 * TAB_PAD + labelW));
-            // Dividers: each else/and at its branch message's y (skipped when out of range / not drawn).
+            // Dividers: each else/and owns the band before its branch's first drawn message.
             List<FrameDivider> divs = new ArrayList<>();
-            for (Divider d : blk.dividers()) {
+            for (int di = 0; di < blk.dividers().size(); di++) {
+                Divider d = blk.dividers().get(di);
                 int at = d.atMsg();
                 if (at < from || at > to || Double.isNaN(yByMsg[at])) {
                     continue;   // a divider with no in-range branch message → inert
@@ -943,7 +1126,7 @@ public final class SequenceLayout {
                 if (dl != null) {
                     right = Math.max(right, left + 2 * TAB_PAD + FONT.runWidth(dl, TAB_SIZE));
                 }
-                divs.add(new FrameDivider(yByMsg[at] - DIV_LIFT, dl));
+                divs.add(new FrameDivider(bands.dividers().get(bi).get(di), dl));
             }
             frames.add(new Frame(kind, label, left, right, top, bottom, tabW, divs,
                 from, to, blk.depth()));
@@ -967,8 +1150,8 @@ public final class SequenceLayout {
 
     /// A child can widen for its own labels even when its messages use just one actor. Propagate
     /// that horizontal extent through the containing ranges, retaining declaration/paint order.
-    /// Sorting + a stack avoids a new blocks-squared containment pass. Vertical header bands are
-    /// deliberately unchanged here.
+    /// Sorting + a stack avoids a new blocks-squared containment pass. The boundary walk already
+    /// placed ancestor/descendant headers in separate vertical bands.
     private static void containChildFrames(List<Frame> frames) {
         List<Integer> order = new ArrayList<>(frames.size());
         for (int i = 0; i < frames.size(); i++) {
@@ -1017,7 +1200,8 @@ public final class SequenceLayout {
     /// are drawn as short segments, staying inside the svg/rect/line/path alphabet). All glyph runs
     /// are clamped in-canvas (the geometry-escape fix class). Emitted BEFORE the lifelines/messages so
     /// the frame sits behind the content it wraps.
-    private static void emitFrame(List<Shape> shapes, Frame f, String textColor, double canvasW) {
+    private static void emitFrame(List<Shape> shapes, List<GlyphRun> frameLabels, Frame f,
+                                   String textColor, double canvasW) {
         // Border — a stroke-only rectangle as four lines.
         shapes.add(new Line(f.left(), f.top(), f.right(), f.top(), FRAME_STROKE, FRAME_STROKE_W));
         shapes.add(new Line(f.left(), f.bottom(), f.right(), f.bottom(), FRAME_STROKE, FRAME_STROKE_W));
@@ -1031,7 +1215,7 @@ public final class SequenceLayout {
                 double runX = clamp(f.left() + TAB_PAD, lw, canvasW);
                 String dd = FONT.textPathD(d.label(), runX, d.y() - LABEL_LIFT, TAB_SIZE);
                 if (!dd.isBlank()) {
-                    shapes.add(new GlyphRun(dd, textColor));
+                    addFrameLabel(shapes, frameLabels, dd, textColor);
                 }
             }
         }
@@ -1041,7 +1225,7 @@ public final class SequenceLayout {
         double baseline = f.top() + TAB_H / 2 + TAB_SIZE * 0.35;
         String kd = FONT.textPathD(f.kind(), f.left() + (f.tabW() - kw) / 2, baseline, TAB_SIZE);
         if (!kd.isBlank()) {
-            shapes.add(new GlyphRun(kd, Colors.contrastFill(TAB_FILL)));
+            addFrameLabel(shapes, frameLabels, kd, Colors.contrastFill(TAB_FILL));
         }
         // Block label — to the right of the tab, aligned on the tab baseline, clamped in-canvas.
         if (f.label() != null) {
@@ -1049,9 +1233,16 @@ public final class SequenceLayout {
             double runX = clamp(f.left() + f.tabW() + TAB_PAD, lw, canvasW);
             String ld = FONT.textPathD(f.label(), runX, baseline, TAB_SIZE);
             if (!ld.isBlank()) {
-                shapes.add(new GlyphRun(ld, textColor));
+                addFrameLabel(shapes, frameLabels, ld, textColor);
             }
         }
+    }
+
+    private static void addFrameLabel(List<Shape> shapes, List<GlyphRun> frameLabels,
+                                      String path, String fill) {
+        GlyphRun run = new GlyphRun(path, fill);
+        shapes.add(run);
+        frameLabels.add(run);
     }
 
     /// A DASHED horizontal line from `x1` to `x2` at `y`, approximated as short solid {@link Line}
@@ -1070,7 +1261,7 @@ public final class SequenceLayout {
         }
     }
 
-    /// One divider inside an emitted frame: its y (already lifted above the branch's first label)
+    /// One divider inside an emitted frame: its y in the explicitly reserved annotation band
     /// and an optional bounded display label. Layout-internal.
     private record FrameDivider(double y, String label) {}
 

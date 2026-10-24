@@ -98,11 +98,12 @@ public final class Main {
                            so --strict fails on it; so does a typeset fragment the fragment guard
                            refused (`fragment guard refused: ...`).
           --lattex PATH    the LatteX jar --math loads; or set SIRENTIDE_LATTEX_JAR.
-          --lint-overlap   ALSO check every text run against text in OTHER diagram elements and
-                           report each overlapping pair as a caveat (`text overlap: ...`), so
-                           --strict fails on it. Off by default: without it no render gains a
-                           lint caveat. Text is checked against text only, so an edge label on
-                           its own stroke is never a finding; typeset math is not checked.
+          --lint-overlap   ALSO check text against text in OTHER diagram elements, and sequence
+                           frame labels against activation bars. Report each overlapping pair as
+                           a caveat (`text overlap: ...`), so --strict fails on it. Off by default:
+                           without it no render gains a lint caveat. Other fills and strokes are
+                           not checked; an edge label on its own stroke is never a finding.
+                           Typeset math is not checked.
           --source-hash    ALSO print the SHA-256 of the RAW source bytes to stderr, as
                            `sirentide: source sha256:<64 lowercase hex>`. The SVG, -o file and
                            exit code are unchanged. See "Source hash" below for the exact bytes.

@@ -776,7 +776,7 @@ public final class Sirentide {
         String lintDetail = "text overlap: " + String.join("; ", named)
             + (more > 0 ? "; and " + more + " more" : "");
         String note = " Lint: " + found.size() + " pair" + (found.size() == 1 ? "" : "s")
-            + " of text runs in different elements overlap.";
+            + " of overlapping layout bounds.";
         return new Diagnostics(ok.outcome(), ok.stage(), ok.message() + note, ok.line(),
             ok.detail().isEmpty() ? lintDetail : ok.detail() + "; " + lintDetail);
     }

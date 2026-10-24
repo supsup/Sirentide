@@ -14,6 +14,11 @@ added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
 committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
+- *2026-10-24.* **Sequence frame labels have reserved annotation bands.** Headers and branch
+  labels occupy separate bands, and visible activation bars pause through those bands so they
+  leave the labels clear. The opt-in `--lint-overlap` check also detects frame labels crossing
+  activation bars, alongside its existing comparisons between labels on different edges.
+
 - *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
   Long plain labels can use up to four lines instead of being cut to the existing actor gap.
   Self messages reserve room before the next lifeline, and rows grow with wrapped text.
