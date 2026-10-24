@@ -1,0 +1,17 @@
+flowchart TD
+  J[Lane job reaches an end] --> C{Completed with exit 0, the verified digest equals the allowlisted one, and a valid docker-wall start time?}
+  C -->|yes| P[passed]
+  C -->|no: anything else that ended| F[failed]
+  J --> T[timed-out: the job ran past its budget]
+  J --> R[refused: no verdict, e.g. sha not on the remote, launcher 429, digest mismatch]
+  J --> X{Cancelled?}
+  X -->|stop and removal confirmed| CA[cancelled]
+  X -->|stop or removal unknown| CU[cancel-unconfirmed: container and checkout kept]
+  J --> SU[start-unknown: the start may have happened, checkout kept]
+  P --> D{Lane still declared with the same command and image?}
+  D -->|yes| COUNT[counts as proof at this sha]
+  D -->|no| RET[retired: no longer proof]
+  classDef bad fill:#be123c
+  classDef ok fill:#15803d
+  class F,R,CU,SU,RET bad
+  class P,COUNT ok
