@@ -19,7 +19,6 @@ import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /// The OPT-IN text-overlap lint (item 4 of Fixpoint's ruling on the cli-math-batch rebuild).
@@ -93,42 +92,29 @@ class OverlapLintTest {
     }
 
     @Test
-    void theSequenceBlocksGoldenGrazesAndIsReported() {
-        // MEASURED, not chosen: of the 32 golden fixtures, this is the one the lint flags. The `loop`
-        // frame's label "every retry" sits 1.8 px into the "ping" message label below it, which the
-        // BrewShot capture shows as descenders touching ascenders. A real (small) finding, kept as a
-        // second native positive rather than tuned away.
+    void theSequenceBlocksFigurePassesAfterTheFrameBandRepair() {
+        // Reserved frame-label bands remove the former loop-label/message-label graze. Keep the
+        // unchanged source as a clean regression; frozen actual collision geometry tests retain
+        // positive coverage independently of the repaired layout.
         RenderResult r = Sirentide.renderWithDiagnostics(SEQUENCE_BLOCKS, null, LINT);
-        assertTrue(r.diagnostics().detail().contains("x message:Alice-Bob-1"), r.diagnostics().detail());
-        assertFalse(Sirentide.renderWithDiagnostics(SEQUENCE_BLOCKS).diagnostics().detail().contains("text overlap"));
+        assertEquals(Outcome.OK, r.diagnostics().outcome());
+        assertEquals("", r.diagnostics().detail(), r.diagnostics().detail());
+        assertTrue(r.svg().contains("data-sirentide-role=\"message\""), "the sequence still renders its messages");
+        assertEquals(Sirentide.renderWithDiagnostics(SEQUENCE_BLOCKS).svg(), r.svg(),
+            "the lint never changes the repaired figure");
     }
 
-    /// The golden fixtures the lint is KNOWN to flag. Exactly one, and it is a real finding, not a
-    /// false positive: `sequence-blocks` (loop label "every retry" 1.8 px into message label "ping").
-    /// KNOWN FINDING, FILED FOR FOLLOW-UP: the layout and the golden are deliberately left as they are
-    /// on this branch; the fix belongs to a layout change that regenerates the golden under review.
-    /// When that lands, delete the entry here and the CLI pin in CliLintOverlapTest goes red, which is
-    /// the signal to retire it too. Adding a name here hides a finding, so it needs the same review.
-    static final Set<String> KNOWN_LINT_FINDINGS = Set.of("sequence-blocks");
-
     @Test
-    void everyGoldenFixtureExceptTheKnownFindingPassesTheLint() {
+    void everyGoldenFixturePassesTheLint() {
         Map<String, String> fixtures = GoldenSvgTest.fixtures();
         assertEquals(32, fixtures.size(), "control: the sweep reaches the whole golden gallery");
-        assertTrue(fixtures.keySet().containsAll(KNOWN_LINT_FINDINGS), "every exclusion names a real fixture");
         int checked = 0;
         for (Map.Entry<String, String> e : fixtures.entrySet()) {
             String detail = Sirentide.renderWithDiagnostics(e.getValue(), null, LINT).diagnostics().detail();
-            if (KNOWN_LINT_FINDINGS.contains(e.getKey())) {
-                // Excluded from the CLEAN assertion, never from the check: it must still fire, so a
-                // stale exclusion cannot sit here hiding nothing.
-                assertTrue(detail.contains("text overlap"), e.getKey() + " no longer fires; retire the exclusion");
-                continue;
-            }
             assertFalse(detail.contains("text overlap"), e.getKey() + ": " + detail);
             checked++;
         }
-        assertEquals(fixtures.size() - KNOWN_LINT_FINDINGS.size(), checked);
+        assertEquals(fixtures.size(), checked);
     }
 
     // --- the rule, on synthetic geometry ------------------------------------------------------
