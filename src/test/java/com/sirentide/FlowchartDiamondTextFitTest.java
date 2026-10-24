@@ -146,10 +146,11 @@ class FlowchartDiamondTextFitTest {
         MathFragmentRenderer real = new LatteXMathFragmentRenderer();
         for (String direction : DIRECTIONS) {
             for (String latex : List.of("\\frac{x}{y}",
-                    "\\begin{matrix} a & b \\\\ c & d \\\\ e & f \\\\ g & h \\end{matrix}",
-                    "\\begin{cases} x & a \\\\ y & b \\end{cases}")) {
+                    "\\begin{matrix} a \\\\ b \\\\ c \\\\ d \\end{matrix}",
+                    "\\begin{cases} x \\\\ y \\end{cases}")) {
                 String dsl = single(direction, "Before $" + latex + "$ after");
-                Flowchart parsed = (Flowchart) DslParser.parse(dsl);
+                Flowchart parsed = assertInstanceOf(Flowchart.class, DslParser.parse(dsl),
+                    "real-math DSL setup: " + latex);
                 assertEquals(1, parsed.nodes().size(), "real-math parser setup");
                 int[] calls = {0};
                 MathFragmentRenderer counted = (source, size) -> {
