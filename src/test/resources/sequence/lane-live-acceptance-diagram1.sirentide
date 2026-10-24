@@ -1,0 +1,30 @@
+sequenceDiagram
+  Caller ->> App : POST lane-runs with lane and sha
+  alt seat credential
+    App -->> Caller : 403, nothing cloned
+  else sha not 40 hex, lane not declared, external lane, image not allowlisted
+    App -->> Caller : 400 naming the rule, no runId
+  else every worker busy
+    App -->> Caller : 429 naming the limit
+  else accepted
+    App -->> Caller : 202 with runId, status running
+    App ->> Git : clone the project's own source, checkout the exact sha
+    App ->> Launcher : post lane job, network none, allowlisted digest, command verbatim
+    Launcher ->> Job : start container with checkout at /w
+    Job -->> Launcher : exit code
+    App ->> Launcher : poll every 2 s until terminal
+    alt start-unknown, or a cancel whose custody is kept
+      App ->> App : skip DELETE on purpose, job not confirmed gone
+    else completed, failed, timed out, or the poll failed
+      App ->> Launcher : DELETE the job
+      Launcher -->> App : confirmed gone (2xx or 404), or not confirmed
+    end
+    App ->> Store : write the receipt, with checkoutRetained when the job is not confirmed gone
+    alt job confirmed gone
+      App ->> App : remove the checkout
+    else DELETE skipped, or attempted and not confirmed
+      App ->> App : keep the checkout for a sweep not yet built
+    end
+  end
+  Caller ->> App : GET lane-runs by runId or by sha
+  App -->> Caller : the receipt, or none for a refused request
