@@ -21,6 +21,10 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   Text beyond the line or source budget still shows an ellipsis; math keeps its bounded,
   single-line rendering or whole-source fallback.
 
+- *2026-10-24.* **Flowchart decision labels fit inside their diamonds.** Diamonds retain the full
+  wrapped label and grow around text and declared math-fragment bounds without reducing the font
+  size. Both TD and LR layouts route around the final dimensions, and diagnostic text capture
+  records the final emission once.
 - *2026-10-13.* **Repository housekeeping from the Markdown audit, no behaviour change.** The July
   code-audit report now opens with a dated status table (which findings are fixed, which are still
   open) and stays at the repository root. The Docker walkthrough moved to
