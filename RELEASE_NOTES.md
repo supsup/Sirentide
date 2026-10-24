@@ -18,6 +18,13 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   require a truthful filled math fragment to remain inside the actual emitted diamond when growth
   changes its baseline. The fixtures pin guard acceptance and the initially short box, retain the
   full math path, and reject literal fallback or shrinking. Tests only; no rendered-output change.
+- *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
+  Long plain labels can use up to four lines instead of being cut to the existing actor gap.
+  Self messages reserve room before the next lifeline, and rows grow with wrapped text.
+  Frame headers and branch labels can widen their frame, including containing frames.
+  Text beyond the line or source budget still shows an ellipsis; math keeps its bounded,
+  single-line rendering or whole-source fallback.
+
 - *2026-10-24.* **Flowchart decision labels fit inside their diamonds.** Diamonds retain the full
   wrapped label and grow around text and declared math-fragment bounds without reducing the font
   size. Both TD and LR layouts route around the final dimensions, and diagnostic text capture
