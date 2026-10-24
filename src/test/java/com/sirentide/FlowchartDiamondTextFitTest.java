@@ -16,6 +16,7 @@ import com.sirentide.layout.Group;
 import com.sirentide.layout.MathBox;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
+import com.sirentide.math.LatteXMathFragmentRenderer;
 import com.sirentide.parse.DslParser;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -27,8 +28,8 @@ import org.junit.jupiter.api.Test;
 
 /** Causal diamond guards: actual emitted polygon/curves AND full text, independently.
  * No sizing-formula oracle, screenshots, golden regeneration or browser is needed.
- * Real LatteX outline integration is not claimed: the strict SVG adapter rejects unsupported
- * paths/transforms. These math fixtures have honest nonzero ink and matching metrics. */
+ * The strict SVG adapter also observes every path/rect and transform in the real LatteX fixtures.
+ * Controlled math fixtures separately occupy their full, truthful metric extents. */
 class FlowchartDiamondTextFitTest {
     private static final FontMetrics FONT = FontMetrics.bundled();
     private static final String CONDITION = "Completed with exit 0, the verified digest equals "
@@ -137,6 +138,37 @@ class FlowchartDiamondTextFitTest {
             Snapshot plain = snapshot(dsl, rectangle(80, 48, 8), 0);
             assertEquals("Ready?\n", plain.corpus, "measurement must not duplicate actual emission");
             assertEquals(Sirentide.render(dsl), plain.publicSvg, "unused renderer is inert");
+        }
+    }
+
+    @Test
+    void realLatteXDiamondInkFitsIncludingNestedTransformsAndFractionBars() {
+        MathFragmentRenderer real = new LatteXMathFragmentRenderer();
+        for (String direction : DIRECTIONS) {
+            for (String latex : List.of("\\frac{x}{y}",
+                    "\\begin{matrix} a & b \\\\ c & d \\\\ e & f \\\\ g & h \\end{matrix}",
+                    "\\begin{cases} x & a \\\\ y & b \\end{cases}")) {
+                String dsl = single(direction, "Before $" + latex + "$ after");
+                Flowchart parsed = (Flowchart) DslParser.parse(dsl);
+                assertEquals(1, parsed.nodes().size(), "real-math parser setup");
+                int[] calls = {0};
+                MathFragmentRenderer counted = (source, size) -> {
+                    calls[0]++;
+                    return real.render(source, size);
+                };
+                var laid = FlowchartLayout.layout(parsed, counted);
+                assertEquals(1, calls[0], "one real callback in layout");
+                assertEquals(1, Group.flatten(laid.shapes()).stream()
+                    .filter(MathBox.class::isInstance).count(), "real formula must not degrade to text");
+                List<SvgTestInk.NodeInk> direct = SvgTestInk.nodes(SvgEmitter.emit(laid));
+                calls[0] = 0;
+                List<SvgTestInk.NodeInk> emitted = SvgTestInk.nodes(Sirentide.render(dsl, counted));
+                assertEquals(1, calls[0], "one real callback in public render");
+                assertEquals(direct, emitted, "public render retains every actual math shape/transform");
+                assertEquals(1, emitted.size(), "real diamond must be present");
+                assertTrue(emitted.get(0).ink().size() > 2, "text plus genuine rendered math ink");
+                DiamondInkOracle.assertInside(emitted.get(0).outline(), emitted.get(0).ink(), EPS);
+            }
         }
     }
 

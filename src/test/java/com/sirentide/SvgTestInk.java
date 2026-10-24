@@ -12,8 +12,8 @@ import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
 /** Strict adapter for these own emitted node fixtures, not an arbitrary foreign-SVG validator.
- * Real LatteX integration remains a separate gate: unsupported geometry/transform never disappears
- * from the denominator. The controlled math fixtures use one closed path, no foreign transforms. */
+ * It covers the bundled glyph alphabet and LatteX's path/rect plus translate/scale output.
+ * Unsupported geometry/transform fails instead of disappearing from the denominator. */
 final class SvgTestInk {
     record NodeInk(String primaryTag, String outline, List<DiamondInkOracle.Ink> ink) {}
     private record Transform(double sx, double sy, double tx, double ty) {
@@ -73,6 +73,18 @@ final class SvgTestInk {
             case "path" -> {
                 String d=required(e,"d");
                 if(d.isBlank()) throw new AssertionError("empty emitted label path");
+                into.add(new DiamondInkOracle.Ink(d,t.sx,t.sy,t.tx,t.ty));
+            }
+            case "rect" -> {
+                if(e.hasAttribute("rx") || e.hasAttribute("ry"))
+                    throw new AssertionError("unsupported rounded ink rectangle");
+                double x=e.hasAttribute("x")?number(e.getAttribute("x")):0;
+                double y=e.hasAttribute("y")?number(e.getAttribute("y")):0;
+                double width=number(required(e,"width")), height=number(required(e,"height"));
+                if(width<=0 || height<=0)
+                    throw new AssertionError("missing rectangle ink area");
+                String d="M"+x+" "+y+" L"+(x+width)+" "+y+" L"+(x+width)+" "
+                    +(y+height)+" L"+x+" "+(y+height)+" Z";
                 into.add(new DiamondInkOracle.Ink(d,t.sx,t.sy,t.tx,t.ty));
             }
             default -> throw new AssertionError("unsupported test ink element: "+tag(e));
