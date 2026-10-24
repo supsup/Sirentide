@@ -2,6 +2,7 @@ package com.sirentide.layout;
 
 import com.sirentide.api.MathFragmentRenderer;
 import com.sirentide.contract.SirentideRole;
+import com.sirentide.font.EmittedText;
 import com.sirentide.font.FontMetrics;
 import com.sirentide.ir.EdgeStyle;
 import com.sirentide.ir.FlowCluster;
@@ -643,7 +644,12 @@ public final class FlowchartLayout {
                 // Word-wrap to MAX_LABEL_W instead of ellipsizing to one line. measureWrapped
                 // returns ONE line (== the whole text) when the label already fits or has no space,
                 // so a short label keeps its exact old width + a single-line box (byte-identical).
-                String[] lines = wrapLabel(raw);
+                // A decision must retain its full condition. Keep the shared wrapping oracle,
+                // but grow the diamond around every line (including an unbreakable word) rather
+                // than applying the ordinary nodes' three-line/ellipsis display limit.
+                String[] lines = "diamond".equals(nodes.get(i).shape())
+                    ? FONT.measureWrapped(raw, MAX_LABEL_W, LABEL_SIZE).lines().toArray(String[]::new)
+                    : wrapLabel(raw);
                 wrapped[i] = lines;
                 labels[i] = lines.length == 1 ? lines[0] : raw;
                 lw = 0;
@@ -651,9 +657,9 @@ public final class FlowchartLayout {
                     lw = Math.max(lw, FONT.runWidth(ln, LABEL_SIZE));
                 }
             }
-            // Per-shape box width. RECT + DIAMOND stay EXACTLY as before (byte-identical): rect is
-            // label+padding; a DIAMOND (M1.3) is 1.5× the text so the rhombus CONTAINS its centered
-            // label ((w/2)/a + 6/b <= 1 with b=NODE_H/2 needs a >= 0.75·labelW). New shapes: a HEXAGON
+            // Initial per-shape width. Diamonds start at their legacy width, then the actual-ink
+            // containment pass below grows them when their sloping sides require more room.
+            // Rect is label+padding. A HEXAGON
             // widens (1.4×) so its left/right side-points don't clip the inscribed label; a CIRCLE is
             // sized SQUARISH (floored at NODE_H, no MIN_BOX_W floor) so a short label bakes a true
             // 36×36 ring (a wide label degrades to an ellipse — the label still fits the inscribed box).
@@ -688,6 +694,19 @@ public final class FlowchartLayout {
                 boxH[i] = Math.max(NODE_H, wrapped[i].length * lineH + (NODE_H - lineH));
             } else {
                 boxH[i] = NODE_H;
+            }
+        }
+
+        // Resolve diamond sizes before routing: both TD and LR then place their nodes, edges and
+        // cluster frames around the final boxes. A rectangle's independent width/height bounds
+        // cannot establish containment in a rhombus, especially for stacked or tall math labels.
+        for (int i = 0; i < n; i++) {
+            if ("diamond".equals(nodes.get(i).shape())) {
+                double scale = diamondLabelScale(boxW[i], boxH[i], measures[i], wrapped[i]);
+                if (scale > 1) {
+                    boxW[i] = Math.ceil(boxW[i] * scale * 1000) / 1000;
+                    boxH[i] = Math.ceil(boxH[i] * scale * 1000) / 1000;
+                }
             }
         }
 
@@ -1041,7 +1060,82 @@ public final class FlowchartLayout {
         return new LaidOut(canvasW, canvasH, shapes);
     }
 
-    /// Max wrapped lines for a node label before the last line ellipsizes — bounds the box height so a
+    /// Grow-only size factor for a diamond's actual label ink. A centered rhombus contains a point
+    /// iff {@code 2*abs(x)/width + 2*abs(y)/height <= 1}. Bounding the control-point hull is
+    /// conservative for the bundled font's quadratic curves. Scaling both box axes by the maximal
+    /// normalized bound therefore contains the whole label without shrinking its font. One pixel
+    /// of clearance per axis exceeds the glyph/outline coordinate rounding reserve; final dimensions
+    /// round outward to the outline's three-decimal precision. Already-fitting boxes stay unchanged.
+    private static double diamondLabelScale(double width, double height,
+                                             MathLabel.Measured measure, String[] lines) {
+        LabelIntervalPacker.Box ink = diamondLabelInk(measure, lines);
+        if (ink == null) {
+            return 1; // A blank decision has no drawable label to fit.
+        }
+        int count = lines == null ? 1 : lines.length;
+        double baseline = labelBaseline(measure, -height / 2, height, count);
+        double rx = Math.max(Math.abs(ink.minX()), Math.abs(ink.maxX()));
+        double ry = Math.max(Math.abs(ink.minY() + baseline), Math.abs(ink.maxY() + baseline));
+        double scale = 2 * (rx + 1) / width + 2 * (ry + 1) / height;
+        if (scale <= 1) {
+            return 1;
+        }
+        if (measure != null && height == NODE_H) {
+            // Growing a short math box switches labelBaseline to the centered-math branch.
+            // Include that final footprint too; proving only the old 4.2px offset is insufficient.
+            double grownBaseline = (measure.ascent() - measure.descent()) / 2;
+            ry = Math.max(ry, Math.max(Math.abs(ink.minY() + grownBaseline),
+                Math.abs(ink.maxY() + grownBaseline)));
+            scale = 2 * (rx + 1) / width + 2 * (ry + 1) / height;
+        }
+        return scale;
+    }
+
+    /// Label bounds relative to its horizontal center and first baseline. Sizing is not emission:
+    /// suspend the diagnostics tap while measuring strings, and restore it even on a tag refusal.
+    /// The ordinary final emission remains the sole contributor to EmittedText and shape budgets.
+    /// Math callbacks were resolved once already; reuse their runs and contractual fragment extents.
+    /// As throughout MathLabel, a renderer must honor its declared box; this is not a validator of
+    /// arbitrary foreign SVG geometry or transforms.
+    private static LabelIntervalPacker.Box diamondLabelInk(MathLabel.Measured measure, String[] lines) {
+        boolean suspended = EmittedText.enterPlainRender();
+        try {
+            LabelIntervalPacker.Box ink = null;
+            if (measure != null) {
+                double pen = -measure.width() / 2;
+                for (MathLabel.Resolved run : measure.runs()) {
+                    LabelIntervalPacker.Box part;
+                    if (run.fragment() != null) {
+                        var fragment = run.fragment();
+                        part = new LabelIntervalPacker.Box(pen, -fragment.heightPx(),
+                            pen + fragment.widthPx(), fragment.depthPx());
+                    } else {
+                        part = LabelIntervalPacker.pathBounds(
+                            FONT.textPathD(run.text(), pen, 0, LABEL_SIZE));
+                    }
+                    if (part != null) {
+                        ink = ink == null ? part : ink.union(part);
+                    }
+                    pen += run.advance();
+                }
+            } else {
+                double lineH = FONT.lineHeight(LABEL_SIZE);
+                for (int i = 0; i < lines.length; i++) {
+                    String line = lines[i];
+                    LabelIntervalPacker.Box part = LabelIntervalPacker.pathBounds(FONT.textPathD(
+                        line, -FONT.runWidth(line, LABEL_SIZE) / 2, i * lineH, LABEL_SIZE));
+                    if (part != null) {
+                        ink = ink == null ? part : ink.union(part);
+                    }
+                }
+            }
+            return ink;
+        } finally {
+            EmittedText.exitPlainRender(suspended);
+        }
+    }
+
+    /// Max wrapped lines for an ordinary node label before the last line ellipsizes — bounds the box height so a
     /// pathologically long label can't grow an enormous box (plan sirentide-label-legibility).
     private static final int WRAP_MAX_LINES = 3;
 

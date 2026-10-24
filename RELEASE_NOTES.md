@@ -14,6 +14,10 @@ added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
 committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
+- *2026-10-24.* **Flowchart decision labels fit inside their diamonds.** Diamonds retain the full
+  wrapped label and grow around text and declared math-fragment bounds without reducing the font
+  size. Both TD and LR layouts route around the final dimensions, and diagnostic text capture
+  records the final emission once.
 - *2026-10-13.* **Repository housekeeping from the Markdown audit, no behaviour change.** The July
   code-audit report now opens with a dated status table (which findings are fixed, which are still
   open) and stays at the repository root. The Docker walkthrough moved to
