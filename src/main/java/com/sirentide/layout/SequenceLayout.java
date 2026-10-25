@@ -685,8 +685,9 @@ public final class SequenceLayout {
     /// A horizontal message between two DISTINCT lifelines: a stroked line + a dst arrowhead (a
     /// FILLED triangle for a call, an OPEN V — two short lines — for a reply), plus a centred label
     /// above the line. The prepared display plan already fits the measured actor span. `painted` is
-    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a label that
-    /// crosses any of it gets a backing plate ({@link #emitLabelLines}).
+    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a plain
+    /// label always gets a backing plate, and earlier arrowheads are cut out of it
+    /// ({@link #emitLabelLines}).
     private static void emitMessage(List<Shape> shapes, double xa, double xb, double y, SeqMessage m,
                                     MessageLabel label, String stroke, String textColor, double canvasW,
                                     List<Shape> painted) {
@@ -734,10 +735,11 @@ public final class SequenceLayout {
         }
     }
 
-    /// Emits a plain message label's glyph runs (plan 5ce905a8). When the label's ink box crosses
-    /// anything already painted (`painted`, or this message's own lines in `shapes`), ONE backing
-    /// plate is laid under the whole label and every run takes the plate's contrast colour, so no
-    /// glyph sits on a bar or a line. A label that crosses nothing emits exactly as before.
+    /// Emits a plain message label's glyph runs (plan 5ce905a8). ONE backing plate is laid under the
+    /// whole label and every run takes the plate's contrast colour, so no glyph sits on a bar, a
+    /// line or the bare page. Plan 3e1104cf: this holds for EVERY plain message label, crossed or
+    /// not; a label that crossed nothing used to keep its page colour on the page, which a dark
+    /// host page could not be relied on to read.
     ///
     /// Paint order (review 1335 F1, the same rule as a flowchart edge, see {@link LabelPlate#place}):
     /// own lines the label's ink crosses, the plate, the other own lines, the arrowhead (from
@@ -748,8 +750,7 @@ public final class SequenceLayout {
     private static void emitLabelLines(List<Shape> shapes, List<String> runs, String textColor,
                                        List<Shape> painted, int headAt) {
         double[] box = LabelPlate.inkBox(runs);
-        boolean plated = box != null
-            && (LabelPlate.crossesPainted(box, painted) || LabelPlate.crossesPainted(box, shapes));
+        boolean plated = box != null;   // plan 3e1104cf: every plain label, crossed or not
         if (plated) {
             LabelPlate.place(shapes, 0, headAt, box, painted);
         }

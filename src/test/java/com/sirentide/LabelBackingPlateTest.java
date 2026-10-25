@@ -105,16 +105,266 @@ class LabelBackingPlateTest {
             .anyMatch(LabelBackingPlateTest::hasPlate), "an edge label crossing an edge line carries a plate");
     }
 
-    /// Healthy positive: a message between adjacent actors crosses nothing, so it keeps its exact
-    /// former emission: no plate, page-inheriting `currentColor` text.
+    /// Plan 3e1104cf: a message between adjacent actors crosses nothing, and it is plated anyway,
+    /// with the plate's contrast text, so it no longer depends on the host page's colour. (Before
+    /// 3e1104cf this test pinned the opposite: no plate, page-inheriting `currentColor`.)
     @Test
-    void aLabelThatCrossesNothingIsUnchanged() throws Exception {
+    void aLabelThatCrossesNothingIsPlatedToo() throws Exception {
         Document svg = bake("sequence\n  A ->> B : hi\n  B -->> A : ok\n");
-        for (Element g : groups(svg, "message")) {
-            assertFalse(hasPlate(g), "no crossing, no plate");
-            assertTrue(labelPaths(g).stream().allMatch(p -> "currentColor".equals(p.getAttribute("fill"))),
-                "an unplated label keeps currentColor");
+        List<Element> messages = groups(svg, "message");
+        assertEquals(2, messages.size());
+        for (Element g : messages) {
+            assertTrue(hasPlate(g), "an uncrossed message label is plated");
+            assertTrue(labelPaths(g).stream().noneMatch(p -> "currentColor".equals(p.getAttribute("fill"))),
+                "a plated label does not inherit the page colour");
         }
+    }
+
+    /// Plan 3e1104cf, the motivating label: in the lane-live-acceptance flowchart (the FLOWCHART
+    /// resource, byte-identical to the docs page's source), the decollider moved
+    /// `stop or removal unknown` (edge X to CU) clear of every line, so before 3e1104cf it crossed
+    /// nothing, got no plate, and drew its page-coloured glyphs straight on the `#0a0a0a` page.
+    @Test
+    void theStopOrRemovalUnknownLabelIsPlated() throws Exception {
+        Element xcu = null;
+        for (Element g : groups(bake(resource(FLOWCHART)), "edge")) {
+            if ("X-CU".equals(g.getAttribute("data-sirentide-id"))) {
+                xcu = g;
+            }
+        }
+        assertNotNull(xcu, "edge X-CU (label 'stop or removal unknown') is baked");
+        assertFalse(labelPaths(xcu).isEmpty(), "X-CU has label glyphs");
+        assertTrue(hasPlate(xcu), "X-CU 'stop or removal unknown' carries a plate");
+    }
+
+    /// Plan 3e1104cf: EVERY edge-label glyph (flowchart) and message-label glyph (sequence), in both
+    /// plan fixtures (the flowchart one is the lane-live-acceptance diagram) and every flowchart and
+    /// sequence golden, sits DIRECTLY on a plate of its own group: the last shape painted before it
+    /// that covers its whole box is a plate (never the bare page, never an edge line, never another
+    /// element's fill), and every colour behind it from that plate on reads at least 4.5 to 1
+    /// against the glyph's own fill. Checked on the dark docs page (`#0a0a0a`, `currentColor` =
+    /// `#e2e8f0`) and on a light page, in the static bake and in every play-through frame.
+    ///
+    /// Label glyphs are found by STRUCTURE, not colour (an unplated label's colour is whatever the
+    /// page says): a `<path>` that is a direct child of an edge or message group and is neither a
+    /// triangle arrowhead nor a plate. A typeset math label is a nested `<g>` and out of scope.
+    ///
+    /// Expected on the code before 3e1104cf: fails, listing every unplated label, among them
+    /// `plan-flowchart dark static edge:X-CU glyph #e2e8f0: no plate behind it (on the page
+    /// #0a0a0a)` (`stop or removal unknown`), and the goldens' uncrossed labels such as
+    /// `sequence ... edge/message ... no plate behind it`. On the light page the same labels' active
+    /// frames also read `#e8590c` on `#ffffff`, 3.58 to 1, and their future frames `#cccccc` on
+    /// `#ffffff`.
+    @Test
+    void everyEdgeAndMessageLabelGlyphSitsOnItsOwnPlateInTheBakeAndEveryFrame() throws Exception {
+        List<String> found = new ArrayList<>();
+        int[] checked = new int[1];
+        for (var e : labelFixtures().entrySet()) {
+            found.addAll(offPlateEverywhere(e.getKey(), e.getValue(), checked));
+        }
+        assertTrue(checked[0] > 0, "label glyphs were checked");
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Healthy opposing control for {@link #everyEdgeAndMessageLabelGlyphSitsOnItsOwnPlateInTheBakeAndEveryFrame}:
+    /// labels that were ALREADY plated before 3e1104cf (an edge label over an earlier sibling edge,
+    /// and the plan sequence's bar-crossing messages 6, 11 and 13) pass the same check, in the bake
+    /// and every frame on both pages, so the new rule keeps what the crossing rule gave. Green before
+    /// and after the change.
+    @Test
+    void labelsThatAlreadyHadAPlateStillPass() throws Exception {
+        String sibling = "flowchart TD\n  A[a]\n  B[b]\n  C[c]\n  D[d]\n  A --> B\n  A --> D\n"
+            + "  A -->|a longer one| C\n";
+        assertTrue(hasPlate(groups(bake(sibling), "edge").get(2)), "the A to C label crosses A to D");
+        int[] checked = new int[1];
+        assertEquals(List.of(), offPlateEverywhere("sibling", sibling, checked));
+        assertTrue(checked[0] > 0, "the sibling label's glyphs were checked");
+
+        String seq = resource(SEQUENCE);
+        List<Element> messages = groups(bake(seq), "message");
+        List<String> seqFound = offPlateEverywhere("plan-sequence", seq, new int[1]);
+        for (int k : new int[] {6, 11, 13}) {
+            Element g = messages.get(k);
+            assertTrue(hasPlate(g), "message " + k + " crosses a bar and carries a plate");
+            String id = g.getAttribute("data-sirentide-id");
+            List<String> mine = new ArrayList<>();
+            for (String f : seqFound) {
+                if (f.contains("message:" + id + " ")) {
+                    mine.add(f);
+                }
+            }
+            assertEquals(List.of(), mine, "message " + k + " (" + id + ")");
+        }
+    }
+
+    /// Healthy opposing control: NODE labels are outside the plate rule. A node label sits on its
+    /// own node box (the box, not a plate, is directly behind it), no node group gains a plate, and
+    /// the structural label finder does not count node glyphs; only the one edge label does.
+    @Test
+    void aNodeLabelIsUnaffected() throws Exception {
+        String dsl = "flowchart\nA[Start] -->|yes| B[End]\n";
+        Document svg = bake(dsl);
+        List<Element> nodes = groups(svg, "node");
+        assertEquals(2, nodes.size());
+        for (Element n : nodes) {
+            assertFalse(hasPlate(n), "a node group carries no plate");
+        }
+        List<Painted> order = new ArrayList<>();
+        collect(svg.getDocumentElement(), null, DARK_DOCS, order);
+        int nodeGlyphs = 0;
+        for (int i = 0; i < order.size(); i++) {
+            Painted p = order.get(i);
+            if (!"node".equals(roleOf(p.el())) || !"path".equals(p.el().getLocalName())
+                || isStructuralLabel(p.el())) {
+                continue;
+            }
+            if (!"#000000".equals(p.el().getAttribute("fill"))) {
+                continue;   // the box silhouette, if any; node labels contrast-fill dark on #dbe4ff
+            }
+            nodeGlyphs++;
+            Painted back = null;
+            for (int j = 0; j < i; j++) {
+                if (touches(order.get(j), p.box()) && coversWhole(order.get(j), p.box())) {
+                    back = order.get(j);
+                }
+            }
+            assertNotNull(back, "something covers node glyph " + i);
+            assertEquals("#dbe4ff", back.el().getAttribute("fill"), "the node box is behind its label");
+        }
+        assertTrue(nodeGlyphs >= 2, "both node labels were found: " + nodeGlyphs);
+        int edgeGlyphs = 0;
+        for (Painted p : order) {
+            if (isStructuralLabel(p.el())) {
+                assertEquals("edge", roleOf(p.el()), "only edge or message glyphs count as labels");
+                edgeGlyphs++;
+            }
+        }
+        assertTrue(edgeGlyphs >= 1, "the 'yes' edge label is found");
+    }
+
+    /// Healthy control for the checker itself, varied on one axis: the same edge glyph is flagged
+    /// when nothing but the page is behind it, and when only its edge line is, and passes once a plate
+    /// is laid under it.
+    @Test
+    void theOnAPlateCheckSeesAMissingPlate() throws Exception {
+        String glyph = "<path d=\"M 10 20 L 40 20 L 40 10 L 10 10 Z\" fill=\"currentColor\"/>";
+        String line = "<line x1=\"25\" y1=\"0\" x2=\"25\" y2=\"40\" stroke=\"#94a3b8\" stroke-width=\"1.5\"/>";
+        String plate = "<rect x=\"8\" y=\"8\" width=\"34\" height=\"14\" fill=\"#f5f7ff\"/>";
+        assertEquals(1, offPlate(plateScene(glyph), DARK_DOCS, "synthetic").size(), "bare page");
+        assertEquals(1, offPlate(plateScene(line + glyph), DARK_DOCS, "synthetic").size(), "only a line");
+        assertEquals(List.of(), offPlate(plateScene(line + plate + glyph.replace("currentColor", "#000000")),
+            DARK_DOCS, "synthetic"), "on a plate");
+        assertEquals(1, offPlate(plateScene(line + plate + glyph), DARK_DOCS, "synthetic").size(),
+            "page-coloured text on a plate is still too faint (#e2e8f0 on #f5f7ff)");
+    }
+
+    private static List<Painted> plateScene(String members) throws Exception {
+        String svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"40\">"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"A-B\" data-sirentide-seq=\"1\">"
+            + members + "</g></svg>";
+        List<Painted> raw = new ArrayList<>();
+        collect(parse(svg).getDocumentElement(), null, DARK_DOCS, raw);
+        return structural(raw);
+    }
+
+    /// {@link #offPlate} over the static bake and every play-through frame of `dsl`, on the dark
+    /// docs page and the light page. Labels are found structurally on the static bake and carried by
+    /// paint-order index into each frame (the frames API keeps every frame's elements identical).
+    private static List<String> offPlateEverywhere(String name, String dsl, int[] checked) throws Exception {
+        List<String> found = new ArrayList<>();
+        List<String> frames = Sirentide.renderFrames(dsl);
+        for (Page page : List.of(DARK_DOCS, LIGHT)) {
+            String pageName = page == DARK_DOCS ? "dark" : "light";
+            List<Painted> raw = new ArrayList<>();
+            collect(bake(dsl).getDocumentElement(), null, page, raw);
+            List<Painted> ref = structural(raw);
+            for (Painted p : ref) {
+                if (p.label()) {
+                    checked[0]++;
+                }
+            }
+            found.addAll(offPlate(ref, page, name + " " + pageName + " static"));
+            for (int f = 0; f < frames.size(); f++) {
+                List<Painted> fr = new ArrayList<>();
+                collect(parse(frames.get(f)).getDocumentElement(), null, page, fr);
+                if (fr.size() != ref.size()) {
+                    found.add(name + " " + pageName + " frame " + f + ": paints " + fr.size()
+                        + " elements, the bake " + ref.size());
+                    continue;
+                }
+                List<Painted> order = new ArrayList<>(fr.size());
+                for (int i = 0; i < fr.size(); i++) {
+                    order.add(new Painted(fr.get(i).el(), fr.get(i).color(), ref.get(i).label(), fr.get(i).box()));
+                }
+                found.addAll(offPlate(order, page, name + " " + pageName + " frame " + f));
+            }
+        }
+        return found;
+    }
+
+    /// Every label glyph in `order` that is not directly on a plate of its own group, or that reads
+    /// under 4.5 to 1 against any colour behind it from that plate on.
+    private static List<String> offPlate(List<Painted> order, Page page, String context) {
+        List<String> found = new ArrayList<>();
+        for (int i = 0; i < order.size(); i++) {
+            Painted p = order.get(i);
+            if (!p.label()) {
+                continue;
+            }
+            int back = -1;
+            for (int j = 0; j < i; j++) {
+                Painted under = order.get(j);
+                if (!under.label() && touches(under, p.box()) && coversWhole(under, p.box())) {
+                    back = j;
+                }
+            }
+            String who = context + " " + owner(p.el()) + " glyph " + p.color();
+            if (back < 0) {
+                found.add(who + ": no plate behind it (on the page " + page.background() + ")");
+                continue;
+            }
+            Painted b = order.get(back);
+            if (!isPlateFill(b.el().getAttribute("fill")) || b.el().getParentNode() != p.el().getParentNode()) {
+                found.add(who + ": directly behind it is " + owner(b.el()) + " " + b.el().getLocalName()
+                    + " " + b.color() + ", not its own plate");
+                continue;
+            }
+            for (int j = back; j < i; j++) {
+                Painted under = order.get(j);
+                if (under.label() || !touches(under, p.box())) {
+                    continue;
+                }
+                double ratio = contrast(p.color(), under.color());
+                if (ratio < MIN_CONTRAST) {
+                    found.add(String.format(Locale.ROOT, "%s on %s %s: %.2f to 1", who, owner(under.el()),
+                        under.color(), ratio));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// `raw` with each element's label flag replaced by the STRUCTURAL rule
+    /// ({@link #isStructuralLabel}).
+    private static List<Painted> structural(List<Painted> raw) {
+        List<Painted> out = new ArrayList<>(raw.size());
+        for (Painted r : raw) {
+            out.add(new Painted(r.el(), r.color(), isStructuralLabel(r.el()), r.box()));
+        }
+        return out;
+    }
+
+    /// An edge or message label glyph by structure: a `<path>` whose parent is the edge or message
+    /// group itself, that is neither a triangle arrowhead nor a plate.
+    private static boolean isStructuralLabel(Element el) {
+        if (!"path".equals(el.getLocalName()) || !(el.getParentNode() instanceof Element parent)) {
+            return false;
+        }
+        String role = parent.getAttribute("data-sirentide-role");
+        if (!"edge".equals(role) && !"message".equals(role)) {
+            return false;
+        }
+        return !"arrowhead".equals(kind(el)) && !isPlateFill(el.getAttribute("fill"));
     }
 
     /// A label spanning a middle lifeline (no bar) is plated: lines count, not only bars.
@@ -158,10 +408,11 @@ class LabelBackingPlateTest {
     /// Every label, plated or not, in every frame state, where the accent and dim are known to fit
     /// the backdrop: the dark docs page that motivated the plan, and the dark theme.
     ///
-    /// NOT asserted, and why: an UNPLATED active label on a LIGHT page or the neutral theme takes the
-    /// page-level accent `#e8590c` (3.58 to 1 on white, 3.28 on `#f5f5f5`), and an unplated future
-    /// label is dimmed by design. That is the frames' page-level accent, older than this plan and
-    /// shared by every diagram kind; no single accent clears 4.5 on both `#0a0a0a` and `#ffffff`.
+    /// Before plan 3e1104cf an UNPLATED active label on a LIGHT page or the neutral theme took the
+    /// page-level accent `#e8590c` (3.58 to 1 on white, 3.28 on `#f5f5f5`), so this test was limited
+    /// to the dark backdrops. Every edge and message label is plated now, and
+    /// {@link #everyEdgeAndMessageLabelGlyphSitsOnItsOwnPlateInTheBakeAndEveryFrame} asserts the
+    /// light page too.
     @Test
     void everyLabelReadsInEveryPlayThroughStateOnTheDarkDocsPageAndTheDarkTheme() throws Exception {
         for (Surface s : List.of(DOCS_DARK_PAGE, THEME_DARK)) {
@@ -720,7 +971,8 @@ class LabelBackingPlateTest {
     }
 
     /// The fixtures the composition checks run over: both plan fixtures and every flowchart and
-    /// sequence golden fixture.
+    /// sequence golden fixture. `plan-flowchart` is the lane-live-acceptance flowchart of plan
+    /// 3e1104cf (the docs page's source, byte-identical).
     private static java.util.Map<String, String> labelFixtures() throws Exception {
         java.util.Map<String, String> diagrams = new java.util.LinkedHashMap<>();
         diagrams.put("plan-sequence", resource(SEQUENCE));

@@ -4,16 +4,22 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/// A BACKING PLATE for a free-standing label whose ink crosses a stroke or fill painted before it
-/// (plan 5ce905a8). A sequence message label that runs over an activation bar or a lifeline, or a
-/// flowchart edge label that sits across an edge line, used to draw its page-coloured text straight
-/// onto that stroke: `#e2e8f0` text on a `#c7d2fe` bar is 1.21 to 1 on a dark docs page.
+/// A BACKING PLATE under EVERY plain-text flowchart edge label and sequence message label (plan
+/// 5ce905a8, widened to every such label by plan 3e1104cf). A sequence message label that runs over
+/// an activation bar or a lifeline, or a flowchart edge label that sits across an edge line, used to
+/// draw its page-coloured text straight onto that stroke: `#e2e8f0` text on a `#c7d2fe` bar is 1.21
+/// to 1 on a dark docs page. A label that crossed nothing first kept its own colour on the bare
+/// page; on a dark host page that read badly too (plan 3e1104cf: `stop or removal unknown` in the
+/// lane-live-acceptance flowchart, moved clear of every line by the decollider), and in the
+/// play-through frames its page-level accent and dim are below 4.5 to 1 on a light page.
 ///
-/// The label's own colour cannot be trusted against an arbitrary stroke, because the default text
-/// colour is `currentColor` (whatever the host page says). So a label that crosses something gets
-/// an opaque plate of {@link #FILL} under its whole ink box, and its glyphs switch to {@link #TEXT},
-/// the contrast pick for that plate. A label that crosses nothing keeps its exact former emission
-/// (no plate, its own colour), so diagrams without crossings bake byte-identically.
+/// The label's own colour cannot be trusted against an arbitrary stroke or page, because the
+/// default text colour is `currentColor` (whatever the host page says). So every plain edge and
+/// message label gets an opaque plate of {@link #FILL} under its whole ink box, whether or not the
+/// ink crosses anything, and its glyphs switch to {@link #TEXT}, the contrast pick for that plate.
+/// Every label glyph then sits on its own plate whatever the page colour, in the bake and in every
+/// frame. ({@link #crossesPainted} no longer decides whether a label is plated; {@link #place}
+/// still decides which of the element's own lines go under the plate.)
 ///
 /// The placement and plate rules below compare BOUNDING BOXES (the label's ink box, an
 /// arrowhead's triangle box, a line's stroke), not rendered pixels; the final-composition test
@@ -46,14 +52,17 @@ import java.util.regex.Pattern;
 ///     those glyphs), and a later message, note or frame is not broken around an earlier label. An
 ///     earlier reply's open-V arrowhead is two strokes, not a filled triangle, so it is not cut out
 ///     (LabelPlateArrowheadGoldenTest checks no plate covers one in any golden or frame).
-///   - Sequence block frames: alt/else/loop/par frame tab and branch-divider labels (plan
-///     9d56f599) are outside this plate. So are other layouts' labels (class, ER) and typeset math
-///     labels ({@link MathBox}, whose extent is inside the fragment's own SVG, not layout
-///     geometry): they are not plated, placed or protected.
-///   - A label that crosses nothing gets no plate, so in a play-through frame it takes the
-///     page-level accent or dim. On a light page or the neutral theme the active accent is below
-///     4.5 to 1, and when its own line passes within the doubled active stroke width of its ink
-///     box the accented line reaches the accented ink box (Emphasis; not asserted).
+///   - Only plain-text flowchart edge labels (state diagram transitions included: they are laid
+///     out by FlowchartLayout) and sequence message labels (normal and self messages) are plated.
+///     Sequence block frames: alt/else/loop/par frame tab and branch-divider labels (plan
+///     9d56f599) are outside this plate. So are other layouts' labels (class, ER and the rest)
+///     and typeset math labels ({@link MathBox}, whose extent is inside the
+///     fragment's own SVG, not layout geometry): they are not plated, placed or protected, and in
+///     a play-through frame they still take the page-level accent and dim. Node, actor-head, note
+///     and cluster labels sit on their own filled box and are not plated either.
+///   - A sequence plate is not cut around an EARLIER label's ink (the flowchart's holes): message
+///     rows are stacked apart so no checked diagram needs it, but a plate's {@link #PAD} could
+///     reach glyphs painted just before it (a frame tab label, say) without the ink crossing them.
 ///   - A flowchart node is not broken around an edge label (no checked diagram has one over a
 ///     label), and the arrowhead and label placement gives up after the decollider's last stack
 ///     slot (then the label may still overlap an arrowhead or an earlier label; the earlier label

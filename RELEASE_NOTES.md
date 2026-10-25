@@ -14,6 +14,21 @@ added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
 committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
+- *2026-10-25.* **Every edge and message label sits on its own plate.** The backing plate from
+  the 2026-10-24 entry below is now laid under every plain-text flowchart edge label and every
+  sequence message label, crossed or not, with black text on it. Before, a label that crossed
+  nothing kept its page-coloured text on the bare page: on a dark docs page with no CSS override
+  it was hard to read (the `stop or removal unknown` label of the lane-live-acceptance flowchart,
+  which the label placement had moved clear of every line), and in play-through frames on a light
+  page its active and future colours were below 4.5 to 1. Now every such label glyph has its
+  plate directly behind it and reads at 4.5 to 1 or better on a dark or light page, in the static
+  bake and every frame. State diagram transition labels are laid out by the flowchart layout and
+  get the plate too. Everything else from the 2026-10-24 entry holds (arrowhead avoidance, label
+  spacing, line breaks and cut-outs, paint order, the anchor groups). Diagrams with edge or
+  message labels bake differently: each label gains a plate and its text is black instead of
+  `currentColor`. Still not plated: alt/else frame and branch labels, class, ER and other
+  layouts' labels, and typeset math labels; those keep the page-level colours in play-through
+  frames. A sequence plate does not cut out earlier labels' text the way a flowchart plate does.
 - *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
   Long plain labels can use up to four lines instead of being cut to the existing actor gap.
   Self messages reserve room before the next lifeline, and rows grow with wrapped text.
