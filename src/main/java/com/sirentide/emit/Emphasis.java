@@ -35,6 +35,16 @@ public final class Emphasis {
     /// a flowchart edge — reads as "the current hop" without any new geometry, just a heavier stroke).
     static final double ACTIVE_WIDTH_MULT = 2.0;
 
+    /// The ACTIVE colour of a label on a backing plate (plan 5ce905a8). {@link #ACCENT} on the plate
+    /// `#f5f7ff` is only 3.35 to 1; this darker orange keeps the "current step" hue at 4.84 to 1. The
+    /// plate is a STRUCTURAL rect, so it keeps its fill in an active frame.
+    static final String PLATE_ACCENT = "#c2410c";
+
+    /// The FUTURE colour of a label on a backing plate (plan 5ce905a8). Dimming black by
+    /// {@link #DIM_T} gives `#9e9e9e` on the dimmed plate `#fbfcff`, 2.61 to 1; this grey still reads
+    /// as ghosted next to the black done/static label but holds 5.19 to 1 on the dimmed plate.
+    static final String PLATE_DIM = "#6b6b6b";
+
     /// The three roles a group's seq can play in a given frame.
     public enum State { DONE, ACTIVE, FUTURE }
 
@@ -83,6 +93,20 @@ public final class Emphasis {
             case DONE -> resolved;
             case ACTIVE -> ACCENT;
             case FUTURE -> Colors.lighten(resolved, DIM_T);
+        };
+    }
+
+    /// Recolour a label that sits on a backing plate (plan 5ce905a8): the same done/active/future
+    /// scheme as {@link #accent}, but with colours chosen against the plate (which {@link #box} keeps
+    /// in an active frame and dims in a future one) instead of the page. `null`/DONE is unchanged.
+    static String plateText(State st, String resolved) {
+        if (st == null) {
+            return resolved;
+        }
+        return switch (st) {
+            case DONE -> resolved;
+            case ACTIVE -> PLATE_ACCENT;
+            case FUTURE -> PLATE_DIM;
         };
     }
 
