@@ -193,7 +193,8 @@ public final class FlowchartLayout {
     /// `painted` is the diagram's shape list so far (clusters and earlier edges). A plain label whose
     /// final ink box crosses anything in it, or this edge's own lines in `shapes`, gets a backing
     /// plate and the plate's contrast colour (plan 5ce905a8, {@link LabelPlate}); a label that
-    /// crosses nothing emits exactly as before.
+    /// crosses nothing emits exactly as before. The plate goes above the edge lines the ink crosses
+    /// and below the arrowhead, and the glyphs come last ({@link LabelPlate} paint order, review 1335).
     private static void emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
                                       boolean subtractWidth, double gap, double canvasW,
                                       LabelDecollider dec, int target, String color,
@@ -238,7 +239,14 @@ public final class FlowchartLayout {
             boolean plated = ink != null
                 && (LabelPlate.crossesPainted(ink, shapes) || LabelPlate.crossesPainted(ink, painted));
             if (plated) {
-                shapes.add(LabelPlate.plate(ink));
+                // Plan 5ce905a8, review 1335 F1: the plate goes BEFORE this edge's own arrowhead (the
+                // trailing Path run) and above the edge lines the ink crosses (LabelPlate.place).
+                // In the legacy flat path `shapes` is the whole diagram, so no line is reordered.
+                int headAt = shapes.size();
+                while (headAt > 0 && shapes.get(headAt - 1) instanceof Path) {
+                    headAt--;
+                }
+                LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted);
             }
             shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));
         }

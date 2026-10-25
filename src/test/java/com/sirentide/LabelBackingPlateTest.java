@@ -37,11 +37,18 @@ import org.w3c.dom.Node;
 /// is under it; otherwise the page itself also shows through. Every colour left behind the glyph
 /// must give at least 4.5 to 1 against the glyph's own fill (WCAG relative luminance).
 ///
+/// That contrast check is about what lies BEHIND a label. What is painted AFTER it, over its
+/// glyphs, is pinned separately and exactly by {@link #theShapesPaintedOverALabelAreExactlyThePinnedOnes}
+/// (review 1335 F2): a group paints its lines, plate, arrowheads and glyphs in that order, but a
+/// later group or a node still paints over an earlier label.
+///
 /// Out of scope here, on purpose: alt/else frame tab and divider labels, which plan 9d56f599 moves
 /// into their own bands, and typeset math labels, whose extent is not layout geometry.
 class LabelBackingPlateTest {
 
     private static final String PLATE = "#f5f7ff";
+    /// The plate's fill in a future play-through frame (Emphasis dims structural fills).
+    private static final String DIMMED_PLATE = "#fbfcff";
     private static final double MIN_CONTRAST = 4.5;
     private static final Page DARK_DOCS = new Page("#0a0a0a", "#e2e8f0");
     private static final Page LIGHT = new Page("#ffffff", "#1a1a1a");
@@ -170,6 +177,85 @@ class LabelBackingPlateTest {
         }
     }
 
+    /// Review 1335 F2: the contrast checks above only look BEHIND a label. This one lists every
+    /// non-label shape painted AFTER a label glyph that touches the glyph's box, over both plan
+    /// fixtures and every flowchart and sequence golden fixture, and requires exactly the pinned
+    /// list below. Inside one group the glyphs are painted last, so no entry is the label's own
+    /// line, plate or arrowhead; every entry is a LATER edge's line, arrowhead or plate, or a node,
+    /// drawn over an earlier label. These are known and not fixed here: moving glyphs out of their
+    /// group's `<g>` would break the one-group-per-element anchor contract. A new crossing, or a
+    /// pinned one that goes away, fails this test so the list is kept true.
+    @Test
+    void theShapesPaintedOverALabelAreExactlyThePinnedOnes() throws Exception {
+        java.util.Map<String, String> diagrams = new java.util.LinkedHashMap<>();
+        diagrams.put("plan-sequence", resource(SEQUENCE));
+        diagrams.put("plan-flowchart", resource(FLOWCHART));
+        for (var e : GoldenSvgTest.fixtures().entrySet()) {
+            if (e.getKey().startsWith("flowchart") || e.getKey().startsWith("sequence")) {
+                diagrams.put(e.getKey(), e.getValue());
+            }
+        }
+        List<String> found = new ArrayList<>();
+        for (var e : diagrams.entrySet()) {
+            List<Painted> order = new ArrayList<>();
+            collect(bake(e.getValue()).getDocumentElement(), null, LIGHT, order);
+            for (int i = 0; i < order.size(); i++) {
+                Painted p = order.get(i);
+                if (!p.label()) {
+                    continue;
+                }
+                for (int j = i + 1; j < order.size(); j++) {
+                    Painted over = order.get(j);
+                    if (!over.label() && touches(over, p.box())) {
+                        found.add(e.getKey() + ": " + owner(p.el()) + " label" + (onPlate(p) ? " (plated)" : "")
+                            + " under " + owner(over.el()) + " " + kind(over.el()));
+                    }
+                }
+            }
+        }
+        assertEquals(String.join("\n", OVER_LABEL_PINNED), String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// The pinned over-label crossings (review 1335 F2), sorted. Each is a later shape drawn over an
+    /// earlier label's glyph box; follow-up work, not covered by the plate.
+    private static final List<String> OVER_LABEL_PINNED = List.of(
+        // F2: edges C, D and E into the sink cross the stacked labels of edges A and B, and the
+        // unplated label of C, after those labels are painted.
+        "flowchart-convergent-fan: edge:A-S label (plated) under edge:B-S line",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:C-S arrowhead",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:C-S line",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:D-S arrowhead",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:D-S line",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:E-S arrowhead",
+        "flowchart-convergent-fan: edge:B-S label (plated) under edge:E-S line",
+        "flowchart-convergent-fan: edge:C-S label under edge:D-S line",
+        // F5 (disclosed follow-up): a later label's padded plate reaches an earlier label.
+        "plan-flowchart: edge:X-CA label (plated) under edge:X-CU plate");
+
+    private static String kind(Element el) {
+        String name = el.getLocalName();
+        if (PLATE.equals(el.getAttribute("fill"))) {
+            return "plate";
+        }
+        if ("path".equals(name) && el.getAttribute("d").matches("M \\S+ \\S+ L \\S+ \\S+ L \\S+ \\S+ Z")) {
+            return "arrowhead";
+        }
+        return name;
+    }
+
+    private static boolean onPlate(Painted p) {
+        return "#000000".equals(p.el().getAttribute("fill"));
+    }
+
+    private static String owner(Element el) {
+        for (Node n = el.getParentNode(); n instanceof Element e; n = n.getParentNode()) {
+            if (e.hasAttribute("data-sirentide-role")) {
+                return e.getAttribute("data-sirentide-role") + ":" + e.getAttribute("data-sirentide-id");
+            }
+        }
+        return "top";
+    }
+
     /// Bakes the frames and checks each label glyph against what is painted under it IN THAT FRAME.
     /// Which elements are label glyphs is decided once on the static bake (whose label fills are
     /// known), then carried by paint-order index into every frame; the frames API keeps geometry
@@ -254,7 +340,8 @@ class LabelBackingPlateTest {
     }
 
     /// The contrast check for the label glyph at `order[at]`: every colour painted EARLIER that
-    /// touches its box (or the page, when no opaque rect covers the whole box) is at least 4.5 to 1.
+    /// touches its box (or the page, when no opaque plate or rect covers the whole box) is at least
+    /// 4.5 to 1. Shapes painted LATER are not behind the glyph; see the pinned over-label test.
     private static void assertGlyphReads(List<Painted> order, int at, String role, Page page, String context) {
         Painted p = order.get(at);
         List<String> behind = new ArrayList<>();
@@ -264,7 +351,7 @@ class LabelBackingPlateTest {
             if (under.label() || !touches(under, p.box())) {
                 continue;
             }
-            if ("rect".equals(under.el().getLocalName()) && contains(under.box(), p.box())) {
+            if (coversWhole(under, p.box())) {
                 behind.clear();
                 covered = true;
             }
@@ -340,13 +427,53 @@ class LabelBackingPlateTest {
         return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
     }
 
+    /// An opaque rect over the whole box, or a plate path (an arrowhead cut out of it, review 1335)
+    /// whose outer ring covers the box and none of whose cut-outs reaches into it.
+    private static boolean coversWhole(Painted under, double[] box) {
+        String name = under.el().getLocalName();
+        if ("rect".equals(name)) {
+            return contains(under.box(), box);
+        }
+        if (!"path".equals(name) || !isPlateFill(under.el().getAttribute("fill"))) {
+            return false;
+        }
+        List<double[]> rings = rings(under.el().getAttribute("d"));
+        if (!contains(rings.get(0), box)) {
+            return false;
+        }
+        for (double[] hole : rings.subList(1, rings.size())) {
+            if (hole[0] < box[2] && box[0] < hole[2] && hole[1] < box[3] && box[1] < hole[3]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// The bounding box of each `M ... Z` ring of a path, in order.
+    private static List<double[]> rings(String d) {
+        List<double[]> out = new ArrayList<>();
+        for (String ring : d.split("(?=M )")) {
+            double[] b = box(ring);
+            if (b != null) {
+                out.add(b);
+            }
+        }
+        return out;
+    }
+
+    private static boolean isPlateFill(String fill) {
+        return PLATE.equals(fill) || DIMMED_PLATE.equals(fill);
+    }
+
     private static boolean contains(double[] outer, double[] inner) {
         return outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3];
     }
 
+    /// A plate is a `#f5f7ff` rect, or a `#f5f7ff` path when an earlier arrowhead is cut out of it.
     private static boolean hasPlate(Element group) {
         for (Node c = group.getFirstChild(); c != null; c = c.getNextSibling()) {
-            if (c instanceof Element e && "rect".equals(e.getLocalName()) && PLATE.equals(e.getAttribute("fill"))) {
+            if (c instanceof Element e && ("rect".equals(e.getLocalName()) || "path".equals(e.getLocalName()))
+                && PLATE.equals(e.getAttribute("fill"))) {
                 return true;
             }
         }
@@ -357,7 +484,8 @@ class LabelBackingPlateTest {
         List<Element> out = new ArrayList<>();
         for (Node c = group.getFirstChild(); c != null; c = c.getNextSibling()) {
             if (c instanceof Element e && "path".equals(e.getLocalName())
-                && !e.getAttribute("fill").equals("#64748b") && !e.getAttribute("fill").equals("#94a3b8")) {
+                && !e.getAttribute("fill").equals("#64748b") && !e.getAttribute("fill").equals("#94a3b8")
+                && !e.getAttribute("fill").equals(PLATE)) {
                 out.add(e);
             }
         }

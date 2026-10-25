@@ -194,7 +194,8 @@ class MathInAllLabelsRealRenderTest {
     /// bakes the formula as literal text, which can cross a stroke and gain a plate; that plate is
     /// not the fraction bar this witness counts.
     private static int barRects(String svg) {
-        return count(svg, "<rect") - count(svg, "fill=\"#f5f7ff\"");
+        return count(svg, "<rect") - (int) java.util.regex.Pattern.compile("<rect [^>]*fill=\"#f5f7ff\"")
+            .matcher(svg).results().count();
     }
 
     private static int count(String s, String sub) {

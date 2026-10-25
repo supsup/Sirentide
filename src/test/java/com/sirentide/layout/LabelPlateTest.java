@@ -63,6 +63,100 @@ class LabelPlateTest {
         assertNull(LabelPlate.inkBox(List.of("")));
     }
 
+    /// Review 1335 F4: only absolute M/L/Q/C/Z paths are read as x,y pairs. An arc's radii and flag
+    /// pair (here `5 5 0 0 1`) used to stretch the box to the origin; any path with another command
+    /// (A, H, V, S, T or a relative one) is skipped and contributes nothing.
+    @Test
+    void inkBoxSkipsPathsWithCommandsOtherThanMLQCZ() {
+        assertNull(LabelPlate.inkBox(List.of("M 100 100 A 5 5 0 0 1 110 100")));
+        assertNull(LabelPlate.inkBox(List.of("M 100 100 H 120 V 130 Z")));
+        assertNull(LabelPlate.inkBox(List.of("M 100 100 l 5 5 Z")));
+        assertArrayEquals(new double[] {100, 50, 120, 60}, LabelPlate.inkBox(List.of(
+            "M 100 100 A 5 5 0 0 1 110 100", "M 100 50 C 105 52 110 58 120 60 Z")), 1e-9);
+    }
+
+    /// Review 1335 F1: with nothing filled under it the plate is the plain padded rect.
+    @Test
+    void aPlateOverNoArrowheadIsThePlainRect() {
+        Shape s = LabelPlate.plate(LABEL, List.of(new Line(90, 55, 170, 55, "#94a3b8", 1.5),
+            new Path("M 300 300 L 310 296 L 310 304 Z", "#94a3b8")));
+        assertEquals(LabelPlate.plate(LABEL), s);
+    }
+
+    /// Review 1335 F1, the paint-order rule for both layouts: inside the element's group the lines
+    /// the ink crosses come first, then the plate, then the other lines, then the arrowheads.
+    @Test
+    void placePutsThePlateAboveCrossedLinesAndBelowTheRestAndTheArrowhead() {
+        Line crossed = new Line(90, 55, 170, 55, "#94a3b8", 1.5);
+        Line clear = new Line(90, 70, 170, 70, "#94a3b8", 1.5);
+        Path head = new Path("M 180 70 L 170 66 L 170 74 Z", "#94a3b8");
+        List<Shape> group = new java.util.ArrayList<>(List.of(crossed, clear, head));
+        LabelPlate.place(group, 0, 2, LABEL, List.of());
+        assertEquals(List.of(crossed, LabelPlate.plate(LABEL), clear, head), group);
+    }
+
+    /// Review 1335 F1: an earlier arrowhead reaching into the plate is cut out of it, including
+    /// arrowheads that converge on one tip and overlap each other (a fan into one node). Read by
+    /// non-zero winding at sample points, the way an SVG renderer fills the path.
+    @Test
+    void earlierArrowheadsAreCutOutOfThePlateEvenWhenTheyOverlap() {
+        Anchor a = new AnchorAssigner().assign(com.sirentide.contract.SirentideRole.EDGE, "A-S");
+        List<double[]> heads = List.of(
+            new double[] {150, 64, 140, 60, 142, 54},
+            new double[] {150, 64, 141, 58, 145, 53},
+            new double[] {150, 64, 143, 57, 148, 54});
+        List<Shape> under = new java.util.ArrayList<>();
+        for (double[] h : heads) {
+            under.add(new Group(a, List.of(new Path("M " + h[0] + " " + h[1] + " L " + h[2] + " " + h[3]
+                + " L " + h[4] + " " + h[5] + " Z", "#94a3b8"))));
+        }
+        Shape s = LabelPlate.plate(LABEL, under);
+        assertTrue(s instanceof Path p && p.structural() && "#f5f7ff".equals(p.fill()), "a cut plate: " + s);
+        String d = ((Path) s).d();
+        int n = 12;
+        for (double[] h : heads) {
+            for (int i = 1; i < n; i++) {
+                for (int j = 1; i + j < n; j++) {
+                    double u = i / (double) n;
+                    double v = j / (double) n;
+                    double x = u * h[0] + v * h[2] + (1 - u - v) * h[4];
+                    double y = u * h[1] + v * h[3] + (1 - u - v) * h[5];
+                    if (x > 98 && x < 162 && y > 48 && y < 62) {
+                        assertEquals(0, winding(d, x, y), "arrowhead point " + x + "," + y + " is uncovered");
+                    }
+                }
+            }
+        }
+        assertTrue(winding(d, 101, 51) != 0, "the rest of the plate is filled");
+        assertTrue(winding(d, 130, 55) != 0, "the rest of the plate is filled");
+    }
+
+    private static int winding(String d, double x, double y) {
+        int w = 0;
+        for (String ring : d.split("(?=M )")) {
+            java.util.List<Double> v = new java.util.ArrayList<>();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("-?[0-9]+(?:\\.[0-9]+)?").matcher(ring);
+            while (m.find()) {
+                v.add(Double.parseDouble(m.group()));
+            }
+            for (int i = 0; i + 1 < v.size(); i += 2) {
+                double ax = v.get(i);
+                double ay = v.get(i + 1);
+                double bx = v.get((i + 2) % v.size());
+                double by = v.get((i + 3) % v.size());
+                double c = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
+                if (ay <= y) {
+                    if (by > y && c > 0) {
+                        w++;
+                    }
+                } else if (by <= y && c < 0) {
+                    w--;
+                }
+            }
+        }
+        return w;
+    }
+
     /// A plated run is flagged so the frames emitter recolours it against the plate, while every
     /// two-argument run stays unflagged (plan 5ce905a8).
     @Test
