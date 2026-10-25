@@ -195,12 +195,19 @@ public final class FlowchartLayout {
     /// plate and the plate's contrast colour (plan 5ce905a8, {@link LabelPlate}); a label that
     /// crosses nothing emits exactly as before. The plate goes above the edge lines the ink crosses
     /// and below the arrowhead, and the glyphs come last ({@link LabelPlate} paint order, review 1335).
-    private static void emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
-                                      boolean subtractWidth, double gap, double canvasW,
-                                      LabelDecollider dec, int target, String color,
-                                      MathFragmentRenderer math, List<Shape> painted) {
+    ///
+    /// `heads` are the boxes of EVERY arrowhead in the diagram, this edge's own and later edges'
+    /// included (review 1337 F1): a plain label's ink box is placed clear of them by the
+    /// de-collider. `earlierInks` are the ink boxes of the labels already emitted; they are cut out of
+    /// this label's plate (review 1337 F2). Returns this plain label's final ink box, or `null`
+    /// (no label, a math label, or nothing drawn).
+    private static double[] emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
+                                          boolean subtractWidth, double gap, double canvasW,
+                                          LabelDecollider dec, int target, String color,
+                                          MathFragmentRenderer math, List<Shape> painted,
+                                          List<double[]> heads, List<double[]> earlierInks) {
         if (raw == null) {
-            return;
+            return null;
         }
         if (math != null && MathLabel.hasMath(raw)) {
             MathLabel.Measured mm = MathLabel.measure(raw, EDGE_LABEL_SIZE, FONT, math);
@@ -212,43 +219,121 @@ public final class FlowchartLayout {
             double dy = dec.resolve(target,
                 new double[] {lblX, baselineY - EDGE_LABEL_SIZE, lblX + w, baselineY});
             MathLabel.emit(mm, lblX, baselineY + dy, color, EDGE_LABEL_SIZE, FONT, shapes);
-            return;
+            return null;
         }
         String fl = boundLabelToCanvas(raw, canvasW);
         if (fl.isBlank()) {
-            return;
+            return null;
         }
         double w = FONT.runWidth(fl, EDGE_LABEL_SIZE);
         double lblX = subtractWidth ? anchorX - gap - w : anchorX + gap;
         lblX = clampLabelX(lblX, w, canvasW);
-        String ld = FONT.textPathD(fl, lblX, baselineY, EDGE_LABEL_SIZE);
+        // Measuring is not emission: the natural-position outline only feeds the de-collider, so it
+        // is built with the diagnostics tap suspended, and the one emitted run below is the label's
+        // only EmittedText record (a moved label used to be recorded twice, once per position).
+        String ld;
+        boolean suspended = EmittedText.enterPlainRender();
+        try {
+            ld = FONT.textPathD(fl, lblX, baselineY, EDGE_LABEL_SIZE);
+        } finally {
+            EmittedText.exitPlainRender(suspended);
+        }
         if (ld.isBlank()) {
-            return;
+            return null;
         }
         // Rendered-box de-collision (plan ea20153b part 2): use the ACTUAL emitted glyph bbox — a
         // label is a box around its midpoint, so two convergent same-target labels can share a
         // rectangle even when their anchor x's differ (the sirentide/514 finding). A same-target
         // both-axes overlap stacks this label a line down; NO overlap leaves dy==0 and the emission
         // byte-identical to the pre-fix path.
-        double dy = dec.resolve(target, pathBBox(ld));
-        if (dy != 0) {
-            ld = FONT.textPathD(fl, lblX, baselineY + dy, EDGE_LABEL_SIZE);
+        // Review 1337 F1: the box also moves off any arrowhead it would sit on (dy==0 when clear).
+        double dy = dec.resolve(target, pathBBox(ld), heads);
+        ld = FONT.textPathD(fl, lblX, baselineY + dy, EDGE_LABEL_SIZE);
+        if (ld.isBlank()) {
+            return null;
         }
-        if (!ld.isBlank()) {
-            double[] ink = LabelPlate.inkBox(List.of(ld));
-            boolean plated = ink != null
-                && (LabelPlate.crossesPainted(ink, shapes) || LabelPlate.crossesPainted(ink, painted));
-            if (plated) {
-                // Plan 5ce905a8, review 1335 F1: the plate goes BEFORE this edge's own arrowhead (the
-                // trailing Path run) and above the edge lines the ink crosses (LabelPlate.place).
-                // In the legacy flat path `shapes` is the whole diagram, so no line is reordered.
-                int headAt = shapes.size();
-                while (headAt > 0 && shapes.get(headAt - 1) instanceof Path) {
-                    headAt--;
-                }
-                LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted);
+        double[] ink = LabelPlate.inkBox(List.of(ld));
+        boolean plated = ink != null
+            && (LabelPlate.crossesPainted(ink, shapes) || LabelPlate.crossesPainted(ink, painted));
+        if (plated) {
+            // Plan 5ce905a8, review 1335 F1: the plate goes BEFORE this edge's own arrowhead (the
+            // trailing Path run) and above the edge lines the ink crosses, at the active frame's
+            // doubled width (LabelPlate.place). In the legacy flat path `shapes` is the whole
+            // diagram, so no line is reordered.
+            int headAt = shapes.size();
+            while (headAt > 0 && shapes.get(headAt - 1) instanceof Path) {
+                headAt--;
             }
-            shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));
+            LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted,
+                LabelPlate.ACTIVE_REACH, earlierInks);
+        }
+        shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));
+        return ink;
+    }
+
+    /// One edge label waiting for {@link #emitEdgeLabels}: the edge's index and shape list plus
+    /// the {@link #emitEdgeLabel} arguments that vary per edge.
+    private record EdgeLabelJob(int edge, List<Shape> group, String raw, double anchorX,
+                                double baselineY, boolean subtractWidth, int target, String color) {}
+
+    /// Queues an edge label for the pass after every edge's lines and arrowheads exist (review 1337),
+    /// or, on the never-taken legacy flat path (`!anchored`, `group` is the diagram list), emits it
+    /// at once exactly as before.
+    private static void edgeLabel(boolean anchored, List<EdgeLabelJob> jobs, EdgeLabelJob job,
+                                  double canvasW, LabelDecollider dec, MathFragmentRenderer math,
+                                  List<Shape> shapes) {
+        if (anchored) {
+            jobs.add(job);
+        } else {
+            emitEdgeLabel(job.group(), job.raw(), job.anchorX(), job.baselineY(), job.subtractWidth(),
+                EDGE_LABEL_GAP, canvasW, dec, job.target(), job.color(), math, shapes, List.of(),
+                List.of());
+        }
+    }
+
+    /// The edge-label pass (plan 5ce905a8, review 1337 F1 and F2). It runs once every edge's
+    /// lines and arrowhead are in `groups` (one shape list per edge, emit order) and before they are
+    /// wrapped into their `<g>`s, so each label sees the WHOLE diagram's edge geometry, not only what
+    /// came before it:
+    ///   - every label is placed with all arrowheads as obstacles, its own included, so no glyph
+    ///     sits on or under an arrowhead (F1);
+    ///   - labels are emitted in edge order against `base` plus the earlier edges (what is painted
+    ///     under them), and each plate has the earlier labels' ink cut out of it;
+    ///   - then every edge's lines are broken around the labels of EARLIER edges, which that edge
+    ///     is painted over (F2, {@link LabelPlate#gap}).
+    /// Each label still lives in its own edge's group, painted last there, so the one-group-per-
+    /// element anchor contract is unchanged.
+    private static void emitEdgeLabels(List<Shape> base, List<List<Shape>> groups,
+                                       List<EdgeLabelJob> jobs, double canvasW, LabelDecollider dec,
+                                       MathFragmentRenderer math) {
+        List<double[]> heads = new ArrayList<>();
+        for (List<Shape> g : groups) {
+            heads.addAll(LabelPlate.arrowheadBoxes(g));
+        }
+        List<List<double[]>> inksByEdge = new ArrayList<>();
+        for (int i = 0; i < groups.size(); i++) {
+            inksByEdge.add(new ArrayList<>());
+        }
+        List<Shape> painted = new ArrayList<>(base);
+        List<double[]> earlierInks = new ArrayList<>();
+        int next = 0;
+        for (int i = 0; i < groups.size(); i++) {
+            while (next < jobs.size() && jobs.get(next).edge() == i) {
+                EdgeLabelJob job = jobs.get(next++);
+                double[] ink = emitEdgeLabel(job.group(), job.raw(), job.anchorX(), job.baselineY(),
+                    job.subtractWidth(), EDGE_LABEL_GAP, canvasW, dec, job.target(), job.color(), math,
+                    painted, heads, List.copyOf(earlierInks));
+                if (ink != null) {
+                    inksByEdge.get(i).add(ink);
+                    earlierInks.add(ink);
+                }
+            }
+            painted.addAll(groups.get(i));
+        }
+        List<double[]> protect = new ArrayList<>();
+        for (int i = 0; i < groups.size(); i++) {
+            LabelPlate.gap(groups.get(i), protect);
+            protect.addAll(inksByEdge.get(i));
         }
     }
 
@@ -303,15 +388,25 @@ public final class FlowchartLayout {
         /// next same-target label stacks below it. dy==0 whenever the natural box is already clear —
         /// the byte-identity guarantee for non-colliding diagrams.
         double resolve(int target, double[] box) {
+            return resolve(target, box, List.of());
+        }
+
+        /// {@link #resolve(int, double[])} with arrowhead boxes `heads` ([x0, y0, x1, y1], every
+        /// arrowhead of the diagram) as obstacles too (review 1337 F1): a label whose natural box
+        /// overlaps an arrowhead also moves, and a stack slot must clear the arrowheads as well as
+        /// the same-target labels and the nodes. With no arrowhead in the way this is exactly
+        /// {@link #resolve(int, double[])}.
+        double resolve(int target, double[] box, List<double[]> heads) {
             List<double[]> placed = byTarget.computeIfAbsent(target, k -> new ArrayList<>());
             double dy = 0;
-            if (overlapsAny(box, placed, 0)) {
-                // Greedy fan-down: first slot clear of BOTH same-target labels and node boxes. Node
-                // avoidance applies ONLY here (while moving) — the natural position is never rejected
-                // for grazing a node, so untouched labels stay byte-identical.
+            if (overlapsAny(box, placed, 0) || overlapsAny(box, heads, 0)) {
+                // Greedy fan-down: first slot clear of same-target labels, node boxes and arrowheads.
+                // Node avoidance applies ONLY here (while moving) — the natural position is never
+                // rejected for grazing a node, so untouched labels stay byte-identical.
                 for (int k = 1; k <= MAX_LABEL_STACK; k++) {
                     dy = k * EDGE_LABEL_STACK;
-                    if (!overlapsAny(box, placed, dy) && !overlapsAny(box, nodeBoxes, dy)) {
+                    if (!overlapsAny(box, placed, dy) && !overlapsAny(box, nodeBoxes, dy)
+                        && !overlapsAny(box, heads, dy)) {
                         break;
                     }
                 }
@@ -918,6 +1013,11 @@ public final class FlowchartLayout {
                 clearRailY(approachX, vy[v] + boxH[v] / 2, laneX, obstacles, u, v));
         }
         canvasH = Math.max(canvasH, railMaxY + MARGIN);
+        // Edge shape lists, their anchors and their labels, kept until every edge's lines and
+        // arrowhead exist (the label pass, review 1337).
+        List<List<Shape>> edgeGroups = new ArrayList<>();
+        List<Anchor> edgeAnchors = new ArrayList<>();
+        List<EdgeLabelJob> labelJobs = new ArrayList<>();
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -957,8 +1057,9 @@ public final class FlowchartLayout {
                     tgt.add(new Path(bd, e.stroke()));
                 }
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
-                emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
-                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
+                edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), laneX,
+                    (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35, false, v, fc.textColor()),
+                    canvasW, labelDecollider, math, shapes);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double scx = vx[u] + boxW[u] / 2;
@@ -1000,8 +1101,9 @@ public final class FlowchartLayout {
                         }
                         // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going
                         // edge's label sits right of the line, a left-going one's left of it.
-                        emitEdgeLabel(tgt, e.label(), lblAx, lblAy + EDGE_LABEL_SIZE * 0.35,
-                            dx < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
+                        edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), lblAx,
+                            lblAy + EDGE_LABEL_SIZE * 0.35, dx < 0, v, fc.textColor()),
+                            canvasW, labelDecollider, math, shapes);
                     }
                     // else: degenerate anchor pair — skip (never emit NaN geometry). The (possibly
                     // empty) edge group is still emitted below so seq stays aligned with the edge set.
@@ -1025,14 +1127,22 @@ public final class FlowchartLayout {
                     ys[k - 1] = dTop;
                     emitPolyline(tgt, xs, ys, e.style(), e.arrow(), e.stroke(), e.width());
                     // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
-                    emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2,
-                        (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
-                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
+                    edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), (xs[0] + xs[1]) / 2,
+                        (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35, (xs[1] - xs[0]) < 0, v, fc.textColor()),
+                        canvasW, labelDecollider, math, shapes);
                 }
             }
             if (anchored) {
-                shapes.add(new Group(
-                    assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]), tgt));
+                // The anchor is minted here, in edge order as before; the group is built after the
+                // label pass below has added the edge's label (review 1337).
+                edgeGroups.add(tgt);
+                edgeAnchors.add(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]));
+            }
+        }
+        if (anchored) {
+            emitEdgeLabels(shapes, edgeGroups, labelJobs, canvasW, labelDecollider, math);
+            for (int ei = 0; ei < edgeGroups.size(); ei++) {
+                shapes.add(new Group(edgeAnchors.get(ei), edgeGroups.get(ei)));
             }
         }
 
@@ -1438,6 +1548,10 @@ public final class FlowchartLayout {
         int[][] ord = readingOrderSeq(n, edges, frames.size());
         int[] nodeSeq = ord[0];
         int[] edgeSeq = ord[1];
+        // Mirror TD: edge shape lists, anchors and labels wait for the label pass (review 1337).
+        List<List<Shape>> edgeGroups = new ArrayList<>();
+        List<Anchor> edgeAnchors = new ArrayList<>();
+        List<EdgeLabelJob> labelJobs = new ArrayList<>();
         for (int ei = 0; ei < edges.size(); ei++) {
             Edge e = edges.get(ei);
             int u = e.u();
@@ -1477,9 +1591,9 @@ public final class FlowchartLayout {
                     tgt.add(new Path(bd, e.stroke()));
                 }
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
-                emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
-                    laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
-                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
+                edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), (sx + tx) / 2,
+                    laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7, false, v, textColor),
+                    canvasW, labelDecollider, math, shapes);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double sx = vx[u] + boxW[u];             // source right-middle
@@ -1522,8 +1636,8 @@ public final class FlowchartLayout {
                         double lblY = dy > 0
                             ? (sy + endY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                             : (sy + endY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                        emitEdgeLabel(tgt, e.label(), (sx + endX) / 2, lblY,
-                            false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
+                        edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), (sx + endX) / 2,
+                            lblY, false, v, textColor), canvasW, labelDecollider, math, shapes);
                     }
                     // else degenerate — skip; the (possibly empty) group still emits so seq stays aligned.
                 } else {
@@ -1545,13 +1659,21 @@ public final class FlowchartLayout {
                     double lblY = (ys[1] - ys[0]) > 0
                         ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                         : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
-                    emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2, lblY,
-                        false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
+                    edgeLabel(anchored, labelJobs, new EdgeLabelJob(ei, tgt, e.label(), (xs[0] + xs[1]) / 2,
+                        lblY, false, v, textColor), canvasW, labelDecollider, math, shapes);
                 }
             }
             if (anchored) {
-                shapes.add(new Group(
-                    assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]), tgt));
+                // The anchor is minted here, in edge order as before; the group is built after the
+                // label pass below has added the edge's label (review 1337).
+                edgeGroups.add(tgt);
+                edgeAnchors.add(assigner.assign(SirentideRole.EDGE, edgeBaseId(nodes, e), edgeSeq[ei]));
+            }
+        }
+        if (anchored) {
+            emitEdgeLabels(shapes, edgeGroups, labelJobs, canvasW, labelDecollider, math);
+            for (int ei = 0; ei < edgeGroups.size(); ei++) {
+                shapes.add(new Group(edgeAnchors.get(ei), edgeGroups.get(ei)));
             }
         }
 

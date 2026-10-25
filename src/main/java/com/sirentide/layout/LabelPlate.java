@@ -12,32 +12,49 @@ import java.util.regex.Pattern;
 /// The label's own colour cannot be trusted against an arbitrary stroke, because the default text
 /// colour is `currentColor` (whatever the host page says). So a label that crosses something gets
 /// an opaque plate of {@link #FILL} under its whole ink box, and its glyphs switch to {@link #TEXT},
-/// the contrast pick for that plate. Every pixel of such a label then sits on the plate, so nothing
-/// painted BEFORE the label (bars, lifelines, frames, edge and message lines) shows behind its
-/// glyphs, whatever the page, the theme or the stroke underneath. A label that crosses nothing keeps
-/// its exact former emission (no plate, its own colour), so diagrams without crossings bake
-/// byte-identically.
+/// the contrast pick for that plate. A label that crosses nothing keeps its exact former emission
+/// (no plate, its own colour), so diagrams without crossings bake byte-identically.
 ///
-/// Paint order inside an edge or message group, the same in both layouts (plan 5ce905a8, review
-/// 1335 F1, {@link #place}): the element's lines that its label's INK crosses, then the plate, then
-/// its other lines and its arrowheads, then the label glyphs last. The plate has to sit ABOVE every
-/// line the ink crosses (a flowchart edge label crosses its own edge line, and a glyph drawn over
-/// that line accented to 3px in a play-through frame reads at about 1.45 to 1), and BELOW every
-/// arrowhead. A line that only reaches the padding stays on top, which keeps a sequence message's
-/// own line drawn over the plate. Arrowheads of LATER groups are drawn after the plate anyway; a
-/// filled arrowhead an EARLIER group already painted is cut out of the plate
-/// ({@link #plate(double[], List)}), so no plate pixel is ever painted over an arrowhead. Two
-/// limits: a label whose ink overlaps an arrowhead now has that arrowhead, not the plate, behind
-/// those glyphs (label placement does not avoid arrowheads; follow-up), and an earlier reply's
-/// open-V arrowhead is two strokes, not a filled triangle, so it is not cut out
-/// (LabelPlateArrowheadGoldenTest checks no plate covers one in any golden or frame).
+/// What the plate guarantees is bounded by the box tests below: they compare BOUNDING BOXES (the
+/// label's ink box, an arrowhead's triangle box, a line's stroke), not rendered glyph pixels.
+/// Within that, for a plain flowchart edge label:
+///   - BEHIND the glyphs: the plate covers every line, bar and fill painted before the label, so
+///     none of them shows behind its ink box. An earlier group's filled arrowhead is cut out of the
+///     plate ({@link #plate(double[], List, List)}) rather than covered, and an earlier label's ink
+///     box is cut out of a later label's plate (except under the later label's own ink box, which
+///     the plate always covers whole), so no plate is painted over an arrowhead or over an earlier
+///     label, other than where two labels' ink boxes overlap (text on text, OverlapLint's concern).
+///   - NO ARROWHEAD under or over the glyphs (review 1337 F1): an edge label's ink box is placed
+///     clear of every arrowhead in the diagram, its own included
+///     ({@code FlowchartLayout.LabelDecollider}), so an active frame never draws the accented
+///     label over its own accented head (`#c2410c` on `#e8590c` is 1.45 to 1).
+///   - NOTHING LATER over the glyphs (review 1337 F2): a later edge's line that would reach the
+///     ink box, even at the active frame's doubled stroke width, is broken around it ({@link #gap}),
+///     a later arrowhead is avoided by the placement above, and a later plate has the ink box cut
+///     out of it outside the later label's own ink box.
 ///
-/// NOT covered (review 1335 F2): shapes painted AFTER the label, that is a later edge's or
-/// message's lines, arrowheads and plate, a flowchart node or a sequence note, can still be drawn
-/// over its glyphs. LabelBackingPlateTest pins the crossings that exist in the checked diagrams.
+/// Paint order inside an edge or message group, the same in both layouts ({@link #place}): the
+/// element's lines that its label's INK crosses, then the plate, then its other lines and its
+/// arrowheads, then the label glyphs last. The plate sits ABOVE every line the ink crosses (a
+/// glyph drawn over its own line accented to 3px in a play-through frame reads at about 1.45 to 1)
+/// and BELOW every arrowhead.
 ///
-/// Scope: plain glyph labels only. A typeset math label ({@link MathBox}) has its extent inside the
-/// fragment's own SVG, not in layout geometry, so it is not plated.
+/// NOT covered, on purpose or as follow-up:
+///   - Sequence diagrams get the plate and the paint order, but not the placement or the gaps: a
+///     sequence label can still sit on an arrowhead (then that arrowhead, not the plate, is behind
+///     those glyphs), and a later message, note or frame is not broken around an earlier label. An
+///     earlier reply's open-V arrowhead is two strokes, not a filled triangle, so it is not cut out
+///     (LabelPlateArrowheadGoldenTest checks no plate covers one in any golden or frame).
+///   - Sequence block frames: alt/else/loop/par frame tab and branch-divider labels (plan
+///     9d56f599) are outside this plate. So are other layouts' labels (class, ER) and typeset math
+///     labels ({@link MathBox}, whose extent is inside the fragment's own SVG, not layout
+///     geometry): they are not plated, placed or protected.
+///   - A label that crosses nothing gets no plate, so in a play-through frame it takes the
+///     page-level accent or dim. On a light page or the neutral theme the active accent is below
+///     4.5 to 1, and when its own line passes within the doubled active stroke width of its ink
+///     box the accented line reaches the accented ink box (Emphasis; not asserted).
+///   - A flowchart node is not broken around an edge label (no checked diagram has one over a
+///     label), and the arrowhead placement gives up after the decollider's last stack slot.
 final class LabelPlate {
 
     private LabelPlate() {}
@@ -51,6 +68,15 @@ final class LabelPlate {
 
     /// Padding added on every side of the ink box, so outline anti-aliasing stays on the plate.
     static final double PAD = 2;
+
+    /// How far a stroke reaches in the widest frame state, as a multiple of its static width: the
+    /// play-through ACTIVE state doubles every stroke of the active step
+    /// ({@code com.sirentide.emit.Emphasis.ACTIVE_WIDTH_MULT}, 2.0; pinned equal by
+    /// {@code LabelBackingPlateTest.theActiveReachIsTheFramesStrokeMultiplier}). The flowchart
+    /// crossing and gap tests use it, so a line that clears a label's ink box at 1.5px still clears
+    /// it when it is drawn at 3px.
+    static final double ACTIVE_REACH = 2.0;
+
 
     /// A label glyph run laid on a plate: {@link #TEXT}, flagged {@link GlyphRun#onPlate} so the
     /// play-through frames recolour it against the plate, not the page (plan 5ce905a8).
@@ -129,19 +155,29 @@ final class LabelPlate {
     /// `group[from, headAt)` are the element's own lines and `group[headAt, end)` its arrowheads;
     /// `painted` is everything drawn before the group. The own lines the ink crosses are moved in
     /// front of the plate, the rest stay after it, so the order becomes: crossed lines, plate, other
-    /// lines, arrowheads. Earlier filled arrowheads are cut out of the plate.
+    /// lines, arrowheads. Earlier filled arrowheads are cut out of the plate. Static stroke widths,
+    /// no label cut-outs: the sequence layout's rule.
     static void place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted) {
+        place(group, from, headAt, ink, painted, 1.0, List.of());
+    }
+
+    /// {@link #place(List, int, int, double[], List)} with each own line's reach scaled by `reach`
+    /// (the flowchart passes {@link #ACTIVE_REACH}, so a line that would touch the ink only at the
+    /// active frame's doubled width also goes under the plate), and with the ink boxes in `holes`
+    /// (earlier labels') cut out of the plate (review 1337 F2).
+    static void place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted,
+                      double reach, List<double[]> holes) {
         List<Shape> crossed = new java.util.ArrayList<>();
         List<Shape> rest = new java.util.ArrayList<>();
         for (Shape s : group.subList(from, headAt)) {
-            (s instanceof Line l && segmentTouches(l, ink) ? crossed : rest).add(s);
+            (s instanceof Line l && segmentTouches(l, ink, reach) ? crossed : rest).add(s);
         }
         List<Shape> under = new java.util.ArrayList<>(painted);
         if (group != painted) {
             under.addAll(group.subList(0, from));
         }
         under.addAll(crossed);
-        Shape plate = plate(ink, under);
+        Shape plate = plate(ink, under, holes);
         List<Shape> span = group.subList(from, headAt);
         span.clear();
         span.addAll(crossed);
@@ -164,6 +200,17 @@ final class LabelPlate {
     /// tip overlap, so every k-way overlap is added back with the alternating winding of
     /// inclusion-exclusion, which leaves winding 0 (unfilled) at every point of every arrowhead.
     static Shape plate(double[] box, List<Shape> under) {
+        return plate(box, under, List.of());
+    }
+
+    /// {@link #plate(double[], List)} with every box in `holes` (an EARLIER label's ink box, review
+    /// 1337 F2) cut out too, the same way as an arrowhead, so a later plate is never painted over an
+    /// earlier label's glyphs. The hole is the ink box exactly, not grown, and never reaches into
+    /// this plate's OWN ink box `box` ({@link #holesOutside}): there the plate must stay whole, or
+    /// the lines under it would show behind this label's glyphs. Where two labels' ink boxes
+    /// overlap the later label's text is drawn over the earlier one's, which is text on text
+    /// (OverlapLint's concern), not something a plate can resolve.
+    static Shape plate(double[] box, List<Shape> under, List<double[]> holes) {
         Rect r = plate(box);
         double rx0 = r.x();
         double ry0 = r.y();
@@ -183,6 +230,20 @@ final class LabelPlate {
                 cuts.add(poly);
             }
         }
+        for (double[] h : holesOutside(holes, box)) {
+            double x0 = h[0];
+            double y0 = h[1];
+            double x1 = h[2];
+            double y1 = h[3];
+            if (!(x0 < rx1 && rx0 < x1 && y0 < ry1 && ry0 < y1)) {
+                continue;
+            }
+            List<double[]> poly = clip(List.of(new double[] {x0, y0}, new double[] {x1, y0},
+                new double[] {x1, y1}, new double[] {x0, y1}), rect);
+            if (poly.size() >= 3 && signedArea(poly) > 1e-6) {
+                cuts.add(poly);
+            }
+        }
         if (cuts.isEmpty()) {
             return r;
         }
@@ -190,6 +251,33 @@ final class LabelPlate {
         ring(d, rect);
         overlaps(d, cuts, 0, null, 0);
         return new Path(d.toString().trim(), FILL, null, 0, true);
+    }
+
+    /// Each box of `holes` minus the box `own`, as at most four disjoint rectangles: the parts left
+    /// of, right of, above and below `own` (a hole that does not overlap `own` is kept whole).
+    static List<double[]> holesOutside(List<double[]> holes, double[] own) {
+        List<double[]> out = new java.util.ArrayList<>();
+        for (double[] h : holes) {
+            if (!(h[0] < own[2] && own[0] < h[2] && h[1] < own[3] && own[1] < h[3])) {
+                out.add(h);
+                continue;
+            }
+            if (h[0] < own[0]) {
+                out.add(new double[] {h[0], h[1], own[0], h[3]});
+            }
+            if (own[2] < h[2]) {
+                out.add(new double[] {own[2], h[1], h[2], h[3]});
+            }
+            double mx0 = Math.max(h[0], own[0]);
+            double mx1 = Math.min(h[2], own[2]);
+            if (h[1] < own[1]) {
+                out.add(new double[] {mx0, h[1], mx1, own[1]});
+            }
+            if (own[3] < h[3]) {
+                out.add(new double[] {mx0, own[3], mx1, h[3]});
+            }
+        }
+        return out;
     }
 
     /// Inclusion-exclusion over the cut polygons: every non-empty intersection of k of them is
@@ -221,6 +309,90 @@ final class LabelPlate {
         List<double[]> out = new java.util.ArrayList<>(poly);
         if (signedArea(out) < 0) {
             java.util.Collections.reverse(out);
+        }
+        return out;
+    }
+
+    /// The bounding box `[x0, y0, x1, y1]` of every filled arrowhead (a closed three-point M/L
+    /// path, as {@link #plate(double[], List)} cuts out) in `shapes`, groups included. The flowchart
+    /// label placement keeps an edge label's ink box clear of all of them (review 1337 F1).
+    static List<double[]> arrowheadBoxes(List<Shape> shapes) {
+        List<double[]> out = new java.util.ArrayList<>();
+        for (double[] t : triangles(shapes, new java.util.ArrayList<>())) {
+            out.add(new double[] {Math.min(t[0], Math.min(t[2], t[4])), Math.min(t[1], Math.min(t[3], t[5])),
+                Math.max(t[0], Math.max(t[2], t[4])), Math.max(t[1], Math.max(t[3], t[5]))});
+        }
+        return out;
+    }
+
+    /// Breaks every {@link Line} of `group` around the label ink boxes in `inks` (review 1337 F2).
+    /// `group` is painted AFTER those labels, so an unbroken line would be drawn over their glyphs.
+    /// A line whose stroke reaches an ink box at {@link #ACTIVE_REACH} times its width is cut where
+    /// it runs through that box grown by {@link #PAD} plus that reach, so even the active frame's
+    /// doubled stroke ends clear of the ink. The pieces keep the line's colour, width and position
+    /// in the group; a line that reaches no ink box is kept as the same object.
+    static void gap(List<Shape> group, List<double[]> inks) {
+        if (inks.isEmpty()) {
+            return;
+        }
+        List<Shape> out = new java.util.ArrayList<>(group.size());
+        boolean changed = false;
+        for (Shape s : group) {
+            if (s instanceof Line l) {
+                List<Line> pieces = gapLine(l, inks);
+                changed |= pieces.size() != 1 || pieces.get(0) != l;
+                out.addAll(pieces);
+            } else {
+                out.add(s);
+            }
+        }
+        if (changed) {
+            group.clear();
+            group.addAll(out);
+        }
+    }
+
+    private static List<Line> gapLine(Line l, List<double[]> inks) {
+        double reach = Math.max(0, l.strokeWidth()) * ACTIVE_REACH / 2;
+        List<double[]> keep = new java.util.ArrayList<>();
+        keep.add(new double[] {0, 1});
+        boolean cut = false;
+        for (double[] ink : inks) {
+            if (clipInterval(l, ink, reach) == null) {
+                continue;
+            }
+            double[] c = clipInterval(l, ink, PAD + reach);
+            if (c == null) {
+                continue;
+            }
+            cut = true;
+            List<double[]> next = new java.util.ArrayList<>();
+            for (double[] k : keep) {
+                if (c[1] <= k[0] || c[0] >= k[1]) {
+                    next.add(k);
+                    continue;
+                }
+                if (c[0] > k[0]) {
+                    next.add(new double[] {k[0], c[0]});
+                }
+                if (c[1] < k[1]) {
+                    next.add(new double[] {c[1], k[1]});
+                }
+            }
+            keep = next;
+        }
+        if (!cut) {
+            return List.of(l);
+        }
+        double dx = l.x2() - l.x1();
+        double dy = l.y2() - l.y1();
+        double len = Math.hypot(dx, dy);
+        List<Line> out = new java.util.ArrayList<>();
+        for (double[] k : keep) {
+            if ((k[1] - k[0]) * len > 1e-3) {
+                out.add(new Line(l.x1() + dx * k[0], l.y1() + dy * k[0], l.x1() + dx * k[1],
+                    l.y1() + dy * k[1], l.stroke(), l.strokeWidth()));
+            }
         }
         return out;
     }
@@ -303,11 +475,22 @@ final class LabelPlate {
 
     /// Liang-Barsky clip of the segment against `box` grown by half the stroke width.
     private static boolean segmentTouches(Line l, double[] box) {
-        double h = Math.max(0, l.strokeWidth()) / 2;
-        double minX = box[0] - h;
-        double minY = box[1] - h;
-        double maxX = box[2] + h;
-        double maxY = box[3] + h;
+        return segmentTouches(l, box, 1.0);
+    }
+
+    /// The same, with the stroke's half width scaled by `reach` ({@link #ACTIVE_REACH} for the
+    /// active frame's doubled stroke).
+    private static boolean segmentTouches(Line l, double[] box, double reach) {
+        return clipInterval(l, box, Math.max(0, l.strokeWidth()) * reach / 2) != null;
+    }
+
+    /// The parameter interval `[t0, t1]` (0 at the line's start, 1 at its end) of the part of the
+    /// segment inside `box` grown by `grow` on every side, or `null` when it misses.
+    private static double[] clipInterval(Line l, double[] box, double grow) {
+        double minX = box[0] - grow;
+        double minY = box[1] - grow;
+        double maxX = box[2] + grow;
+        double maxY = box[3] + grow;
         double dx = l.x2() - l.x1();
         double dy = l.y2() - l.y1();
         double[] p = {-dx, dx, -dy, dy};
@@ -317,7 +500,7 @@ final class LabelPlate {
         for (int i = 0; i < 4; i++) {
             if (p[i] == 0) {
                 if (q[i] < 0) {
-                    return false;
+                    return null;
                 }
             } else {
                 double t = q[i] / p[i];
@@ -327,10 +510,10 @@ final class LabelPlate {
                     t1 = Math.min(t1, t);
                 }
                 if (t0 > t1) {
-                    return false;
+                    return null;
                 }
             }
         }
-        return Double.isFinite(t0) && Double.isFinite(t1);
+        return Double.isFinite(t0) && Double.isFinite(t1) ? new double[] {t0, t1} : null;
     }
 }

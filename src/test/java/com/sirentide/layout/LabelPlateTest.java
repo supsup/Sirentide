@@ -131,6 +131,107 @@ class LabelPlateTest {
         assertTrue(winding(d, 130, 55) != 0, "the rest of the plate is filled");
     }
 
+    /// Review 1337 F2: a line painted AFTER a label is broken where it would cross the label's ink,
+    /// with the cut at the ink box grown by PAD plus the line's active-frame half width (1.5 for a
+    /// 1.5px line), so even the doubled stroke ends clear of the ink.
+    @Test
+    void aLaterLineIsBrokenAroundAnEarlierLabelsInk() {
+        Line through = new Line(130, 0, 130, 200, "#94a3b8", 1.5);
+        Path head = new Path("M 130 210 L 126.5 200 L 133.5 200 Z", "#94a3b8");
+        List<Shape> group = new java.util.ArrayList<>(List.of(through, head));
+        LabelPlate.gap(group, List.of(LABEL));
+        assertEquals(3, group.size(), "two pieces and the arrowhead: " + group);
+        assertLine(new double[] {130, 0, 130, 46.5}, group.get(0));
+        assertLine(new double[] {130, 63.5, 130, 200}, group.get(1));
+        assertTrue(group.get(2) == head, "the arrowhead is kept, after the pieces");
+    }
+
+    private static void assertLine(double[] xy, Shape s) {
+        assertTrue(s instanceof Line, "a line: " + s);
+        Line l = (Line) s;
+        assertArrayEquals(xy, new double[] {l.x1(), l.y1(), l.x2(), l.y2()}, 1e-9);
+        assertEquals("#94a3b8", l.stroke());
+        assertEquals(1.5, l.strokeWidth());
+    }
+
+    /// Healthy control for the gap, varied only in the line's distance from the ink: a line ending
+    /// 2px below the ink box is out of reach even at the doubled 3px width and is kept as the same
+    /// object, while one ending 1px below it reaches the ink at the doubled width and is cut back.
+    @Test
+    void aLaterLineOutOfReachIsKeptWholeAndOneWithinTheActiveReachIsCut() {
+        Line clear = new Line(130, 62, 130, 200, "#94a3b8", 1.5);
+        List<Shape> group = new java.util.ArrayList<>(List.of(clear));
+        LabelPlate.gap(group, List.of(LABEL));
+        assertEquals(1, group.size());
+        assertTrue(group.get(0) == clear, "a line out of reach is not rebuilt");
+        List<Shape> near = new java.util.ArrayList<>(List.of(new Line(130, 61, 130, 200, "#94a3b8", 1.5)));
+        LabelPlate.gap(near, List.of(LABEL));
+        assertEquals(1, near.size(), "one piece: " + near);
+        assertLine(new double[] {130, 63.5, 130, 200}, near.get(0));
+    }
+
+    /// Review 1337 F2: an earlier label's ink box is cut out of a later plate
+    /// that reaches over it, read by non-zero winding; the rest of the plate stays filled. With no
+    /// earlier ink the same plate is the plain rect.
+    @Test
+    void anEarlierLabelsInkIsCutOutOfALaterPlate() {
+        double[] earlier = {150, 40, 200, 49};
+        Shape s = LabelPlate.plate(LABEL, List.of(), List.of(earlier));
+        assertTrue(s instanceof Path p && p.structural() && "#f5f7ff".equals(p.fill()), "a cut plate: " + s);
+        String d = ((Path) s).d();
+        for (double x = 150.01; x < 162; x += 1) {
+            for (double y = 48.01; y < 49; y += 0.25) {
+                assertEquals(0, winding(d, x, y), "earlier ink point " + x + "," + y + " is uncovered");
+            }
+        }
+        assertTrue(winding(d, 130, 55) != 0, "the rest of the plate is filled");
+        assertTrue(winding(d, 155, 55) != 0, "the plate below the earlier ink is filled");
+        assertEquals(LabelPlate.plate(LABEL), LabelPlate.plate(LABEL, List.of(), List.of()));
+    }
+
+    /// The plate stays whole under its OWN ink even where an earlier label's ink box overlaps it
+    /// (plan-flowchart X-CU over X-CA): a hole there let X-CA's line and the page show behind X-CU's
+    /// glyphs (`#000000` on `#0a0a0a`, 1.06 to 1). Only the part of the earlier ink outside this
+    /// label's ink box is cut out.
+    @Test
+    void anEarlierInkHoleNeverReachesIntoThePlatesOwnInk() {
+        double[] earlier = {150, 40, 200, 55};
+        String d = ((Path) LabelPlate.plate(LABEL, List.of(), List.of(earlier))).d();
+        assertTrue(winding(d, 155, 52) != 0, "under this label's own ink, inside the earlier ink box");
+        assertTrue(winding(d, 120, 55) != 0, "under this label's own ink");
+        assertEquals(0, winding(d, 161, 51), "the earlier ink right of this label's ink is uncut");
+        assertEquals(0, winding(d, 155, 49), "the earlier ink above this label's ink is uncut");
+        assertEquals(List.of("[160.0, 40.0, 200.0, 55.0]", "[150.0, 40.0, 160.0, 50.0]"),
+            LabelPlate.holesOutside(List.of(earlier), LABEL).stream().map(java.util.Arrays::toString).toList());
+    }
+
+    /// The flowchart's crossing reach: a line 1.2px below the ink box does not touch it at its
+    /// static 1.5px width (half 0.75) and stays after the plate under the sequence rule, but does
+    /// at the active frame's doubled width (half 1.5), so the flowchart rule moves it under the plate.
+    @Test
+    void theActiveReachMovesANearLineUnderThePlate() {
+        Line near = new Line(90, 61.2, 170, 61.2, "#94a3b8", 1.5);
+        List<Shape> sequenceRule = new java.util.ArrayList<>(List.of(near));
+        LabelPlate.place(sequenceRule, 0, 1, LABEL, List.of());
+        assertEquals(List.of(LabelPlate.plate(LABEL), near), sequenceRule);
+        List<Shape> flowchartRule = new java.util.ArrayList<>(List.of(near));
+        LabelPlate.place(flowchartRule, 0, 1, LABEL, List.of(), LabelPlate.ACTIVE_REACH, List.of());
+        assertEquals(List.of(near, LabelPlate.plate(LABEL)), flowchartRule);
+    }
+
+    /// Review 1337 F1: the arrowhead boxes the flowchart placement avoids, groups included; a node
+    /// silhouette (structural) and an open path are not arrowheads.
+    @Test
+    void arrowheadBoxesAreTheFilledTrianglesOnly() {
+        Anchor a = new AnchorAssigner().assign(com.sirentide.contract.SirentideRole.EDGE, "A-B");
+        List<double[]> boxes = LabelPlate.arrowheadBoxes(List.of(
+            new Group(a, List.of(new Path("M 82 108 L 85.2 97.9 L 90.8 102.1 Z", "#94a3b8"))),
+            Path.silhouette("M 0 0 L 10 0 L 5 8 Z", "#dbe4ff", null, 0),
+            new Path("M 0 0 L 10 10", "#94a3b8")));
+        assertEquals(1, boxes.size());
+        assertArrayEquals(new double[] {82, 97.9, 90.8, 108}, boxes.get(0), 1e-9);
+    }
+
     private static int winding(String d, double x, double y) {
         int w = 0;
         for (String ring : d.split("(?=M )")) {

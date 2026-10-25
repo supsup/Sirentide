@@ -32,7 +32,16 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   bars at about 1.2 to 1. A label that crosses nothing is unchanged. In play-through frames a
   plated label takes its own active colour (`#c2410c`, 4.84 to 1 on the plate; the page accent
   `#e8590c` was 3.35 to 1) and its own future grey (`#6b6b6b`, 5.19 to 1 on the dimmed plate).
-  Not yet covered: alt/else frame and branch labels, and typeset math labels.
+  A plate never covers an arrowhead. A flowchart edge label is also placed clear of every
+  arrowhead, its own included, so an active label is never drawn on its own accented head
+  (1.45 to 1 before), and nothing painted later covers it: a later edge's line is broken around
+  the label and a later label's plate has it cut out (where two labels' text boxes overlap, the
+  later text still covers the earlier). These checks compare bounding boxes, not rendered
+  pixels. Not yet covered: sequence labels get the plate but not the arrowhead placement
+  or the later-line breaks; alt/else frame and branch labels, class and ER labels, and typeset
+  math labels are not plated; and a label that crosses nothing has no plate, so in play-through
+  frames on a light page or the neutral theme (or with its own line close by) its active accent
+  is not held to 4.5 to 1.
 - *2026-10-13.* **Repository housekeeping from the Markdown audit, no behaviour change.** The July
   code-audit report now opens with a dated status table (which findings are fixed, which are still
   open) and stays at the repository root. The Docker walkthrough moved to

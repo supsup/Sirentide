@@ -58,6 +58,45 @@ class LabelPlateArrowheadGoldenTest {
             svgs.put(fixture + " render", Sirentide.render(dsl));
             addFrames(svgs, fixture, dsl);
         }
+        Scan scan = scan(svgs);
+        assertEquals("", String.join("\n", scan.covered()), "plates painted over arrowheads");
+        // Non-vacuous: plates and arrowheads were read. Whether a fixture still has a plate next to
+        // an earlier arrowhead depends on label placement (review 1337 F1 moved the labels that sat
+        // on arrowheads), so the cut-out reading is proven on a fixed scene instead, by
+        // theSamplerSeesAnUncutPlateOverAnArrowheadAndNotACutOne.
+        assertTrue(scan.plates() > 0 && scan.heads() > 0, "plates " + scan.plates() + ", arrowheads " + scan.heads());
+    }
+
+    /// Healthy control for the sampler, varied only in whether the later plate has the earlier
+    /// arrowhead cut out of it: an edge's arrowhead (tip 20,30, base at y 20) and a later edge's
+    /// plate over the lower part of it. As a plain rect the plate covers samples of the arrowhead;
+    /// as a path with the clipped triangle wound the other way it covers none, and that pass is not
+    /// vacuous (the pair is near and the plate is a cut path).
+    @Test
+    void theSamplerSeesAnUncutPlateOverAnArrowheadAndNotACutOne() throws Exception {
+        Scan uncut = scan(Map.of("uncut", headScene(
+            "<rect x=\"10\" y=\"22\" width=\"40\" height=\"18\" fill=\"#f5f7ff\"/>")));
+        assertEquals(1, uncut.covered().size(), "an uncut plate over an earlier arrowhead: " + uncut.covered());
+        Scan cut = scan(Map.of("cut", headScene("<path d=\"M 10 22 L 50 22 L 50 40 L 10 40 Z "
+            + "M 20 30 L 23.2 22 L 16.8 22 Z\" fill=\"#f5f7ff\"/>")));
+        assertEquals(List.of(), cut.covered(), "the arrowhead is cut out of the plate");
+        assertEquals(1, cut.nearPairs(), "the plate and the arrowhead are a near pair");
+        assertEquals(1, cut.cutPlates(), "the plate is a cut path");
+    }
+
+    private static String headScene(String plate) {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"40\">"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"A-B\" data-sirentide-seq=\"1\">"
+            + "<path d=\"M 20 30 L 16 20 L 24 20 Z\" fill=\"#94a3b8\"/></g>"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"C-D\" data-sirentide-seq=\"2\">"
+            + plate + "</g></svg>";
+    }
+
+    private record Scan(List<String> covered, int plates, int cutPlates, int heads, int nearPairs) {}
+
+    /// Every plate painted over a sample of an arrowhead painted before it, over `svgs`, with the
+    /// counts that show what was read.
+    private static Scan scan(Map<String, String> svgs) throws Exception {
         List<String> covered = new ArrayList<>();
         int plates = 0;
         int cutPlates = 0;
@@ -96,12 +135,7 @@ class LabelPlateArrowheadGoldenTest {
                 }
             }
         }
-        assertEquals("", String.join("\n", covered), "plates painted over arrowheads");
-        // Non-vacuous: plates and arrowheads were read, at least one plate was painted after an
-        // arrowhead it overlaps, and the cut-out plate path was exercised.
-        assertTrue(plates > 0 && heads > 0, "plates " + plates + ", arrowheads " + heads);
-        assertTrue(nearPairs > 0, "no plate overlapped an earlier arrowhead's box; the check is vacuous");
-        assertTrue(cutPlates > 0, "no plate with a cut-out arrowhead was checked");
+        return new Scan(covered, plates, cutPlates, heads, nearPairs);
     }
 
     private static void addFrames(Map<String, String> svgs, String name, String dsl) {

@@ -94,6 +94,24 @@ class EdgeLabelDecollisionTest {
             "with no node in the way the same collision stacks to the FIRST slot");
     }
 
+    /// Review 1337 F1: a label whose natural box sits on an arrowhead (its own included) moves to
+    /// the first stack slot clear of it, and a slot on an arrowhead is skipped like one on a node.
+    /// Healthy control: the same label with the arrowhead beside it, or with no arrowheads, keeps
+    /// its natural position, so the move is caused by the arrowhead.
+    @Test
+    void aLabelOnAnArrowheadMovesToTheFirstSlotClearOfIt() {
+        List<double[]> onIt = List.of(box(20, 25, 30, 35));
+        assertEquals(STACK, decollider().resolve(5, box(10, 20, 40, 30), onIt),
+            "a natural box on an arrowhead moves one line down, the first slot clear of it");
+        List<double[]> tall = List.of(box(20, 25, 30, 48));
+        assertEquals(2 * STACK, decollider().resolve(5, box(10, 20, 40, 30), tall),
+            "a slot still on the arrowhead is skipped");
+        assertEquals(0.0, decollider().resolve(5, box(10, 20, 40, 30), List.of(box(50, 20, 60, 30))),
+            "an arrowhead beside the box does not move it");
+        assertEquals(0.0, decollider().resolve(5, box(10, 20, 40, 30), List.of()),
+            "no arrowheads, no move");
+    }
+
     @Test
     void mixedFixtureCollidingLabelStacksWhileNonCollidingStaysPut() {
         // Mixed-fixture rule: a genuinely-colliding case beside a non-colliding one in the SAME

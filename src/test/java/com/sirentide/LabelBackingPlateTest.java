@@ -38,9 +38,9 @@ import org.w3c.dom.Node;
 /// must give at least 4.5 to 1 against the glyph's own fill (WCAG relative luminance).
 ///
 /// That contrast check is about what lies BEHIND a label. What is painted AFTER it, over its
-/// glyphs, is pinned separately and exactly by {@link #theShapesPaintedOverALabelAreExactlyThePinnedOnes}
-/// (review 1335 F2): a group paints its lines, plate, arrowheads and glyphs in that order, but a
-/// later group or a node still paints over an earlier label.
+/// glyphs, is checked separately by {@link #nothingIsPaintedOverALabelGlyph} (review 1337 F2), and a
+/// glyph read against an arrowhead in a play-through frame by
+/// {@link #noLabelGlyphReadsAgainstAnArrowheadInAnyFrame} (review 1337 F1).
 ///
 /// Out of scope here, on purpose: alt/else frame tab and divider labels, which plan 9d56f599 moves
 /// into their own bands, and typeset math labels, whose extent is not layout geometry.
@@ -177,16 +177,287 @@ class LabelBackingPlateTest {
         }
     }
 
-    /// Review 1335 F2: the contrast checks above only look BEHIND a label. This one lists every
-    /// non-label shape painted AFTER a label glyph that touches the glyph's box, over both plan
-    /// fixtures and every flowchart and sequence golden fixture, and requires exactly the pinned
-    /// list below. Inside one group the glyphs are painted last, so no entry is the label's own
-    /// line, plate or arrowhead; every entry is a LATER edge's line, arrowhead or plate, or a node,
-    /// drawn over an earlier label. These are known and not fixed here: moving glyphs out of their
-    /// group's `<g>` would break the one-group-per-element anchor contract. A new crossing, or a
-    /// pinned one that goes away, fails this test so the list is kept true.
+    /// Review 1337 F2, the FINAL composition: the contrast checks above only look BEHIND a label,
+    /// so this one looks at everything painted AFTER each label glyph. Over both plan fixtures and
+    /// every flowchart and sequence golden fixture, no non-label shape painted later may cover any
+    /// part of a label glyph's box: a later line by its stroke, a later arrowhead, rect or path by
+    /// its box, and a later plate by non-zero winding at points inside the glyph box (so an earlier
+    /// label cut out of the plate counts as uncovered). Later labels are text-on-text, OverlapLint's
+    /// job, and are not counted.
+    ///
+    /// Before the fix this failed with nine entries, among them the review's witness
+    /// `flowchart-convergent-fan: edge:B-S label (plated) under edge:C-S line` (the C-S line, x 190,
+    /// y 60 to 98, crosses B-S's glyphs at about 190,94.5) and
+    /// `plan-flowchart: edge:X-CA label (plated) under edge:X-CU plate`.
     @Test
-    void theShapesPaintedOverALabelAreExactlyThePinnedOnes() throws Exception {
+    void nothingIsPaintedOverALabelGlyph() throws Exception {
+        List<String> found = new ArrayList<>();
+        for (var e : labelFixtures().entrySet()) {
+            found.addAll(overPainted(e.getKey(), bake(e.getValue())));
+        }
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Healthy control for {@link #nothingIsPaintedOverALabelGlyph}: the check is varied on one axis
+    /// at a time over a hand-built scene. A later line across the glyph box and a later uncut plate
+    /// reaching into it are both seen; the same line broken around the box, the same plate with the
+    /// glyph box cut out of it, and a rect beside the box are not. So a pass of the fixture test is
+    /// not the check going blind.
+    @Test
+    void theOverPaintCheckSeesALaterLineOrPlateButNotAGapOrAHole() throws Exception {
+        assertEquals(List.of("synthetic: edge:A-B label (plated) under edge:C-D line"),
+            overPainted("synthetic", parse(overScene("<line x1=\"25\" y1=\"0\" x2=\"25\" y2=\"40\" "
+                + "stroke=\"#94a3b8\" stroke-width=\"1.5\"/>"))));
+        assertEquals(List.of("synthetic: edge:A-B label (plated) under edge:C-D plate"),
+            overPainted("synthetic", parse(overScene("<path d=\"M 30 5 L 60 5 L 60 25 L 30 25 Z\" "
+                + "fill=\"#f5f7ff\"/>"))));
+        assertEquals(List.of(), overPainted("synthetic", parse(overScene(
+            "<line x1=\"25\" y1=\"0\" x2=\"25\" y2=\"6\" stroke=\"#94a3b8\" stroke-width=\"1.5\"/>"
+                + "<line x1=\"25\" y1=\"24\" x2=\"25\" y2=\"40\" stroke=\"#94a3b8\" stroke-width=\"1.5\"/>"))),
+            "a line broken around the glyph box is not over it");
+        assertEquals(List.of(), overPainted("synthetic", parse(overScene(
+            "<path d=\"M 30 5 L 60 5 L 60 25 L 30 25 Z M 30 9.5 L 30 20.5 L 40.5 20.5 L 40.5 9.5 Z\" "
+                + "fill=\"#f5f7ff\"/><rect x=\"45\" y=\"0\" width=\"10\" height=\"40\" fill=\"#c7d2fe\"/>"))),
+            "a plate with the glyph box cut out of it, and a rect beside the box, are not over it");
+    }
+
+    /// An earlier edge `A-B` with a plated label glyph whose box is [10, 10, 40, 20], then a later
+    /// edge `C-D` holding `later`.
+    private static String overScene(String later) {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"A-B\" data-sirentide-seq=\"1\">"
+            + "<rect x=\"8\" y=\"8\" width=\"34\" height=\"14\" fill=\"#f5f7ff\"/>"
+            + "<path d=\"M 10 20 L 40 20 L 40 10 L 10 10 Z\" fill=\"#000000\"/></g>"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"C-D\" data-sirentide-seq=\"2\">"
+            + later + "</g></svg>";
+    }
+
+    /// Every label glyph of `svg` with a non-label shape painted after it over its box (see
+    /// {@link #nothingIsPaintedOverALabelGlyph}).
+    private static List<String> overPainted(String name, Document svg) {
+        List<Painted> order = new ArrayList<>();
+        collect(svg.getDocumentElement(), null, LIGHT, order);
+        List<String> found = new ArrayList<>();
+        for (int i = 0; i < order.size(); i++) {
+            Painted p = order.get(i);
+            if (!p.label()) {
+                continue;
+            }
+            for (int j = i + 1; j < order.size(); j++) {
+                Painted over = order.get(j);
+                if (!over.label() && paintsOver(over, p.box(), ownGlyphBoxes(order, over))) {
+                    found.add(name + ": " + owner(p.el()) + " label" + (onPlate(p) ? " (plated)" : "")
+                        + " under " + owner(over.el()) + " " + kind(over.el()));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// The glyph boxes of the labels in the same group as `shape` (its own label, for a plate).
+    private static List<double[]> ownGlyphBoxes(List<Painted> order, Painted shape) {
+        List<double[]> out = new ArrayList<>();
+        for (Painted q : order) {
+            if (q.label() && q.el().getParentNode() == shape.el().getParentNode()) {
+                out.add(q.box());
+            }
+        }
+        return out;
+    }
+
+    /// Whether `over` covers some of `box`. A plate path is read by non-zero winding at a grid of
+    /// points just inside the box, the way a renderer fills it; anything else by {@link #touches}.
+    /// Points inside the plate's OWN label's glyph box (`own`) are skipped: where two labels' ink
+    /// boxes overlap, the later text is drawn over the earlier one whatever the plate does, which is
+    /// text on text (OverlapLint's concern), and the plate stays whole under its own glyphs so the
+    /// lines beneath it cannot show through them.
+    private static boolean paintsOver(Painted over, double[] box, List<double[]> own) {
+        if (!touches(over, box)) {
+            return false;
+        }
+        if (!"path".equals(over.el().getLocalName()) || !isPlateFill(over.el().getAttribute("fill"))) {
+            return true;
+        }
+        String d = over.el().getAttribute("d");
+        int n = 12;
+        double in = 0.01;
+        for (int i = 0; i <= n; i++) {
+            for (int j = 0; j <= n; j++) {
+                double x = box[0] + in + (box[2] - box[0] - 2 * in) * i / n;
+                double y = box[1] + in + (box[3] - box[1] - 2 * in) * j / n;
+                if (!insideAny(own, x, y) && winding(d, x, y) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean insideAny(List<double[]> boxes, double x, double y) {
+        for (double[] b : boxes) {
+            if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Non-zero winding number of the M/L/Z rings of `d` at a point.
+    private static int winding(String d, double x, double y) {
+        int w = 0;
+        for (String ring : d.split("(?=M )")) {
+            List<Double> v = new ArrayList<>();
+            Matcher m = NUM.matcher(ring);
+            while (m.find()) {
+                v.add(Double.parseDouble(m.group()));
+            }
+            for (int i = 0; i + 1 < v.size(); i += 2) {
+                double ax = v.get(i);
+                double ay = v.get(i + 1);
+                double bx = v.get((i + 2) % v.size());
+                double by = v.get((i + 3) % v.size());
+                double c = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
+                if (ay <= y) {
+                    if (by > y && c > 0) {
+                        w++;
+                    }
+                } else if (by <= y && c < 0) {
+                    w--;
+                }
+            }
+        }
+        return w;
+    }
+
+    /// Review 1337 F1: in every play-through frame (and the static bake), no label glyph is read
+    /// against a filled arrowhead painted before it at under 4.5 to 1. Over both plan fixtures and
+    /// every flowchart and sequence golden fixture, on the dark docs page. The colours are read from
+    /// each emitted frame.
+    ///
+    /// Before the fix this failed on `flowchart-convergent`, whose B-X label ink overlapped its own
+    /// arrowhead (line, plate, head, glyph in paint order): in B-X's active frame
+    /// `edge:B-X glyph #c2410c on edge:B-X arrowhead #e8590c: 1.45 to 1`, and in its future frames
+    /// `#6b6b6b on #d6dce4: 3.86 to 1`; the fan fixture's B-S label failed the same way.
+    @Test
+    void noLabelGlyphReadsAgainstAnArrowheadInAnyFrame() throws Exception {
+        List<String> found = new ArrayList<>();
+        for (var e : labelFixtures().entrySet()) {
+            Document base = bake(e.getValue());
+            List<Painted> ref = new ArrayList<>();
+            collect(base.getDocumentElement(), null, DARK_DOCS, ref);
+            found.addAll(arrowheadClashes(ref, e.getKey() + " static"));
+            List<String> frames = Sirentide.renderFrames(e.getValue());
+            for (int f = 0; f < frames.size(); f++) {
+                List<Painted> raw = new ArrayList<>();
+                collect(parse(frames.get(f)).getDocumentElement(), null, DARK_DOCS, raw);
+                assertEquals(ref.size(), raw.size(), e.getKey() + " frame " + f + " paints the static scene");
+                List<Painted> order = new ArrayList<>(raw.size());
+                for (int i = 0; i < raw.size(); i++) {
+                    order.add(new Painted(raw.get(i).el(), raw.get(i).color(), ref.get(i).label(), raw.get(i).box()));
+                }
+                found.addAll(arrowheadClashes(order, e.getKey() + " frame " + f));
+            }
+        }
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Review 1337 F1, the placement behind the frame check: no flowchart edge label's ink box
+    /// touches ANY arrowhead's box, painted before or after it, its own included. Before the fix it
+    /// failed on `flowchart-convergent` (B-X on its own head) and `flowchart-convergent-fan` (B-S on
+    /// its own and the A-S, C-S, D-S and E-S heads).
+    @Test
+    void noFlowchartEdgeLabelTouchesAnArrowhead() throws Exception {
+        List<String> found = new ArrayList<>();
+        for (var e : labelFixtures().entrySet()) {
+            if (!e.getKey().contains("flowchart")) {
+                continue;
+            }
+            List<Painted> order = new ArrayList<>();
+            collect(bake(e.getValue()).getDocumentElement(), null, LIGHT, order);
+            for (Painted p : order) {
+                if (!p.label() || !"edge".equals(roleOf(p.el()))) {
+                    continue;
+                }
+                for (Painted head : order) {
+                    if ("arrowhead".equals(kind(head.el())) && touches(head, p.box())) {
+                        found.add(e.getKey() + ": " + owner(p.el()) + " label on " + owner(head.el()) + " arrowhead");
+                    }
+                }
+            }
+        }
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Healthy opposing control for the two F1 tests, varied only in where the arrowhead sits: an
+    /// active plated label (`#c2410c`) whose own active arrowhead (`#e8590c`) reaches into its glyph
+    /// box is a clash at 1.45 to 1, and the same label with the arrowhead moved just clear of the
+    /// glyph box is none, and reads at 4.84 to 1 on its plate by the full behind-the-glyph check.
+    @Test
+    void anActiveGlyphOnItsOwnArrowheadClashesAndTheSameGlyphOnItsPlateReads() throws Exception {
+        List<String> clash = arrowheadClashes(activeScene("M 20 24 L 16 10 L 24 10 Z"), "synthetic");
+        assertEquals(1, clash.size(), "the active glyph over its own active arrowhead: " + clash);
+        assertTrue(clash.get(0).contains("#c2410c on edge:A-B arrowhead #e8590c: 1.45"), clash.get(0));
+        List<Painted> clear = activeScene("M 20 28 L 16 14 L 24 14 Z");
+        assertEquals(List.of(), arrowheadClashes(clear, "synthetic"));
+        int glyph = clear.size() - 1;
+        assertTrue(clear.get(glyph).label(), "the glyph is the last shape");
+        assertGlyphReads(clear, glyph, "edge", DARK_DOCS, "synthetic ");
+    }
+
+    /// One active edge group: a plate, an accented arrowhead with path `head`, then the plate-accent
+    /// glyph whose box is [4, 4, 40, 13]. The glyph is marked as the label by its colour.
+    private static List<Painted> activeScene(String head) throws Exception {
+        String svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"60\" height=\"40\">"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"A-B\" data-sirentide-seq=\"1\">"
+            + "<rect x=\"2\" y=\"2\" width=\"40\" height=\"13\" fill=\"#f5f7ff\"/>"
+            + "<path d=\"" + head + "\" fill=\"#e8590c\"/>"
+            + "<path d=\"M 4 13 L 40 13 L 40 4 L 4 4 Z\" fill=\"#c2410c\"/></g></svg>";
+        List<Painted> raw = new ArrayList<>();
+        collect(parse(svg).getDocumentElement(), null, DARK_DOCS, raw);
+        List<Painted> order = new ArrayList<>();
+        for (Painted r : raw) {
+            order.add(new Painted(r.el(), r.color(), "#c2410c".equals(r.color()), r.box()));
+        }
+        return order;
+    }
+
+    /// Every label glyph in `order` with a filled arrowhead painted before it that touches its box
+    /// and reads under 4.5 to 1 against the glyph's own fill. An arrowhead painted before an opaque
+    /// rect or plate that covers the whole glyph box is hidden by it and not counted, the same rule
+    /// as {@link #assertGlyphReads}.
+    private static List<String> arrowheadClashes(List<Painted> order, String context) {
+        List<String> found = new ArrayList<>();
+        for (int i = 0; i < order.size(); i++) {
+            Painted p = order.get(i);
+            if (!p.label()) {
+                continue;
+            }
+            List<Painted> heads = new ArrayList<>();
+            for (int j = 0; j < i; j++) {
+                Painted under = order.get(j);
+                if (under.label() || !touches(under, p.box())) {
+                    continue;
+                }
+                if (coversWhole(under, p.box())) {
+                    heads.clear();
+                } else if ("arrowhead".equals(kind(under.el()))) {
+                    heads.add(under);
+                }
+            }
+            for (Painted head : heads) {
+                double ratio = contrast(p.color(), head.color());
+                if (ratio < MIN_CONTRAST) {
+                    found.add(String.format(Locale.ROOT, "%s %s glyph %s on %s arrowhead %s: %.2f to 1",
+                        context, owner(p.el()), p.color(), owner(head.el()), head.color(), ratio));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// The fixtures the composition checks run over: both plan fixtures and every flowchart and
+    /// sequence golden fixture.
+    private static java.util.Map<String, String> labelFixtures() throws Exception {
         java.util.Map<String, String> diagrams = new java.util.LinkedHashMap<>();
         diagrams.put("plan-sequence", resource(SEQUENCE));
         diagrams.put("plan-flowchart", resource(FLOWCHART));
@@ -195,42 +466,19 @@ class LabelBackingPlateTest {
                 diagrams.put(e.getKey(), e.getValue());
             }
         }
-        List<String> found = new ArrayList<>();
-        for (var e : diagrams.entrySet()) {
-            List<Painted> order = new ArrayList<>();
-            collect(bake(e.getValue()).getDocumentElement(), null, LIGHT, order);
-            for (int i = 0; i < order.size(); i++) {
-                Painted p = order.get(i);
-                if (!p.label()) {
-                    continue;
-                }
-                for (int j = i + 1; j < order.size(); j++) {
-                    Painted over = order.get(j);
-                    if (!over.label() && touches(over, p.box())) {
-                        found.add(e.getKey() + ": " + owner(p.el()) + " label" + (onPlate(p) ? " (plated)" : "")
-                            + " under " + owner(over.el()) + " " + kind(over.el()));
-                    }
-                }
-            }
-        }
-        assertEquals(String.join("\n", OVER_LABEL_PINNED), String.join("\n", new TreeSet<>(found)));
+        return diagrams;
     }
 
-    /// The pinned over-label crossings (review 1335 F2), sorted. Each is a later shape drawn over an
-    /// earlier label's glyph box; follow-up work, not covered by the plate.
-    private static final List<String> OVER_LABEL_PINNED = List.of(
-        // F2: edges C, D and E into the sink cross the stacked labels of edges A and B, and the
-        // unplated label of C, after those labels are painted.
-        "flowchart-convergent-fan: edge:A-S label (plated) under edge:B-S line",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:C-S arrowhead",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:C-S line",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:D-S arrowhead",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:D-S line",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:E-S arrowhead",
-        "flowchart-convergent-fan: edge:B-S label (plated) under edge:E-S line",
-        "flowchart-convergent-fan: edge:C-S label under edge:D-S line",
-        // F5 (disclosed follow-up): a later label's padded plate reaches an earlier label.
-        "plan-flowchart: edge:X-CA label (plated) under edge:X-CU plate");
+    /// The flowchart layout's crossing and gap tests reach a stroke at its ACTIVE-frame width
+    /// (LabelPlate.ACTIVE_REACH); that must stay the multiplier the frames emitter really applies.
+    @Test
+    void theActiveReachIsTheFramesStrokeMultiplier() throws Exception {
+        var reach = Class.forName("com.sirentide.layout.LabelPlate").getDeclaredField("ACTIVE_REACH");
+        var mult = Class.forName("com.sirentide.emit.Emphasis").getDeclaredField("ACTIVE_WIDTH_MULT");
+        reach.setAccessible(true);
+        mult.setAccessible(true);
+        assertEquals(mult.getDouble(null), reach.getDouble(null));
+    }
 
     private static String kind(Element el) {
         String name = el.getLocalName();
@@ -341,7 +589,7 @@ class LabelBackingPlateTest {
 
     /// The contrast check for the label glyph at `order[at]`: every colour painted EARLIER that
     /// touches its box (or the page, when no opaque plate or rect covers the whole box) is at least
-    /// 4.5 to 1. Shapes painted LATER are not behind the glyph; see the pinned over-label test.
+    /// 4.5 to 1. Shapes painted LATER are not behind the glyph; see {@link #nothingIsPaintedOverALabelGlyph}.
     private static void assertGlyphReads(List<Painted> order, int at, String role, Page page, String context) {
         Painted p = order.get(at);
         List<String> behind = new ArrayList<>();
