@@ -485,9 +485,9 @@ public final class SequenceLayout {
             String stroke = m.reply() ? REPLY_STROKE : CALL_STROKE;
             List<Shape> mg = new ArrayList<>();
             if (a == b) {
-                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW);
+                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
             } else {
-                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW);
+                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
             }
             shapes.add(new Group(assigner.assign(SirentideRole.MESSAGE, m.from() + "-" + m.to()), mg));
         }
@@ -684,9 +684,12 @@ public final class SequenceLayout {
 
     /// A horizontal message between two DISTINCT lifelines: a stroked line + a dst arrowhead (a
     /// FILLED triangle for a call, an OPEN V — two short lines — for a reply), plus a centred label
-    /// above the line. The prepared display plan already fits the measured actor span.
+    /// above the line. The prepared display plan already fits the measured actor span. `painted` is
+    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a label that
+    /// crosses any of it gets a backing plate ({@link #emitLabelLines}).
     private static void emitMessage(List<Shape> shapes, double xa, double xb, double y, SeqMessage m,
-                                    MessageLabel label, String stroke, String textColor, double canvasW) {
+                                    MessageLabel label, String stroke, String textColor, double canvasW,
+                                    List<Shape> painted) {
         double dx = xb - xa;
         double span = Math.abs(dx);
         if (!Double.isFinite(span) || span < 1e-6) {
@@ -714,15 +717,36 @@ public final class SequenceLayout {
             MathLabel.emit(label.math(), runX, y - LABEL_LIFT,
                 textColor, MSG_LABEL_SIZE, FONT, shapes);
         } else {
+            List<String> runs = new ArrayList<>();
             double baseline = y - LABEL_LIFT - label.extraHeight();
             for (LabelLine line : label.lines()) {
                 double runX = clamp(midX - line.width() / 2, line.width(), canvasW);
                 String d = FONT.textPathD(line.text(), runX, baseline, MSG_LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, textColor));
+                    runs.add(d);
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
+            emitLabelLines(shapes, runs, textColor, painted);
+        }
+    }
+
+    /// Emits a plain message label's glyph runs (plan 5ce905a8). When the label's ink box crosses
+    /// anything already painted (`painted`, or this message's own lines in `shapes`), ONE backing
+    /// plate is laid under the whole label and every run takes the plate's contrast colour, so no
+    /// glyph sits on a bar or a line. A label that crosses nothing emits exactly as before.
+    private static void emitLabelLines(List<Shape> shapes, List<String> runs, String textColor,
+                                       List<Shape> painted) {
+        double[] box = LabelPlate.inkBox(runs);
+        boolean plated = box != null
+            && (LabelPlate.crossesPainted(box, painted) || LabelPlate.crossesPainted(box, shapes));
+        if (plated) {
+            // First in the message group: the message's own line and arrowhead stay drawn on top of
+            // the plate's padding, while every glyph still sits on it.
+            shapes.add(0, LabelPlate.plate(box));
+        }
+        for (String d : runs) {
+            shapes.add(plated ? LabelPlate.text(d) : new GlyphRun(d, textColor));
         }
     }
 
@@ -730,7 +754,8 @@ public final class SequenceLayout {
     /// ROW_H/2, back left into the lifeline with a LEFT-pointing arrowhead (filled triangle for a
     /// call, open V for a reply) — plus a left-aligned label just right of the hook's outer edge.
     private static void emitSelfMessage(List<Shape> shapes, double x, double y, SeqMessage m,
-                                        MessageLabel label, String stroke, String textColor, double canvasW) {
+                                        MessageLabel label, String stroke, String textColor, double canvasW,
+                                        List<Shape> painted) {
         double outX = x + SELF_W;
         double yb = y + ROW_H / 2;
         shapes.add(new Line(x, y, outX, y, stroke, MSG_WIDTH));            // out right
@@ -753,14 +778,16 @@ public final class SequenceLayout {
             double runX = clamp(outX + LABEL_GAP, label.width(), canvasW);
             MathLabel.emit(label.math(), runX, baseline, textColor, MSG_LABEL_SIZE, FONT, shapes);
         } else {
+            List<String> runs = new ArrayList<>();
             for (LabelLine line : label.lines()) {
                 double runX = clamp(outX + LABEL_GAP, line.width(), canvasW);
                 String d = FONT.textPathD(line.text(), runX, baseline, MSG_LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, textColor));
+                    runs.add(d);
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
+            emitLabelLines(shapes, runs, textColor, painted);
         }
     }
 

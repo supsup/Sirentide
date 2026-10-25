@@ -189,10 +189,15 @@ public final class FlowchartLayout {
     /// `textPathD` — so a plain-text edge label is byte-identical to the inline emission it replaced.
     /// A math label SKIPS the canvas ellipsize (a formula must not be cut mid-run) and is measured on
     /// its composite width, then clamped in-frame the same way.
+    ///
+    /// `painted` is the diagram's shape list so far (clusters and earlier edges). A plain label whose
+    /// final ink box crosses anything in it, or this edge's own lines in `shapes`, gets a backing
+    /// plate and the plate's contrast colour (plan 5ce905a8, {@link LabelPlate}); a label that
+    /// crosses nothing emits exactly as before.
     private static void emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
                                       boolean subtractWidth, double gap, double canvasW,
                                       LabelDecollider dec, int target, String color,
-                                      MathFragmentRenderer math) {
+                                      MathFragmentRenderer math, List<Shape> painted) {
         if (raw == null) {
             return;
         }
@@ -229,7 +234,13 @@ public final class FlowchartLayout {
             ld = FONT.textPathD(fl, lblX, baselineY + dy, EDGE_LABEL_SIZE);
         }
         if (!ld.isBlank()) {
-            shapes.add(new GlyphRun(ld, color));
+            double[] ink = LabelPlate.inkBox(List.of(ld));
+            boolean plated = ink != null
+                && (LabelPlate.crossesPainted(ink, shapes) || LabelPlate.crossesPainted(ink, painted));
+            if (plated) {
+                shapes.add(LabelPlate.plate(ink));
+            }
+            shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));
         }
     }
 
@@ -939,7 +950,7 @@ public final class FlowchartLayout {
                 }
                 // Edge label (M1.2): beside the lane's vertical run (the canvas was widened for it).
                 emitEdgeLabel(tgt, e.label(), laneX, (sy + ty) / 2 + EDGE_LABEL_SIZE * 0.35,
-                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
+                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double scx = vx[u] + boxW[u] / 2;
@@ -982,7 +993,7 @@ public final class FlowchartLayout {
                         // Edge label (M1.2): on the OUTSIDE of the edge at its midpoint — a right-going
                         // edge's label sits right of the line, a left-going one's left of it.
                         emitEdgeLabel(tgt, e.label(), lblAx, lblAy + EDGE_LABEL_SIZE * 0.35,
-                            dx < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
+                            dx < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
                     }
                     // else: degenerate anchor pair — skip (never emit NaN geometry). The (possibly
                     // empty) edge group is still emitted below so seq stays aligned with the edge set.
@@ -1008,7 +1019,7 @@ public final class FlowchartLayout {
                     // Edge label anchors on the FIRST segment's midpoint (outside rule + clamp, as today).
                     emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2,
                         (ys[0] + ys[1]) / 2 + EDGE_LABEL_SIZE * 0.35,
-                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math);
+                        (xs[1] - xs[0]) < 0, EDGE_LABEL_GAP, canvasW, labelDecollider, v, fc.textColor(), math, shapes);
                 }
             }
             if (anchored) {
@@ -1460,7 +1471,7 @@ public final class FlowchartLayout {
                 // Edge label: just below the lane's horizontal run (the canvas was grown for it).
                 emitEdgeLabel(tgt, e.label(), (sx + tx) / 2,
                     laneY + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7,
-                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
+                    false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
             } else {
                 int[] chain = rt.chain.get(ei);
                 double sx = vx[u] + boxW[u];             // source right-middle
@@ -1504,7 +1515,7 @@ public final class FlowchartLayout {
                             ? (sy + endY) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                             : (sy + endY) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
                         emitEdgeLabel(tgt, e.label(), (sx + endX) / 2, lblY,
-                            false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
+                            false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
                     }
                     // else degenerate — skip; the (possibly empty) group still emits so seq stays aligned.
                 } else {
@@ -1527,7 +1538,7 @@ public final class FlowchartLayout {
                         ? (ys[0] + ys[1]) / 2 + EDGE_LABEL_GAP + EDGE_LABEL_SIZE * 0.7
                         : (ys[0] + ys[1]) / 2 - EDGE_LABEL_GAP - EDGE_LABEL_SIZE * 0.35;
                     emitEdgeLabel(tgt, e.label(), (xs[0] + xs[1]) / 2, lblY,
-                        false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math);
+                        false, EDGE_LABEL_GAP, canvasW, labelDecollider, v, textColor, math, shapes);
                 }
             }
             if (anchored) {

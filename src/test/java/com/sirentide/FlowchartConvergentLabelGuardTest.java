@@ -172,10 +172,13 @@ class FlowchartConvergentLabelGuardTest {
     }
 
     /// Node boxes as [x, y, w, h].
+    /// A label's backing plate (plan 5ce905a8, fill `#f5f7ff`) is not a node: it surrounds its label,
+    /// so counting it would hide that label from this guard.
     private static List<double[]> rects(String svg) {
         List<double[]> out = new ArrayList<>();
         Matcher m = Pattern.compile(
-            "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\"")
+            "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\""
+                + "(?! fill=\"#f5f7ff\")")
             .matcher(svg);
         while (m.find()) {
             out.add(new double[] {Double.parseDouble(m.group(1)), Double.parseDouble(m.group(2)),

@@ -25,6 +25,14 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   wrapped label and grow around text and declared math-fragment bounds without reducing the font
   size. Both TD and LR layouts route around the final dimensions, and diagnostic text capture
   records the final emission once.
+- *2026-10-24.* **Labels that cross a line or bar get a backing plate.** A sequence message label
+  that runs over an activation bar or a lifeline, or a flowchart edge label that crosses an edge
+  line, now sits on an opaque pale plate (`#f5f7ff`) with black text, so it reads at well over
+  4.5 to 1 whatever the page colour. Before, page-coloured text on a dark docs page met the pale
+  bars at about 1.2 to 1. A label that crosses nothing is unchanged. In play-through frames a
+  plated label takes its own active colour (`#c2410c`, 4.84 to 1 on the plate; the page accent
+  `#e8590c` was 3.35 to 1) and its own future grey (`#6b6b6b`, 5.19 to 1 on the dimmed plate).
+  Not yet covered: alt/else frame and branch labels, and typeset math labels.
 - *2026-10-13.* **Repository housekeeping from the Markdown audit, no behaviour change.** The July
   code-audit report now opens with a dated status table (which findings are fixed, which are still
   open) and stays at the repository root. The Docker walkthrough moved to
