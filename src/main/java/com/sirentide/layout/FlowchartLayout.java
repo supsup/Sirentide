@@ -196,9 +196,10 @@ public final class FlowchartLayout {
     /// crosses nothing emits exactly as before. The plate goes above the edge lines the ink crosses
     /// and below the arrowhead, and the glyphs come last ({@link LabelPlate} paint order, review 1335).
     ///
-    /// `heads` are the boxes of EVERY arrowhead in the diagram, this edge's own and later edges'
-    /// included (review 1337 F1): a plain label's ink box is placed clear of them by the
-    /// de-collider. `earlierInks` are the ink boxes of the labels already emitted; they are cut out of
+    /// `heads` are the de-collider's obstacle boxes: EVERY arrowhead in the diagram, this edge's own
+    /// and later edges' included (review 1337 F1), and every earlier label's ink box grown by
+    /// {@link LabelPlate#PAD} (review 1341). A plain label's ink box is placed clear of them.
+    /// `earlierInks` are the ink boxes of the labels already emitted; they are cut out of
     /// this label's plate (review 1337 F2). Returns this plain label's final ink box, or `null`
     /// (no label, a math label, or nothing drawn).
     private static double[] emitEdgeLabel(List<Shape> shapes, String raw, double anchorX, double baselineY,
@@ -246,7 +247,8 @@ public final class FlowchartLayout {
         // rectangle even when their anchor x's differ (the sirentide/514 finding). A same-target
         // both-axes overlap stacks this label a line down; NO overlap leaves dy==0 and the emission
         // byte-identical to the pre-fix path.
-        // Review 1337 F1: the box also moves off any arrowhead it would sit on (dy==0 when clear).
+        // Review 1337 F1 and 1341: the box also moves off any arrowhead or earlier label's padded ink
+        // box it would sit on (dy==0 when clear).
         double dy = dec.resolve(target, pathBBox(ld), heads);
         ld = FONT.textPathD(fl, lblX, baselineY + dy, EDGE_LABEL_SIZE);
         if (ld.isBlank()) {
@@ -298,7 +300,10 @@ public final class FlowchartLayout {
     ///   - every label is placed with all arrowheads as obstacles, its own included, so no glyph
     ///     sits on or under an arrowhead (F1);
     ///   - labels are emitted in edge order against `base` plus the earlier edges (what is painted
-    ///     under them), and each plate has the earlier labels' ink cut out of it;
+    ///     under them); every earlier label's ink box, grown by {@link LabelPlate#PAD}, is an
+    ///     obstacle too (review 1341), so no two edge labels' ink boxes overlap and no later plate
+    ///     reaches an earlier label's ink; each plate still has the earlier labels' ink cut out of
+    ///     it as a safety net for the all-slots-blocked fallback;
     ///   - then every edge's lines are broken around the labels of EARLIER edges, which that edge
     ///     is painted over (F2, {@link LabelPlate#gap}).
     /// Each label still lives in its own edge's group, painted last there, so the one-group-per-
@@ -306,9 +311,11 @@ public final class FlowchartLayout {
     private static void emitEdgeLabels(List<Shape> base, List<List<Shape>> groups,
                                        List<EdgeLabelJob> jobs, double canvasW, LabelDecollider dec,
                                        MathFragmentRenderer math) {
-        List<double[]> heads = new ArrayList<>();
+        // Obstacles for the de-collider: every arrowhead (F1), then each placed label's padded ink
+        // box as it is emitted (review 1341).
+        List<double[]> obstacles = new ArrayList<>();
         for (List<Shape> g : groups) {
-            heads.addAll(LabelPlate.arrowheadBoxes(g));
+            obstacles.addAll(LabelPlate.arrowheadBoxes(g));
         }
         List<List<double[]>> inksByEdge = new ArrayList<>();
         for (int i = 0; i < groups.size(); i++) {
@@ -322,10 +329,12 @@ public final class FlowchartLayout {
                 EdgeLabelJob job = jobs.get(next++);
                 double[] ink = emitEdgeLabel(job.group(), job.raw(), job.anchorX(), job.baselineY(),
                     job.subtractWidth(), EDGE_LABEL_GAP, canvasW, dec, job.target(), job.color(), math,
-                    painted, heads, List.copyOf(earlierInks));
+                    painted, obstacles, List.copyOf(earlierInks));
                 if (ink != null) {
                     inksByEdge.get(i).add(ink);
                     earlierInks.add(ink);
+                    double pad = LabelPlate.PAD;
+                    obstacles.add(new double[] {ink[0] - pad, ink[1] - pad, ink[2] + pad, ink[3] + pad});
                 }
             }
             painted.addAll(groups.get(i));
@@ -391,8 +400,9 @@ public final class FlowchartLayout {
             return resolve(target, box, List.of());
         }
 
-        /// {@link #resolve(int, double[])} with arrowhead boxes `heads` ([x0, y0, x1, y1], every
-        /// arrowhead of the diagram) as obstacles too (review 1337 F1): a label whose natural box
+        /// {@link #resolve(int, double[])} with obstacle boxes `heads` ([x0, y0, x1, y1]: every
+        /// arrowhead of the diagram, review 1337 F1, and the label pass adds every earlier label's
+        /// padded ink box, review 1341) as obstacles too: a label whose natural box
         /// overlaps an arrowhead also moves, and a stack slot must clear the arrowheads as well as
         /// the same-target labels and the nodes. With no arrowhead in the way this is exactly
         /// {@link #resolve(int, double[])}.

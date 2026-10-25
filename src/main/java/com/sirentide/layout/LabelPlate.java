@@ -15,23 +15,24 @@ import java.util.regex.Pattern;
 /// the contrast pick for that plate. A label that crosses nothing keeps its exact former emission
 /// (no plate, its own colour), so diagrams without crossings bake byte-identically.
 ///
-/// What the plate guarantees is bounded by the box tests below: they compare BOUNDING BOXES (the
-/// label's ink box, an arrowhead's triangle box, a line's stroke), not rendered glyph pixels.
-/// Within that, for a plain flowchart edge label:
+/// The placement and plate rules below compare BOUNDING BOXES (the label's ink box, an
+/// arrowhead's triangle box, a line's stroke), not rendered pixels; the final-composition test
+/// (LabelBackingPlateTest) also samples points inside the actual glyph outlines. For a plain
+/// flowchart edge label:
 ///   - BEHIND the glyphs: the plate covers every line, bar and fill painted before the label, so
 ///     none of them shows behind its ink box. An earlier group's filled arrowhead is cut out of the
 ///     plate ({@link #plate(double[], List, List)}) rather than covered, and an earlier label's ink
-///     box is cut out of a later label's plate (except under the later label's own ink box, which
-///     the plate always covers whole), so no plate is painted over an arrowhead or over an earlier
-///     label, other than where two labels' ink boxes overlap (text on text, OverlapLint's concern).
+///     box is cut out of a later label's plate, so no plate is painted over an arrowhead or over
+///     any part of an earlier label (review 1341: not even the whitespace between its glyphs).
 ///   - NO ARROWHEAD under or over the glyphs (review 1337 F1): an edge label's ink box is placed
 ///     clear of every arrowhead in the diagram, its own included
 ///     ({@code FlowchartLayout.LabelDecollider}), so an active frame never draws the accented
 ///     label over its own accented head (`#c2410c` on `#e8590c` is 1.45 to 1).
 ///   - NOTHING LATER over the glyphs (review 1337 F2): a later edge's line that would reach the
 ///     ink box, even at the active frame's doubled stroke width, is broken around it ({@link #gap}),
-///     a later arrowhead is avoided by the placement above, and a later plate has the ink box cut
-///     out of it outside the later label's own ink box.
+///     a later arrowhead is avoided by the placement above, a later label's ink box is placed at
+///     least {@link #PAD} clear of it (so two edge labels' ink boxes never overlap and a later
+///     plate cannot reach its ink), and a later plate has its ink box cut out as a safety net.
 ///
 /// Paint order inside an edge or message group, the same in both layouts ({@link #place}): the
 /// element's lines that its label's INK crosses, then the plate, then its other lines and its
@@ -54,7 +55,10 @@ import java.util.regex.Pattern;
 ///     4.5 to 1, and when its own line passes within the doubled active stroke width of its ink
 ///     box the accented line reaches the accented ink box (Emphasis; not asserted).
 ///   - A flowchart node is not broken around an edge label (no checked diagram has one over a
-///     label), and the arrowhead placement gives up after the decollider's last stack slot.
+///     label), and the arrowhead and label placement gives up after the decollider's last stack
+///     slot (then the label may still overlap an arrowhead or an earlier label; the earlier label
+///     is never erased, see {@link #plate(double[], List, List)}). A typeset math label is not an
+///     obstacle to later labels. Moving a label off another can put it well away from its edge.
 final class LabelPlate {
 
     private LabelPlate() {}
@@ -205,11 +209,13 @@ final class LabelPlate {
 
     /// {@link #plate(double[], List)} with every box in `holes` (an EARLIER label's ink box, review
     /// 1337 F2) cut out too, the same way as an arrowhead, so a later plate is never painted over an
-    /// earlier label's glyphs. The hole is the ink box exactly, not grown, and never reaches into
-    /// this plate's OWN ink box `box` ({@link #holesOutside}): there the plate must stay whole, or
-    /// the lines under it would show behind this label's glyphs. Where two labels' ink boxes
-    /// overlap the later label's text is drawn over the earlier one's, which is text on text
-    /// (OverlapLint's concern), not something a plate can resolve.
+    /// earlier label's glyphs, its whitespace and counters included (review 1341). The hole is the
+    /// earlier ink box exactly and WHOLE. The flowchart placement keeps a later label's ink box at
+    /// least {@link #PAD} clear of every earlier label's ({@code FlowchartLayout.emitEdgeLabels}),
+    /// so normally the hole lies in this plate's padding only. If placement gave up (every stack
+    /// slot blocked) and the two ink boxes still overlap, the hole reaches under this label's own
+    /// glyphs: the earlier label is still never erased, and inside the overlap this label's glyphs
+    /// sit on whatever is under the earlier label (its plate, if it has one).
     static Shape plate(double[] box, List<Shape> under, List<double[]> holes) {
         Rect r = plate(box);
         double rx0 = r.x();
@@ -230,7 +236,7 @@ final class LabelPlate {
                 cuts.add(poly);
             }
         }
-        for (double[] h : holesOutside(holes, box)) {
+        for (double[] h : holes) {
             double x0 = h[0];
             double y0 = h[1];
             double x1 = h[2];
@@ -251,33 +257,6 @@ final class LabelPlate {
         ring(d, rect);
         overlaps(d, cuts, 0, null, 0);
         return new Path(d.toString().trim(), FILL, null, 0, true);
-    }
-
-    /// Each box of `holes` minus the box `own`, as at most four disjoint rectangles: the parts left
-    /// of, right of, above and below `own` (a hole that does not overlap `own` is kept whole).
-    static List<double[]> holesOutside(List<double[]> holes, double[] own) {
-        List<double[]> out = new java.util.ArrayList<>();
-        for (double[] h : holes) {
-            if (!(h[0] < own[2] && own[0] < h[2] && h[1] < own[3] && own[1] < h[3])) {
-                out.add(h);
-                continue;
-            }
-            if (h[0] < own[0]) {
-                out.add(new double[] {h[0], h[1], own[0], h[3]});
-            }
-            if (own[2] < h[2]) {
-                out.add(new double[] {own[2], h[1], h[2], h[3]});
-            }
-            double mx0 = Math.max(h[0], own[0]);
-            double mx1 = Math.min(h[2], own[2]);
-            if (h[1] < own[1]) {
-                out.add(new double[] {mx0, h[1], mx1, own[1]});
-            }
-            if (own[3] < h[3]) {
-                out.add(new double[] {mx0, own[3], mx1, h[3]});
-            }
-        }
-        return out;
     }
 
     /// Inclusion-exclusion over the cut polygons: every non-empty intersection of k of them is

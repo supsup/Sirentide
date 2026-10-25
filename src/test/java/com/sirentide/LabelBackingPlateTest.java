@@ -50,6 +50,8 @@ class LabelBackingPlateTest {
     /// The plate's fill in a future play-through frame (Emphasis dims structural fills).
     private static final String DIMMED_PLATE = "#fbfcff";
     private static final double MIN_CONTRAST = 4.5;
+    /// The plate's padding around a label's ink box (LabelPlate.PAD).
+    private static final double PAD = 2;
     private static final Page DARK_DOCS = new Page("#0a0a0a", "#e2e8f0");
     private static final Page LIGHT = new Page("#ffffff", "#1a1a1a");
     private static final Pattern NUM = Pattern.compile("-?[0-9]+(?:\\.[0-9]+)?");
@@ -245,7 +247,7 @@ class LabelBackingPlateTest {
             }
             for (int j = i + 1; j < order.size(); j++) {
                 Painted over = order.get(j);
-                if (!over.label() && paintsOver(over, p.box(), ownGlyphBoxes(order, over))) {
+                if (!over.label() && paintsOver(over, p.box())) {
                     found.add(name + ": " + owner(p.el()) + " label" + (onPlate(p) ? " (plated)" : "")
                         + " under " + owner(over.el()) + " " + kind(over.el()));
                 }
@@ -254,24 +256,10 @@ class LabelBackingPlateTest {
         return found;
     }
 
-    /// The glyph boxes of the labels in the same group as `shape` (its own label, for a plate).
-    private static List<double[]> ownGlyphBoxes(List<Painted> order, Painted shape) {
-        List<double[]> out = new ArrayList<>();
-        for (Painted q : order) {
-            if (q.label() && q.el().getParentNode() == shape.el().getParentNode()) {
-                out.add(q.box());
-            }
-        }
-        return out;
-    }
-
     /// Whether `over` covers some of `box`. A plate path is read by non-zero winding at a grid of
     /// points just inside the box, the way a renderer fills it; anything else by {@link #touches}.
-    /// Points inside the plate's OWN label's glyph box (`own`) are skipped: where two labels' ink
-    /// boxes overlap, the later text is drawn over the earlier one whatever the plate does, which is
-    /// text on text (OverlapLint's concern), and the plate stays whole under its own glyphs so the
-    /// lines beneath it cannot show through them.
-    private static boolean paintsOver(Painted over, double[] box, List<double[]> own) {
+    /// Every sample point counts (review 1341: no exemption for another label's box).
+    private static boolean paintsOver(Painted over, double[] box) {
         if (!touches(over, box)) {
             return false;
         }
@@ -285,18 +273,9 @@ class LabelBackingPlateTest {
             for (int j = 0; j <= n; j++) {
                 double x = box[0] + in + (box[2] - box[0] - 2 * in) * i / n;
                 double y = box[1] + in + (box[3] - box[1] - 2 * in) * j / n;
-                if (!insideAny(own, x, y) && winding(d, x, y) != 0) {
+                if (winding(d, x, y) != 0) {
                     return true;
                 }
-            }
-        }
-        return false;
-    }
-
-    private static boolean insideAny(List<double[]> boxes, double x, double y) {
-        for (double[] b : boxes) {
-            if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) {
-                return true;
             }
         }
         return false;
@@ -316,6 +295,291 @@ class LabelBackingPlateTest {
                 double ay = v.get(i + 1);
                 double bx = v.get((i + 2) % v.size());
                 double by = v.get((i + 3) % v.size());
+                double c = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
+                if (ay <= y) {
+                    if (by > y && c > 0) {
+                        w++;
+                    }
+                } else if (by <= y && c < 0) {
+                    w--;
+                }
+            }
+        }
+        return w;
+    }
+
+    /// Review 1341, placement: no two flowchart edge labels come within a plate's padding of each
+    /// other, so no label's plate can reach another label's ink. For every pair of edge label
+    /// glyphs in different groups, one ink box grown by the 2px plate padding must not overlap the
+    /// other, over both plan fixtures and every flowchart golden. On cbb61b57 this failed with
+    /// `plan-flowchart: edge:X-CA and edge:X-CU` (ink boxes [616.54, 200.55, 734.68, 209.88] and
+    /// [710.37, 195.97, 818.94, 205.23] overlap).
+    @Test
+    void noTwoFlowchartEdgeLabelsComeWithinAPlateOfEachOther() throws Exception {
+        List<String> found = new ArrayList<>();
+        for (var e : labelFixtures().entrySet()) {
+            if (!e.getKey().contains("flowchart")) {
+                continue;
+            }
+            List<Painted> order = new ArrayList<>();
+            collect(bake(e.getValue()).getDocumentElement(), null, LIGHT, order);
+            List<Painted> labels = new ArrayList<>();
+            for (Painted p : order) {
+                if (p.label() && "edge".equals(roleOf(p.el()))) {
+                    labels.add(p);
+                }
+            }
+            for (int i = 0; i < labels.size(); i++) {
+                for (int j = i + 1; j < labels.size(); j++) {
+                    Painted a = labels.get(i);
+                    Painted b = labels.get(j);
+                    if (a.el().getParentNode() == b.el().getParentNode()) {
+                        continue;
+                    }
+                    double[] g = {a.box()[0] - PAD, a.box()[1] - PAD, a.box()[2] + PAD, a.box()[3] + PAD};
+                    double[] h = b.box();
+                    if (g[0] < h[2] && h[0] < g[2] && g[1] < h[3] && h[1] < g[3]) {
+                        found.add(e.getKey() + ": " + owner(a.el()) + " and " + owner(b.el()));
+                    }
+                }
+            }
+        }
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Review 1341, the final composition at GLYPH-OUTLINE level: for every label glyph, at every
+    /// point of a 0.5px grid that lies inside the glyph's own outline (non-zero winding of its
+    /// M/L/Q/C path, curves flattened), nothing painted later covers it: no later line (by stroke),
+    /// rect, plate, arrowhead, node path or other label's glyph outline. Over both plan fixtures
+    /// and every flowchart and sequence golden fixture. Unlike the box-level check this sees a
+    /// plate that erases ink between another label's glyphs. On cbb61b57 it failed with
+    /// `plan-flowchart: edge:X-CA ink under edge:X-CU plate` and
+    /// `plan-flowchart: edge:X-CA ink under edge:X-CU label`.
+    @Test
+    void nothingLaterPaintsOverAnyLabelGlyphInk() throws Exception {
+        List<String> found = new ArrayList<>();
+        for (var e : labelFixtures().entrySet()) {
+            found.addAll(inkOverPainted(e.getKey(), bake(e.getValue())));
+        }
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Review 1341's literal points in the static plan flowchart, all inside edge X-CA's glyph
+    /// outline: (733.76, 200.65), where X-CU's plate used to erase X-CA's ink between X-CU's
+    /// glyphs; (733.82915, 200.6904), where X-CU's glyph and plate both used to cover it; and
+    /// (710.97775, 205.2598), the opposing control, where the cut-out already left X-CA's ink
+    /// uncovered at cbb61b57. Each must be X-CA ink (checked first) with nothing painted later over
+    /// it. On cbb61b57 the first two failed (`covered by [edge:X-CU plate]`,
+    /// `[edge:X-CU plate, edge:X-CU label]`) and the control passed.
+    @Test
+    void review1341PointsOfTheCancelledLabelAreUncovered() throws Exception {
+        List<Painted> order = new ArrayList<>();
+        collect(bake(resource(FLOWCHART)).getDocumentElement(), null, LIGHT, order);
+        int at = -1;
+        for (int i = 0; i < order.size(); i++) {
+            if (order.get(i).label() && "edge:X-CA".equals(owner(order.get(i).el()))) {
+                at = i;
+            }
+        }
+        assertTrue(at >= 0, "the X-CA edge label");
+        List<double[][]> ink = outline(order.get(at).el().getAttribute("d"));
+        for (double[] pt : new double[][] {{733.76, 200.65}, {733.82915, 200.6904}, {710.97775, 205.2598}}) {
+            assertTrue(winding(ink, pt[0], pt[1]) != 0, "review 1341 point " + Arrays.toString(pt)
+                + " is inside X-CA's glyph outline; if X-CA moved, re-derive the points");
+            List<String> over = new ArrayList<>();
+            for (Painted q : order.subList(at + 1, order.size())) {
+                if (coversPoint(q, pt[0], pt[1])) {
+                    over.add(owner(q.el()) + " " + (q.label() ? "label" : kind(q.el())));
+                }
+            }
+            assertEquals(List.of(), over, "X-CA ink at " + Arrays.toString(pt) + " covered by");
+        }
+    }
+
+    /// Healthy opposing control for the outline-level check, varied only in where a later plate
+    /// sits: an earlier glyph shaped like an `O` (outer ring, counter cut out) with a later plate
+    /// over just its counter is NOT ink under paint (the box-level check would call it covered),
+    /// and the same plate moved onto the ring IS.
+    @Test
+    void theInkCheckReadsTheOutlineNotTheBox() throws Exception {
+        String counterOnly = "<path d=\"M 22 13 L 28 13 L 28 17 L 22 17 Z\" fill=\"#f5f7ff\"/>";
+        String onTheRing = "<path d=\"M 10.5 11 L 13 11 L 13 19 L 10.5 19 Z\" fill=\"#f5f7ff\"/>";
+        assertEquals(List.of(), inkOverPainted("synthetic", parse(ringScene(counterOnly))));
+        assertEquals(List.of("synthetic: edge:A-B ink under edge:C-D plate"),
+            inkOverPainted("synthetic", parse(ringScene(onTheRing))));
+        assertEquals(List.of("synthetic: edge:A-B label (plated) under edge:C-D plate"),
+            overPainted("synthetic", parse(ringScene(counterOnly))), "the box-level check sees the box only");
+    }
+
+    /// An earlier edge `A-B` whose plated glyph is a square ring (outer [10, 10, 40, 20], counter
+    /// [20, 12, 30, 18] wound the other way), then a later edge `C-D` holding `later`.
+    private static String ringScene(String later) {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"A-B\" data-sirentide-seq=\"1\">"
+            + "<rect x=\"8\" y=\"8\" width=\"34\" height=\"14\" fill=\"#f5f7ff\"/>"
+            + "<path d=\"M 10 10 L 40 10 L 40 20 L 10 20 Z M 20 12 L 20 18 L 30 18 L 30 12 Z\" "
+            + "fill=\"#000000\"/></g>"
+            + "<g data-sirentide-role=\"edge\" data-sirentide-id=\"C-D\" data-sirentide-seq=\"2\">"
+            + later + "</g></svg>";
+    }
+
+    /// Every label glyph of `svg` with some point of its outline's ink covered by a shape painted
+    /// later (see {@link #nothingLaterPaintsOverAnyLabelGlyphInk}). Another run of the SAME label
+    /// (a wrapped line, same group) is not counted.
+    private static List<String> inkOverPainted(String name, Document svg) {
+        List<Painted> order = new ArrayList<>();
+        collect(svg.getDocumentElement(), null, LIGHT, order);
+        TreeSet<String> found = new TreeSet<>();
+        double step = 0.5;
+        for (int i = 0; i < order.size(); i++) {
+            Painted p = order.get(i);
+            if (!p.label()) {
+                continue;
+            }
+            List<Painted> later = new ArrayList<>();
+            for (Painted q : order.subList(i + 1, order.size())) {
+                if (!(q.label() && q.el().getParentNode() == p.el().getParentNode()) && touches(q, p.box())) {
+                    later.add(q);
+                }
+            }
+            if (later.isEmpty()) {
+                continue;
+            }
+            List<double[][]> ink = outline(p.el().getAttribute("d"));
+            double[] b = p.box();
+            for (double x = b[0] + step / 2; x < b[2]; x += step) {
+                for (double y = b[1] + step / 2; y < b[3]; y += step) {
+                    if (winding(ink, x, y) == 0) {
+                        continue;
+                    }
+                    for (Painted q : later) {
+                        if (coversPoint(q, x, y)) {
+                            found.add(name + ": " + owner(p.el()) + " ink under " + owner(q.el()) + " "
+                                + (q.label() ? "label" : kind(q.el())));
+                        }
+                    }
+                }
+            }
+        }
+        return new ArrayList<>(found);
+    }
+
+    /// Whether `q` paints the point: a line within half its stroke width, a rect strictly inside,
+    /// a path by non-zero winding of its outline (a path with commands other than M/L/Q/C/Z, such
+    /// as an arc, by its box).
+    private static boolean coversPoint(Painted q, double x, double y) {
+        String name = q.el().getLocalName();
+        if ("line".equals(name)) {
+            double[] l = q.box();
+            double dx = l[2] - l[0];
+            double dy = l[3] - l[1];
+            double len2 = dx * dx + dy * dy;
+            double t = len2 == 0 ? 0 : Math.max(0, Math.min(1, ((x - l[0]) * dx + (y - l[1]) * dy) / len2));
+            return Math.hypot(x - l[0] - t * dx, y - l[1] - t * dy) <= l[4];
+        }
+        double[] b = q.box();
+        if ("rect".equals(name)) {
+            return x > b[0] && x < b[2] && y > b[1] && y < b[3];
+        }
+        List<double[][]> rings = outline(q.el().getAttribute("d"));
+        if (rings == null) {
+            return x > b[0] && x < b[2] && y > b[1] && y < b[3];
+        }
+        return winding(rings, x, y) != 0;
+    }
+
+    private static final Pattern PATH_TOKEN = Pattern.compile("[A-Za-z]|-?[0-9]+(?:\\.[0-9]+)?");
+
+    /// The closed rings of an absolute M/L/Q/C/Z path, each curve flattened into 8 segments, or
+    /// `null` for a path with any other command.
+    private static List<double[][]> outline(String d) {
+        List<String> t = new ArrayList<>();
+        Matcher m = PATH_TOKEN.matcher(d);
+        while (m.find()) {
+            t.add(m.group());
+        }
+        List<double[][]> rings = new ArrayList<>();
+        List<double[]> cur = new ArrayList<>();
+        char cmd = 0;
+        double px = 0;
+        double py = 0;
+        int i = 0;
+        int n = 8;
+        while (i < t.size()) {
+            String tok = t.get(i);
+            if (Character.isLetter(tok.charAt(0))) {
+                cmd = tok.charAt(0);
+                i++;
+                if (cmd == 'Z') {
+                    if (!cur.isEmpty()) {
+                        rings.add(cur.toArray(new double[0][]));
+                        cur = new ArrayList<>();
+                    }
+                    continue;
+                }
+                if ("MLQC".indexOf(cmd) < 0) {
+                    return null;
+                }
+                continue;
+            }
+            if (cmd == 'M') {
+                if (!cur.isEmpty()) {
+                    rings.add(cur.toArray(new double[0][]));
+                    cur = new ArrayList<>();
+                }
+                px = Double.parseDouble(t.get(i++));
+                py = Double.parseDouble(t.get(i++));
+                cur.add(new double[] {px, py});
+                cmd = 'L';
+            } else if (cmd == 'L') {
+                px = Double.parseDouble(t.get(i++));
+                py = Double.parseDouble(t.get(i++));
+                cur.add(new double[] {px, py});
+            } else if (cmd == 'Q') {
+                double cx = Double.parseDouble(t.get(i++));
+                double cy = Double.parseDouble(t.get(i++));
+                double x = Double.parseDouble(t.get(i++));
+                double y = Double.parseDouble(t.get(i++));
+                for (int k = 1; k <= n; k++) {
+                    double s = k / (double) n;
+                    double u = 1 - s;
+                    cur.add(new double[] {u * u * px + 2 * u * s * cx + s * s * x, u * u * py + 2 * u * s * cy + s * s * y});
+                }
+                px = x;
+                py = y;
+            } else if (cmd == 'C') {
+                double[] c = new double[6];
+                for (int k = 0; k < 6; k++) {
+                    c[k] = Double.parseDouble(t.get(i++));
+                }
+                for (int k = 1; k <= n; k++) {
+                    double s = k / (double) n;
+                    double u = 1 - s;
+                    cur.add(new double[] {
+                        u * u * u * px + 3 * u * u * s * c[0] + 3 * u * s * s * c[2] + s * s * s * c[4],
+                        u * u * u * py + 3 * u * u * s * c[1] + 3 * u * s * s * c[3] + s * s * s * c[5]});
+                }
+                px = c[4];
+                py = c[5];
+            } else {
+                return null;
+            }
+        }
+        if (!cur.isEmpty()) {
+            rings.add(cur.toArray(new double[0][]));
+        }
+        return rings;
+    }
+
+    /// Non-zero winding number of closed polygon rings at a point.
+    private static int winding(List<double[][]> rings, double x, double y) {
+        int w = 0;
+        for (double[][] r : rings) {
+            for (int i = 0; i < r.length; i++) {
+                double ax = r[i][0];
+                double ay = r[i][1];
+                double bx = r[(i + 1) % r.length][0];
+                double by = r[(i + 1) % r.length][1];
                 double c = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
                 if (ay <= y) {
                     if (by > y && c > 0) {

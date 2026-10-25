@@ -189,20 +189,20 @@ class LabelPlateTest {
         assertEquals(LabelPlate.plate(LABEL), LabelPlate.plate(LABEL, List.of(), List.of()));
     }
 
-    /// The plate stays whole under its OWN ink even where an earlier label's ink box overlaps it
-    /// (plan-flowchart X-CU over X-CA): a hole there let X-CA's line and the page show behind X-CU's
-    /// glyphs (`#000000` on `#0a0a0a`, 1.06 to 1). Only the part of the earlier ink outside this
-    /// label's ink box is cut out.
+    /// Review 1341: an earlier label's ink box is cut out of a later plate WHOLE, even where it
+    /// reaches into the later label's own ink box (only the all-slots-blocked placement fallback can
+    /// leave two ink boxes overlapping), so a later plate never erases earlier ink, not even in the
+    /// whitespace between the later label's glyphs. On cbb61b57 the plate stayed whole under its
+    /// own ink box, so `winding(d, 155, 52)` was 1, not 0.
     @Test
-    void anEarlierInkHoleNeverReachesIntoThePlatesOwnInk() {
+    void anEarlierLabelsInkIsCutOutWholeEvenUnderThePlatesOwnInkBox() {
         double[] earlier = {150, 40, 200, 55};
         String d = ((Path) LabelPlate.plate(LABEL, List.of(), List.of(earlier))).d();
-        assertTrue(winding(d, 155, 52) != 0, "under this label's own ink, inside the earlier ink box");
-        assertTrue(winding(d, 120, 55) != 0, "under this label's own ink");
-        assertEquals(0, winding(d, 161, 51), "the earlier ink right of this label's ink is uncut");
-        assertEquals(0, winding(d, 155, 49), "the earlier ink above this label's ink is uncut");
-        assertEquals(List.of("[160.0, 40.0, 200.0, 55.0]", "[150.0, 40.0, 160.0, 50.0]"),
-            LabelPlate.holesOutside(List.of(earlier), LABEL).stream().map(java.util.Arrays::toString).toList());
+        assertEquals(0, winding(d, 155, 52), "earlier ink inside this label's own ink box is not erased");
+        assertEquals(0, winding(d, 161, 51), "earlier ink right of this label's ink box is not erased");
+        assertEquals(0, winding(d, 155, 49), "earlier ink above this label's ink box is not erased");
+        assertTrue(winding(d, 120, 55) != 0, "the rest of the plate is filled");
+        assertTrue(winding(d, 155, 58) != 0, "the plate below the earlier ink is filled");
     }
 
     /// The flowchart's crossing reach: a line 1.2px below the ink box does not touch it at its

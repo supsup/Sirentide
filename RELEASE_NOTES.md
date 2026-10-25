@@ -35,9 +35,12 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   A plate never covers an arrowhead. A flowchart edge label is also placed clear of every
   arrowhead, its own included, so an active label is never drawn on its own accented head
   (1.45 to 1 before), and nothing painted later covers it: a later edge's line is broken around
-  the label and a later label's plate has it cut out (where two labels' text boxes overlap, the
-  later text still covers the earlier). These checks compare bounding boxes, not rendered
-  pixels. Not yet covered: sequence labels get the plate but not the arrowhead placement
+  the label, and a later edge label is placed at least the plate's 2px padding clear of every
+  earlier one (stacked to a free slot, which can put it some way from its edge), so neither its
+  text nor its plate reaches the earlier text; a plate also has any earlier label's text box cut
+  out of it. The placement compares bounding boxes; the over-paint check also samples the actual
+  glyph outlines. If every stack slot is taken, a label can still overlap an arrowhead or an
+  earlier label (the earlier label is never erased). Not yet covered: sequence labels get the plate but not the arrowhead placement
   or the later-line breaks; alt/else frame and branch labels, class and ER labels, and typeset
   math labels are not plated; and a label that crosses nothing has no plate, so in play-through
   frames on a light page or the neutral theme (or with its own line close by) its active accent
