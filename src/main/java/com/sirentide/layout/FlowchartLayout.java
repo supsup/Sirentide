@@ -259,7 +259,7 @@ public final class FlowchartLayout {
         // Plan 3e1104cf: every plain label is plated, crossed or not (only an unreadable outline,
         // with no ink box, is not).
         boolean plated = ink != null;
-        if (plated) {
+        if (plated) {   // unless the cut-outs are too many to compose (review 1381): then unplated
             // Plan 5ce905a8, review 1335 F1: the plate goes BEFORE this edge's own arrowhead (the
             // trailing Path run) and above the edge lines the ink crosses, at the active frame's
             // doubled width (LabelPlate.place). In the legacy flat path `shapes` is the whole
@@ -268,7 +268,7 @@ public final class FlowchartLayout {
             while (headAt > 0 && shapes.get(headAt - 1) instanceof Path) {
                 headAt--;
             }
-            LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted,
+            plated = LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted,
                 LabelPlate.ACTIVE_REACH, earlierInks);
         }
         shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));

@@ -730,6 +730,43 @@ class LabelBackingPlateTest {
         assertTrue(plate[1] >= tab[3], "the ping plate top " + plate[1] + " must be at or below the tab row bottom " + tab[3]);
     }
 
+    /// Review 1381's witness shape, at a size that can still be run against cced2495: an `alt` frame
+    /// whose self-message label wraps to four lines, then twelve identical `else` dividers at the next
+    /// boundary, all labelled the same and all drawn where the self-message plate reaches. Fixture
+    /// checks first: twelve root-level divider labels, every one overlapping that plate's box. Then
+    /// the plate is cut around them in a bounded number of rings (identical cuts are composed once).
+    /// On cced2495 the self-message plate carried one ring per subset of the twelve (2^12).
+    @Test
+    void duplicateDividerLabelsUnderASelfMessagePlateAreCutOutOnce() throws Exception {
+        StringBuilder dsl = new StringBuilder("sequenceDiagram\nalt check\nA ->> A : ");
+        dsl.append("pending ".repeat(12).trim()).append('\n');
+        for (int i = 0; i < 12; i++) {
+            dsl.append("else pending pending pending\n");
+        }
+        dsl.append("A ->> B : done\nend\n");
+        List<Painted> order = new ArrayList<>();
+        collect(bake(dsl.toString()).getDocumentElement(), null, LIGHT, order);
+        Painted plate = null;
+        for (Painted q : order) {
+            if ("plate".equals(kind(q.el())) && "message:A-A".equals(owner(q.el()))) {
+                plate = q;
+            }
+        }
+        assertTrue(plate != null, "fixture check: the self-message has a plate");
+        int dividers = 0;
+        for (Painted q : order) {
+            Element el = q.el();
+            if ("path".equals(el.getLocalName()) && "top".equals(owner(el))
+                && "currentColor".equals(el.getAttribute("fill")) && touches(plate, q.box())) {
+                dividers++;
+            }
+        }
+        assertTrue(dividers >= 12, "fixture check: the twelve divider labels reach the plate: " + dividers);
+        String d = plate.el().getAttribute("d");
+        int rings = d.split("M ", -1).length - 1;
+        assertTrue(rings <= 3, "the duplicate divider labels are cut out once, not per subset: " + rings);
+    }
+
     /// Healthy opposing control for {@link #platesOverGlyphInk}, varied only in where the later
     /// plate sits: a root-level caption glyph (box [10, 10, 40, 20]) with a later message plate
     /// clear of it is not reported, and the same plate moved onto the caption is.

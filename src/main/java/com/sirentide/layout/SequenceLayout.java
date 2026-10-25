@@ -788,10 +788,9 @@ public final class SequenceLayout {
     private static void emitLabelLines(List<Shape> shapes, List<String> runs, String textColor,
                                        List<Shape> painted, int headAt, List<double[]> earlierInks) {
         double[] box = LabelPlate.inkBox(runs);
-        boolean plated = box != null;   // plan 3e1104cf: every plain label, crossed or not
-        if (plated) {
-            LabelPlate.place(shapes, 0, headAt, box, painted, 1.0, earlierInks);
-        }
+        // Plan 3e1104cf: every plain label, crossed or not, unless its cut-outs are too many to
+        // compose (review 1381; then it is drawn unplated, as before).
+        boolean plated = box != null && LabelPlate.place(shapes, 0, headAt, box, painted, 1.0, earlierInks);
         for (String d : runs) {
             shapes.add(plated ? LabelPlate.text(d) : new GlyphRun(d, textColor));
         }

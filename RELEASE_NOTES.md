@@ -36,7 +36,11 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   few pixels lower, so its label (and plate) stays below the frame's tab row; before, the label
   grew up into that row. That retires the one finding `--lint-overlap` reported on the golden
   gallery (`sequence-blocks`: "every retry" 1.8 px into "ping"). Sequence diagrams with frames are
-  slightly taller.
+  slightly taller. Composing a plate's cut-outs is bounded: identical cut-outs are made once,
+  overlapping text boxes are split into disjoint pieces first, and a plate whose arrowheads and
+  text boxes would still need more than 4,096 composition steps (or more than 64 distinct text
+  boxes) is left out, so that one label is drawn unplated in the page colour, as before this
+  entry, instead of the render running away.
 - *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
   Long plain labels can use up to four lines instead of being cut to the existing actor gap.
   Self messages reserve room before the next lifeline, and rows grow with wrapped text.
