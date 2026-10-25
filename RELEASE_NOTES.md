@@ -26,9 +26,17 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   get the plate too. Everything else from the 2026-10-24 entry holds (arrowhead avoidance, label
   spacing, line breaks and cut-outs, paint order, the anchor groups). Diagrams with edge or
   message labels bake differently: each label gains a plate and its text is black instead of
-  `currentColor`. Still not plated: alt/else frame and branch labels, class, ER and other
+  `currentColor`. A compatibility change for API callers: the `textColor` of a `Flowchart` or
+  `Sequence` (an explicit `#hex`, `currentColor` or `none`) no longer colours a plain-text edge
+  or message label; it still fills typeset math edge and message labels. Still not plated: alt/else frame and branch labels, class, ER and other
   layouts' labels, and typeset math labels; those keep the page-level colours in play-through
-  frames. A sequence plate does not cut out earlier labels' text the way a flowchart plate does.
+  frames. A sequence plate is never laid over earlier text: it is cut around the text of every
+  frame and divider label, note and earlier message label painted before it, as a flowchart plate
+  is. And the first normal message inside a block frame (`loop`, `alt` and the rest) now sits a
+  few pixels lower, so its label (and plate) stays below the frame's tab row; before, the label
+  grew up into that row. That retires the one finding `--lint-overlap` reported on the golden
+  gallery (`sequence-blocks`: "every retry" 1.8 px into "ping"). Sequence diagrams with frames are
+  slightly taller.
 - *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
   Long plain labels can use up to four lines instead of being cut to the existing actor gap.
   Self messages reserve room before the next lifeline, and rows grow with wrapped text.

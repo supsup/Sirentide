@@ -93,23 +93,23 @@ class OverlapLintTest {
     }
 
     @Test
-    void theSequenceBlocksGoldenGrazesAndIsReported() {
-        // MEASURED, not chosen: of the 32 golden fixtures, this is the one the lint flags. The `loop`
-        // frame's label "every retry" sits 1.8 px into the "ping" message label below it, which the
-        // BrewShot capture shows as descenders touching ascenders. A real (small) finding, kept as a
-        // second native positive rather than tuned away.
+    void theSequenceBlocksGoldenNoLongerGrazes() {
+        // This was the one golden the lint flagged: the `loop` frame's label "every retry" sat 1.8 px
+        // into the "ping" message label below it (the frame's first message label grew up into the
+        // tab row). Sirentide plan 3e1104cf, review 1372, moves a frame's first normal message clear
+        // of its tab row (SequenceLayout.FRAME_LABEL_CLEAR) and regenerates the golden, which retires
+        // the finding. The lint must still see the frame label and the message label: the fixture
+        // keeps both, and the synthetic positives below keep the rule's teeth.
         RenderResult r = Sirentide.renderWithDiagnostics(SEQUENCE_BLOCKS, null, LINT);
-        assertTrue(r.diagnostics().detail().contains("x message:Alice-Bob-1"), r.diagnostics().detail());
-        assertFalse(Sirentide.renderWithDiagnostics(SEQUENCE_BLOCKS).diagnostics().detail().contains("text overlap"));
+        assertTrue(r.svg().contains("data-sirentide-id=\"Alice-Bob-1\""), "control: the ping message is drawn");
+        assertFalse(r.diagnostics().detail().contains("text overlap"), r.diagnostics().detail());
     }
 
-    /// The golden fixtures the lint is KNOWN to flag. Exactly one, and it is a real finding, not a
-    /// false positive: `sequence-blocks` (loop label "every retry" 1.8 px into message label "ping").
-    /// KNOWN FINDING, FILED FOR FOLLOW-UP: the layout and the golden are deliberately left as they are
-    /// on this branch; the fix belongs to a layout change that regenerates the golden under review.
-    /// When that lands, delete the entry here and the CLI pin in CliLintOverlapTest goes red, which is
-    /// the signal to retire it too. Adding a name here hides a finding, so it needs the same review.
-    static final Set<String> KNOWN_LINT_FINDINGS = Set.of("sequence-blocks");
+    /// The golden fixtures the lint is KNOWN to flag. None: the one there was, `sequence-blocks`
+    /// (loop label "every retry" 1.8 px into message label "ping"), was retired by the layout fix
+    /// of Sirentide plan 3e1104cf (review 1372), together with its CLI pin in CliLintOverlapTest.
+    /// Adding a name here hides a finding, so it needs the same review.
+    static final Set<String> KNOWN_LINT_FINDINGS = Set.of();
 
     @Test
     void everyGoldenFixtureExceptTheKnownFindingPassesTheLint() {

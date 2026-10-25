@@ -60,9 +60,12 @@ import java.util.regex.Pattern;
 ///     fragment's own SVG, not layout geometry): they are not plated, placed or protected, and in
 ///     a play-through frame they still take the page-level accent and dim. Node, actor-head, note
 ///     and cluster labels sit on their own filled box and are not plated either.
-///   - A sequence plate is not cut around an EARLIER label's ink (the flowchart's holes): message
-///     rows are stacked apart so no checked diagram needs it, but a plate's {@link #PAD} could
-///     reach glyphs painted just before it (a frame tab label, say) without the ink crossing them.
+///   - A sequence plate is cut around every EARLIER glyph run's ink box (the flowchart's holes,
+///     {@link #glyphInks}): a frame tab or divider label, note text, an earlier message label.
+///     Review 1372 found the `ping` plate's {@link #PAD} reaching the `every retry` loop tab
+///     label in sequence-blocks. Sequence placement still does not move a label off an earlier
+///     one, so if two ink boxes overlapped the later label's glyphs would sit, inside the
+///     overlap, on whatever is under the earlier label; no checked diagram has such an overlap.
 ///   - A flowchart node is not broken around an edge label (no checked diagram has one over a
 ///     label), and the arrowhead and label placement gives up after the decollider's last stack
 ///     slot (then the label may still overlap an arrowhead or an earlier label; the earlier label
@@ -95,6 +98,22 @@ final class LabelPlate {
     /// play-through frames recolour it against the plate, not the page (plan 5ce905a8).
     static GlyphRun text(String pathD) {
         return new GlyphRun(pathD, TEXT, true);
+    }
+
+    /// The ink box of every {@link GlyphRun} in `shapes`, groups flattened, in paint order (review
+    /// 1372). The sequence layout cuts these out of a later message plate. A run with no readable
+    /// box ({@link #inkBox} returns null) contributes nothing.
+    static List<double[]> glyphInks(List<Shape> shapes) {
+        List<double[]> out = new java.util.ArrayList<>();
+        for (Shape s : Group.flatten(shapes)) {
+            if (s instanceof GlyphRun g) {
+                double[] b = inkBox(List.of(g.pathD()));
+                if (b != null) {
+                    out.add(b);
+                }
+            }
+        }
+        return out;
     }
 
     private static final Pattern NUM = Pattern.compile("-?[0-9]+(?:\\.[0-9]+)?");

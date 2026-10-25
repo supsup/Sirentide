@@ -647,6 +647,158 @@ class LabelBackingPlateTest {
         }
     }
 
+    /// Review 1372, the class: no plate is laid over the ink of ANY glyph painted before it, not
+    /// only an edge or message label's. A frame tab or divider label, a note's text and a node's
+    /// label are root-level or inside their own box, so {@link #nothingLaterPaintsOverAnyLabelGlyphInk}
+    /// (structural labels only) did not see them. Over both plan fixtures and every flowchart and
+    /// sequence golden fixture, at glyph-outline level on a 0.5px grid. On da403ae it failed with
+    /// `plan-sequence: top ink under message:App-Caller plate` and
+    /// `sequence-blocks: top ink under message:Alice-Bob-1 plate` (the `ping` plate over `every retry`).
+    @Test
+    void noPlateIsLaidOverAnyEarlierGlyphInk() throws Exception {
+        List<String> found = new ArrayList<>();
+        int[] glyphs = {0};
+        for (var e : labelFixtures().entrySet()) {
+            found.addAll(platesOverGlyphInk(e.getKey(), bake(e.getValue()), glyphs));
+        }
+        assertTrue(glyphs[0] > 100, "the check saw glyphs: " + glyphs[0]);
+        assertEquals("", String.join("\n", new TreeSet<>(found)));
+    }
+
+    /// Review 1372's witness in sequence-blocks: the `loop` frame's root-level label "every retry"
+    /// sits in the frame's tab row just above the first message label inside the loop, `ping`
+    /// (message Alice-Bob-1). Fixture checks first: the ping plate exists; the caption is the
+    /// nearest root-level text glyph above it that shares its x-range, inside a tab rect, and less
+    /// than 10px above the plate (so a regression to the old layout reaches it). Then: no plate
+    /// covers any ink point of the caption (0.5px grid), and the ping plate's top is at or below the
+    /// tab row's bottom. On da403ae the first failed (`covered by [message:Alice-Bob-1 plate]` at
+    /// review 1372's point (89.703, 132.107)); with the plate cut-outs alone the second failed.
+    @Test
+    void theEveryRetryLoopLabelInkSurvivesThePingPlate() throws Exception {
+        List<Painted> order = new ArrayList<>();
+        collect(bake(GoldenSvgTest.fixtures().get("sequence-blocks")).getDocumentElement(), null, LIGHT, order);
+        int plateAt = -1;
+        for (int i = 0; i < order.size(); i++) {
+            if ("plate".equals(kind(order.get(i).el())) && "message:Alice-Bob-1".equals(owner(order.get(i).el()))) {
+                plateAt = i;
+            }
+        }
+        assertTrue(plateAt >= 0, "fixture check: the ping message has a plate");
+        double[] plate = order.get(plateAt).box();
+        int at = -1;
+        for (int i = 0; i < plateAt; i++) {
+            Element el = order.get(i).el();
+            double[] b = order.get(i).box();
+            if ("path".equals(el.getLocalName()) && "top".equals(owner(el))
+                && "currentColor".equals(el.getAttribute("fill"))
+                && b[0] < plate[2] && plate[0] < b[2] && b[3] <= plate[3]
+                && (at < 0 || b[3] > order.get(at).box()[3])) {
+                at = i;
+            }
+        }
+        assertTrue(at >= 0, "fixture check: a root-level frame label above the ping plate");
+        double[] cap = order.get(at).box();
+        double[] tab = null;
+        for (Painted q : order.subList(0, at)) {
+            double[] b = q.box();
+            if ("rect".equals(q.el().getLocalName()) && "#e7ecff".equals(q.el().getAttribute("fill"))
+                && b[1] <= (cap[1] + cap[3]) / 2 && (cap[1] + cap[3]) / 2 <= b[3]) {
+                tab = b;
+            }
+        }
+        assertTrue(tab != null, "fixture check: the caption sits in a frame tab row");
+        assertTrue(plate[1] - cap[3] < 10, "fixture check: the caption is just above the ping plate: "
+            + Arrays.toString(cap) + " vs " + Arrays.toString(plate));
+        List<double[][]> ink = outline(order.get(at).el().getAttribute("d"));
+        TreeSet<String> over = new TreeSet<>();
+        int inkPoints = 0;
+        for (double x = cap[0] + 0.25; x < cap[2]; x += 0.5) {
+            for (double y = cap[1] + 0.25; y < cap[3]; y += 0.5) {
+                if (winding(ink, x, y) == 0) {
+                    continue;
+                }
+                inkPoints++;
+                for (Painted q : order.subList(at + 1, order.size())) {
+                    if ("plate".equals(kind(q.el())) && coversPoint(q, x, y)) {
+                        over.add(owner(q.el()) + " plate");
+                    }
+                }
+            }
+        }
+        assertTrue(inkPoints > 50, "fixture check: the caption's ink was sampled: " + inkPoints);
+        assertEquals(List.of(), new ArrayList<>(over), "every retry ink covered by");
+        assertTrue(plate[1] >= tab[3], "the ping plate top " + plate[1] + " must be at or below the tab row bottom " + tab[3]);
+    }
+
+    /// Healthy opposing control for {@link #platesOverGlyphInk}, varied only in where the later
+    /// plate sits: a root-level caption glyph (box [10, 10, 40, 20]) with a later message plate
+    /// clear of it is not reported, and the same plate moved onto the caption is.
+    @Test
+    void thePlateOverGlyphCheckSeesARootLevelCaption() throws Exception {
+        String clear = "<rect x=\"50\" y=\"8\" width=\"20\" height=\"14\" fill=\"#f5f7ff\"/>";
+        String onIt = "<rect x=\"30\" y=\"8\" width=\"20\" height=\"14\" fill=\"#f5f7ff\"/>";
+        int[] glyphs = {0};
+        assertEquals(List.of(), platesOverGlyphInk("synthetic", parse(captionScene(clear)), glyphs));
+        assertEquals(List.of("synthetic: top ink under message:C-D plate"),
+            platesOverGlyphInk("synthetic", parse(captionScene(onIt)), glyphs));
+        assertEquals(2, glyphs[0], "the caption glyph was checked in both arms");
+    }
+
+    /// A root-level caption glyph (a filled square ring [10, 10, 40, 20]), then a message `C-D`
+    /// holding `later`.
+    private static String captionScene(String later) {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+            + "<path d=\"M 10 10 L 40 10 L 40 20 L 10 20 Z M 20 12 L 20 18 L 30 18 L 30 12 Z\" "
+            + "fill=\"currentColor\"/>"
+            + "<g data-sirentide-role=\"message\" data-sirentide-id=\"C-D\" data-sirentide-seq=\"1\">"
+            + later + "</g></svg>";
+    }
+
+    /// Every glyph of `svg` (a path filled with the page text, currentColor or plate ink, whatever
+    /// group it is in; not an arrowhead or a plate) with some point of its outline's ink covered
+    /// by a PLATE painted later. A plate in the glyph's own group is not counted. `glyphs[0]` is
+    /// incremented once per glyph checked.
+    private static List<String> platesOverGlyphInk(String name, Document svg, int[] glyphs) {
+        List<Painted> order = new ArrayList<>();
+        collect(svg.getDocumentElement(), null, LIGHT, order);
+        TreeSet<String> found = new TreeSet<>();
+        double step = 0.5;
+        for (int i = 0; i < order.size(); i++) {
+            Element el = order.get(i).el();
+            String fill = el.getAttribute("fill");
+            if (!"path".equals(el.getLocalName()) || "arrowhead".equals(kind(el)) || isPlateFill(fill)
+                || !("currentColor".equals(fill) || "#000000".equals(fill) || LIGHT.text().equals(fill))) {
+                continue;
+            }
+            glyphs[0]++;
+            List<Painted> plates = new ArrayList<>();
+            for (Painted q : order.subList(i + 1, order.size())) {
+                if ("plate".equals(kind(q.el())) && q.el().getParentNode() != el.getParentNode()
+                    && touches(q, order.get(i).box())) {
+                    plates.add(q);
+                }
+            }
+            if (plates.isEmpty()) {
+                continue;
+            }
+            List<double[][]> ink = outline(el.getAttribute("d"));
+            double[] b = order.get(i).box();
+            for (double x = b[0] + step / 2; x < b[2]; x += step) {
+                for (double y = b[1] + step / 2; y < b[3]; y += step) {
+                    if (winding(ink, x, y) == 0) {
+                        continue;
+                    }
+                    for (Painted q : plates) {
+                        if (coversPoint(q, x, y)) {
+                            found.add(name + ": " + owner(el) + " ink under " + owner(q.el()) + " plate");
+                        }
+                    }
+                }
+            }
+        }
+        return new ArrayList<>(found);
+    }
+
     /// Healthy opposing control for the outline-level check, varied only in where a later plate
     /// sits: an earlier glyph shaped like an `O` (outer ring, counter cut out) with a later plate
     /// over just its counter is NOT ink under paint (the box-level check would call it covered),
