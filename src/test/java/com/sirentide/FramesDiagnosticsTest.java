@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sirentide.api.Diagnostics;
+import com.sirentide.api.FrameBudget;
 import com.sirentide.api.FramesResult;
 import com.sirentide.api.Outcome;
 import com.sirentide.api.Sirentide;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 /// Receipts for the play-through diagnostics twin (plan sirentide-fence-diagnostics).
@@ -93,6 +96,112 @@ class FramesDiagnosticsTest {
             "the drop caveat still rides the message: " + r.diagnostics().message());
         assertEquals(Sirentide.renderFrames(DROPPING_PIE), r.frames(),
             "frames stay byte-identical to renderFrames even with the caveat riding the diagnostics");
+    }
+
+    @Test
+    void sourceAndFontCaveatsComposeIdenticallyOnSingleAndMultiFramePaths() {
+        // Causal mutant: omit droppedStatementCaveat from the shared policy (or bypass the policy
+        // on either frames branch). The independent expected detail pins composition and line
+        // attribution; parity alone would pass if both diagnostic APIs lost the same caveat.
+        for (boolean multi : new boolean[] {false, true}) {
+            for (boolean drop : new boolean[] {false, true}) {
+                for (boolean font : new boolean[] {false, true}) {
+                    String dsl = "flowchart TD\nA[" + (font ? "漢字" : "Start") + "]"
+                        + (multi ? " --> B[End]" : "") + "\n"
+                        + (drop ? "mystyle A fill:#f00\n" : "");
+                    String expectedDetail = drop
+                        ? "dropped statement(s): 1; line 3: mystyle A fill:#f00" : "";
+                    if (font) {
+                        expectedDetail += (drop ? "; " : "")
+                            + "out-of-coverage code points: U+6F22, U+5B57";
+                    }
+                    Diagnostics still = Sirentide.renderWithDiagnostics(dsl).diagnostics();
+                    FramesResult deck = Sirentide.renderFramesWithDiagnostics(dsl);
+
+                    assertEquals(Outcome.OK, still.outcome(), dsl);
+                    assertEquals(expectedDetail, still.detail(), dsl);
+                    assertEquals(drop ? 3 : -1, still.line(), dsl);
+                    assertEquals(still.detail(), deck.diagnostics().detail(), dsl);
+                    assertEquals(still.line(), deck.diagnostics().line(), dsl);
+                    assertEquals(still.outcome(), deck.diagnostics().outcome(), dsl);
+                    assertEquals(still.stage(), deck.diagnostics().stage(), dsl);
+                    assertEquals(multi, deck.frames().size() > 1, "branch control: " + dsl);
+                    assertEquals(Sirentide.renderFrames(dsl), deck.frames(), dsl);
+                    if (!multi) {
+                        assertTrue(deck.diagnostics().message().contains("single frame"), dsl);
+                        assertEquals(Sirentide.render(dsl), deck.frames().getFirst(), dsl);
+                    } else {
+                        assertEquals(still, deck.diagnostics(), dsl);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void framesAlsoKeepNumericRowAndHeatmapInputCaveats() {
+        String[] sources = {
+            "xychart line numeric\n1 : 1\nabc : 2\n3 : 3\n",
+            "heatmap\nhide: nope\n\"r\" : 0.5\n"
+        };
+        String[] kinds = {"xychart numeric row issue(s): 1", "heatmap input issue(s): 1"};
+        for (int i = 0; i < sources.length; i++) {
+            Diagnostics still = Sirentide.renderWithDiagnostics(sources[i]).diagnostics();
+            FramesResult deck = Sirentide.renderFramesWithDiagnostics(sources[i]);
+            assertEquals(Outcome.OK, still.outcome());
+            assertTrue(still.detail().contains(kinds[i]), still.detail());
+            assertEquals(still.detail(), deck.diagnostics().detail());
+            assertEquals(still.line(), deck.diagnostics().line());
+            assertEquals(Outcome.OK, deck.diagnostics().outcome());
+            assertEquals(Sirentide.renderFrames(sources[i]), deck.frames());
+        }
+    }
+
+    @Test
+    void consumerBudgetFailureOwnsTheVerdictEvenWhenTheSourceHasCombinedCaveats() {
+        for (boolean multi : new boolean[] {false, true}) {
+            String dsl = "flowchart TD\nA[漢字]" + (multi ? " --> B[End]" : "")
+                + "\nmystyle A fill:#f00\n";
+            FramesResult deck = Sirentide.renderFramesWithDiagnostics(dsl);
+            long bytes = deck.frames().stream()
+                .mapToLong(frame -> frame.getBytes(StandardCharsets.UTF_8).length).sum();
+            assertTrue(deck.diagnostics().detail().contains("dropped statement(s)"));
+            assertTrue(deck.diagnostics().detail().contains("out-of-coverage"));
+            FramesResult exact = Sirentide.renderFramesWithDiagnostics(dsl, null,
+                new FrameBudget(deck.frames().size(), bytes));
+            assertEquals(deck, exact, "sufficient budgets preserve the caveats and every frame");
+
+            FramesResult shortBytes = Sirentide.renderFramesWithDiagnostics(dsl, null,
+                new FrameBudget(deck.frames().size(), bytes - 1));
+            assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, shortBytes.diagnostics().outcome());
+            assertTrue(shortBytes.frames().isEmpty(), "no partial deck survives the cap");
+            assertTrue(shortBytes.diagnostics().detail().startsWith("consumer-utf8-bytes"));
+            assertFalse(shortBytes.diagnostics().detail().contains("dropped statement(s)"));
+            if (multi) {
+                FramesResult shortCount = Sirentide.renderFramesWithDiagnostics(dsl, null,
+                    new FrameBudget(deck.frames().size() - 1, 1));
+                assertEquals(Outcome.OUTPUT_CAP_EXCEEDED, shortCount.diagnostics().outcome());
+                assertTrue(shortCount.frames().isEmpty());
+                assertTrue(shortCount.diagnostics().detail().startsWith("consumer-frame-count"),
+                    "count rejection precedes both byte evaluation and successful caveat policy");
+            }
+        }
+    }
+
+    @Test
+    void unsupportedAndUnreadableEmptiedBodiesKeepTheirFailureClassifications() {
+        String[] bodies = {"A <--> B", "mystyle A fill:#f00"};
+        Outcome[] outcomes = {Outcome.UNSUPPORTED_CONSTRUCT, Outcome.PARSE_ERROR};
+        for (int i = 0; i < bodies.length; i++) {
+            String dsl = "flowchart TD\n" + bodies[i] + "\n";
+            Diagnostics still = Sirentide.renderWithDiagnostics(dsl).diagnostics();
+            FramesResult deck = Sirentide.renderFramesWithDiagnostics(dsl);
+            assertEquals(outcomes[i], still.outcome(), bodies[i]);
+            assertEquals(2, still.line());
+            assertEquals("parse", still.stage());
+            assertEquals(still, deck.diagnostics());
+            assertEquals(Sirentide.renderFrames(dsl), deck.frames());
+        }
     }
 
     /// The never-throw invariant holds on hostile input, same as the whole api surface.

@@ -359,10 +359,7 @@ public final class Sirentide {
                             consumerBudget.maxUtf8Bytes());
                     }
                 }
-                Diagnostics caveat = labelDropCaveat(ir, math);
-                return new FramesResult(java.util.List.of(base), caveat != null
-                    ? withFontCoverageCaveat(caveat)
-                    : okDiagnostics(STAGE_EMIT,
+                return new FramesResult(java.util.List.of(base), successfulDiagnostics(ir, dsl, math,
                         "Rendered successfully (single frame — the diagram has no play-through steps)."));
             }
             if (consumerBudget != null && seqs.size() > consumerBudget.maxFrames()) {
@@ -427,10 +424,8 @@ public final class Sirentide {
                 }
                 frames.add(svg);
             }
-            Diagnostics caveat = labelDropCaveat(ir, math);
-            return new FramesResult(java.util.List.copyOf(frames), caveat != null
-                ? withFontCoverageCaveat(caveat)
-                : okDiagnostics(STAGE_EMIT, "Rendered successfully."));
+            return new FramesResult(java.util.List.copyOf(frames),
+                successfulDiagnostics(ir, dsl, math, "Rendered successfully."));
         } catch (RuntimeException | StackOverflowError e) {
             // Mirror renderFrames' last-resort guard EXACTLY (a single frame == the guarded static
             // render — which may be a healthy SVG when only the emphasis pass failed), and classify
@@ -618,31 +613,7 @@ public final class Sirentide {
             if (emptied != null) {
                 return new RenderResult(svg, emptied);
             }
-            // OK, with one honest caveat: a pie whose thin-slice OUTSIDE label had no room is drawn
-            // as a coloured wedge with NO visible name (PieLayout drops the leader+text rather than
-            // overrun the canvas). The SVG is unchanged — this only NAMES the dropped slice(s) and
-            // points at `pie legend`, which shows every label in a side key. Mirrors the caveat-on-OK
-            // shape: same Outcome.OK, a richer message/detail, no record change. Composed with the
-            // font-coverage caveat so neither honest note can shadow the other.
-            // The OK caveats COMPOSE, so none can shadow another: pie drop, then dropped
-            // statements, then font coverage. Each takes the previous as its base and appends.
-            Diagnostics ok = labelDropCaveat(ir, math);
-            if (ok == null) {
-                ok = new Diagnostics(Outcome.OK, STAGE_EMIT, "Rendered successfully.", -1, "");
-            }
-            Diagnostics rows = xyNumericRowCaveat(ir, dsl, ok);
-            if (rows != null) {
-                ok = rows;
-            }
-            Diagnostics dropped = droppedStatementCaveat(ir, dsl, ok);
-            if (dropped != null) {
-                ok = dropped;
-            }
-            Diagnostics heat = heatmapInputCaveat(ir, dsl, ok);
-            if (heat != null) {
-                ok = heat;
-            }
-            ok = withFontCoverageCaveat(ok);
+            Diagnostics ok = successfulDiagnostics(ir, dsl, math, "Rendered successfully.");
             if (options.lintOverlap()) {
                 ok = withOverlapLint(ok, laid);
             }
@@ -652,6 +623,36 @@ public final class Sirentide {
             // the caught throwable + the stage it escaped. OutOfMemoryError stays UN-caught here too.
             return new RenderResult(INERT_SHELL, classifyFailure(stage, e));
         }
+    }
+
+    /// One post-render caveat policy for static bakes and both successful frame-deck paths. The
+    /// existing typed IR and parser censuses identify losses; diagnostic prose is never parsed to
+    /// decide their kind. Preserve the composition order and source line, then append emission-time
+    /// fragment/font caveats so no note shadows another. Consumers such as the CLI can keep gating
+    /// ANY nonblank OK detail with their documented opt-in --strict policy.
+    ///
+    /// Call only after the output and consumer-budget gates succeed. Failure diagnostics retain
+    /// their own outcome/detail instead of being softened into an OK caveat. The base message lets
+    /// a clean single-frame deck retain its existing explanation without changing static messages.
+    private static Diagnostics successfulDiagnostics(Diagram ir, String dsl,
+            com.sirentide.api.MathFragmentRenderer math, String baseMessage) {
+        Diagnostics ok = labelDropCaveat(ir, math);
+        if (ok == null) {
+            ok = new Diagnostics(Outcome.OK, STAGE_EMIT, baseMessage, -1, "");
+        }
+        Diagnostics rows = xyNumericRowCaveat(ir, dsl, ok);
+        if (rows != null) {
+            ok = rows;
+        }
+        Diagnostics dropped = droppedStatementCaveat(ir, dsl, ok);
+        if (dropped != null) {
+            ok = dropped;
+        }
+        Diagnostics heat = heatmapInputCaveat(ir, dsl, ok);
+        if (heat != null) {
+            ok = heat;
+        }
+        return withFontCoverageCaveat(ok);
     }
 
     /// The cap on how many distinct out-of-coverage code points a coverage caveat names (plan

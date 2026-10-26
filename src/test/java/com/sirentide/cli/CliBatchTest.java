@@ -3,6 +3,7 @@ package com.sirentide.cli;
 import static com.sirentide.cli.CliRun.LATTEX_JAR;
 import static com.sirentide.cli.CliRun.runWithStdin;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sirentide.api.Sirentide;
@@ -150,6 +151,29 @@ class CliBatchTest {
     void batchStrictOnCleanSourcesIsExit0() throws IOException {
         Captured c = runWithStdin(nulJoin(false, PIE, FLOW), "render", "--batch", "--strict");
         assertEquals(0, c.exitCode(), c.err());
+    }
+
+    @Test
+    void fontOnlyAndCombinedCaveatsGateOnlyUnderStrictAndKeepRecordAlignment() throws IOException {
+        for (boolean drop : new boolean[] {false, true}) {
+            String dsl = "flowchart TD\nA[漢字] --> B[End]\n"
+                + (drop ? "mystyle A fill:#f00\n" : "");
+            for (boolean strict : new boolean[] {false, true}) {
+                Captured c = runWithStdin(nulJoin(true, PIE, dsl, FLOW), strict
+                    ? new String[] {"render", "--batch", "--strict"}
+                    : new String[] {"render", "--batch"});
+                assertEquals(strict ? 1 : 0, c.exitCode(), c.err());
+                assertEquals(List.of(Sirentide.render(PIE), Sirentide.render(dsl), Sirentide.render(FLOW)),
+                    records(c.outBytes()), "a strict caveat never suppresses or shifts an SVG record");
+                assertTrue(c.err().contains("record 2: rendered, with caveats"), c.err());
+                assertTrue(c.err().contains("out-of-coverage code points: U+6F22, U+5B57"), c.err());
+                assertEquals(drop, c.err().contains("dropped statement(s): 1; line 3: mystyle A fill:#f00"));
+                assertEquals(strict, c.err().contains("--strict: treating the caveat as a failure"));
+                assertFalse(c.err().contains("record 1:"), c.err());
+                assertFalse(c.err().contains("record 3:"), c.err());
+                assertFalse(c.err().contains("the named statement(s) are absent"), c.err());
+            }
+        }
     }
 
     @Test
