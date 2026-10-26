@@ -52,8 +52,8 @@ class MathInAllLabelsRealRenderTest {
             "a MathBox wraps the baked message math (did NOT degrade to text): " + preview(svg));
         assertFalse(svg.contains("\\frac"), "the \\frac source is baked away, not passed through: " + preview(svg));
         // The fraction bar is an extra <rect> over the feature-off baseline (mutant witness).
-        int rectsOff = count(Sirentide.render(dsl, null), "<rect");
-        int rectsOn = count(svg, "<rect");
+        int rectsOff = barRects(Sirentide.render(dsl, null));
+        int rectsOn = barRects(svg);
         assertTrue(rectsOn > rectsOff,
             "the real fraction bake adds a bar <rect>: off=" + rectsOff + " on=" + rectsOn);
     }
@@ -68,8 +68,8 @@ class MathInAllLabelsRealRenderTest {
         assertTrue(svg.matches(MATHBOX_RE),
             "a MathBox wraps the baked transition-label math: " + preview(svg));
         assertFalse(svg.contains("\\frac"), "the \\frac source is baked away: " + preview(svg));
-        int rectsOff = count(Sirentide.render(dsl, null), "<rect");
-        int rectsOn = count(svg, "<rect");
+        int rectsOff = barRects(Sirentide.render(dsl, null));
+        int rectsOn = barRects(svg);
         assertTrue(rectsOn > rectsOff,
             "the fraction bar adds a <rect> over the feature-off baseline: off=" + rectsOff + " on=" + rectsOn);
     }
@@ -188,6 +188,14 @@ class MathInAllLabelsRealRenderTest {
         f.setExpandEntityReferences(false);
         DocumentBuilder b = f.newDocumentBuilder();
         return b.parse(new ByteArrayInputStream(svg.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /// Rects other than label backing plates (plan 5ce905a8, fill `#f5f7ff`). The feature-off render
+    /// bakes the formula as literal text, which can cross a stroke and gain a plate; that plate is
+    /// not the fraction bar this witness counts.
+    private static int barRects(String svg) {
+        return count(svg, "<rect") - (int) java.util.regex.Pattern.compile("<rect [^>]*fill=\"#f5f7ff\"")
+            .matcher(svg).results().count();
     }
 
     private static int count(String s, String sub) {

@@ -142,11 +142,12 @@ class FlowchartConvergentLabelGuardTest {
     /// Edge-label bounding boxes [minX, minY, maxX, maxY], one per label. Edge labels are the
     /// multi-glyph `<path>` runs whose center is NOT inside any node box (that excludes node-name
     /// labels) and which carry enough coordinates to be a word, not an arrowhead. Each edge-label
-    /// GlyphRun is one `<path>`, so one path == one label.
+    /// GlyphRun is one `<path>`, so one path == one label. A backing plate with an arrowhead cut out
+    /// of it (plan 5ce905a8, review 1335) is a `<path>` filled `#f5f7ff`; it is not a label.
     private static List<double[]> edgeLabelBboxes(String svg) {
         List<double[]> nodeRects = rects(svg);
         List<double[]> out = new ArrayList<>();
-        Matcher p = Pattern.compile("<path d=\"([^\"]+)\"").matcher(svg);
+        Matcher p = Pattern.compile("<path d=\"([^\"]+)\"(?! fill=\"#f5f7ff\")").matcher(svg);
         while (p.find()) {
             List<Double> nums = new ArrayList<>();
             Matcher n = Pattern.compile("[-0-9.]+").matcher(p.group(1));
@@ -172,10 +173,13 @@ class FlowchartConvergentLabelGuardTest {
     }
 
     /// Node boxes as [x, y, w, h].
+    /// A label's backing plate (plan 5ce905a8, fill `#f5f7ff`) is not a node: it surrounds its label,
+    /// so counting it would hide that label from this guard.
     private static List<double[]> rects(String svg) {
         List<double[]> out = new ArrayList<>();
         Matcher m = Pattern.compile(
-            "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\"")
+            "<rect x=\"([-0-9.]+)\" y=\"([-0-9.]+)\" width=\"([-0-9.]+)\" height=\"([-0-9.]+)\""
+                + "(?! fill=\"#f5f7ff\")")
             .matcher(svg);
         while (m.find()) {
             out.add(new double[] {Double.parseDouble(m.group(1)), Double.parseDouble(m.group(2)),

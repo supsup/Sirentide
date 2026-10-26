@@ -485,9 +485,9 @@ public final class SequenceLayout {
             String stroke = m.reply() ? REPLY_STROKE : CALL_STROKE;
             List<Shape> mg = new ArrayList<>();
             if (a == b) {
-                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW);
+                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
             } else {
-                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW);
+                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
             }
             shapes.add(new Group(assigner.assign(SirentideRole.MESSAGE, m.from() + "-" + m.to()), mg));
         }
@@ -684,24 +684,30 @@ public final class SequenceLayout {
 
     /// A horizontal message between two DISTINCT lifelines: a stroked line + a dst arrowhead (a
     /// FILLED triangle for a call, an OPEN V — two short lines — for a reply), plus a centred label
-    /// above the line. The prepared display plan already fits the measured actor span.
+    /// above the line. The prepared display plan already fits the measured actor span. `painted` is
+    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a label that
+    /// crosses any of it gets a backing plate ({@link #emitLabelLines}).
     private static void emitMessage(List<Shape> shapes, double xa, double xb, double y, SeqMessage m,
-                                    MessageLabel label, String stroke, String textColor, double canvasW) {
+                                    MessageLabel label, String stroke, String textColor, double canvasW,
+                                    List<Shape> painted) {
         double dx = xb - xa;
         double span = Math.abs(dx);
         if (!Double.isFinite(span) || span < 1e-6) {
             return;   // degenerate (coincident lifelines) — skip (never emit NaN geometry)
         }
         double ux = dx > 0 ? 1 : -1;   // horizontal unit vector toward the dst
+        int headAt;   // where this message's arrowhead starts (LabelPlate.place, review 1335)
         if (m.reply()) {
             // Reply: the full line reaches the dst, then an OPEN V (two short lines) points back.
             shapes.add(new Line(xa, y, xb, y, stroke, MSG_WIDTH));
+            headAt = shapes.size();
             shapes.add(new Line(xb, y, xb - V_DX * ux, y - V_DY, stroke, MSG_WIDTH));
             shapes.add(new Line(xb, y, xb - V_DX * ux, y + V_DY, stroke, MSG_WIDTH));
         } else {
             // Call: the line stops at the arrow base so it doesn't overshoot the filled triangle.
             double baseX = xb - ARROW_LEN * ux;
             shapes.add(new Line(xa, y, baseX, y, stroke, MSG_WIDTH));
+            headAt = shapes.size();
             String d = "M " + fmt(xb) + " " + fmt(y)
                 + " L " + fmt(baseX) + " " + fmt(y - ARROW_HALF_W)
                 + " L " + fmt(baseX) + " " + fmt(y + ARROW_HALF_W)
@@ -714,15 +720,41 @@ public final class SequenceLayout {
             MathLabel.emit(label.math(), runX, y - LABEL_LIFT,
                 textColor, MSG_LABEL_SIZE, FONT, shapes);
         } else {
+            List<String> runs = new ArrayList<>();
             double baseline = y - LABEL_LIFT - label.extraHeight();
             for (LabelLine line : label.lines()) {
                 double runX = clamp(midX - line.width() / 2, line.width(), canvasW);
                 String d = FONT.textPathD(line.text(), runX, baseline, MSG_LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, textColor));
+                    runs.add(d);
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
+            emitLabelLines(shapes, runs, textColor, painted, headAt);
+        }
+    }
+
+    /// Emits a plain message label's glyph runs (plan 5ce905a8). When the label's ink box crosses
+    /// anything already painted (`painted`, or this message's own lines in `shapes`), ONE backing
+    /// plate is laid under the whole label and every run takes the plate's contrast colour, so no
+    /// glyph sits on a bar or a line. A label that crosses nothing emits exactly as before.
+    ///
+    /// Paint order (review 1335 F1, the same rule as a flowchart edge, see {@link LabelPlate#place}):
+    /// own lines the label's ink crosses, the plate, the other own lines, the arrowhead (from
+    /// `headAt`), then the glyphs. A message label sits LABEL_LIFT above its own line, so its ink
+    /// does not reach that line and the plate comes first in the group: the message's own line and
+    /// arrowhead stay drawn on top of the plate's padding. An earlier message's filled arrowhead is
+    /// cut out of the plate.
+    private static void emitLabelLines(List<Shape> shapes, List<String> runs, String textColor,
+                                       List<Shape> painted, int headAt) {
+        double[] box = LabelPlate.inkBox(runs);
+        boolean plated = box != null
+            && (LabelPlate.crossesPainted(box, painted) || LabelPlate.crossesPainted(box, shapes));
+        if (plated) {
+            LabelPlate.place(shapes, 0, headAt, box, painted);
+        }
+        for (String d : runs) {
+            shapes.add(plated ? LabelPlate.text(d) : new GlyphRun(d, textColor));
         }
     }
 
@@ -730,18 +762,22 @@ public final class SequenceLayout {
     /// ROW_H/2, back left into the lifeline with a LEFT-pointing arrowhead (filled triangle for a
     /// call, open V for a reply) — plus a left-aligned label just right of the hook's outer edge.
     private static void emitSelfMessage(List<Shape> shapes, double x, double y, SeqMessage m,
-                                        MessageLabel label, String stroke, String textColor, double canvasW) {
+                                        MessageLabel label, String stroke, String textColor, double canvasW,
+                                        List<Shape> painted) {
         double outX = x + SELF_W;
         double yb = y + ROW_H / 2;
         shapes.add(new Line(x, y, outX, y, stroke, MSG_WIDTH));            // out right
         shapes.add(new Line(outX, y, outX, yb, stroke, MSG_WIDTH));        // down
+        int headAt;   // where the arrowhead starts (LabelPlate.place, review 1335)
         if (m.reply()) {
             shapes.add(new Line(outX, yb, x, yb, stroke, MSG_WIDTH));      // back left (full, open V)
+            headAt = shapes.size();
             shapes.add(new Line(x, yb, x + V_DX, yb - V_DY, stroke, MSG_WIDTH));
             shapes.add(new Line(x, yb, x + V_DX, yb + V_DY, stroke, MSG_WIDTH));
         } else {
             double baseX = x + ARROW_LEN;   // line stops at the arrow base (left-pointing triangle)
             shapes.add(new Line(outX, yb, baseX, yb, stroke, MSG_WIDTH));
+            headAt = shapes.size();
             String d = "M " + fmt(x) + " " + fmt(yb)
                 + " L " + fmt(baseX) + " " + fmt(yb - ARROW_HALF_W)
                 + " L " + fmt(baseX) + " " + fmt(yb + ARROW_HALF_W)
@@ -753,14 +789,16 @@ public final class SequenceLayout {
             double runX = clamp(outX + LABEL_GAP, label.width(), canvasW);
             MathLabel.emit(label.math(), runX, baseline, textColor, MSG_LABEL_SIZE, FONT, shapes);
         } else {
+            List<String> runs = new ArrayList<>();
             for (LabelLine line : label.lines()) {
                 double runX = clamp(outX + LABEL_GAP, line.width(), canvasW);
                 String d = FONT.textPathD(line.text(), runX, baseline, MSG_LABEL_SIZE);
                 if (!d.isBlank()) {
-                    shapes.add(new GlyphRun(d, textColor));
+                    runs.add(d);
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
+            emitLabelLines(shapes, runs, textColor, painted, headAt);
         }
     }
 

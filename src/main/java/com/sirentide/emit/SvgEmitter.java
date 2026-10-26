@@ -138,8 +138,11 @@ public final class SvgEmitter {
             case Wedge w -> appendWedge(sb, w, theme, st);
             // A glyph/label run: an ACCENTABLE fill (active → accent, future → dim). A message/node
             // label popping to the accent colour is the clearest "this is the active step" signal.
+            // A label on a backing plate takes the plate-safe accent/dim instead (plan 5ce905a8).
             case GlyphRun g -> sb.append("<path d=\"").append(g.pathD())
-                .append("\" fill=\"").append(color(Emphasis.accent(st, theme.resolve(g.fill())))).append("\"/>");
+                .append("\" fill=\"").append(color(g.onPlate()
+                    ? Emphasis.plateText(st, theme.resolve(g.fill()))
+                    : Emphasis.accent(st, theme.resolve(g.fill())))).append("\"/>");
             // Path mirrors GlyphRun's contract-clean `d` string + colour-sink-validated fill, but the
             // FILL TREATMENT splits on the shape's role (Lattice needs-fix, sirentide seq 220): a NODE
             // SILHOUETTE (Path.structural — diamond/stadium/… body) is a STRUCTURAL fill like a node

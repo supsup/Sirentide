@@ -79,8 +79,10 @@ public class GoldenSvgTest {
         // confluence/flowchart-label-guard @ 277f3f1c; the "x-separated by construction" withdrawal
         // premise was RETRACTED at sirentide/514 — anchor-x separation is not rendered-box-x
         // separation). This golden pins the STACKED output: the second same-target label ("exit") is
-        // nudged one EDGE_LABEL_STACK (15px) below the first ("resume") so both read — post-fix
-        // [x 82.91..97.97, y 91.77..98.60], now Y-separated. This is the ONE flowchart golden the fix
+        // stacked below the first ("resume") so both read. One EDGE_LABEL_STACK (15px) down,
+        // [x 82.91..97.97, y 91.77..98.60], its ink would sit on its own arrowhead (review 1337 F1:
+        // 1.45 to 1 in its active frame), and the next three slots are on node x, so it takes the
+        // fifth slot, [y 151.77..158.60], under node x. This is the ONE flowchart golden the fix
         // moves; every OTHER flowchart golden is a non-colliding fixture and stays byte-for-byte
         // identical (its labels reach distinct targets, or are already x-separated so dy==0).
         FIXTURES.put("flowchart-convergent",
@@ -88,10 +90,14 @@ public class GoldenSvgTest {
         // Deep convergent fan + canvas-height grow (plan ea20153b part 2, review sir/523). FIVE labeled
         // edges into one sink chain-stack far enough that, before the grow, the lowest stacked label
         // fell OFF the bottom (pre-fix canvasH 168, lowest label bottom 178.3). The de-collision now
-        // grows canvasH DOWN to contain the stack + MARGIN (canvasH 168 -> 202), so every stacked label
-        // is inside the canvas. This golden pins that GROWN output byte-for-byte — the deterministic
-        // machine proof of "no off-canvas clip" (the deep-fan legibility is BrewShot-reviewed at judge
-        // time). The grow fires ONLY on genuine overflow, so no non-overflowing diagram's canvasH moves.
+        // grows canvasH DOWN to contain the stack + MARGIN (canvasH 168 -> 202 at the time), so every
+        // stacked label is inside the canvas. Since review 1337 the stack also skips slots on an
+        // arrowhead (the B-S label used to sit on the fan's five converging heads) and later edge
+        // lines are broken around earlier labels, so the stack and the grown height moved; the
+        // golden holds the current values. This golden pins that GROWN output byte-for-byte — the
+        // deterministic machine proof of "no off-canvas clip" (the deep-fan legibility is
+        // BrewShot-reviewed at judge time). The grow fires ONLY on genuine overflow, so no
+        // non-overflowing diagram's canvasH moves.
         FIXTURES.put("flowchart-convergent-fan",
             "flowchart TD\n  A[A] -->|provisioning| S[Sink]\n  B[B] -->|invalidating| S\n"
                 + "  C[C] -->|transitioning| S\n  D[D] -->|reactivating| S\n"
