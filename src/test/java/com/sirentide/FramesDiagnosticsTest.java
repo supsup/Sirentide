@@ -193,16 +193,23 @@ class FramesDiagnosticsTest {
             String dsl = "flowchart TD\nA[$漢字$]" + (multi ? " --> B[End]" : "")
                 + "\nmystyle A fill:#f00\n";
             List<String> calls = new ArrayList<>();
+            List<String> innerCalls = new ArrayList<>();
+            List<String> nestedSvgs = new ArrayList<>();
             MathFragmentRenderer refusing = (latex, size) -> {
                 calls.add(latex);
                 // This nested plain render has a DISTINCT refusal and uncovered code point.
                 // Neither belongs to the outer diagnostic collectors, which must resume after it.
-                Sirentide.render("flowchart TD\nN[$🚀$]\n", (inner, innerSize) ->
-                    Optional.of(new MathFragment("<circle cx=\"7\" cy=\"7\" r=\"3\"/>", 40, 12, 4)));
+                // Plain render can catch an independent failure into an inert shell: witness
+                // both the inner callback and its emitted node/ink instead of discarding it.
+                nestedSvgs.add(Sirentide.render("flowchart TD\nN[$🚀$]\n", (inner, innerSize) -> {
+                    innerCalls.add(inner);
+                    return Optional.of(new MathFragment("<circle cx=\"7\" cy=\"7\" r=\"3\"/>", 40, 12, 4));
+                }));
                 return Optional.of(new MathFragment("<circle/>", 40, 12, 4));
             };
 
             FramesResult deck = Sirentide.renderFramesWithDiagnostics(dsl, refusing);
+            assertNestedPlainWitness(innerCalls, nestedSvgs);
             assertEquals(Outcome.OK, deck.diagnostics().outcome());
             assertEquals("emit", deck.diagnostics().stage());
             assertEquals(3, deck.diagnostics().line());
@@ -220,7 +227,10 @@ class FramesDiagnosticsTest {
             assertEquals("", EmittedText.collected(), "completed render disarms emitted text");
 
             calls.clear();
+            innerCalls.clear();
+            nestedSvgs.clear();
             assertEquals(Sirentide.renderFrames(dsl, refusing), deck.frames(), "byte-identity control");
+            assertNestedPlainWitness(innerCalls, nestedSvgs);
             assertEquals(List.of("漢字"), calls);
             String cleanDsl = "flowchart TD\nA[$x$]" + (multi ? " --> B[End]" : "") + "\n";
             FramesResult clean = Sirentide.renderFramesWithDiagnostics(cleanDsl,
@@ -233,12 +243,23 @@ class FramesDiagnosticsTest {
             assertEquals("", EmittedText.collected());
 
             calls.clear();
+            innerCalls.clear();
+            nestedSvgs.clear();
             FramesResult repeated = Sirentide.renderFramesWithDiagnostics(dsl, refusing);
+            assertNestedPlainWitness(innerCalls, nestedSvgs);
             assertEquals(deck, repeated, "a fresh render reports exactly its own caveats again");
             assertEquals(List.of("漢字"), calls);
             assertEquals(List.of(), FragmentGuard.Refusals.collected());
             assertEquals("", EmittedText.collected());
         }
+    }
+
+    private static void assertNestedPlainWitness(List<String> innerCalls, List<String> nestedSvgs) {
+        assertEquals(List.of("🚀"), innerCalls, "nested plain render must invoke its rocket renderer once");
+        assertEquals(1, nestedSvgs.size(), "one nested SVG must be captured per outer renderer call");
+        List<SvgTestInk.NodeInk> nodes = SvgTestInk.nodes(nestedSvgs.getFirst());
+        assertEquals(1, nodes.size(), "nested plain render must emit its node instead of an inert shell");
+        assertFalse(nodes.getFirst().ink().isEmpty(), "nested plain render must emit its refused rocket label ink");
     }
 
     @Test
