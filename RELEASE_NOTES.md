@@ -14,6 +14,11 @@ added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
 committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
+- *2026-10-26.* **Frame decks preserve the same caveats as static diagrams.**
+  Both single-frame and multi-frame diagnostic results now retain dropped statements, numeric-row
+  and heatmap-input caveats alongside label, fragment and font notices. Consumer-budget failures
+  retain their own refusal. Raw, Markdown and batch strict-mode behavior remains consistent.
+
 - *2026-10-24.* **Sequence message labels size their columns and wrap within bounded widths.**
   Long plain labels can use up to four lines instead of being cut to the existing actor gap.
   Self messages reserve room before the next lifeline, and rows grow with wrapped text.
