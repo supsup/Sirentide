@@ -96,6 +96,11 @@ public final class SequenceLayout {
     private static final double TAB_H = 15;           // label-tab height
     private static final double TAB_PAD = 5;          // horizontal padding inside the tab
     private static final double TAB_SIZE = 10;        // kind/label glyph size
+    /// Review 1372: how far a frame's first normal message moves down so its label's plate top
+    /// (`LABEL_LIFT` + the label ascent + `LabelPlate.PAD` above the line) stays at or below the
+    /// tab row's bottom (`FRAME_TOP_PAD - TAB_H` above the frame anchor). Zero if it already does.
+    private static final double FRAME_LABEL_CLEAR = Math.max(0,
+        LABEL_LIFT + FONT.ascent(MSG_LABEL_SIZE) + LabelPlate.PAD - (FRAME_TOP_PAD - TAB_H));
     private static final double DIV_LIFT = 15;        // a divider sits this far above its branch's msg
     private static final double DASH = 5;             // dashed-divider dash length (Line has no dash)
     private static final double DASH_GAP = 4;         // dashed-divider gap length
@@ -278,8 +283,22 @@ public final class SequenceLayout {
         // every injected band is zero → the cursor advances by exactly ROW_H (or SELF_ROWS·ROW_H) per
         // drawn message, byte-identical to the pre-enrichment `headBottom + MSG_TOP_PAD + rowCursor·ROW_H`.
         List<NoteBox> noteBoxes = new ArrayList<>();
+        // Review 1372: the furthest toMsg of the blocks that open at each message index, so the
+        // first DRAWN normal message of a frame can be moved clear of the frame's tab row.
+        int[] opensUntil = new int[msgCount];
+        Arrays.fill(opensUntil, -1);
+        for (SeqBlock blk : seq.blocks()) {
+            int f = blk.fromMsg();
+            if (f >= 0 && f < msgCount && blk.toMsg() >= f) {
+                opensUntil[f] = Math.max(opensUntil[f], blk.toMsg());
+            }
+        }
+        int frameOpenUntil = -1;   // a frame opened at or before K and has not had a drawn message yet
         double cursorY = headBottom + MSG_TOP_PAD;
         for (int K = 0; K <= msgCount; K++) {
+            if (K < msgCount) {
+                frameOpenUntil = Math.max(frameOpenUntil, opensUntil[K]);
+            }
             // Notes anchored at this boundary (declaration order): each injects its own vertical band.
             for (SeqNote note : notesByBoundary.at(K)) {
                 NoteBox nb = layoutNote(note, cursorY + NOTE_MARGIN, cx, index);
@@ -317,6 +336,16 @@ public final class SequenceLayout {
                 // Normal labels grow upwards from the arrow, so move that arrow down by the
                 // extra line height. Frame/divider anchors stay above the first displayed line.
                 frameYByMsg[K] = cursorY;
+                if (frameOpenUntil >= K) {
+                    // Review 1372: the first drawn message of a frame. A normal message's label
+                    // grows upwards into the frame's top pad; move its arrow down so the label's
+                    // plate stays below the tab row (the frame itself stays at frameYByMsg). A
+                    // self-message's label sits below its line and never reaches the tab.
+                    if (!self) {
+                        cursorY += FRAME_LABEL_CLEAR;
+                    }
+                    frameOpenUntil = -1;
+                }
                 if (!self) {
                     cursorY += label.extraHeight();
                 }
@@ -477,6 +506,11 @@ public final class SequenceLayout {
         // 2) messages — each drawn message's shapes collect into ONE `<g role="message">` (id = the
         // from-to actor pair, uniquified for parallel messages). A degenerate (coincident-lifeline)
         // message emits an empty group, keeping seq aligned with the drawn-message set (as in flowchart).
+        // Review 1372: the ink box of every glyph run painted so far (frame tab and divider labels,
+        // note text, earlier message labels), cut out of each later message plate so no plate is
+        // laid over an earlier label's ink. Seeded once from what precedes the messages, then grown
+        // by each message group as it is emitted, so no glyph is parsed twice.
+        List<double[]> earlierInks = LabelPlate.glyphInks(shapes);
         for (int i = 0; i < drawn.size(); i++) {
             SeqMessage m = drawn.get(i);
             int a = index.get(m.from());
@@ -485,10 +519,13 @@ public final class SequenceLayout {
             String stroke = m.reply() ? REPLY_STROKE : CALL_STROKE;
             List<Shape> mg = new ArrayList<>();
             if (a == b) {
-                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
+                emitSelfMessage(mg, cx[a], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes,
+                    earlierInks);
             } else {
-                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes);
+                emitMessage(mg, cx[a], cx[b], y, m, drawnLabels.get(i), stroke, textColor, canvasW, shapes,
+                    earlierInks);
             }
+            earlierInks.addAll(LabelPlate.glyphInks(mg));
             shapes.add(new Group(assigner.assign(SirentideRole.MESSAGE, m.from() + "-" + m.to()), mg));
         }
 
@@ -685,11 +722,12 @@ public final class SequenceLayout {
     /// A horizontal message between two DISTINCT lifelines: a stroked line + a dst arrowhead (a
     /// FILLED triangle for a call, an OPEN V — two short lines — for a reply), plus a centred label
     /// above the line. The prepared display plan already fits the measured actor span. `painted` is
-    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a label that
-    /// crosses any of it gets a backing plate ({@link #emitLabelLines}).
+    /// everything drawn before this message (frames, lifelines, bars, earlier messages): a plain
+    /// label always gets a backing plate, and earlier arrowheads are cut out of it
+    /// ({@link #emitLabelLines}).
     private static void emitMessage(List<Shape> shapes, double xa, double xb, double y, SeqMessage m,
                                     MessageLabel label, String stroke, String textColor, double canvasW,
-                                    List<Shape> painted) {
+                                    List<Shape> painted, List<double[]> earlierInks) {
         double dx = xb - xa;
         double span = Math.abs(dx);
         if (!Double.isFinite(span) || span < 1e-6) {
@@ -730,29 +768,29 @@ public final class SequenceLayout {
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
-            emitLabelLines(shapes, runs, textColor, painted, headAt);
+            emitLabelLines(shapes, runs, textColor, painted, headAt, earlierInks);
         }
     }
 
-    /// Emits a plain message label's glyph runs (plan 5ce905a8). When the label's ink box crosses
-    /// anything already painted (`painted`, or this message's own lines in `shapes`), ONE backing
-    /// plate is laid under the whole label and every run takes the plate's contrast colour, so no
-    /// glyph sits on a bar or a line. A label that crosses nothing emits exactly as before.
+    /// Emits a plain message label's glyph runs (plan 5ce905a8). ONE backing plate is laid under the
+    /// whole label and every run takes the plate's contrast colour, so no glyph sits on a bar, a
+    /// line or the bare page. Plan 3e1104cf: this holds for EVERY plain message label, crossed or
+    /// not; a label that crossed nothing used to keep its page colour on the page, which a dark
+    /// host page could not be relied on to read.
     ///
     /// Paint order (review 1335 F1, the same rule as a flowchart edge, see {@link LabelPlate#place}):
     /// own lines the label's ink crosses, the plate, the other own lines, the arrowhead (from
     /// `headAt`), then the glyphs. A message label sits LABEL_LIFT above its own line, so its ink
     /// does not reach that line and the plate comes first in the group: the message's own line and
     /// arrowhead stay drawn on top of the plate's padding. An earlier message's filled arrowhead is
-    /// cut out of the plate.
+    /// cut out of the plate, and so is every earlier label's ink box in `earlierInks` (review 1372:
+    /// a frame tab label just above a message row), the flowchart's holes.
     private static void emitLabelLines(List<Shape> shapes, List<String> runs, String textColor,
-                                       List<Shape> painted, int headAt) {
+                                       List<Shape> painted, int headAt, List<double[]> earlierInks) {
         double[] box = LabelPlate.inkBox(runs);
-        boolean plated = box != null
-            && (LabelPlate.crossesPainted(box, painted) || LabelPlate.crossesPainted(box, shapes));
-        if (plated) {
-            LabelPlate.place(shapes, 0, headAt, box, painted);
-        }
+        // Plan 3e1104cf: every plain label, crossed or not, unless its cut-outs are too many to
+        // compose (review 1381; then it is drawn unplated, as before).
+        boolean plated = box != null && LabelPlate.place(shapes, 0, headAt, box, painted, 1.0, earlierInks);
         for (String d : runs) {
             shapes.add(plated ? LabelPlate.text(d) : new GlyphRun(d, textColor));
         }
@@ -763,7 +801,7 @@ public final class SequenceLayout {
     /// call, open V for a reply) — plus a left-aligned label just right of the hook's outer edge.
     private static void emitSelfMessage(List<Shape> shapes, double x, double y, SeqMessage m,
                                         MessageLabel label, String stroke, String textColor, double canvasW,
-                                        List<Shape> painted) {
+                                        List<Shape> painted, List<double[]> earlierInks) {
         double outX = x + SELF_W;
         double yb = y + ROW_H / 2;
         shapes.add(new Line(x, y, outX, y, stroke, MSG_WIDTH));            // out right
@@ -798,7 +836,7 @@ public final class SequenceLayout {
                 }
                 baseline += FONT.lineHeight(MSG_LABEL_SIZE);
             }
-            emitLabelLines(shapes, runs, textColor, painted, headAt);
+            emitLabelLines(shapes, runs, textColor, painted, headAt, earlierInks);
         }
     }
 

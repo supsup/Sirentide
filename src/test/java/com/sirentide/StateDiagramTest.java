@@ -62,6 +62,23 @@ class StateDiagramTest {
         return com.sirentide.layout.Group.flatten(laid.shapes()).stream().filter(type::isInstance).count();
     }
 
+    /// The edge-label backing plate's fill (LabelPlate.FILL): plan 3e1104cf plates every transition
+    /// label, so a plate is the one sharp {@link Rect} a state diagram may carry.
+    private static final String PLATE_FILL = "#f5f7ff";
+
+    /// Sharp {@link Rect}s other than transition-label plates (plan 3e1104cf).
+    private static long countBoxRects(LaidOut laid) {
+        return com.sirentide.layout.Group.flatten(laid.shapes()).stream()
+            .filter(s -> s instanceof Rect r && !PLATE_FILL.equals(r.fill())).count();
+    }
+
+    private static long countPlates(LaidOut laid) {
+        return com.sirentide.layout.Group.flatten(laid.shapes()).stream()
+            .filter(s -> (s instanceof Rect r && PLATE_FILL.equals(r.fill()))
+                || (s instanceof Path p && PLATE_FILL.equals(p.fill())))
+            .count();
+    }
+
     // -- parse ----------------------------------------------------------------
 
     @Test
@@ -165,7 +182,7 @@ class StateDiagramTest {
         assertEquals(4, countShapes(laid, Wedge.class),
             "1 start disc + 3 bullseye discs (dark/white/dark)");
         // Normal states are ROUNDED-rect Paths now (Q-corner boxes), NOT sharp Rects — none anywhere.
-        assertEquals(0, countShapes(laid, Rect.class), "no sharp rects — states are rounded paths");
+        assertEquals(0, countBoxRects(laid), "no sharp rects — states are rounded paths");
     }
 
     /// Each normal `state` box is a rounded-rect {@link Path} carrying Q (quadratic corner) commands
@@ -181,8 +198,10 @@ class StateDiagramTest {
             .count();
         assertEquals(2, roundedBoxes,
             "each of the 2 normal states (Idle, Running) is a rounded-rect path with Q corners");
-        assertEquals(0, countShapes(laid, Rect.class),
+        assertEquals(0, countBoxRects(laid),
             "no sharp rects for a state box — rounded paths replace them");
+        // Plan 3e1104cf: the two transition labels (start, stop) each sit on a plate.
+        assertEquals(2, countPlates(laid), "each transition label has its own plate");
     }
 
     @Test
