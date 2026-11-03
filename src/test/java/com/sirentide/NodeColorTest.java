@@ -11,7 +11,8 @@ import org.junit.jupiter.api.Test;
 /// (A) CONTRAST-DERIVED box labels — a label drawn ON a filled shape (flowchart/state node box,
 /// sequence actor head) fills with the CONTRAST of the box colour (dark on a light box, white on a
 /// dark one), never the page-theme `currentColor` that rendered white-on-light and vanished under a
-/// dark theme. Edge/message labels sit on the page background and KEEP `currentColor`.
+/// dark theme. Edge/message labels sit on their own backing plate (plan 3e1104cf) and take the
+/// plate's contrast colour, so they no longer bake as `currentColor` either.
 ///
 /// (B) AUTHOR node colours — a per-node trailing `#hex` (`A[Start] #22c55e`) and a header
 /// `nodecolor=#hex` default. Fill resolution is per-node ?? header ?? built-in `#dbe4ff`; the label
@@ -49,12 +50,13 @@ class NodeColorTest {
     }
 
     @Test
-    void flowchartEdgeLabelsStayCurrentColor() {
-        // Node labels contrast; the EDGE label (yes) sits on the page background → keeps currentColor.
+    void flowchartEdgeLabelsSitOnAPlateNotThePage() {
+        // Node labels contrast; the EDGE label (yes) sits on its own plate (plan 3e1104cf), so it
+        // takes the plate's contrast colour, not currentColor.
         String svg = Sirentide.render("flowchart\nA[Start] -->|yes| B[End]\n");
-        assertTrue(count(svg, "fill=\"currentColor\"") == 1,
-            "exactly the one edge label keeps currentColor");
-        assertTrue(count(svg, "fill=\"#000000\"") >= 2, "both node labels contrast-fill dark");
+        assertEquals(0, count(svg, "fill=\"currentColor\""), "the edge label no longer inherits the page");
+        assertEquals(1, count(svg, "fill=\"#f5f7ff\""), "the one edge label has a plate");
+        assertTrue(count(svg, "fill=\"#000000\"") >= 3, "both node labels and the edge label are dark");
     }
 
     // -- (B) author node colours ----------------------------------------------------------------
@@ -117,10 +119,11 @@ class NodeColorTest {
     @Test
     void sequenceActorHeadLabelsContrastWithTheHeadFill() {
         // Default head fill #dbe4ff is light → head labels use the dark contrast; the MESSAGE label
-        // stays currentColor (page background).
+        // sits on its own plate (plan 3e1104cf) and is dark too, never currentColor.
         String svg = Sirentide.render("sequence\nAlice ->> Bob : Request\n");
-        assertTrue(count(svg, "fill=\"#000000\"") >= 2, "both actor-head labels contrast dark");
-        assertTrue(count(svg, "fill=\"currentColor\"") >= 1, "the message label keeps currentColor");
+        assertTrue(count(svg, "fill=\"#000000\"") >= 3, "both actor-head labels and the message label are dark");
+        assertEquals(1, count(svg, "fill=\"#f5f7ff\""), "the message label has a plate");
+        assertEquals(0, count(svg, "fill=\"currentColor\""), "the message label no longer inherits the page");
     }
 
     @Test

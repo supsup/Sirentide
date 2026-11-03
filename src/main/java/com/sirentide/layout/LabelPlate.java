@@ -4,16 +4,22 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/// A BACKING PLATE for a free-standing label whose ink crosses a stroke or fill painted before it
-/// (plan 5ce905a8). A sequence message label that runs over an activation bar or a lifeline, or a
-/// flowchart edge label that sits across an edge line, used to draw its page-coloured text straight
-/// onto that stroke: `#e2e8f0` text on a `#c7d2fe` bar is 1.21 to 1 on a dark docs page.
+/// A BACKING PLATE under EVERY plain-text flowchart edge label and sequence message label (plan
+/// 5ce905a8, widened to every such label by plan 3e1104cf). A sequence message label that runs over
+/// an activation bar or a lifeline, or a flowchart edge label that sits across an edge line, used to
+/// draw its page-coloured text straight onto that stroke: `#e2e8f0` text on a `#c7d2fe` bar is 1.21
+/// to 1 on a dark docs page. A label that crossed nothing first kept its own colour on the bare
+/// page; on a dark host page that read badly too (plan 3e1104cf: `stop or removal unknown` in the
+/// lane-live-acceptance flowchart, moved clear of every line by the decollider), and in the
+/// play-through frames its page-level accent and dim are below 4.5 to 1 on a light page.
 ///
-/// The label's own colour cannot be trusted against an arbitrary stroke, because the default text
-/// colour is `currentColor` (whatever the host page says). So a label that crosses something gets
-/// an opaque plate of {@link #FILL} under its whole ink box, and its glyphs switch to {@link #TEXT},
-/// the contrast pick for that plate. A label that crosses nothing keeps its exact former emission
-/// (no plate, its own colour), so diagrams without crossings bake byte-identically.
+/// The label's own colour cannot be trusted against an arbitrary stroke or page, because the
+/// default text colour is `currentColor` (whatever the host page says). So every plain edge and
+/// message label gets an opaque plate of {@link #FILL} under its whole ink box, whether or not the
+/// ink crosses anything, and its glyphs switch to {@link #TEXT}, the contrast pick for that plate.
+/// Every label glyph then sits on its own plate whatever the page colour, in the bake and in every
+/// frame. ({@link #crossesPainted} no longer decides whether a label is plated; {@link #place}
+/// still decides which of the element's own lines go under the plate.)
 ///
 /// The placement and plate rules below compare BOUNDING BOXES (the label's ink box, an
 /// arrowhead's triangle box, a line's stroke), not rendered pixels; the final-composition test
@@ -46,14 +52,20 @@ import java.util.regex.Pattern;
 ///     those glyphs), and a later message, note or frame is not broken around an earlier label. An
 ///     earlier reply's open-V arrowhead is two strokes, not a filled triangle, so it is not cut out
 ///     (LabelPlateArrowheadGoldenTest checks no plate covers one in any golden or frame).
-///   - Sequence block frames: alt/else/loop/par frame tab and branch-divider labels (plan
-///     9d56f599) are outside this plate. So are other layouts' labels (class, ER) and typeset math
-///     labels ({@link MathBox}, whose extent is inside the fragment's own SVG, not layout
-///     geometry): they are not plated, placed or protected.
-///   - A label that crosses nothing gets no plate, so in a play-through frame it takes the
-///     page-level accent or dim. On a light page or the neutral theme the active accent is below
-///     4.5 to 1, and when its own line passes within the doubled active stroke width of its ink
-///     box the accented line reaches the accented ink box (Emphasis; not asserted).
+///   - Only plain-text flowchart edge labels (state diagram transitions included: they are laid
+///     out by FlowchartLayout) and sequence message labels (normal and self messages) are plated.
+///     Sequence block frames: alt/else/loop/par frame tab and branch-divider labels (plan
+///     9d56f599) are outside this plate. So are other layouts' labels (class, ER and the rest)
+///     and typeset math labels ({@link MathBox}, whose extent is inside the
+///     fragment's own SVG, not layout geometry): they are not plated, placed or protected, and in
+///     a play-through frame they still take the page-level accent and dim. Node, actor-head, note
+///     and cluster labels sit on their own filled box and are not plated either.
+///   - A sequence plate is cut around every EARLIER glyph run's ink box (the flowchart's holes,
+///     {@link #glyphInks}): a frame tab or divider label, note text, an earlier message label.
+///     Review 1372 found the `ping` plate's {@link #PAD} reaching the `every retry` loop tab
+///     label in sequence-blocks. Sequence placement still does not move a label off an earlier
+///     one, so if two ink boxes overlapped the later label's glyphs would sit, inside the
+///     overlap, on whatever is under the earlier label; no checked diagram has such an overlap.
 ///   - A flowchart node is not broken around an edge label (no checked diagram has one over a
 ///     label), and the arrowhead and label placement gives up after the decollider's last stack
 ///     slot (then the label may still overlap an arrowhead or an earlier label; the earlier label
@@ -86,6 +98,22 @@ final class LabelPlate {
     /// play-through frames recolour it against the plate, not the page (plan 5ce905a8).
     static GlyphRun text(String pathD) {
         return new GlyphRun(pathD, TEXT, true);
+    }
+
+    /// The ink box of every {@link GlyphRun} in `shapes`, groups flattened, in paint order (review
+    /// 1372). The sequence layout cuts these out of a later message plate. A run with no readable
+    /// box ({@link #inkBox} returns null) contributes nothing.
+    static List<double[]> glyphInks(List<Shape> shapes) {
+        List<double[]> out = new java.util.ArrayList<>();
+        for (Shape s : Group.flatten(shapes)) {
+            if (s instanceof GlyphRun g) {
+                double[] b = inkBox(List.of(g.pathD()));
+                if (b != null) {
+                    out.add(b);
+                }
+            }
+        }
+        return out;
     }
 
     private static final Pattern NUM = Pattern.compile("-?[0-9]+(?:\\.[0-9]+)?");
@@ -161,16 +189,19 @@ final class LabelPlate {
     /// front of the plate, the rest stay after it, so the order becomes: crossed lines, plate, other
     /// lines, arrowheads. Earlier filled arrowheads are cut out of the plate. Static stroke widths,
     /// no label cut-outs: the sequence layout's rule.
-    static void place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted) {
-        place(group, from, headAt, ink, painted, 1.0, List.of());
+    static boolean place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted) {
+        return place(group, from, headAt, ink, painted, 1.0, List.of());
     }
 
     /// {@link #place(List, int, int, double[], List)} with each own line's reach scaled by `reach`
     /// (the flowchart passes {@link #ACTIVE_REACH}, so a line that would touch the ink only at the
     /// active frame's doubled width also goes under the plate), and with the ink boxes in `holes`
-    /// (earlier labels') cut out of the plate (review 1337 F2).
-    static void place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted,
-                      double reach, List<double[]> holes) {
+    /// (earlier labels') cut out of the plate (review 1337 F2). Returns false, and leaves `group`
+    /// unchanged, when the plate's cut-outs are too many to compose within {@link #MAX_CUT_TERMS}
+    /// (review 1381): the label is then drawn unplated, in its page colour, as before plan 3e1104cf,
+    /// so nothing earlier is painted over and the work stays bounded.
+    static boolean place(List<Shape> group, int from, int headAt, double[] ink, List<Shape> painted,
+                         double reach, List<double[]> holes) {
         List<Shape> crossed = new java.util.ArrayList<>();
         List<Shape> rest = new java.util.ArrayList<>();
         for (Shape s : group.subList(from, headAt)) {
@@ -182,11 +213,31 @@ final class LabelPlate {
         }
         under.addAll(crossed);
         Shape plate = plate(ink, under, holes);
+        if (plate == null) {
+            return false;
+        }
         List<Shape> span = group.subList(from, headAt);
         span.clear();
         span.addAll(crossed);
         span.add(plate);
         span.addAll(rest);
+        return true;
+    }
+
+    /// The most inclusion-exclusion terms (clip attempts) one plate may spend composing its
+    /// cut-outs (review 1381). Ordinary plates spend a handful: one per cut plus one per pair of
+    /// converging arrowheads. Past this the plate is not drawn (see {@link #plate(double[], List, List)}).
+    static final int MAX_CUT_TERMS = 4096;
+
+    /// The most distinct earlier ink boxes one plate may be cut around (review 1381). Overlapping
+    /// boxes are split into disjoint pieces on a grid of their edges, which costs the square of this.
+    static final int MAX_HOLES = 64;
+
+    /// Signals that a plate's cut-outs exceed {@link #MAX_CUT_TERMS} or {@link #MAX_HOLES}.
+    private static final class TooManyCuts extends RuntimeException {
+        TooManyCuts() {
+            super(null, null, false, false);
+        }
     }
 
     /// The plate rectangle for an ink box: the box grown by {@link #PAD} on every side.
@@ -216,6 +267,15 @@ final class LabelPlate {
     /// slot blocked) and the two ink boxes still overlap, the hole reaches under this label's own
     /// glyphs: the earlier label is still never erased, and inside the overlap this label's glyphs
     /// sit on whatever is under the earlier label (its plate, if it has one).
+    ///
+    /// BOUNDED (review 1381). Inclusion-exclusion visits every overlapping subset of cuts, so its
+    /// cost is exponential in how many cuts share a point. Three things keep it bounded: identical
+    /// cuts are composed once (25 identical frame divider labels make one hole, not 2^25 rings);
+    /// earlier ink boxes that overlap each other are first split into disjoint rectangles on the grid
+    /// of their edges, so two hole pieces never overlap and only arrowheads can stack; and every clip
+    /// attempt is counted against {@link #MAX_CUT_TERMS}. Past that, or past {@link #MAX_HOLES}
+    /// distinct holes, this returns `null` and the caller draws the label unplated. Holes that do not
+    /// overlap one another are cut exactly as before, so ordinary output is unchanged.
     static Shape plate(double[] box, List<Shape> under, List<double[]> holes) {
         Rect r = plate(box);
         double rx0 = r.x();
@@ -236,16 +296,25 @@ final class LabelPlate {
                 cuts.add(poly);
             }
         }
+        List<double[]> boxes = new java.util.ArrayList<>();
+        java.util.Set<String> seenHoles = new java.util.HashSet<>();
         for (double[] h : holes) {
-            double x0 = h[0];
-            double y0 = h[1];
-            double x1 = h[2];
-            double y1 = h[3];
-            if (!(x0 < rx1 && rx0 < x1 && y0 < ry1 && ry0 < y1)) {
+            if (!(h[0] < rx1 && rx0 < h[2] && h[1] < ry1 && ry0 < h[3])) {
                 continue;
             }
-            List<double[]> poly = clip(List.of(new double[] {x0, y0}, new double[] {x1, y0},
-                new double[] {x1, y1}, new double[] {x0, y1}), rect);
+            if (seenHoles.add(java.util.Arrays.toString(h))) {
+                boxes.add(h);
+            }
+        }
+        if (boxes.size() > MAX_HOLES) {
+            return null;
+        }
+        if (anyOverlap(boxes)) {
+            boxes = disjointPieces(boxes, rx0, ry0, rx1, ry1);
+        }
+        for (double[] h : boxes) {
+            List<double[]> poly = clip(List.of(new double[] {h[0], h[1]}, new double[] {h[2], h[1]},
+                new double[] {h[2], h[3]}, new double[] {h[0], h[3]}), rect);
             if (poly.size() >= 3 && signedArea(poly) > 1e-6) {
                 cuts.add(poly);
             }
@@ -255,15 +324,79 @@ final class LabelPlate {
         }
         StringBuilder d = new StringBuilder();
         ring(d, rect);
-        overlaps(d, cuts, 0, null, 0);
+        try {
+            overlaps(d, cuts, 0, null, 0, new int[] {MAX_CUT_TERMS});
+        } catch (TooManyCuts e) {
+            return null;
+        }
         return new Path(d.toString().trim(), FILL, null, 0, true);
+    }
+
+    /// Whether any two boxes `[x0, y0, x1, y1]` overlap with positive area.
+    private static boolean anyOverlap(List<double[]> boxes) {
+        for (int i = 0; i < boxes.size(); i++) {
+            for (int j = i + 1; j < boxes.size(); j++) {
+                double[] a = boxes.get(i);
+                double[] b = boxes.get(j);
+                if (a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// The union of `boxes`, clamped to the plate rectangle, as disjoint rectangles: the grid of
+    /// every box edge, each covered cell merged with its covered neighbours along its row band
+    /// (review 1381). Same covered area, no two pieces overlapping, at most (2n + 1)^2 pieces.
+    private static List<double[]> disjointPieces(List<double[]> boxes, double rx0, double ry0,
+                                                 double rx1, double ry1) {
+        java.util.TreeSet<Double> xs = new java.util.TreeSet<>();
+        java.util.TreeSet<Double> ys = new java.util.TreeSet<>();
+        for (double[] b : boxes) {
+            xs.add(Math.max(rx0, b[0]));
+            xs.add(Math.min(rx1, b[2]));
+            ys.add(Math.max(ry0, b[1]));
+            ys.add(Math.min(ry1, b[3]));
+        }
+        Double[] gx = xs.toArray(new Double[0]);
+        Double[] gy = ys.toArray(new Double[0]);
+        List<double[]> out = new java.util.ArrayList<>();
+        for (int j = 0; j + 1 < gy.length; j++) {
+            double cy = (gy[j] + gy[j + 1]) / 2;
+            int start = -1;
+            for (int i = 0; i + 1 <= gx.length; i++) {
+                boolean covered = false;
+                if (i + 1 < gx.length) {
+                    double cx = (gx[i] + gx[i + 1]) / 2;
+                    for (double[] b : boxes) {
+                        if (b[0] <= cx && cx <= b[2] && b[1] <= cy && cy <= b[3]) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                }
+                if (covered && start < 0) {
+                    start = i;
+                } else if (!covered && start >= 0) {
+                    out.add(new double[] {gx[start], gy[j], gx[i], gy[j + 1]});
+                    start = -1;
+                }
+            }
+        }
+        return out;
     }
 
     /// Inclusion-exclusion over the cut polygons: every non-empty intersection of k of them is
     /// emitted reverse-wound for odd k and forward-wound for even k (all inputs are positive).
+    /// Each clip attempt spends one of `left[0]`; when none is left this throws {@link TooManyCuts}
+    /// before any further ring is built (review 1381).
     private static void overlaps(StringBuilder d, List<List<double[]>> cuts, int from,
-                                 List<double[]> acc, int k) {
+                                 List<double[]> acc, int k, int[] left) {
         for (int i = from; i < cuts.size(); i++) {
+            if (--left[0] < 0) {
+                throw new TooManyCuts();
+            }
             List<double[]> next = acc == null ? cuts.get(i) : clip(acc, cuts.get(i));
             if (next.size() < 3 || signedArea(next) <= 1e-6) {
                 continue;
@@ -273,7 +406,7 @@ final class LabelPlate {
                 java.util.Collections.reverse(ringPts);
             }
             ring(d, ringPts);
-            overlaps(d, cuts, i + 1, next, k + 1);
+            overlaps(d, cuts, i + 1, next, k + 1, left);
         }
     }
 

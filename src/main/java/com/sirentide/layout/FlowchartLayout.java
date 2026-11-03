@@ -190,11 +190,12 @@ public final class FlowchartLayout {
     /// A math label SKIPS the canvas ellipsize (a formula must not be cut mid-run) and is measured on
     /// its composite width, then clamped in-frame the same way.
     ///
-    /// `painted` is the diagram's shape list so far (clusters and earlier edges). A plain label whose
-    /// final ink box crosses anything in it, or this edge's own lines in `shapes`, gets a backing
-    /// plate and the plate's contrast colour (plan 5ce905a8, {@link LabelPlate}); a label that
-    /// crosses nothing emits exactly as before. The plate goes above the edge lines the ink crosses
-    /// and below the arrowhead, and the glyphs come last ({@link LabelPlate} paint order, review 1335).
+    /// `painted` is the diagram's shape list so far (clusters and earlier edges). EVERY plain label
+    /// gets a backing plate and the plate's contrast colour, whether or not its ink crosses anything
+    /// (plan 5ce905a8, {@link LabelPlate}; plan 3e1104cf: an uncrossed label used to draw its own
+    /// colour straight on the page, unreadable on a dark host). The plate goes above the edge lines
+    /// the ink crosses (none, for a label beside its edge) and below the arrowhead, and the glyphs
+    /// come last ({@link LabelPlate} paint order, review 1335).
     ///
     /// `heads` are the de-collider's obstacle boxes: EVERY arrowhead in the diagram, this edge's own
     /// and later edges' included (review 1337 F1), and every earlier label's ink box grown by
@@ -255,9 +256,10 @@ public final class FlowchartLayout {
             return null;
         }
         double[] ink = LabelPlate.inkBox(List.of(ld));
-        boolean plated = ink != null
-            && (LabelPlate.crossesPainted(ink, shapes) || LabelPlate.crossesPainted(ink, painted));
-        if (plated) {
+        // Plan 3e1104cf: every plain label is plated, crossed or not (only an unreadable outline,
+        // with no ink box, is not).
+        boolean plated = ink != null;
+        if (plated) {   // unless the cut-outs are too many to compose (review 1381): then unplated
             // Plan 5ce905a8, review 1335 F1: the plate goes BEFORE this edge's own arrowhead (the
             // trailing Path run) and above the edge lines the ink crosses, at the active frame's
             // doubled width (LabelPlate.place). In the legacy flat path `shapes` is the whole
@@ -266,7 +268,7 @@ public final class FlowchartLayout {
             while (headAt > 0 && shapes.get(headAt - 1) instanceof Path) {
                 headAt--;
             }
-            LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted,
+            plated = LabelPlate.place(shapes, shapes == painted ? headAt : 0, headAt, ink, painted,
                 LabelPlate.ACTIVE_REACH, earlierInks);
         }
         shapes.add(plated ? LabelPlate.text(ld) : new GlyphRun(ld, color));
