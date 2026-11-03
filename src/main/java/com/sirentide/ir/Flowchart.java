@@ -8,8 +8,11 @@ import java.util.List;
 ///
 /// `direction` is the layout flow: `"TD"` (top-down, the M1 default + only implemented geometry) or
 /// `"LR"` (left-right — PARSED into this field but layout still lays out TD; LR geometry is a
-/// follow-up). `textColor` fills the EDGE labels (they sit on the page background) — defaults to
-/// `currentColor` so they inherit the host page's text colour (legible on light AND dark). NODE
+/// follow-up). `textColor` fills typeset math EDGE labels (they sit on the page background) and a
+/// plain edge label with no readable outline — defaults to `currentColor` so they inherit the host
+/// page's text colour (legible on light AND dark). A plain-text edge label does NOT use it: it sits
+/// on its own backing plate in fixed dark ink whatever `textColor` is (`#hex`, `currentColor` or
+/// `none`), so it reads on any page (Sirentide plan 3e1104cf). NODE
 /// labels no longer use `textColor`: they contrast against the node's resolved box fill (dark text
 /// on a light box, white on a dark one) so they stay legible on any theme.
 ///

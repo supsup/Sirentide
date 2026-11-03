@@ -9,9 +9,12 @@ import java.util.List;
 /// solve). FOLLOW-UP (M2): activation bars, alt/loop/par frames, bottom actor boxes.
 ///
 /// `actors` are in first-seen declaration order (both endpoints of every message register). `messages`
-/// are in declaration order (top→down). `textColor` fills the MESSAGE labels (they sit on the page
-/// background) — defaults to `currentColor` so they inherit the host page's text colour (legible on
-/// light AND dark). Actor-HEAD labels no longer use `textColor`: they contrast against the head box
+/// are in declaration order (top→down). `textColor` fills typeset math MESSAGE labels (they sit on
+/// the page background) and a plain message label with no readable outline — defaults to
+/// `currentColor` so they inherit the host page's text colour (legible on light AND dark). A
+/// plain-text message label does NOT use it: it sits on its own backing plate in fixed dark ink
+/// whatever `textColor` is (`#hex`, `currentColor` or `none`), so it reads on any page (Sirentide
+/// plan 3e1104cf). Actor-HEAD labels no longer use `textColor`: they contrast against the head box
 /// fill so they stay legible on any theme.
 ///
 /// `nodeColor` is the header `nodecolor=#hex` actor-head fill — a canonical `#rrggbb`, or `null` for

@@ -232,6 +232,101 @@ class LabelPlateTest {
         assertArrayEquals(new double[] {82, 97.9, 90.8, 108}, boxes.get(0), 1e-9);
     }
 
+    // ---- review 1381: the cut-out composition is bounded ----
+
+    /// Ten copies of one earlier ink box (25 identical frame divider labels in the review's witness)
+    /// are cut out ONCE: the plate is the rect ring plus one hole ring. On cced2495 every subset of
+    /// the ten was emitted, 2^10 - 1 hole rings.
+    @Test
+    void identicalEarlierInkBoxesAreCutOutOnce() {
+        double[] h = {120, 45, 140, 55};
+        List<double[]> holes = java.util.Collections.nCopies(10, h);
+        String d = ((Path) LabelPlate.plate(LABEL, List.of(), holes)).d();
+        assertEquals(2, rings(d), "rect plus one hole: " + rings(d));
+        assertEquals(0, winding(d, 130, 50), "the hole is uncovered");
+        assertTrue(winding(d, 110, 55) != 0, "the plate beside it is filled");
+    }
+
+    /// Ten distinct, mutually overlapping earlier ink boxes (all contain one point) are split into
+    /// disjoint pieces first, so the ring count stays within 1 + (2n + 1)^2, and the uncovered area
+    /// is EXACTLY their union: on a 0.5px grid over the plate, winding is 0 inside some box and
+    /// nonzero outside all of them. On cced2495 this was 2^10 rings.
+    @Test
+    void overlappingEarlierInkBoxesAreSplitDisjointWithTheSameCoverage() {
+        List<double[]> holes = new java.util.ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            holes.add(new double[] {104 + 2 * i, 49 + 0.3 * i, 124 + 3 * i, 56 - 0.2 * i});   // all share [122, 51.7, 124, 54.2]
+        }
+        String d = ((Path) LabelPlate.plate(LABEL, List.of(), holes)).d();
+        assertTrue(rings(d) <= 1 + 21 * 21, "bounded ring count: " + rings(d));
+        assertTrue(rings(d) < 1023, "not one ring per overlapping subset: " + rings(d));
+        assertSameCoverage(d, holes);
+    }
+
+    /// Healthy opposing control: one hole and two DISJOINT holes keep today's exact output (one ring
+    /// per hole, the same rings as before the bound), with the same coverage check.
+    @Test
+    void oneOrDisjointHolesAreCutExactlyAsBefore() {
+        double[] a = {104, 45, 114, 55};
+        double[] b = {130, 52, 150, 70};
+        String one = ((Path) LabelPlate.plate(LABEL, List.of(), List.of(a))).d();
+        String two = ((Path) LabelPlate.plate(LABEL, List.of(), List.of(a, b))).d();
+        assertEquals(2, rings(one));
+        assertEquals(3, rings(two));
+        assertTrue(two.startsWith(one), "the first hole's ring is unchanged by the second");
+        assertSameCoverage(two, List.of(a, b));
+    }
+
+    /// Fourteen distinct arrowheads that all overlap at one tip need 2^14 - 1 inclusion-exclusion
+    /// terms, past {@link LabelPlate#MAX_CUT_TERMS}: no plate is built (null), and place() leaves
+    /// the group unchanged and reports false so the label is drawn unplated. On cced2495 the plate
+    /// was built with every term.
+    @Test
+    void tooManyStackedArrowheadsLeaveThePlateOutAndPlaceReportsIt() {
+        List<Shape> heads = new java.util.ArrayList<>();
+        for (int i = 0; i < 14; i++) {
+            heads.add(new Path("M 130 58 L " + (110 + i) + " 49 L " + (150 - i * 0.5) + " 49 Z", "#94a3b8"));
+        }
+        assertNull(LabelPlate.plate(LABEL, heads, List.of()));
+        List<Shape> group = new java.util.ArrayList<>(List.of(new Line(0, 0, 1, 1, "#94a3b8", 1)));
+        assertFalse(LabelPlate.place(group, 0, 1, LABEL, heads));
+        assertEquals(1, group.size(), "the group is unchanged");
+    }
+
+    /// Healthy opposing control for the cap: three of the same converging arrowheads are composed
+    /// as before (a cut plate, the tip uncovered) and place() reports true.
+    @Test
+    void afewStackedArrowheadsStillComposeAndPlaceReportsIt() {
+        List<Shape> heads = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            heads.add(new Path("M 130 58 L " + (110 + i) + " 49 L " + (150 - i * 0.5) + " 49 Z", "#94a3b8"));
+        }
+        Shape s = LabelPlate.plate(LABEL, heads, List.of());
+        assertTrue(s instanceof Path, "a cut plate: " + s);
+        assertEquals(0, winding(((Path) s).d(), 130, 55), "the stacked tips are uncovered");
+        assertTrue(winding(((Path) s).d(), 100, 60) != 0, "the corner is filled");
+        List<Shape> group = new java.util.ArrayList<>(List.of(new Line(0, 0, 1, 1, "#94a3b8", 1)));
+        assertTrue(LabelPlate.place(group, 0, 1, LABEL, heads));
+    }
+
+    private static int rings(String d) {
+        return d.split("M ", -1).length - 1;
+    }
+
+    /// Over a 0.5px grid of the plate rect [98, 48, 162, 62] (offset off every edge), winding is 0
+    /// exactly where the point lies inside some hole.
+    private static void assertSameCoverage(String d, List<double[]> holes) {
+        for (double x = 98.13; x < 162; x += 0.5) {
+            for (double y = 48.13; y < 62; y += 0.5) {
+                boolean inHole = false;
+                for (double[] h : holes) {
+                    inHole |= h[0] < x && x < h[2] && h[1] < y && y < h[3];
+                }
+                assertEquals(inHole, winding(d, x, y) == 0, "point " + x + "," + y + " in a hole: " + inHole);
+            }
+        }
+    }
+
     private static int winding(String d, double x, double y) {
         int w = 0;
         for (String ring : d.split("(?=M )")) {
