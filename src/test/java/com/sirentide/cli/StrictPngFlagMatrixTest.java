@@ -1,5 +1,6 @@
 package com.sirentide.cli;
 
+import com.sirentide.api.Sirentide;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -7,11 +8,14 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// THE FLAG-PAIR MATRIX for `--strict` and `--png`, and the reason it exists is not the defect it
@@ -159,5 +163,60 @@ class StrictPngFlagMatrixTest {
         assertEquals(2, c.exitCode(),
             "with nothing dropped there is no strict failure to take precedence, so the PNG failure "
                 + "must not be swallowed by the presence of --strict: " + c.err());
+    }
+
+    @Test
+    void rawAndMarkdownCrossDropFontStrictAndPngFlagsWithoutLosingArtifacts() throws IOException {
+        // --strict is the documented opt-in for ANY caveat, including font coverage alone.
+        // Mutants: ignore raw caveats, gate only statement drops, or return the PNG exit code
+        // unconditionally. Exact codes, diagnostic details and SVG bytes discriminate all three.
+        for (boolean markdown : new boolean[] {false, true}) {
+            for (boolean drop : new boolean[] {false, true}) {
+                for (boolean font : new boolean[] {false, true}) {
+                    String dsl = "flowchart TD\nA[" + (font ? "漢字" : "Start")
+                        + "] --> B[End]\n" + (drop ? "mystyle A fill:#f00\n" : "");
+                    String detail = Sirentide.renderWithDiagnostics(dsl).diagnostics().detail();
+                    assertEquals(drop, detail.contains("dropped statement(s)"), dsl);
+                    assertEquals(font, detail.contains("out-of-coverage code points"), dsl);
+                    for (boolean strict : new boolean[] {false, true}) {
+                        for (boolean png : new boolean[] {false, true}) {
+                            String cell = "md=" + markdown + ",drop=" + drop + ",font=" + font
+                                + ",strict=" + strict + ",png=" + png;
+                            Path svg = tmp.resolve(cell + ".svg");
+                            Path screenshot = tmp.resolve(cell + ".png");
+                            List<String> args = new ArrayList<>(List.of("render", markdown
+                                ? md(cell + ".md", "```sirentide\n" + dsl + "```\n").toString()
+                                : "-", "-o", svg.toString()));
+                            if (strict) {
+                                args.add("--strict");
+                            }
+                            if (png) {
+                                args.addAll(List.of("--png", screenshot.toString(),
+                                    "--brewshot", unresolvableJar()));
+                            }
+                            CliRun.Captured c = CliRun.runWithStdin(markdown ? "" : dsl,
+                                args.toArray(String[]::new));
+                            boolean strictFailure = strict && (drop || font);
+                            assertEquals(strictFailure ? 1 : png ? 2 : 0, c.exitCode(),
+                                cell + ": " + c.err());
+                            assertEquals(Sirentide.render(dsl), Files.readString(svg), cell);
+                            assertEquals("", c.out(), "-o keeps stdout empty: " + cell);
+                            assertEquals(drop || font, c.err().contains("rendered, with caveats"), cell);
+                            if (drop || font) {
+                                assertTrue(c.err().contains(detail), cell + ": " + c.err());
+                            }
+                            assertEquals(strictFailure,
+                                c.err().contains("--strict: treating the caveat as a failure"), cell);
+                            assertFalse(c.err().contains("the named statement(s) are absent"), cell);
+                            if (!drop) {
+                                assertFalse(c.err().contains("statement"), cell + ": " + c.err());
+                            }
+                            assertEquals(png, c.err().contains("BrewShot jar not readable"), cell);
+                            assertFalse(Files.exists(screenshot), "missing backend writes no PNG: " + cell);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

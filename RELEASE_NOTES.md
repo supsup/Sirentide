@@ -18,6 +18,11 @@ committed (dates added 2026-10-13 from the file's history); the entries are not 
   require a truthful filled math fragment to remain inside the actual emitted diamond when growth
   changes its baseline. The fixtures pin guard acceptance and the initially short box, retain the
   full math path, and reject literal fallback or shrinking. Tests only; no rendered-output change.
+- *2026-10-26.* **Frame decks preserve the same caveats as static diagrams.**
+  Both single-frame and multi-frame diagnostic results now retain dropped statements, numeric-row
+  and heatmap-input caveats alongside label, fragment and font notices. Consumer-budget failures
+  retain their own refusal. Raw, Markdown and batch strict-mode behavior remains consistent.
+
 - *2026-10-25.* **Every edge and message label sits on its own plate.** The backing plate from
   the 2026-10-24 entry below is now laid under every plain-text flowchart edge label and every
   sequence message label, crossed or not, with black text on it. Before, a label that crossed
