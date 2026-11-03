@@ -14,6 +14,7 @@ import com.sirentide.layout.FlowchartLayout;
 import com.sirentide.layout.GlyphRun;
 import com.sirentide.layout.Group;
 import com.sirentide.layout.MathBox;
+import com.sirentide.layout.MathLabel;
 import com.sirentide.layout.Rect;
 import com.sirentide.layout.Shape;
 import com.sirentide.math.LatteXMathFragmentRenderer;
@@ -127,6 +128,16 @@ class FlowchartDiamondTextFitTest {
     }
 
     @Test
+    void shortMathBaselineSwitchInkFitsInTd() {
+        shortMathBaselineSwitchInkFits("TD");
+    }
+
+    @Test
+    void shortMathBaselineSwitchInkFitsInLr() {
+        shortMathBaselineSwitchInkFits("LR");
+    }
+
+    @Test
     void failedMathRemainsLiteralAndPlainTextDoesNotConsultTheRenderer() {
         for (String direction : DIRECTIONS) {
             Snapshot fallback = snapshot(single(direction, "$FAIL$"), (latex, size) -> Optional.empty(), 1);
@@ -234,6 +245,44 @@ class FlowchartDiamondTextFitTest {
             () -> DiamondInkOracle.assertTranslatedPath(expected, "", GLYPH_IDENTITY_EPS));
         assertThrows(AssertionError.class, () -> DiamondInkOracle.assertTranslatedPath(
             expected, FONT.textPathD("AB", 42, 70, 11), GLYPH_IDENTITY_EPS));
+    }
+
+    private static void shortMathBaselineSwitchInkFits(String direction) {
+        // Fill the entire declared rectangle. The measured envelope also retains the font's
+        // descent, which moves the baseline when this initially short diamond grows. The wide
+        // fragment makes that movement observable beyond the existing one-pixel clearance.
+        double width = 40_000, ascent = 9.21, depth = 0;
+        MathFragmentRenderer rectangle = rectangle(width, ascent, depth);
+        int[] setupCalls = {0};
+        MathLabel.Measured measured = MathLabel.measure("$M$", 12, FONT, (latex, size) -> {
+            setupCalls[0]++;
+            assertEquals("M", latex);
+            assertEquals(12.0, size);
+            return rectangle.render(latex, size);
+        });
+        assertEquals(1, setupCalls[0], "separate setup callback, not a layout/public-render call");
+        assertEquals(1, measured.runs().size());
+        assertNull(measured.runs().get(0).text(), "setup must accept math, not literal fallback");
+        assertNotNull(measured.runs().get(0).fragment(), "guard must accept the full rectangle");
+        assertEquals(width, measured.width());
+        assertEquals(ascent, measured.ascent(), 1e-9);
+        assertEquals(2.856, measured.descent(), 1e-9, "font descent survives a depth-zero fragment");
+        assertEquals(15.0, FONT.lineHeight(12), 1e-9);
+        assertFalse(MathLabel.isTall(measured, 12, FONT), "fixture must start on the short-box path");
+        assertEquals(36.0, MathLabel.boxHeight(measured, 36, 12, FONT));
+
+        Snapshot s = snapshot(single(direction, "$M$"), rectangle, 1);
+        assertEquals(1, Group.flatten(s.groups.get(0).members()).stream()
+            .filter(MathBox.class::isInstance).count(), "one accepted fragment in actual layout");
+        assertEquals(List.of(), s.text.get(0), "math must not degrade to literal glyphs");
+        assertEquals("", s.corpus, "pure math emits no substituted text");
+        assertEquals(1, s.nodes.get(0).ink().size(), "retain the complete single filled path");
+        var ink = s.nodes.get(0).ink().get(0);
+        assertEquals(1.0, ink.sx());
+        assertEquals(1.0, ink.sy());
+        DiamondInkOracle.assertTranslatedPath(rectanglePath(width, ascent, depth), ink.d(), .003);
+        // Decide from the emitted outline and transformed ink, not a copy of the sizing formula.
+        contained(s, 0);
     }
 
     private static Snapshot snapshot(String dsl, MathFragmentRenderer math, int expectedMathCalls) {

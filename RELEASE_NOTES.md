@@ -14,6 +14,10 @@ added here as they land. Source-checkout jars now identify as 0.6.0 so they
 cannot be mistaken for the published 0.5.0 artifacts. Each entry carries the date its text was first
 committed (dates added 2026-10-13 from the file's history); the entries are not in date order.
 
+- *2026-10-24.* **Short-math diamond baseline regression coverage.** Separate TD and LR tests
+  require a truthful filled math fragment to remain inside the actual emitted diamond when growth
+  changes its baseline. The fixtures pin guard acceptance and the initially short box, retain the
+  full math path, and reject literal fallback or shrinking. Tests only; no rendered-output change.
 - *2026-10-26.* **Frame decks preserve the same caveats as static diagrams.**
   Both single-frame and multi-frame diagnostic results now retain dropped statements, numeric-row
   and heatmap-input caveats alongside label, fragment and font notices. Consumer-budget failures
